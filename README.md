@@ -10,4 +10,4 @@ I will optimize the FHCB first and then develop this program.
 3. Add new functions for MC needs: 1. Regular backup 2. More available settings etc.
 4. Implement on-game backup.
 5. Multi-language adaptation.
-6. Graphical interface# MineBackup - Minecraft Archive Backup Program
+6. Graphical interface
