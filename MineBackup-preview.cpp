@@ -25,6 +25,24 @@ void sprint(string s,int time)
 	}
 }
 
+inline void neglect(int x)
+{
+	int num;
+	char ch;
+	while(num<x)
+	{
+		ch=getchar();
+		if(ch=='\n') ++num;
+	}
+	/*string tmp;
+	int num=0;
+	while(num<x)
+	{
+		getline(cin,tmp);
+		++num;
+	 } */
+}
+
 bool isDirectory(const std::string& path)
 {
 #ifdef _WIN32
@@ -110,7 +128,7 @@ std::string getModificationDate(const std::string& filePath)//Folder modificatio
 
     return modificationDate;
 }
-string temp[30];
+string temp[100];
 void ListFiles(const std::string& folderPath) {
     std::string searchPath = folderPath + "\\*.*";
 
@@ -150,14 +168,14 @@ string GetRegistryValue(const std::string& keyPath, const std::string& valueName
 	}
 	else
 	{
-		printf("\n\n±¾³ÌĞòµ÷ÓÃ 7-Zip ½øĞĞ¸ßÑ¹Ëõ±¸·İ£¬µ«ÄãµÄ¼ÆËã»úÉÏÉĞÎ´°²×° 7-Zip £¬ÇëÏÈµ½¹ÙÍø 7-zip.org ÏÂÔØ¡£\n\n");
+		printf("\n\næœ¬ç¨‹åºè°ƒç”¨ 7-Zip è¿›è¡Œé«˜å‹ç¼©å¤‡ä»½ï¼Œä½†ä½ çš„è®¡ç®—æœºä¸Šå°šæœªå®‰è£… 7-Zip ï¼Œè¯·å…ˆåˆ°å®˜ç½‘ 7-zip.org ä¸‹è½½ã€‚\n\n");
 	}
     return valueData;
 }
 struct names{
 	string real,alias;
 	int x;
-}name[100]; 
+}name[100];
 string rname2[20],Bpath,command,yasuo,lv;
 bool prebf,ontop,choice,echos;
 HWND hwnd;
@@ -195,7 +213,7 @@ void Backup(int bf,bool echo)
     tmp="["+tmp+"]"+name[bf].alias;
 	if(echo) command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\*";
 	else command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\*";
-//	cout<< endl << command <<endl;//debug 
+	cout<< endl << command <<endl;//debug 
 	system(command.c_str());
 	if(echo) command="move "+tmp+".7z "+folderName;
 	else command="move "+tmp+".7z "+folderName;
@@ -204,7 +222,7 @@ void Backup(int bf,bool echo)
 }
 void CreateConfig()
 {
-	printf("\nÄãĞèÒª´´½¨ (1)Ò»°ãÅäÖÃ »¹ÊÇ (2)È«×Ô¶¯ÅäÖÃ\n\n");
+	printf("\nä½ éœ€è¦åˆ›å»º (1)ä¸€èˆ¬é…ç½® è¿˜æ˜¯ (2)å…¨è‡ªåŠ¨é…ç½®\n\n");
 	char ch=getch();
 	string folderName,filename = "config1.ini";
 	string i="1";
@@ -276,7 +294,7 @@ void CreateConfig()
 		}
 	    newFile << "*" << endl;
 	    newFile.close();
-	    sprint("ÅäÖÃÎÄ¼ş´´½¨Íê±Ï£¡£¡£¡\n",10);
+	    sprint("é…ç½®æ–‡ä»¶åˆ›å»ºå®Œæ¯•ï¼ï¼ï¼\n",10);
         return ;
 	}
 	else if(ch=='2')
@@ -284,28 +302,28 @@ void CreateConfig()
 		ofstream newFile(filename);
 		newFile << "AUTO:1" << endl;
 		int configs;
-		printf("ĞèÒªµ÷ÓÃµÄÅäÖÃÎÄ¼şĞòºÅ(´ÓÖĞ»ñÈ¡´æµµÃû³ÆºÍ±ğÃû):\n");
+		printf("éœ€è¦è°ƒç”¨çš„é…ç½®æ–‡ä»¶åºå·(ä»ä¸­è·å–å­˜æ¡£åç§°å’Œåˆ«å):\n");
 		cin>>configs;
 		newFile << "Use Config:" << configs << endl;
-		printf("ĞèÒª±¸·İµÚ¼¸¸ö´æµµ:");
+		printf("éœ€è¦å¤‡ä»½ç¬¬å‡ ä¸ªå­˜æ¡£:");
 		cin>>configs;
 		newFile << "BF:" << configs << endl;
-		printf("ÄãĞèÒª (1)¶¨Ê±±¸·İ »¹ÊÇ (2)¼ä¸ô±¸·İ\n");
+		printf("ä½ éœ€è¦ (1)å®šæ—¶å¤‡ä»½ è¿˜æ˜¯ (2)é—´éš”å¤‡ä»½\n");
 		ch=getch();
 		if(ch=='1'){
-			printf("ÊäÈëÄãÒªÔÚÊ²Ã´Ê±¼ä±¸·İ: 1.ÇëÊäÈëÔÂ·İ£¬È»ºó»Ø³µ(ÊäÈë0±íÊ¾Ã¿¸öÔÂ):");
+			printf("è¾“å…¥ä½ è¦åœ¨ä»€ä¹ˆæ—¶é—´å¤‡ä»½: 1.è¯·è¾“å…¥æœˆä»½ï¼Œç„¶åå›è½¦(è¾“å…¥0è¡¨ç¤ºæ¯ä¸ªæœˆ):");
 			int mon,day,hour,min;
 			scanf("%d",&mon);
-			printf("2.ÇëÊäÈëÈÕÆÚ£¬È»ºó»Ø³µ(ÊäÈë0±íÊ¾Ã¿Ìì):");
+			printf("2.è¯·è¾“å…¥æ—¥æœŸï¼Œç„¶åå›è½¦(è¾“å…¥0è¡¨ç¤ºæ¯å¤©):");
 			scanf("%d",&day);
-			printf("3.ÇëÊäÈëĞ¡Ê±£¬È»ºó»Ø³µ(ÊäÈë0±íÊ¾Ã¿Ğ¡Ê±):");
+			printf("3.è¯·è¾“å…¥å°æ—¶ï¼Œç„¶åå›è½¦(è¾“å…¥0è¡¨ç¤ºæ¯å°æ—¶):");
 			scanf("%d",&hour);
-			printf("4.ÇëÊäÈë·ÖÖÓ£¬È»ºó»Ø³µ:");
+			printf("4.è¯·è¾“å…¥åˆ†é’Ÿï¼Œç„¶åå›è½¦:");
 			scanf("%d",&min);
 			newFile << "Mode:1\nTime:" << mon << " " << day << " " << hour << " " << min << endl;
 		} 
 		else if(ch=='2'){
-			printf("ÊäÈëÄãÒª¼ä¸ô¶àÉÙ·ÖÖÓ±¸·İ:");
+			printf("è¾“å…¥ä½ è¦é—´éš”å¤šå°‘åˆ†é’Ÿå¤‡ä»½:");
 			int detime;
 			scanf("%d",&detime);
 			newFile << "Mode:2\nTime:" << detime << endl;
@@ -314,10 +332,10 @@ void CreateConfig()
 			printf("\nError\n");
 			return ;
 		}
-		printf("ÊÇ·ñ¿ªÆôÃâ´òÈÅÄ£Ê½(0/1):");
+		printf("æ˜¯å¦å¼€å¯å…æ‰“æ‰°æ¨¡å¼(0/1):");
 		cin>>configs;
-		newFile << "Inter:" << configs;
-		sprint("ÅäÖÃÎÄ¼ş´´½¨Íê±Ï£¡£¡£¡\n",10);
+		newFile << "Inter:" << configs << "\n*";
+		sprint("é…ç½®æ–‡ä»¶åˆ›å»ºå®Œæ¯•ï¼ï¼ï¼\n",10);
 		return ;
 	}
 	else
@@ -339,7 +357,6 @@ void Main()
 		printf("Please enter which folder you want to backup to:");
 		getline(cin,Bpath);
 		int summ=PreSolve(Gpath);
-		cout<< endl << summ << endl;//debug
         if (newFile.is_open()) {
         	newFile << "The serial number of the config file used:0" << endl;
         	/*newFile << "Backup parent folder path:" << Gpath2[0] << '$';
@@ -395,20 +412,20 @@ void Main()
     
     freopen("config.ini","r",stdin);
     Qread();
+    string temps,tempss;
     int configs;
-    string temps="";
-    char configss[10];
+    char configss[100];
 	scanf("%d",&configs);
 	if(configs!=0)
 	{
-		temps+='0';
-		temps[0]=configs+'0';
+		temps=to_string(configs); //only c++11
 		temps="config"+temps+".ini";
-		for(int i=0;i<temps.size();++i)
-			configss[i]=temps[i];
+		/*for(int i=0;i<temps.size();++i)
+			configss[i]=temps[i];*/
+		strcpy(configss,temps.c_str());
 		freopen(configss,"r",stdin);
 		Qread();
-		bool auto1;
+		int auto1;
 		cin>>auto1;
 		if(auto1)
 		{
@@ -422,7 +439,9 @@ void Main()
 			int bftime,month,day,hour,min;
 			if(mode==1)
 			{
-				scanf("%d %d %d %d",&month,&day,&hour,&min);
+				Qread(); 
+				scanf("%d %d %d %d",&month,&day,&hour,&min);//è¿™é‡Œå¦‚æœè¯»å…¥é”™è¯¯ï¼Œåé¢å°±æ­£ç¡®â€¦â€¦ 
+				//2023.12.31è§£å†³ï¼Œé…ç½®æ–‡ä»¶åé¢å¤šä¸€ä¸²ä¸œè¥¿å°±è¡Œ 
 			}
 			else if(mode==2)
 			{
@@ -431,35 +450,68 @@ void Main()
 			}
 			Qread();
 			cin>>ifinter;
-			if(usecf==0) // Ê¹ÓÃÒ»°ãÅäÖÃÖĞµÄ´æµµÂ·¾¶ 
+			if(usecf==0) // ä½¿ç”¨ä¸€èˆ¬é…ç½®ä¸­çš„å­˜æ¡£è·¯å¾„ 
 			{
+//				freopen("CON","r",stdin);
 				freopen("config.ini","r",stdin);
-				string tmp;
-				getline(cin,tmp);
+//				getline(cin,tmp1);// Problem Here! ï¼ï¼ï¼ï¼ï¼ï¼ï¼ï¼ï¼ 
+				/*for(int i=0;i<=10;++i)
+					tmp[i]=getchar();*/
+//				cin.getline(tmp,100);
+//				cout<<"\n\n\n"<<tmp1<<"\n\n\n\n";
+				neglect(1); 
 				Qread();
-			    getline(cin,temps);
-			    int summ=PreSolve(temps);
+				char inputs[1000];
+				for(int i=0;;++i)
+				{
+					inputs[i]=getchar();
+					if(inputs[i]=='\n'){
+						inputs[i]='\0';break;
+					}
+				}
+				tempss=inputs;
+			    int summ=PreSolve(tempss);
 			    Qread();
-			    getline(cin,Bpath);
-			    Qread();
-			    getline(cin,yasuo);
-			//    yasuo="\""+yasuo+"\""; useless
-			    Qread();
-			    cin>>tmp;//prebf useless
-			    Qread();
-			    cin>>tmp;//
-			    Qread();
-				cin>>tmp;//
+			    memset(inputs,'\0',sizeof(inputs));
+			    for(int i=0;;++i)
+				{
+					inputs[i]=getchar();
+					if(inputs[i]=='\n'){
+						inputs[i]='\0';break;
+					}
+				}
+				Bpath=inputs;
 				Qread();
-				cin>>tmp;//
+				memset(inputs,'\0',sizeof(inputs));
+			    for(int i=0;;++i)
+				{
+					inputs[i]=getchar();
+					if(inputs[i]=='\n'){
+						inputs[i]='\0';break;
+					}
+				}
+				yasuo=inputs;
+				neglect(4);
 				Qread();
-				getline(cin,lv);
+				memset(inputs,'\0',sizeof(inputs));
+				inputs[0]=getchar();
+				lv=inputs;
 			    int i=0;
 //			    printf("Your folder is as follows:\n\n");
 			    int ttt=0;
+			    inputs[0]=getchar();// addition
 			    while(true)
 			    {
-			    	getline(cin,name[++i].real);
+//			    	getline(cin,name[++i].real);
+					memset(inputs,'\0',sizeof(inputs));
+					for(int i=0;;++i)
+					{
+						inputs[i]=getchar();
+						if(inputs[i]=='\n'){
+							inputs[i]='\0';break;
+						}
+					}
+					name[++i].real=inputs;
 			    	if(name[i].real[0]=='*') break;
 			    	else if(name[i].real[0]=='$')
 			    	{
@@ -468,24 +520,25 @@ void Main()
 					}
 			    	name[i].real=Gpath2[ttt]+"/"+name[i].real;
 			    	name[i].x=ttt;
-			    	getline(cin,name[i].alias);
-			    	//printf("%d. ",i);
-			    	//cout<<name[i].alias<<endl;
+			    	memset(inputs,'\0',sizeof(inputs));
+					for(int i=0;;++i)
+					{
+						inputs[i]=getchar();
+						if(inputs[i]=='\n'){
+							inputs[i]='\0';break;
+						}
+					}
+					name[i].alias=inputs;
 				}
-				freopen("CON","r",stdin);
-				
 			}
 			else
 			{
-			    string temps="";
+				string temps=to_string(usecf);
 			    char configss[10];
-				temps+='0';
-				temps[0]=usecf+'0';
 				temps="config"+temps+".ini";
 				for(int i=0;i<temps.size();++i)
 					configss[i]=temps[i];
 				freopen(configss,"r",stdin);
-				
 				string tmp;
 				getline(cin,tmp);
 				Qread();
@@ -495,15 +548,7 @@ void Main()
 			    getline(cin,Bpath);
 			    Qread();
 			    getline(cin,yasuo);
-			//    yasuo="\""+yasuo+"\""; useless
-			    Qread();
-			    cin>>tmp;//prebf useless
-			    Qread();
-			    cin>>tmp;//
-			    Qread();
-				cin>>tmp;//
-				Qread();
-				cin>>tmp;//
+			    neglect(4);
 				Qread();
 				getline(cin,lv);
 			    int i=0;
@@ -521,63 +566,52 @@ void Main()
 			    	name[i].real=Gpath2[ttt]+"/"+name[i].real;
 			    	name[i].x=ttt;
 			    	getline(cin,name[i].alias);
-			    	//printf("%d. ",i);
-			    	//cout<<name[i].alias<<endl;
 				}
-				freopen("CON","r",stdin);
 			}
-			
-			
 			if(mode==1)
 			{
-				int month,day,hour,min;
-				scanf("%d %d %d %d",&month,&day,&hour,&min);
-				// »ñÈ¡µ±Ç°Ê±¼ä
-			    std::time_t now = std::time(nullptr);
-			    std::tm* local_time = std::localtime(&now);
-			
-			    // ÉèÖÃÄ¿±êÊ±¼äÎª2023Äê7ÔÂ1ÈÕÉÏÎç6µã         Íü¼Ç±£´æÀ²À² 
-			    std::tm target_time = {0};
-			    //target_time.tm_year = 2023 - 1900; // Äê·İ´Ó1900Äê¿ªÊ¼¼ÆËã
-			    if(month==0)  /*target_time.tm_mon = local_time->tm_mon*/;
-			    else target_time.tm_mon = month - 1; // ÔÂ·İ´Ó0¿ªÊ¼¼ÆËã
-			    if(day==0) /*target_time.tm_mday = local_time->tm_mday*/;
-			    else target_time.tm_mday = day;
-			    if(hour==0) /*target_time.tm_hour = local_time->tm_hour*/;
-			    else target_time.tm_hour = hour;
-			    if(min==0) /*target_time.tm_min = local_time->tm_min*/;
-			    else target_time.tm_min = min;
-			
-			    // Èç¹ûµ±Ç°Ê±¼äÒÑ¾­³¬¹ıÁËÄ¿±êÊ±¼ä£¬ÄÇÃ´¾Í²»ĞèÒªµÈ´ıÁË
-			    if (std::mktime(local_time) > std::mktime(&target_time)) {
-			        std::cout << "ÏÖÔÚµÄÊ±¼äÒÑ¾­³¬¹ıÁËÄ¿±êÊ±¼ä" << std::endl;
-			    } else {
-			        // ¼ÆËãĞèÒªµÈ´ıµÄÊ±¼ä£¨µ¥Î»£ºÃë£©
-			        std::time_t wait_time = std::difftime(std::mktime(&target_time), std::mktime(local_time));
-			
-			        // µÈ´ıÖ¸¶¨µÄÊ±¼ä
-			        std::this_thread::sleep_for(std::chrono::seconds(wait_time));
-			
-			        // ÔÚÕâÀïÖ´ĞĞÄãµÄÓï¾ä
-			        std::cout << "ÏÖÔÚÊÇ2023Äê7ÔÂ1ÈÕÉÏÎç6µãÕû" << std::endl;
-			        Backup(bfnum,false);
-			    }
+				while(true)
+				{
+					// è·å–å½“å‰æ—¶é—´
+				    std::time_t now = std::time(nullptr);
+				    std::tm* local_time = std::localtime(&now);
+				
+				    std::tm target_time = {0};
+				    target_time.tm_year = local_time->tm_year; // å¹´ä»½ä»1900å¹´å¼€å§‹è®¡ç®—
+				    if(month==0)  target_time.tm_mon = local_time->tm_mon+1;
+				    else target_time.tm_mon = month - 1; // æœˆä»½ä»0å¼€å§‹è®¡ç®—
+				    if(day==0) target_time.tm_mday = local_time->tm_mday+1;
+				    else target_time.tm_mday = day;
+				    if(hour==0) target_time.tm_hour = local_time->tm_hour+1;
+				    else target_time.tm_hour = hour;
+				    if(min==0) target_time.tm_min = local_time->tm_min+1;
+				    else target_time.tm_min = min;
+//				    if(min==0 || hour==0 || day==0 || month==0) 
+//				    	target_time.tm_sec = local_time->tm_sec+1;
+				    // å¦‚æœå½“å‰æ—¶é—´å·²ç»è¶…è¿‡äº†ç›®æ ‡æ—¶é—´ï¼Œé‚£ä¹ˆå°±ä¸éœ€è¦ç­‰å¾…äº†
+				    if (std::mktime(local_time) > std::mktime(&target_time)) {
+				        std::cout << "ç°åœ¨çš„æ—¶é—´å·²ç»è¶…è¿‡äº†ç›®æ ‡æ—¶é—´" << std::endl;
+				    } else {
+				        // è®¡ç®—éœ€è¦ç­‰å¾…çš„æ—¶é—´ï¼ˆå•ä½ï¼šç§’ï¼‰
+				        std::time_t wait_time = std::difftime(std::mktime(&target_time), std::mktime(local_time));
+				        // ç­‰å¾…æŒ‡å®šçš„æ—¶é—´
+				        std::this_thread::sleep_for(std::chrono::seconds(wait_time));
+				        Backup(bfnum,false);
+				    }
+				}
 			} 
 			else if(mode==2)
 			{
-				
-				
-//				puts("233");
 				while(true)
 				{
 					auto now = std::chrono::steady_clock::now();
-				    // ¼ÆËãÄ¿±êÊ±¼ä£¨ÀıÈç£º5Ãëºó£©
-				    auto target_time = now + std::chrono::seconds(bftime);
+				    // è®¡ç®—ç›®æ ‡æ—¶é—´ï¼ˆä¾‹å¦‚ï¼š5ç§’åï¼‰
+				    auto target_time = now + std::chrono::seconds(10);
 				
-				    // ¼ÆËãÊ±¼ä²îÖµ
+				    // è®¡ç®—æ—¶é—´å·®å€¼
 				    auto duration = target_time - now;
 				
-				    // ÈÃÏß³ÌĞİÃßÖ¸¶¨µÄÊ±¼ä
+				    // è®©çº¿ç¨‹ä¼‘çœ æŒ‡å®šçš„æ—¶é—´
 				    std::this_thread::sleep_for(duration);
 				    Backup(bfnum,false);
 				}
@@ -815,12 +849,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         hInstance,
         NULL
     );
-    CreateWindow("button", "Open the data folder",
+    CreateWindow("button", "Data folder",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         20, 10, 120, 35,
         hwnd, (HMENU)1, hInstance, NULL);
 
-    CreateWindow("button", "Open the backup folder",
+    CreateWindow("button", "Backup folder",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         150, 10, 120, 35,
         hwnd, (HMENU)2, hInstance, NULL);
