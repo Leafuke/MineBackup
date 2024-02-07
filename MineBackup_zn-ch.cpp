@@ -10,7 +10,7 @@
 #include <windows.h> 
 using namespace std;
 string Gpath,Gpath2[100];
-void sprint(string s,int time)
+void sprint(string s,int time)//å»¶è¿Ÿè¾“å‡º 
 {
 	int len=s.size();
 	for(int i=0;i<len;i++)
@@ -25,7 +25,7 @@ void sprint(string s,int time)
 	}
 }
 
-inline void neglect(int x)
+inline void neglect(int x)//è¯»å–å¿½ç•¥ x è¡Œ 
 {
 	int num;
 	char ch;
@@ -43,7 +43,7 @@ inline void neglect(int x)
 	 } */
 }
 
-bool isDirectory(const std::string& path)
+bool isDirectory(const std::string& path)//å¯»æ‰¾æ–‡ä»¶å¤¹ 
 {
 #ifdef _WIN32
     DWORD attr = GetFileAttributes(path.c_str());
@@ -59,6 +59,7 @@ bool isDirectory(const std::string& path)
 #endif
 }
 
+//åˆ—å‡ºå­æ–‡ä»¶å¤¹ 
 void listSubdirectories(const std::string& folderPath, std::vector<std::string>& subdirectories)
 {
 #ifdef _WIN32
@@ -91,7 +92,7 @@ void listSubdirectories(const std::string& folderPath, std::vector<std::string>&
     }
 #endif
 }
-
+//è·å–æ–‡ä»¶å¤¹æœ€è¿‘ä¿®æ”¹æ—¶é—´ 
 std::string getModificationDate(const std::string& filePath)//Folder modification date
 {
     std::string modificationDate;
@@ -129,6 +130,7 @@ std::string getModificationDate(const std::string& filePath)//Folder modificatio
     return modificationDate;
 }
 string temp[100];
+//åˆ—å‡ºæ–‡ä»¶å¤¹å†…çš„æ–‡ä»¶ 
 void ListFiles(const std::string& folderPath) {
     std::string searchPath = folderPath + "\\*.*";
 
@@ -146,6 +148,7 @@ void ListFiles(const std::string& folderPath) {
         FindClose(hFind);
     }
 }
+//é¢„è¯»å–ï¼ˆç›´åˆ°: 
 void Qread()
 {
 	char ch;
@@ -153,6 +156,7 @@ void Qread()
 	while(ch!=':') ch=getchar();
 	return ;
 }
+//è·å–æ³¨å†Œè¡¨çš„å€¼ 
 string GetRegistryValue(const std::string& keyPath, const std::string& valueName)
 {
     HKEY hKey;
@@ -168,7 +172,7 @@ string GetRegistryValue(const std::string& keyPath, const std::string& valueName
 	}
 	else
 	{
-		printf("\n\n±¾³ÌĞòµ÷ÓÃ 7-Zip ½øĞĞ¸ßÑ¹Ëõ±¸·İ£¬µ«ÄãµÄ¼ÆËã»úÉÏÉĞÎ´°²×° 7-Zip £¬ÇëÏÈµ½¹ÙÍø 7-zip.org ÏÂÔØ¡£\n\n");
+		printf("\n\næœ¬ç¨‹åºè°ƒç”¨ 7-Zip è¿›è¡Œé«˜å‹ç¼©å¤‡ä»½ï¼Œä½†ä½ çš„è®¡ç®—æœºä¸Šå°šæœªå®‰è£… 7-Zip ï¼Œè¯·å…ˆåˆ°å®˜ç½‘ 7-zip.org ä¸‹è½½ã€‚\n\n");
 	}
     return valueData;
 }
@@ -176,13 +180,14 @@ struct names{
 	string real,alias;
 	int x;
 }name[100];
-string rname2[20],Bpath,command,yasuo,lv;
-bool prebf,ontop,choice,echos;
+string rname2[20],Bpath,command,yasuo,lv;//å­˜æ¡£çœŸå®å å¤‡ä»½æ–‡ä»¶å¤¹è·¯å¾„ cmdæŒ‡ä»¤ 7-Zipè·¯å¾„ å‹ç¼©ç­‰çº§ 
+bool prebf,ontop,choice,echos;//å›æ¡£å‰å¤‡ä»½ å·¥å…·ç®±ç½®é¡¶ æ‰‹åŠ¨é€‰æ‹© å›æ˜¾ 
 HWND hwnd;
 struct File {
     string name;
     time_t modifiedTime;
 };
+//å­˜æ¡£æ–‡ä»¶å¤¹è·¯å¾„é¢„å¤„ç† 
 int PreSolve(string s)
 {
 	int len=s.size(),tt=0;
@@ -197,6 +202,7 @@ int PreSolve(string s)
 	}
 	return tt;
 }
+//å¤‡ä»½å‡½æ•° 
 void Backup(int bf,bool echo)
 {
 	string folderName = Bpath + "/" + name[bf].alias; // Set folder name
@@ -220,9 +226,10 @@ void Backup(int bf,bool echo)
 	system(command.c_str());
 	return ;
 }
+//åˆ›å»ºå¤‡ä»½æ–‡ä»¶ 
 void CreateConfig()
 {
-	printf("\nÄãĞèÒª´´½¨ (1)Ò»°ãÅäÖÃ »¹ÊÇ (2)È«×Ô¶¯ÅäÖÃ\n\n");
+	printf("\nä½ éœ€è¦åˆ›å»º (1)ä¸€èˆ¬é…ç½® è¿˜æ˜¯ (2)å…¨è‡ªåŠ¨é…ç½®\n\n");
 	char ch=getch();
 	string folderName,filename = "config1.ini";
 	string i="1";
@@ -236,38 +243,38 @@ void CreateConfig()
 	}
 	if(ch=='1')
 	{
-		printf("\nÕıÔÚ´´½¨ÃûÎª %s µÄÅäÖÃÎÄ¼ş\n",&filename[0]);     
+		printf("\næ­£åœ¨åˆ›å»ºåä¸º %s çš„é…ç½®æ–‡ä»¶\n",&filename[0]);     
     	ofstream newFile(filename);
-    	printf("ÇëÊäÈë´æµµÎÄ¼ş¼ĞµÄ´¢´æÂ·¾¶ (¶à¸öÎÄ¼ş¼ĞÂ·¾¶¼äÓÃ$·Ö¸ô): ");
+    	printf("è¯·è¾“å…¥å­˜æ¡£æ–‡ä»¶å¤¹çš„å‚¨å­˜è·¯å¾„ (å¤šä¸ªæ–‡ä»¶å¤¹è·¯å¾„é—´ç”¨$åˆ†éš”): ");
 		getline(cin,Gpath);
-		printf("ÇëÊäÈë±¸·İ´æ´¢ÎÄ¼ş¼ĞÂ·¾¶:");
+		printf("è¯·è¾“å…¥å¤‡ä»½å­˜å‚¨æ–‡ä»¶å¤¹è·¯å¾„:");
 		getline(cin,Bpath);
 		for(int i=0;i<=10;++i)
 			Gpath2[i]="";
 		int summ=PreSolve(Gpath);
         if (newFile.is_open()) {
         	newFile << "Auto:0" << endl;
-        	newFile << "ËùÓĞ´æµµÂ·¾¶:" << Gpath2[0];
+        	newFile << "æ‰€æœ‰å­˜æ¡£è·¯å¾„:" << Gpath2[0];
         	if(summ>1) newFile << '$'; 
         	for(int i=1;i<summ;++i)
         		newFile << Gpath2[i] << '$';
         	if(summ!=0) newFile << Gpath2[summ] << endl;
         	else newFile << endl;
-            newFile << "±¸·İ´æ´¢Â·¾¶:" << Bpath << endl;
+            newFile << "å¤‡ä»½å­˜å‚¨è·¯å¾„:" << Bpath << endl;
 			string keyPath = "Software\\7-Zip"; 
 			string valueName = "Path";
 			string softw=GetRegistryValue(keyPath, valueName),softww="";
 			for(int i=0;i<softw.size();++i)
 				if(softw[i]==' ') softww+='"',softww+=' ',softww+='"';
 				else softww+=softw[i];
-            newFile << "Ñ¹ËõÈí¼şÂ·¾¶:" << softww+"7z.exe" << endl;
-            newFile << "»¹Ô­Ç°ÏÈ±¸·İ:0" << endl;
-            newFile << "¹¤¾ßÏäÖÃ¶¥:0" << endl;
-            newFile << "ÊÖ¶¯Ñ¡Ôñ±¸·İ:0" << endl;
-            newFile << "¹ı³ÌÏÔÊ¾:1" << endl;
-            newFile << "Ñ¹ËõµÈ¼¶(Ô½¸ß£¬Ñ¹ËõÂÊÔ½µÍ£¬µ«ËÙ¶ÈÔ½Âı):5" << endl;
+            newFile << "å‹ç¼©è½¯ä»¶è·¯å¾„:" << softww+"7z.exe" << endl;
+            newFile << "è¿˜åŸå‰å…ˆå¤‡ä»½:0" << endl;
+            newFile << "å·¥å…·ç®±ç½®é¡¶:0" << endl;
+            newFile << "æ‰‹åŠ¨é€‰æ‹©å¤‡ä»½:0" << endl;
+            newFile << "è¿‡ç¨‹æ˜¾ç¤º:1" << endl;
+            newFile << "å‹ç¼©ç­‰çº§(è¶Šé«˜ï¼Œå‹ç¼©ç‡è¶Šä½ï¼Œä½†é€Ÿåº¦è¶Šæ…¢):5" << endl;
     	}
-    	printf("\nÓĞÒÔÏÂ´æµµ:\n\n"); 
+    	printf("\næœ‰ä»¥ä¸‹å­˜æ¡£:\n\n"); 
     	for(int i=0;i<=summ;++i)
     	{
     		cout << endl; 
@@ -277,16 +284,16 @@ void CreateConfig()
 		    {
 				std::string NGpath=Gpath2[i]+"/"+folderName;
 		        std::string modificationDate = getModificationDate(NGpath);
-		        std::cout << "´æµµÃû³Æ: " << folderName << endl;
-		        std::cout << "×î½üÓÎÍæÊ±¼ä " << modificationDate << endl;
+		        std::cout << "å­˜æ¡£åç§°: " << folderName << endl;
+		        std::cout << "æœ€è¿‘æ¸¸ç©æ—¶é—´ " << modificationDate << endl;
 		        std::cout << "-----------" << endl;
 		    }
 		    Sleep(2000);
-		    sprint("½ÓÏÂÀ´£¬ÄãĞèÒª¸øÕâĞ©ÎÄ¼ş¼ĞÆğÒ»¸öÒ×ÓÚÄã×Ô¼ºÀí½âµÄ±ğÃû¡£\n\n",50);
+		    sprint("æ¥ä¸‹æ¥ï¼Œä½ éœ€è¦ç»™è¿™äº›æ–‡ä»¶å¤¹èµ·ä¸€ä¸ªæ˜“äºä½ è‡ªå·±ç†è§£çš„åˆ«åã€‚\n\n",50);
 			for (const auto& folderName : subdirectories)
 		    {
 		        string alias;
-		        cout << "Çë¸øÒÔÏÂ´æµµÉèÖÃ±ğÃû(¿ÉÒÔÊÇÒ»¶ÎÃèÊö) " << folderName << endl;
+		        cout << "è¯·ç»™ä»¥ä¸‹å­˜æ¡£è®¾ç½®åˆ«å(å¯ä»¥æ˜¯ä¸€æ®µæè¿°) " << folderName << endl;
 		        cin >> alias;
 				newFile << folderName << endl << alias << endl;
 		    }
@@ -294,7 +301,7 @@ void CreateConfig()
 		}
 	    newFile << "*" << endl;
 	    newFile.close();
-	    sprint("ÅäÖÃÎÄ¼ş´´½¨Íê±Ï£¡£¡£¡\n",10);
+	    sprint("é…ç½®æ–‡ä»¶åˆ›å»ºå®Œæ¯•ï¼ï¼ï¼\n",10);
         return ;
 	}
 	else if(ch=='2')
@@ -302,28 +309,28 @@ void CreateConfig()
 		ofstream newFile(filename);
 		newFile << "AUTO:1" << endl;
 		int configs;
-		printf("ĞèÒªµ÷ÓÃµÄÅäÖÃÎÄ¼şĞòºÅ(´ÓÖĞ»ñÈ¡´æµµÃû³ÆºÍ±ğÃû):\n");
+		printf("éœ€è¦è°ƒç”¨çš„é…ç½®æ–‡ä»¶åºå·(ä»ä¸­è·å–å­˜æ¡£åç§°å’Œåˆ«å):\n");
 		cin>>configs;
 		newFile << "Use Config:" << configs << endl;
-		printf("ĞèÒª±¸·İµÚ¼¸¸ö´æµµ:");
+		printf("éœ€è¦å¤‡ä»½ç¬¬å‡ ä¸ªå­˜æ¡£:");
 		cin>>configs;
 		newFile << "BF:" << configs << endl;
-		printf("ÄãĞèÒª (1)¶¨Ê±±¸·İ »¹ÊÇ (2)¼ä¸ô±¸·İ\n");
+		printf("ä½ éœ€è¦ (1)å®šæ—¶å¤‡ä»½ è¿˜æ˜¯ (2)é—´éš”å¤‡ä»½\n");
 		ch=getch();
 		if(ch=='1'){
-			printf("ÊäÈëÄãÒªÔÚÊ²Ã´Ê±¼ä±¸·İ: 1.ÇëÊäÈëÔÂ·İ£¬È»ºó»Ø³µ(ÊäÈë0±íÊ¾Ã¿¸öÔÂ):");
+			printf("è¾“å…¥ä½ è¦åœ¨ä»€ä¹ˆæ—¶é—´å¤‡ä»½: 1.è¯·è¾“å…¥æœˆä»½ï¼Œç„¶åå›è½¦(è¾“å…¥0è¡¨ç¤ºæ¯ä¸ªæœˆ):");
 			int mon,day,hour,min;
 			scanf("%d",&mon);
-			printf("2.ÇëÊäÈëÈÕÆÚ£¬È»ºó»Ø³µ(ÊäÈë0±íÊ¾Ã¿Ìì):");
+			printf("2.è¯·è¾“å…¥æ—¥æœŸï¼Œç„¶åå›è½¦(è¾“å…¥0è¡¨ç¤ºæ¯å¤©):");
 			scanf("%d",&day);
-			printf("3.ÇëÊäÈëĞ¡Ê±£¬È»ºó»Ø³µ(ÊäÈë0±íÊ¾Ã¿Ğ¡Ê±):");
+			printf("3.è¯·è¾“å…¥å°æ—¶ï¼Œç„¶åå›è½¦(è¾“å…¥0è¡¨ç¤ºæ¯å°æ—¶):");
 			scanf("%d",&hour);
-			printf("4.ÇëÊäÈë·ÖÖÓ£¬È»ºó»Ø³µ:");
+			printf("4.è¯·è¾“å…¥åˆ†é’Ÿï¼Œç„¶åå›è½¦:");
 			scanf("%d",&min);
 			newFile << "Mode:1\nTime:" << mon << " " << day << " " << hour << " " << min << endl;
 		} 
 		else if(ch=='2'){
-			printf("ÊäÈëÄãÒª¼ä¸ô¶àÉÙ·ÖÖÓ±¸·İ:");
+			printf("è¾“å…¥ä½ è¦é—´éš”å¤šå°‘åˆ†é’Ÿå¤‡ä»½:");
 			int detime;
 			scanf("%d",&detime);
 			newFile << "Mode:2\nTime:" << detime << endl;
@@ -332,10 +339,10 @@ void CreateConfig()
 			printf("\nError\n");
 			return ;
 		}
-		printf("ÊÇ·ñ¿ªÆôÃâ´òÈÅÄ£Ê½(0/1):");
+		printf("æ˜¯å¦å¼€å¯å…æ‰“æ‰°æ¨¡å¼(0/1):");
 		cin>>configs;
 		newFile << "Inter:" << configs << "\n*";
-		sprint("ÅäÖÃÎÄ¼ş´´½¨Íê±Ï£¡£¡£¡\n",10);
+		sprint("é…ç½®æ–‡ä»¶åˆ›å»ºå®Œæ¯•ï¼ï¼ï¼\n",10);
 		return ;
 	}
 	else
@@ -350,35 +357,35 @@ void Main()
 	string filename = "config.ini";
     ifstream file(filename);
     if (!file.is_open()) {
-		printf("\nÕıÔÚ½¨Á¢ÅäÖÃÎÄ¼ş......\n"); 
+		printf("\næ­£åœ¨å»ºç«‹é…ç½®æ–‡ä»¶......\n"); 
     	ofstream newFile(filename);
-    	printf("ÇëÊäÈë´æµµÎÄ¼ş¼ĞµÄ´¢´æÂ·¾¶ (¶à¸öÎÄ¼ş¼ĞÂ·¾¶¼äÓÃ$·Ö¸ô): ");
+    	printf("è¯·è¾“å…¥å­˜æ¡£æ–‡ä»¶å¤¹çš„å‚¨å­˜è·¯å¾„ (å¤šä¸ªæ–‡ä»¶å¤¹è·¯å¾„é—´ç”¨$åˆ†éš”): ");
 		getline(cin,Gpath);
-		printf("ÇëÊäÈë´æµµ±¸·İ´æ´¢Â·¾¶:");
+		printf("è¯·è¾“å…¥å­˜æ¡£å¤‡ä»½å­˜å‚¨è·¯å¾„:");
 		getline(cin,Bpath);
 		int summ=PreSolve(Gpath);
         if (newFile.is_open()) {
-        	newFile << "Ê¹ÓÃµÄÅäÖÃÎÄ¼şĞòºÅ:0" << endl;
+        	newFile << "ä½¿ç”¨çš„é…ç½®æ–‡ä»¶åºå·:0" << endl;
         	/*newFile << "Backup parent folder path:" << Gpath2[0] << '$';
         	for(int i=1;i<summ;++i)
         		newFile << Gpath2[i] << '$';
         	newFile << Gpath2[summ] << endl;*/
-        	newFile << "´æµµÎÄ¼ş¼ĞÂ·¾¶:" << Gpath << endl;//new
-            newFile << "´æµµ±¸·İ´æ´¢Â·¾¶:" << Bpath << endl;
+        	newFile << "å­˜æ¡£æ–‡ä»¶å¤¹è·¯å¾„:" << Gpath << endl;//new
+            newFile << "å­˜æ¡£å¤‡ä»½å­˜å‚¨è·¯å¾„:" << Bpath << endl;
 			string keyPath = "Software\\7-Zip"; 
 			string valueName = "Path";
 			string softw=GetRegistryValue(keyPath, valueName),softww="";
 			for(int i=0;i<softw.size();++i)
 				if(softw[i]==' ') softww+='"',softww+=' ',softww+='"';
 				else softww+=softw[i];
-            newFile << "Ñ¹ËõÈí¼şÂ·¾¶:" << softww+"7z.exe" << endl;
-            newFile << "±¸·İÇ°ÏÈ»¹Ô­:0" << endl;
-            newFile << "¹¤¾ßÏäÖÃ¶¥:0" << endl;
-            newFile << "ÊÖ¶¯Ñ¡Ôñ»¹Ô­(Ä¬ÈÏÑ¡×îĞÂ):0" << endl;
-            newFile << "¹ı³ÌÏÔÊ¾:1" << endl;
-            newFile << "Ñ¹ËõµÈ¼¶:5" << endl;
+            newFile << "å‹ç¼©è½¯ä»¶è·¯å¾„:" << softww+"7z.exe" << endl;
+            newFile << "å¤‡ä»½å‰å…ˆè¿˜åŸ:0" << endl;
+            newFile << "å·¥å…·ç®±ç½®é¡¶:0" << endl;
+            newFile << "æ‰‹åŠ¨é€‰æ‹©è¿˜åŸ(é»˜è®¤é€‰æœ€æ–°):0" << endl;
+            newFile << "è¿‡ç¨‹æ˜¾ç¤º:1" << endl;
+            newFile << "å‹ç¼©ç­‰çº§:5" << endl;
     	}
-    	printf("\nÓĞÒÔÏÂ´æµµÎÄ¼ş¼Ğ:\n\n"); 
+    	printf("\næœ‰ä»¥ä¸‹å­˜æ¡£æ–‡ä»¶å¤¹:\n\n"); 
     	for(int i=0;i<=summ;++i)
     	{
     		cout << endl; 
@@ -388,16 +395,16 @@ void Main()
 		    {
 				std::string NGpath=Gpath2[i]+"/"+folderName;
 		        std::string modificationDate = getModificationDate(NGpath);
-		        std::cout << "´æµµÃû³Æ: " << folderName << endl;
-		        std::cout << "×î½üÓÎÍæÊ±¼ä: " << modificationDate << endl;
+		        std::cout << "å­˜æ¡£åç§°: " << folderName << endl;
+		        std::cout << "æœ€è¿‘æ¸¸ç©æ—¶é—´: " << modificationDate << endl;
 		        std::cout << "-----------" << endl;
 		    }
 		    Sleep(2000);
-		    sprint("ÏÂÀ´£¬ÄãĞèÒª¸øÕâĞ©ÎÄ¼ş¼ĞÆğÒ»¸öÒ×ÓÚÄã×Ô¼ºÀí½âµÄ±ğÃû¡£\n\n",50);
+		    sprint("ä¸‹æ¥ï¼Œä½ éœ€è¦ç»™è¿™äº›æ–‡ä»¶å¤¹èµ·ä¸€ä¸ªæ˜“äºä½ è‡ªå·±ç†è§£çš„åˆ«åã€‚\n\n",50);
 			for (const auto& folderName : subdirectories)
 		    {
 		        string alias;
-		        cout << "ÇëÊäÈëÒÔÏÂ´æµµµÄ±ğÃû(¿ÉÒÔÊÇÒ»¶ÎÃèÊö) " << folderName << endl;
+		        cout << "è¯·è¾“å…¥ä»¥ä¸‹å­˜æ¡£çš„åˆ«å(å¯ä»¥æ˜¯ä¸€æ®µæè¿°) " << folderName << endl;
 		        cin >> alias;
 				newFile << folderName << endl << alias << endl;
 		    }
@@ -440,8 +447,8 @@ void Main()
 			if(mode==1)
 			{
 				Qread(); 
-				scanf("%d %d %d %d",&month,&day,&hour,&min);//ÕâÀïÈç¹û¶ÁÈë´íÎó£¬ºóÃæ¾ÍÕıÈ·¡­¡­ 
-				//2023.12.31½â¾ö£¬ÅäÖÃÎÄ¼şºóÃæ¶àÒ»´®¶«Î÷¾ÍĞĞ 
+				scanf("%d %d %d %d",&month,&day,&hour,&min);//è¿™é‡Œå¦‚æœè¯»å…¥é”™è¯¯ï¼Œåé¢å°±æ­£ç¡®â€¦â€¦ 
+				//2023.12.31è§£å†³ï¼Œé…ç½®æ–‡ä»¶åé¢å¤šä¸€ä¸²ä¸œè¥¿å°±è¡Œ 
 			}
 			else if(mode==2)
 			{
@@ -450,11 +457,11 @@ void Main()
 			}
 			Qread();
 			cin>>ifinter;
-			if(usecf==0) // Ê¹ÓÃÒ»°ãÅäÖÃÖĞµÄ´æµµÂ·¾¶ 
+			if(usecf==0) // ä½¿ç”¨ä¸€èˆ¬é…ç½®ä¸­çš„å­˜æ¡£è·¯å¾„ 
 			{
 //				freopen("CON","r",stdin);
 				freopen("config.ini","r",stdin);
-//				getline(cin,tmp1);// Problem Here! £¡£¡£¡£¡£¡£¡£¡£¡£¡ 
+//				getline(cin,tmp1);// Problem Here! ï¼ï¼ï¼ï¼ï¼ï¼ï¼ï¼ï¼ 
 				/*for(int i=0;i<=10;++i)
 					tmp[i]=getchar();*/
 //				cin.getline(tmp,100);
@@ -572,29 +579,61 @@ void Main()
 			{
 				while(true)
 				{
-					// »ñÈ¡µ±Ç°Ê±¼ä
+					// è·å–å½“å‰æ—¶é—´
 				    std::time_t now = std::time(nullptr);
 				    std::tm* local_time = std::localtime(&now);
 				
 				    std::tm target_time = {0};
-				    target_time.tm_year = local_time->tm_year; // Äê·İ´Ó1900Äê¿ªÊ¼¼ÆËã
-				    if(month==0)  target_time.tm_mon = local_time->tm_mon+1;
-				    else target_time.tm_mon = month - 1; // ÔÂ·İ´Ó0¿ªÊ¼¼ÆËã
-				    if(day==0) target_time.tm_mday = local_time->tm_mday+1;
+				    target_time.tm_year = local_time->tm_year; // å¹´ä»½ä»1900å¹´å¼€å§‹è®¡ç®—
+				    if(month==0)  target_time.tm_mon = local_time->tm_mon;
+				    else target_time.tm_mon = month - 1; // æœˆä»½ä»0å¼€å§‹è®¡ç®—
+				    if(day==0) target_time.tm_mday = local_time->tm_mday;
 				    else target_time.tm_mday = day;
-				    if(hour==0) target_time.tm_hour = local_time->tm_hour+1;
+				    if(hour==0) target_time.tm_hour = local_time->tm_hour;
 				    else target_time.tm_hour = hour;
-				    if(min==0) target_time.tm_min = local_time->tm_min+1;
+				    if(min==0) target_time.tm_min = local_time->tm_min;
 				    else target_time.tm_min = min;
 //				    if(min==0 || hour==0 || day==0 || month==0) 
 //				    	target_time.tm_sec = local_time->tm_sec+1;
-				    // Èç¹ûµ±Ç°Ê±¼äÒÑ¾­³¬¹ıÁËÄ¿±êÊ±¼ä£¬ÄÇÃ´¾Í²»ĞèÒªµÈ´ıÁË
+				    // å¦‚æœå½“å‰æ—¶é—´å·²ç»è¶…è¿‡äº†ç›®æ ‡æ—¶é—´ï¼Œé‚£ä¹ˆå°±ä¸éœ€è¦ç­‰å¾…äº†
+				    A: 
 				    if (std::mktime(local_time) > std::mktime(&target_time)) {
-				        std::cout << "ÏÖÔÚµÄÊ±¼äÒÑ¾­³¬¹ıÁËÄ¿±êÊ±¼ä" << std::endl;
+				        std::cout << "ç°åœ¨çš„æ—¶é—´å·²ç»è¶…è¿‡äº†ç›®æ ‡æ—¶é—´" << std::endl;
+						if(min!=0 && hour!=0 && day!=0 && month!=0) return ;
+						if(min==0)
+						{
+							++target_time.tm_min;
+							if(std::mktime(local_time) <= std::mktime(&target_time)) goto A ;
+							--target_time.tm_min;
+						}
+						if(hour==0)
+						{
+							++target_time.tm_hour;
+							if(std::mktime(local_time) <= std::mktime(&target_time)) goto A ;
+							--target_time.tm_hour;
+						}
+						if(day==0)
+						{
+							++target_time.tm_mday;
+							if(std::mktime(local_time) <= std::mktime(&target_time)) goto A ;
+							--target_time.tm_mday;
+						}
+						if(month==0)
+						{
+							++target_time.tm_mon;
+							if(std::mktime(local_time) <= std::mktime(&target_time)) goto A ;
+							--target_time.tm_mon;
+						}
+						/*f(day==0 && ++target_time.tm_mday && std::mktime(local_time) <= std::mktime(&target_time))
+							continue;
+						if(month==0 && ++target_time.tm_mon && std::mktime(local_time) <= std::mktime(&target_time))
+							continue;*/
+						puts("1");
+						
 				    } else {
-				        // ¼ÆËãĞèÒªµÈ´ıµÄÊ±¼ä£¨µ¥Î»£ºÃë£©
+				        // è®¡ç®—éœ€è¦ç­‰å¾…çš„æ—¶é—´ï¼ˆå•ä½ï¼šç§’ï¼‰
 				        std::time_t wait_time = std::difftime(std::mktime(&target_time), std::mktime(local_time));
-				        // µÈ´ıÖ¸¶¨µÄÊ±¼ä
+				        // ç­‰å¾…æŒ‡å®šçš„æ—¶é—´
 				        std::this_thread::sleep_for(std::chrono::seconds(wait_time));
 				        Backup(bfnum,false);
 				    }
@@ -605,13 +644,13 @@ void Main()
 				while(true)
 				{
 					auto now = std::chrono::steady_clock::now();
-				    // ¼ÆËãÄ¿±êÊ±¼ä£¨ÀıÈç£º5Ãëºó£©
-				    auto target_time = now + std::chrono::seconds(10);
+				    // è®¡ç®—ç›®æ ‡æ—¶é—´ï¼ˆä¾‹å¦‚ï¼š5ç§’åï¼‰
+				    auto target_time = now + std::chrono::seconds(60*bftime);
 				
-				    // ¼ÆËãÊ±¼ä²îÖµ
+				    // è®¡ç®—æ—¶é—´å·®å€¼
 				    auto duration = target_time - now;
 				
-				    // ÈÃÏß³ÌĞİÃßÖ¸¶¨µÄÊ±¼ä
+				    // è®©çº¿ç¨‹ä¼‘çœ æŒ‡å®šçš„æ—¶é—´
 				    std::this_thread::sleep_for(duration);
 				    Backup(bfnum,false);
 				}
@@ -639,7 +678,7 @@ void Main()
 	Qread();
 	getline(cin,lv);
     int i=0;
-    printf("ÓĞÒÔÏÂ´æµµ:\n\n");
+    printf("æœ‰ä»¥ä¸‹å­˜æ¡£:\n\n");
     int ttt=0;
     //char ch=getchar();//DEBUG because getline ...//bug why?now ok?
     while(true)
@@ -661,28 +700,28 @@ void Main()
 	
 	while(true)
 	{
-		printf("ÇëÎÊÄãÒª (1)±¸·İ´æµµ (2)»Øµµ (3)¸üĞÂ´æµµ (4) ×Ô¶¯±¸·İ »¹ÊÇ (5) ´´½¨ÅäÖÃÎÄ¼ş ÄØ£¿ (°´ 1/2/3/4/5)\n");
+		printf("è¯·é—®ä½ è¦ (1)å¤‡ä»½å­˜æ¡£ (2)å›æ¡£ (3)æ›´æ–°å­˜æ¡£ (4) è‡ªåŠ¨å¤‡ä»½ è¿˜æ˜¯ (5) åˆ›å»ºé…ç½®æ–‡ä»¶ å‘¢ï¼Ÿ (æŒ‰ 1/2/3/4/5)\n");
 		char ch;
 		ch=getch();
 		if(ch=='1')
 		{
-			printf("ÊäÈë´æµµÇ°µÄĞòºÅÀ´Íê³É±¸·İ:");
+			printf("è¾“å…¥å­˜æ¡£å‰çš„åºå·æ¥å®Œæˆå¤‡ä»½:");
 			int bf;
 			scanf("%d",&bf);
 			Backup(bf,echos);
-			sprint("\n\n±¸·İÍê³É! ! !\n\n",40);
+			sprint("\n\nå¤‡ä»½å®Œæˆ! ! !\n\n",40);
 		}
 		else if(ch=='2')
 		{
 			int i=0;
-		    if(!choice) printf("ÊäÈë´æµµÇ°µÄĞòºÅÀ´Íê³É»¹Ô­ (Ä£Ê½: Ñ¡È¡×îĞÂ±¸·İ) : ");
-		    else printf("ÊäÈë´æµµÇ°µÄĞòºÅÀ´Íê³É»¹Ô­ (Ä£Ê½: ÊÖ¶¯Ñ¡Ôñ) :");
+		    if(!choice) printf("è¾“å…¥å­˜æ¡£å‰çš„åºå·æ¥å®Œæˆè¿˜åŸ (æ¨¡å¼: é€‰å–æœ€æ–°å¤‡ä»½) : ");
+		    else printf("è¾“å…¥å­˜æ¡£å‰çš„åºå·æ¥å®Œæˆè¿˜åŸ (æ¨¡å¼: æ‰‹åŠ¨é€‰æ‹©) :");
 			int bf;
 			scanf("%d",&bf);
 			string folderPath=Bpath+"/"+name[bf].alias+"/";
 			DIR* directory = opendir(folderPath.c_str());
 		    if (!directory) {
-		        printf("±¸·İ²»´æÔÚ£¬ÎŞ·¨»¹Ô­£¡Äã¿ÉÒÔ»¹Ã»ÓĞ½øĞĞ¹ı±¸·İ\n");
+		        printf("å¤‡ä»½ä¸å­˜åœ¨ï¼Œæ— æ³•è¿˜åŸï¼ä½ å¯ä»¥è¿˜æ²¡æœ‰è¿›è¡Œè¿‡å¤‡ä»½\n");
 		        return ;
 		    }
 		    File files;
@@ -712,9 +751,9 @@ void Main()
 			else
 			{
 				string folderName2 = Bpath + "/" + name[bf].alias;
-				printf("ÒÔÏÂÊÇ±¸·İ´æµµ\n\n");
+				printf("ä»¥ä¸‹æ˜¯å¤‡ä»½å­˜æ¡£\n\n");
 				ListFiles(folderName2);
-				printf("ÊäÈë±¸·İÇ°µÄĞòºÅÀ´Íê³É»¹Ô­:");
+				printf("è¾“å…¥å¤‡ä»½å‰çš„åºå·æ¥å®Œæˆè¿˜åŸ:");
 				int bf2;
 				scanf("%d",&bf2);
 				files.name=temp[bf2];
@@ -723,27 +762,27 @@ void Main()
 		    	Backup(bf,false);
 			command=yasuo+" x "+Bpath+"/"+name[bf].alias+"/"+files.name+" -o"+name[bf].real+" -y";
 			system(command.c_str());
-			sprint("\n\n»¹Ô­³É¹¦! ! !\n\n",40);
+			sprint("\n\nè¿˜åŸæˆåŠŸ! ! !\n\n",40);
 		}
 		else if(ch=='3')
 		{
 			freopen("CON","r",stdin);
         	ofstream cfile("config.ini");
-        	cfile << "Ê¹ÓÃµÄÅäÖÃÎÄ¼şĞòºÅ:0\n";
-        	cfile << "´æµµÎÄ¼ş¼ĞÂ·¾¶:" << Gpath2[0] << '$';
+        	cfile << "ä½¿ç”¨çš„é…ç½®æ–‡ä»¶åºå·:0\n";
+        	cfile << "å­˜æ¡£æ–‡ä»¶å¤¹è·¯å¾„:" << Gpath2[0] << '$';
         	for(int i=1;i<summ;++i)
         		cfile << Gpath2[i] << '$';
         	cfile << Gpath2[summ] << endl;
-        	cfile << "´æµµ±¸·İ´æ´¢Â·¾¶:" << Bpath << endl;
+        	cfile << "å­˜æ¡£å¤‡ä»½å­˜å‚¨è·¯å¾„:" << Bpath << endl;
 			string keyPath = "Software\\7-Zip"; 
 			string valueName = "Path";
-            cfile << "Ñ¹ËõÈí¼şÂ·¾¶:" << GetRegistryValue(keyPath, valueName)+"7z.exe" << endl;
-            cfile << "±¸·İÇ°»¹Ô­:" << prebf << endl;
-            cfile << "¹¤¾ßÏäÖÃ¶¥:" << ontop << endl;
-            cfile << "ÊÖ¶¯Ñ¡Ôñ±¸·İ:" << choice << endl;
-            cfile << "¹ı³ÌÏÔÊ¾:" << echos << endl;
-            cfile << "Ñ¹ËõµÈ¼¶:" << lv << endl;
-        	printf("\nÔÚÎÄ¼ş¼ĞÖĞÓĞÒÔÏÂ´æµµ: \n\n"); 
+            cfile << "å‹ç¼©è½¯ä»¶è·¯å¾„:" << GetRegistryValue(keyPath, valueName)+"7z.exe" << endl;
+            cfile << "å¤‡ä»½å‰è¿˜åŸ:" << prebf << endl;
+            cfile << "å·¥å…·ç®±ç½®é¡¶:" << ontop << endl;
+            cfile << "æ‰‹åŠ¨é€‰æ‹©å¤‡ä»½:" << choice << endl;
+            cfile << "è¿‡ç¨‹æ˜¾ç¤º:" << echos << endl;
+            cfile << "å‹ç¼©ç­‰çº§:" << lv << endl;
+        	printf("\nåœ¨æ–‡ä»¶å¤¹ä¸­æœ‰ä»¥ä¸‹å­˜æ¡£: \n\n"); 
 	    	for(int i=0;i<=summ;++i)
 	    	{
 	    		vector<string> subdirectories;
@@ -752,33 +791,33 @@ void Main()
 			    {
 					string NGpath=Gpath2[i]+"/"+folderName;
 			        string modificationDate = getModificationDate(NGpath);
-			        cout << "´æµµÃû³Æ: " << folderName << endl;
-			        cout << "×î½üÓÎÍæÊ±¼ä: " << modificationDate << endl;
+			        cout << "å­˜æ¡£åç§°: " << folderName << endl;
+			        cout << "æœ€è¿‘æ¸¸ç©æ—¶é—´: " << modificationDate << endl;
 			        cout << "-----------" << endl;
 			    }
 			    Sleep(2000);
-			    sprint("½ÓÏÂÀ´£¬ÄãĞèÒª¸øÕâĞ©ÎÄ¼ş¼ĞÆğÒ»¸öÒ×ÓÚÄã×Ô¼ºÀí½âµÄ±ğÃû¡£\n\n",50);
+			    sprint("æ¥ä¸‹æ¥ï¼Œä½ éœ€è¦ç»™è¿™äº›æ–‡ä»¶å¤¹èµ·ä¸€ä¸ªæ˜“äºä½ è‡ªå·±ç†è§£çš„åˆ«åã€‚\n\n",50);
 				for (const auto& folderName : subdirectories)
 			    {
 			        string alias;
-			        cout << "ÇëÊäÈëÒÔÏÂ´æµµµÄ±ğÃû(¿ÉÒÔÊÇÒ»¶ÎÃèÊö) " << endl << folderName;
+			        cout << "è¯·è¾“å…¥ä»¥ä¸‹å­˜æ¡£çš„åˆ«å(å¯ä»¥æ˜¯ä¸€æ®µæè¿°) " << endl << folderName;
 			        cin >> alias;
 					cfile << folderName << endl << alias << endl;
 			    }
 			    cfile << "$" << endl;
 			}
 		    cfile << "*" << endl;
-	    	puts("\n\n¸üĞÂ´æµµÍê³É\n\n");
+	    	puts("\n\næ›´æ–°å­˜æ¡£å®Œæˆ\n\n");
 	    	cfile.close(); 
 		}
 		else if(ch=='4')
 		{
-			printf("ÇëÊäÈëÄãÒª±¸·İµÄ´æµµĞòºÅ:");
+			printf("è¯·è¾“å…¥ä½ è¦å¤‡ä»½çš„å­˜æ¡£åºå·:");
 			int bf,tim;
 			scanf("%d",&bf);
-			printf("Ã¿¸ô¼¸·ÖÖÓ½øĞĞ±¸·İ: ");
+			printf("æ¯éš”å‡ åˆ†é’Ÿè¿›è¡Œå¤‡ä»½: ");
 			scanf("%d",&tim);
-			printf("ÒÑ½øÈë×Ô¶¯±¸·İÄ£Ê½£¬Ã¿¸ô %d ·ÖÖÓ½øĞĞ±¸·İ",tim);
+			printf("å·²è¿›å…¥è‡ªåŠ¨å¤‡ä»½æ¨¡å¼ï¼Œæ¯éš” %d åˆ†é’Ÿè¿›è¡Œå¤‡ä»½",tim);
 			while(true)
 			{
 				Backup(bf,false);
@@ -789,7 +828,7 @@ void Main()
 		{
 			CreateConfig();
 		}
-		else printf("Çë°´¼üÅÌÉÏµÄ 1/2/3/4/5 ¼ü\n\n");
+		else printf("è¯·æŒ‰é”®ç›˜ä¸Šçš„ 1/2/3/4/5 é”®\n\n");
 	}
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 //    return ;
@@ -849,17 +888,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         hInstance,
         NULL
     );
-    CreateWindow("button", "´ò¿ª´æµµÎÄ¼ş¼Ğ",
+    CreateWindow("button", "æ‰“å¼€å­˜æ¡£æ–‡ä»¶å¤¹",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         20, 10, 120, 35,
         hwnd, (HMENU)1, hInstance, NULL);
 
-    CreateWindow("button", "´ò¿ª±¸·İÎÄ¼ş¼Ğ",
+    CreateWindow("button", "æ‰“å¼€å¤‡ä»½æ–‡ä»¶å¤¹",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         150, 10, 120, 35,
         hwnd, (HMENU)2, hInstance, NULL);
 
-    CreateWindow("button", "ÉèÖÃ",
+    CreateWindow("button", "è®¾ç½®",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         280, 10, 80, 35,
         hwnd, (HMENU)3, hInstance, NULL);
