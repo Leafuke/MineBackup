@@ -1,13 +1,30 @@
 # MineBackup - Minecraft Archive Backup Program
-It's based on another copy of my open source code **Folder-High-Compression-Backup**.
 
+MineBackup is a user-friendly application designed to help you easily back up, restore, and export your game save files. It's based on another copy of my open source code **Folder-High-Compression-Backup**. And you can simply run this program using Dev-C++
 
-I will optimize the FHCB first and then develop this program.
+## Features
 
+- **Backup**: Securely backup your game saves with just a click.
+- **Restore**: Quickly restore your game saves to a previous state from either a `.7z` file or directly from the machine.
+- **High-Compression**: Use 7-Zip to compress your archive and save storage space on your computer.
+- **Custom Backup Path**: Set a custom path for your backups according to your storage preferences.
+- **One More Thing**: A wide range of backup options and methods are waiting for you to explore
 
-1. Improve the code of FHCB and make it close to the needs of this program.
-2. Move a slightly modified version of the FHCB here.
-3. Add new functions for MC needs: 1. Regular backup 2. More available settings etc.
-4. Implement on-game backup.
-5. Multi-language adaptation.
-6. Graphical interface
+## Installation
+
+1. **Download**: Navigate to the [latest release](https://github.com/Leafuke/MineBackup/releases) and download the single file for Windows.
+2. **Double click**: That's ALL. No need to install.
+
+## Usage
+
+Wait, please.
+
+## Support
+
+For issues, feature requests, or contributions, please visit the [GitHub repository](https://github.com/Leafuke/MineBackup).
+
+## Plan
+
+1. Implement on-game backup.
+2. Multi-language adaptation.
+3. Graphical interface
