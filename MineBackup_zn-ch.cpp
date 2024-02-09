@@ -219,7 +219,7 @@ void Backup(int bf,bool echo)
     tmp="["+tmp+"]"+name[bf].alias;
 	if(echo) command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\*";
 	else command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\*";
-	cout<< endl << command <<endl;//debug 
+//	cout<< endl << command <<endl;//debug 
 	system(command.c_str());
 	if(echo) command="move "+tmp+".7z "+folderName;
 	else command="move "+tmp+".7z "+folderName;
@@ -427,8 +427,6 @@ void Main()
 	{
 		temps=to_string(configs); //only c++11
 		temps="config"+temps+".ini";
-		/*for(int i=0;i<temps.size();++i)
-			configss[i]=temps[i];*/
 		strcpy(configss,temps.c_str());
 		freopen(configss,"r",stdin);
 		Qread();
@@ -459,13 +457,8 @@ void Main()
 			cin>>ifinter;
 			if(usecf==0) // 使用一般配置中的存档路径 
 			{
-//				freopen("CON","r",stdin);
 				freopen("config.ini","r",stdin);
-//				getline(cin,tmp1);// Problem Here! ！！！！！！！！！ 
-				/*for(int i=0;i<=10;++i)
-					tmp[i]=getchar();*/
-//				cin.getline(tmp,100);
-//				cout<<"\n\n\n"<<tmp1<<"\n\n\n\n";
+//				getline(cin,tmp1);// Problem Here
 				neglect(1); 
 				Qread();
 				char inputs[1000];
@@ -504,12 +497,10 @@ void Main()
 				inputs[0]=getchar();
 				lv=inputs;
 			    int i=0;
-//			    printf("Your folder is as follows:\n\n");
 			    int ttt=0;
 			    inputs[0]=getchar();// addition
 			    while(true)
 			    {
-//			    	getline(cin,name[++i].real);
 					memset(inputs,'\0',sizeof(inputs));
 					for(int i=0;;++i)
 					{
@@ -559,7 +550,6 @@ void Main()
 				Qread();
 				getline(cin,lv);
 			    int i=0;
-			    //printf("Your folder is as follows:\n\n");
 			    int ttt=0;
 			    while(true)
 			    {
@@ -593,8 +583,6 @@ void Main()
 				    else target_time.tm_hour = hour;
 				    if(min==0) target_time.tm_min = local_time->tm_min;
 				    else target_time.tm_min = min;
-//				    if(min==0 || hour==0 || day==0 || month==0) 
-//				    	target_time.tm_sec = local_time->tm_sec+1;
 				    // 如果当前时间已经超过了目标时间，那么就不需要等待了
 				    A: 
 				    if (std::mktime(local_time) > std::mktime(&target_time)) {
@@ -624,10 +612,6 @@ void Main()
 							if(std::mktime(local_time) <= std::mktime(&target_time)) goto A ;
 							--target_time.tm_mon;
 						}
-						/*f(day==0 && ++target_time.tm_mday && std::mktime(local_time) <= std::mktime(&target_time))
-							continue;
-						if(month==0 && ++target_time.tm_mon && std::mktime(local_time) <= std::mktime(&target_time))
-							continue;*/
 						puts("1");
 						
 				    } else {
@@ -656,7 +640,6 @@ void Main()
 				}
 				
 			}
-			//freopen("","r",stdin) //NEWWW
 		}
 	}
     Qread();
@@ -666,7 +649,6 @@ void Main()
     getline(cin,Bpath);
     Qread();
     getline(cin,yasuo);
-//    yasuo="\""+yasuo+"\""; useless
     Qread();
     cin>>prebf;
     Qread();
@@ -847,9 +829,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         switch (buttonId)
         {
 	        case 1:
-	            command="start "+Gpath2[0];
-				system(command.c_str());
+        	{
+        		int x=0;
+	        	while(!Gpath2[x].empty())
+	        	{
+	        		command="start "+Gpath2[x++];
+					system(command.c_str());
+				}
 	            break;
+			}
 	        case 2:
 	            command="start "+Bpath;
 				system(command.c_str());
