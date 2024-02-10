@@ -218,11 +218,11 @@ void Backup(int bf,bool echo)
     		else tmp+=com[j];
     tmp="["+tmp+"]"+name[bf].alias;
 	if(echo) command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\*";
-	else command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\*";
+	else command=yasuo+" a -t7z -bd -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\* > nul 2>&1";
 //	cout<< endl << command <<endl;//debug 
 	system(command.c_str());
 	if(echo) command="move "+tmp+".7z "+folderName;
-	else command="move "+tmp+".7z "+folderName;
+	else command="move "+tmp+".7z "+folderName+" > nul 2>&1";
 	system(command.c_str());
 	return ;
 }
@@ -366,10 +366,6 @@ void Main()
 		int summ=PreSolve(Gpath);
         if (newFile.is_open()) {
         	newFile << "使用的配置文件序号:0" << endl;
-        	/*newFile << "Backup parent folder path:" << Gpath2[0] << '$';
-        	for(int i=1;i<summ;++i)
-        		newFile << Gpath2[i] << '$';
-        	newFile << Gpath2[summ] << endl;*/
         	newFile << "存档文件夹路径:" << Gpath << endl;//new
             newFile << "存档备份存储路径:" << Bpath << endl;
 			string keyPath = "Software\\7-Zip"; 
@@ -496,8 +492,7 @@ void Main()
 				memset(inputs,'\0',sizeof(inputs));
 				inputs[0]=getchar();
 				lv=inputs;
-			    int i=0;
-			    int ttt=0;
+			    int i=0,ttt=0;//存档数量 存档所在存档文件夹序号 
 			    inputs[0]=getchar();// addition
 			    while(true)
 			    {
@@ -527,6 +522,37 @@ void Main()
 						}
 					}
 					name[i].alias=inputs;
+				}
+				//检测存档文件夹是否有更新 
+				int ix=0;
+				bool ifnew=0; 
+				for(int i=0;i<=summ;++i)
+				{
+					std::vector<std::string> subdirectories;
+					listSubdirectories(Gpath2[i], subdirectories);
+				    for (const auto& folderName : subdirectories)
+				    {
+				    	if((Gpath2[i]+"/"+folderName)==name[++ix].real) //与实际一致则不更新 注意，这里的检测是有缺陷的 
+				    		continue;
+						--ix;//因为多出一个，所以比对时-1，但未能处理减少情况 
+				    	//不一致，则列出
+				    	ifnew=true;
+						printf("\n检测到新的存档如下：\n");
+						string NGpath=Gpath2[i]+"/"+folderName;
+				        string modificationDate = getModificationDate(NGpath);
+				        cout << "存档名称: " << folderName << endl;
+				        cout << "最近游玩时间: " << modificationDate << endl;
+				        cout << "-----------" << endl;
+				    }
+				}
+				if(ifnew) //如果有更新，询问是否更新配置文件
+				{
+					printf("请问是否更新配置文件？(0/1)\n");
+					char ch;
+					ch=getch();
+					printf("\n请手动更新，在对应位置以后添加新存档的“真实名”和“别名”\n"); 
+					if(ch=='1')
+						system("start config.ini");
 				}
 			}
 			else
@@ -563,6 +589,38 @@ void Main()
 			    	name[i].real=Gpath2[ttt]+"/"+name[i].real;
 			    	name[i].x=ttt;
 			    	getline(cin,name[i].alias);
+				}
+				//检测存档文件夹是否有更新 
+				int ix=0;
+				bool ifnew=0; 
+				for(int i=0;i<=summ;++i)
+				{
+					std::vector<std::string> subdirectories;
+					listSubdirectories(Gpath2[i], subdirectories);
+				    for (const auto& folderName : subdirectories)
+				    {
+				    	if((Gpath2[i]+"/"+folderName)==name[++ix].real) //与实际一致则不更新 注意，这里的检测是有缺陷的 
+				    		continue;
+						--ix;//因为多出一个，所以比对时-1，但未能处理减少情况 
+				    	//不一致，则列出
+				    	ifnew=true;
+						printf("\n检测到新的存档如下：\n");
+						string NGpath=Gpath2[i]+"/"+folderName;
+				        string modificationDate = getModificationDate(NGpath);
+				        cout << "存档名称: " << folderName << endl;
+				        cout << "最近游玩时间: " << modificationDate << endl;
+				        cout << "-----------" << endl;
+				    }
+				}
+				if(ifnew) //如果有更新，询问是否更新配置文件
+				{
+					printf("请问是否更新配置文件？(0/1)\n");
+					char ch;
+					ch=getch();
+					printf("\n请手动更新，在对应位置以后添加新存档的“真实名”和“别名”\n"); 
+					string command="start "+temps;
+					if(ch=='1')
+						system(command.c_str());
 				}
 			}
 			if(mode==1)
@@ -611,9 +669,7 @@ void Main()
 							++target_time.tm_mon;
 							if(std::mktime(local_time) <= std::mktime(&target_time)) goto A ;
 							--target_time.tm_mon;
-						}
-						puts("1");
-						
+						}						
 				    } else {
 				        // 计算需要等待的时间（单位：秒）
 				        std::time_t wait_time = std::difftime(std::mktime(&target_time), std::mktime(local_time));
@@ -659,9 +715,8 @@ void Main()
 	cin>>echos;
 	Qread();
 	getline(cin,lv);
-    int i=0;
-    printf("有以下存档:\n\n");
-    int ttt=0;
+    int i=0,ttt=0;//存档数量 存档所在存档文件夹序号 
+    printf("有以下存档:\n\n"); 
     //char ch=getchar();//DEBUG because getline ...//bug why?now ok?
     while(true)
     {
@@ -679,7 +734,37 @@ void Main()
     	cout<<name[i].alias<<endl;
 	}
 	freopen("CON","r",stdin);
-	
+	//检测存档文件夹是否有更新 
+	int ix=0;
+	bool ifnew=0; 
+	for(int i=0;i<=summ;++i)
+	{
+		std::vector<std::string> subdirectories;
+		listSubdirectories(Gpath2[i], subdirectories);
+	    for (const auto& folderName : subdirectories)
+	    {
+	    	if((Gpath2[i]+"/"+folderName)==name[++ix].real) //与实际一致则不更新 注意，这里的检测是有缺陷的 
+	    		continue;
+			--ix;//因为多出一个，所以比对时-1，但未能处理减少情况 
+	    	//不一致，则列出
+	    	ifnew=true;
+			printf("\n检测到新的存档如下：\n");
+			string NGpath=Gpath2[i]+"/"+folderName;
+	        string modificationDate = getModificationDate(NGpath);
+	        cout << "存档名称: " << folderName << endl;
+	        cout << "最近游玩时间: " << modificationDate << endl;
+	        cout << "-----------" << endl;
+	    }
+	}
+	if(ifnew) //如果有更新，询问是否更新配置文件
+	{
+		printf("请问是否更新配置文件？(0/1)\n");
+		char ch;
+		ch=getch();
+		printf("\n请手动更新，在对应位置以后添加新存档的“真实名”和“别名”\n"); 
+		if(ch=='1')
+			system("start config.ini");
+	}
 	while(true)
 	{
 		printf("请问你要 (1)备份存档 (2)回档 (3)更新存档 (4) 自动备份 还是 (5) 创建配置文件 呢？ (按 1/2/3/4/5)\n");
@@ -813,7 +898,6 @@ void Main()
 		else printf("请按键盘上的 1/2/3/4/5 键\n\n");
 	}
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-//    return ;
 }
 
 bool isRunning = true;
@@ -891,15 +975,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         280, 10, 80, 35,
         hwnd, (HMENU)3, hInstance, NULL);
 
-    ShowWindow(hwnd, nCmdShow);
-    if(ontop) SetWindowPos(h,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE | SWP_NOSIZE);//Top the window
+    ShowWindow(hwnd, nCmdShow);    
     std::thread MainThread(Main);
     MSG msg = {};
+    
+    //线程休眠，为了等待ontop读取完毕 
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if(ontop)
+		SetWindowPos(hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE | SWP_NOSIZE);//Top the window
     while (GetMessage(&msg, NULL, 0, 0))
     {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+    
     isRunning = false;
     MainThread.join();
     return 0;
