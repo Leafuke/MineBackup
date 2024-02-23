@@ -93,9 +93,9 @@ void listSubdirectories(const std::string& folderPath, std::vector<std::string>&
 #endif
 }
 //获取文件夹最近修改时间 
-std::string getModificationDate(const std::string& filePath)//Folder modification date
+string getModificationDate(const std::string& filePath)//Folder modification date
 {
-    std::string modificationDate;
+    string modificationDate;
 #ifdef _WIN32
     WIN32_FIND_DATAA fileData;
     HANDLE hFile = FindFirstFileA(filePath.c_str(), &fileData);
@@ -173,6 +173,9 @@ string GetRegistryValue(const std::string& keyPath, const std::string& valueName
 	else
 	{
 		printf("\n\n本程序调用 7-Zip 进行高压缩备份，但你的计算机上尚未安装 7-Zip ，请先到官网 7-zip.org 下载。\n\n");
+		system("del config.ini");
+		system("pause");
+		exit(0); 
 	}
     return valueData;
 }
@@ -182,6 +185,7 @@ struct names{
 }name[100];
 string rname2[20],Bpath,command,yasuo,lv;//存档真实名 备份文件夹路径 cmd指令 7-Zip路径 压缩等级 
 bool prebf,ontop,choice,echos;//回档前备份 工具箱置顶 手动选择 回显 
+int limitnum;
 HWND hwnd;
 struct File {
     string name;
@@ -202,10 +206,58 @@ int PreSolve(string s)
 	}
 	return tt;
 }
+//检测备份数量
+void checkup(string folderPath,int limit)
+{
+	if(limit==0) return ;
+	DIR* directory = opendir(folderPath.c_str());
+    if (!directory) return ;
+    File files;
+    struct dirent* entry;
+    int checknum=0;
+    while ((entry = readdir(directory))) {
+    	string fileName = entry->d_name;
+		string filePath = folderPath + fileName;
+		struct stat fileStat;
+		stat(filePath.c_str(), &fileStat);
+    	if (S_ISREG(fileStat.st_mode)) {
+    		++checknum;//如果是常规文件，统计总备份数 
+    	}
+    }
+    closedir(directory);
+    struct dirent* entry2;
+    while (checknum > limit)
+    {
+    	directory = opendir(folderPath.c_str());//放外面会造成读取重复，只会删除一次，后面都找不到 
+		bool fl=0;
+		while ((entry2 = readdir(directory))) {
+		    string fileName = entry2->d_name;
+		    string filePath = folderPath + fileName;
+		    struct stat fileStat;
+		    if(!fl) files.modifiedTime=fileStat.st_mtime,fl=1; //重置files 
+		    if (stat(filePath.c_str(), &fileStat) != -1) {
+		    	if (S_ISREG(fileStat.st_mode)) {
+			        File file;
+			        file.modifiedTime = fileStat.st_mtime;
+					if(file.modifiedTime <= files.modifiedTime)
+					{
+						files.modifiedTime=file.modifiedTime;
+						files.name=fileName;
+					}
+				}
+		    }
+		}
+		string command="del \"" + folderPath + files.name + "\"";
+		system(command.c_str());
+		--checknum;
+		closedir(directory);
+	}
+	return ;
+}
 //备份函数 
 void Backup(int bf,bool echo)
 {
-	string folderName = Bpath + "/" + name[bf].alias; // Set folder name
+	string folderName = Bpath + "\\" + name[bf].alias; // Set folder name
 	// Create a folder using mkdir ()
 	int result = mkdir(folderName.c_str());
 	time_t now = time(0);
@@ -224,6 +276,7 @@ void Backup(int bf,bool echo)
 	if(echo) command="move "+tmp+".7z "+folderName;
 	else command="move "+tmp+".7z "+folderName+" > nul 2>&1";
 	system(command.c_str());
+	checkup(folderName+"\\",limitnum);
 	return ;
 }
 //创建备份文件 
@@ -273,6 +326,7 @@ void CreateConfig()
             newFile << "手动选择备份:0" << endl;
             newFile << "过程显示:1" << endl;
             newFile << "压缩等级(越高，压缩率越低，但速度越慢):5" << endl;
+            newFile << "保留的备份数量(0表示不限制):0" << endl; 
     	}
     	printf("\n有以下存档:\n\n"); 
     	for(int i=0;i<=summ;++i)
@@ -380,6 +434,7 @@ void Main()
             newFile << "手动选择还原(默认选最新):0" << endl;
             newFile << "过程显示:1" << endl;
             newFile << "压缩等级:5" << endl;
+            newFile << "保留的备份数量(0表示不限制):0" << endl; 
     	}
     	printf("\n有以下存档文件夹:\n\n"); 
     	for(int i=0;i<=summ;++i)
@@ -492,6 +547,8 @@ void Main()
 				memset(inputs,'\0',sizeof(inputs));
 				inputs[0]=getchar();
 				lv=inputs;
+				Qread();
+				cin>>limitnum;
 			    int i=0,ttt=0;//存档数量 存档所在存档文件夹序号 
 			    inputs[0]=getchar();// addition
 			    while(true)
@@ -575,6 +632,8 @@ void Main()
 			    neglect(4);
 				Qread();
 				getline(cin,lv);
+				Qread();
+				cin>>limitnum;
 			    int i=0;
 			    int ttt=0;
 			    while(true)
@@ -683,18 +742,10 @@ void Main()
 			{
 				while(true)
 				{
-					auto now = std::chrono::steady_clock::now();
-				    // 计算目标时间（例如：5秒后）
-				    auto target_time = now + std::chrono::seconds(60*bftime);
-				
-				    // 计算时间差值
-				    auto duration = target_time - now;
-				
 				    // 让线程休眠指定的时间
-				    std::this_thread::sleep_for(duration);
+				    std::this_thread::sleep_for(std::chrono::seconds(60*bftime));
 				    Backup(bfnum,false);
 				}
-				
 			}
 		}
 	}
@@ -715,9 +766,11 @@ void Main()
 	cin>>echos;
 	Qread();
 	getline(cin,lv);
+	Qread();
+	cin>>limitnum;
     int i=0,ttt=0;//存档数量 存档所在存档文件夹序号 
     printf("有以下存档:\n\n"); 
-    //char ch=getchar();//DEBUG because getline ...//bug why?now ok?
+    char ch=getchar();//DEBUG because getline ...//bug why?now ok?
     while(true)
     {
     	getline(cin,name[++i].real);
@@ -849,6 +902,7 @@ void Main()
             cfile << "手动选择备份:" << choice << endl;
             cfile << "过程显示:" << echos << endl;
             cfile << "压缩等级:" << lv << endl;
+            cfile << "保留的备份数量(0表示不限制):" << limitnum << endl; 
         	printf("\n在文件夹中有以下存档: \n\n"); 
 	    	for(int i=0;i<=summ;++i)
 	    	{
