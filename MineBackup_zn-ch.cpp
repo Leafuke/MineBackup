@@ -191,6 +191,29 @@ struct File {
     string name;
     time_t modifiedTime;
 };
+//判断文件是否被占用 
+bool isFileLocked(const string& filePath)
+{
+    HANDLE hFile = CreateFile(filePath.c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_SHARE_READ, NULL);
+    
+    if (hFile == INVALID_HANDLE_VALUE)
+    {
+        DWORD error = GetLastError();
+        // 如果文件正被另一个进程以独占方式打开，则会返回ERROR_SHARING_VIOLATION错误。
+        if (error == ERROR_SHARING_VIOLATION)
+            return true;
+        // 其他错误情况需要根据实际情况处理
+        else
+            return false;
+    }
+    else
+    {
+        CloseHandle(hFile);
+        // 文件成功打开且关闭，表明当前没有被占用（至少在这个瞬间）
+        return false;
+    }
+}
+
 //存档文件夹路径预处理 
 int PreSolve(string s)
 {
@@ -205,6 +228,15 @@ int PreSolve(string s)
 		Gpath2[tt]+=s[i];
 	}
 	return tt;
+}
+//检验别名合理性
+bool checkupName(string Name)
+{
+	int len=Name.size();
+	for(int i=0;i<len;++i)
+		if(Name[i]=='\\' || Name[i]=='/' || Name[i]==':' || Name[i]=='*' || Name[i]=='?' || Name[i]=='"' || Name[i]=='<' || Name[i]=='>' || Name[i]=='|')
+			return false;
+	return true;
 }
 //检测备份数量
 void checkup(string folderPath,int limit)
@@ -259,7 +291,23 @@ void Backup(int bf,bool echo)
 {
 	string folderName = Bpath + "\\" + name[bf].alias; // Set folder name
 	// Create a folder using mkdir ()
-	int result = mkdir(folderName.c_str());
+	mkdir(folderName.c_str());
+	
+	bool isFileLock=0;
+	if(isFileLocked(name[bf].real+"\\region\\r.0.0.mca"))
+	{
+		printf("检测到该存档为打开状态，已在该存档下创建临时文件夹。\n\n请先将存档文件夹中所有文件复制到[1临时文件夹]中，\n然后按下 1/0 来开始/取消备份\n");
+		string folderName2 = name[bf].real + "\\1临时文件夹";
+		mkdir(folderName2.c_str());
+		command = "start " + name[bf].real;
+		system(command.c_str());
+		char ch;
+		ch=getch();
+		if(ch=='1')
+			isFileLock=1;
+		else return ;
+	}
+	
 	time_t now = time(0);
     tm *ltm = localtime(&now);
     string com=asctime(ltm),tmp="";
@@ -269,14 +317,26 @@ void Backup(int bf,bool echo)
     		if(j==13 || j==16) tmp+="-";
     		else tmp+=com[j];
     tmp="["+tmp+"]"+name[bf].alias;
-	if(echo) command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\*";
-	else command=yasuo+" a -t7z -bd -mx="+lv+" "+tmp+" \""+name[bf].real+"\"\\* > nul 2>&1";
+    
+    string Real = name[bf].real;
+    if(isFileLock)
+    	Real+="\\1临时文件夹"; 
+    
+	if(echo) command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+Real+"\"\\*";
+	else command=yasuo+" a -t7z -bd -mx="+lv+" "+tmp+" \""+Real+"\"\\* > nul 2>&1";
 //	cout<< endl << command <<endl;//debug 
 	system(command.c_str());
 	if(echo) command="move "+tmp+".7z "+folderName;
 	else command="move "+tmp+".7z "+folderName+" > nul 2>&1";
 	system(command.c_str());
 	checkup(folderName+"\\",limitnum);
+	
+	if(isFileLock)
+	{
+		command = "rmdir /S /Q " + Real;
+		system(command.c_str());
+	}
+	
 	return ;
 }
 //创建备份文件 
@@ -336,7 +396,7 @@ void CreateConfig()
 			listSubdirectories(Gpath2[i], subdirectories);
 		    for (const auto& folderName : subdirectories)
 		    {
-				std::string NGpath=Gpath2[i]+"/"+folderName;
+				std::string NGpath=Gpath2[i]+"\\"+folderName;
 		        std::string modificationDate = getModificationDate(NGpath);
 		        std::cout << "存档名称: " << folderName << endl;
 		        std::cout << "最近游玩时间 " << modificationDate << endl;
@@ -444,19 +504,25 @@ void Main()
 			listSubdirectories(Gpath2[i], subdirectories);
 		    for (const auto& folderName : subdirectories)
 		    {
-				std::string NGpath=Gpath2[i]+"/"+folderName;
+				std::string NGpath=Gpath2[i]+"\\"+folderName;
 		        std::string modificationDate = getModificationDate(NGpath);
 		        std::cout << "存档名称: " << folderName << endl;
 		        std::cout << "最近游玩时间: " << modificationDate << endl;
 		        std::cout << "-----------" << endl;
 		    }
 		    Sleep(2000);
-		    sprint("下来，你需要给这些文件夹起一个易于你自己理解的别名。\n\n",50);
+		    sprint("接下来，你需要给这些文件夹起一个易于你自己理解的别名。\n\n",40);
 			for (const auto& folderName : subdirectories)
 		    {
 		        string alias;
+		        B:
 		        cout << "请输入以下存档的别名(可以是一段描述) " << folderName << endl;
 		        cin >> alias;
+		        if(!checkupName(alias))
+				{
+					printf("文件夹名称不能包含符号 \\  /  :  *  ?  \"  <  >  | ，请重新命名");
+					goto B;
+				}
 				newFile << folderName << endl << alias << endl;
 		    }
 		    newFile << "$" << endl;
@@ -568,7 +634,7 @@ void Main()
 			    		++ttt,--i;
 			    		continue;
 					}
-			    	name[i].real=Gpath2[ttt]+"/"+name[i].real;
+			    	name[i].real=Gpath2[ttt]+"\\"+name[i].real;
 			    	name[i].x=ttt;
 			    	memset(inputs,'\0',sizeof(inputs));
 					for(int i=0;;++i)
@@ -664,7 +730,7 @@ void Main()
 				    	//不一致，则列出
 				    	ifnew=true;
 						printf("\n检测到新的存档如下：\n");
-						string NGpath=Gpath2[i]+"/"+folderName;
+						string NGpath=Gpath2[i]+"\\"+folderName;
 				        string modificationDate = getModificationDate(NGpath);
 				        cout << "存档名称: " << folderName << endl;
 				        cout << "最近游玩时间: " << modificationDate << endl;
@@ -780,7 +846,7 @@ void Main()
     		++ttt,--i;
     		continue;
 		}
-    	name[i].real=Gpath2[ttt]+"/"+name[i].real;
+    	name[i].real=Gpath2[ttt]+"\\"+name[i].real;
     	name[i].x=ttt;
     	getline(cin,name[i].alias);
     	printf("%d. ",i);
@@ -796,13 +862,13 @@ void Main()
 		listSubdirectories(Gpath2[i], subdirectories);
 	    for (const auto& folderName : subdirectories)
 	    {
-	    	if((Gpath2[i]+"/"+folderName)==name[++ix].real) //与实际一致则不更新 注意，这里的检测是有缺陷的 
+	    	if((Gpath2[i]+"\\"+folderName)==name[++ix].real) //与实际一致则不更新 注意，这里的检测是有缺陷的 
 	    		continue;
 			--ix;//因为多出一个，所以比对时-1，但未能处理减少情况 
 	    	//不一致，则列出
 	    	ifnew=true;
 			printf("\n检测到新的存档如下：\n");
-			string NGpath=Gpath2[i]+"/"+folderName;
+			string NGpath=Gpath2[i]+"\\"+folderName;
 	        string modificationDate = getModificationDate(NGpath);
 	        cout << "存档名称: " << folderName << endl;
 	        cout << "最近游玩时间: " << modificationDate << endl;
@@ -838,7 +904,7 @@ void Main()
 		    else printf("输入存档前的序号来完成还原 (模式: 手动选择) :");
 			int bf;
 			scanf("%d",&bf);
-			string folderPath=Bpath+"/"+name[bf].alias+"/";
+			string folderPath=Bpath+"\\"+name[bf].alias+"\\";
 			DIR* directory = opendir(folderPath.c_str());
 		    if (!directory) {
 		        printf("备份不存在，无法还原！你可以还没有进行过备份\n");
@@ -870,7 +936,7 @@ void Main()
 			}
 			else
 			{
-				string folderName2 = Bpath + "/" + name[bf].alias;
+				string folderName2 = Bpath + "\\" + name[bf].alias;
 				printf("以下是备份存档\n\n");
 				ListFiles(folderName2);
 				printf("输入备份前的序号来完成还原:");
@@ -880,7 +946,7 @@ void Main()
 			}
 		    if(prebf)
 		    	Backup(bf,false);
-			command=yasuo+" x "+Bpath+"/"+name[bf].alias+"/"+files.name+" -o"+name[bf].real+" -y";
+			command=yasuo+" x "+Bpath+"\\"+name[bf].alias+"\\"+files.name+" -o"+name[bf].real+" -y";
 			system(command.c_str());
 			sprint("\n\n还原成功! ! !\n\n",40);
 		}
@@ -910,7 +976,7 @@ void Main()
 				listSubdirectories(Gpath2[i], subdirectories);
 			    for (const auto& folderName : subdirectories)
 			    {
-					string NGpath=Gpath2[i]+"/"+folderName;
+					string NGpath=Gpath2[i]+"\\"+folderName;
 			        string modificationDate = getModificationDate(NGpath);
 			        cout << "存档名称: " << folderName << endl;
 			        cout << "最近游玩时间: " << modificationDate << endl;
