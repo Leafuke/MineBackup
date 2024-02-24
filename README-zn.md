@@ -1,4 +1,4 @@
-**中文** | [English](README-.md) <!-- lang -->
+**中文** | [English](README.md) <!-- lang -->
 
 # MineBackup - 我的世界存档备份程序
 
