@@ -1,4 +1,4 @@
-[中文](README.md) | **English** <!-- lang -->
+[中文](README-zn.md) | **English** <!-- lang -->
 
 # MineBackup - Minecraft Archive Backup Program
 
