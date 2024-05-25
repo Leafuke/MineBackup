@@ -172,10 +172,17 @@ string GetRegistryValue(const std::string& keyPath, const std::string& valueName
 	}
 	else
 	{
-		printf("\n\n本程序调用 7-Zip 进行高压缩备份，但你的计算机上尚未安装 7-Zip ，请先到官网 7-zip.org 下载。\n\n");
-		system("del config.ini");
-		system("pause");
-		exit(0); 
+		if(access("7z.exe", F_OK) == 0)
+		{
+			return "7z.exe"; 
+		}
+		else
+		{
+			printf("\n\n本程序调用 7-Zip 进行高压缩备份，但你的计算机上尚未安装 7-Zip ，请先到官网 7-zip.org 下载或下载 MineBackup 的便携版。\n\n");
+			system("del config.ini");
+			system("pause");
+			exit(0);
+		}
 	}
     return valueData;
 }
@@ -183,7 +190,7 @@ struct names{
 	string real,alias;
 	int x;
 }name[100];
-string rname2[20],Bpath,command,yasuo,lv;//存档真实名 备份文件夹路径 cmd指令 7-Zip路径 压缩等级 
+string rname2[30],Bpath,command,yasuo,lv;//存档真实名 备份文件夹路径 cmd指令 7-Zip路径 压缩等级 
 bool prebf,ontop,choice,echos;//回档前备份 工具箱置顶 手动选择 回显 
 int limitnum;
 HWND hwnd;
@@ -293,21 +300,84 @@ void Backup(int bf,bool echo)
 	// Create a folder using mkdir ()
 	mkdir(folderName.c_str());
 	
-	bool isFileLock=0;
+	bool isFileLock = 0;
 	if(isFileLocked(name[bf].real+"\\region\\r.0.0.mca"))
 	{
-		printf("检测到该存档为打开状态，已在该存档下创建临时文件夹。\n\n请先将存档文件夹中所有文件复制到[1临时文件夹]中，\n然后按下 1/0 来开始/取消备份\n");
+		isFileLock = true; 
+		printf("检测到该存档为打开状态，已在该存档下创建临时文件夹。\n\n正在将存档文件夹中所有文件复制到[1临时文件夹]中，然后开始备份\n此过程中请不要随意点击\n");
+		command = "start \"\"  \"" + name[bf].real + "\"";//这样打开不会报错 
+		system(command.c_str());
+		Sleep(2000);
+	    keybd_event(0x11, 0, 0, 0);//Ctrl
+		keybd_event(0x41, 0, 0, 0);//A
+		keybd_event(0x41, 0, KEYEVENTF_KEYUP, 0);
+		keybd_event(0x43, 0, 0, 0);//C
+		keybd_event(0x43, 0, KEYEVENTF_KEYUP, 0);
+		keybd_event(0x11, 0, KEYEVENTF_KEYUP, 0);
+		Sleep(500);
 		string folderName2 = name[bf].real + "\\1临时文件夹";
 		mkdir(folderName2.c_str());
-		command = "start " + name[bf].real;
+		command = "start \"\"  \"" + folderName2 + "\"";
 		system(command.c_str());
-		char ch;
-		ch=getch();
-		if(ch=='1')
-			isFileLock=1;
-		else return ;
+		Sleep(500);
+		keybd_event(0x11, 0, 0, 0);//Ctrl
+		keybd_event(0x56, 0, 0, 0);//V
+		keybd_event(0x56, 0, KEYEVENTF_KEYUP, 0);//V 
+		keybd_event(0x11, 0, KEYEVENTF_KEYUP, 0);//Ctrl
+		Sleep(2000);
+		keybd_event(0x12, 0, 0, 0);//Alt 
+		keybd_event(0x53, 0, 0, 0);//Skip
+		keybd_event(0x53, 0, KEYEVENTF_KEYUP, 0);
+		keybd_event(0x12, 0, KEYEVENTF_KEYUP, 0);
+	    // 获取复制进度窗口的句柄
+//	    Sleep(10);
+	    HWND hForegroundWindow = GetForegroundWindow();
+	    cout << "正在复制..." << endl;
+	    // 循环检查窗口是否还存在
+	    int sumtime=0;
+	    while (true) {
+	        // 等待一段时间再检查，避免高CPU占用
+	        Sleep(2000); // 等待2秒
+	        sumtime+=2;
+	        // 检查窗口是否仍然有效 或者 复制太快了根本没抓到窗口 
+	        if (!IsWindow(hForegroundWindow) || sumtime > 10)
+	        {
+	        	cout << "文件复制完成" << endl;
+	        	break; // 窗口关闭，退出循环
+			}
+	    }
+		Sleep(1000); 
+		keybd_event(0x01, 0, 0, 0);//左键 
+		keybd_event(0x01, 0, KEYEVENTF_KEYUP, 0);
+		keybd_event(0x12, 0, 0, 0);//Alt 
+		keybd_event(0x73, 0, 0, 0);//F4
+		Sleep(100);
+		keybd_event(0x01, 0, 0, 0);//左键 
+		keybd_event(0x01, 0, KEYEVENTF_KEYUP, 0);
+		keybd_event(0x73, 0, 0, 0);//F4
+		keybd_event(0x73, 0, KEYEVENTF_KEYUP, 0);
+		keybd_event(0x12, 0, KEYEVENTF_KEYUP, 0);
 	}
-	
+	else //记录一下备份时区块修改时间，方便以后快速压缩的构建 
+	{
+		string time = name[bf].real+"\\Time.txt";
+		freopen(time.c_str(),"w",stdout);
+		struct dirent* entry;
+		time = name[bf].real+"\\region";
+		DIR* directory3 = opendir(time.c_str());
+	    while ((entry = readdir(directory3))) {
+	        string fileName = entry->d_name;
+	        string filePath = time + "\\" + fileName;
+	        struct stat fileStat;
+	        if (stat(filePath.c_str(), &fileStat) != -1) {
+	            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
+					cout << fileName << " " << fileStat.st_mtime << endl;
+	            }
+	        }
+	    }
+	    closedir(directory3);
+		
+	}
 	time_t now = time(0);
     tm *ltm = localtime(&now);
     string com=asctime(ltm),tmp="";
@@ -333,13 +403,98 @@ void Backup(int bf,bool echo)
 	
 	if(isFileLock)
 	{
-		command = "rmdir /S /Q " + Real;
+		command = "rmdir /S /Q \"" + Real + "\"";
 		system(command.c_str());
 	}
-	
+	freopen("CON","w",stdout);
 	return ;
 }
-//创建备份文件 
+//初始设置/更新设置 
+void SetConfig(string filename, bool ifreset, int summ)
+{
+	//现在将创建配置文件整合为一个函数 SetConfig() 
+	freopen("CON","r",stdin);
+	printf("\n正在建立配置文件......\n"); 
+	ofstream newFile(filename);
+	if(ifreset)
+	{
+		printf("请输入存档文件夹的储存路径 (多个文件夹路径间用$分隔): ");
+		getline(cin,Gpath);
+		printf("请输入存档备份存储路径:");
+		getline(cin,Bpath);
+		summ=PreSolve(Gpath);
+	}
+	else
+	{
+		Gpath="";
+		for(int i=0;i<summ;++i)
+        	Gpath+=Gpath2[i],Gpath+="$";
+        Gpath+=Gpath2[summ];
+	}	
+	
+    if (newFile.is_open()) {
+    	newFile << "使用的配置文件序号:0" << endl;
+    	newFile << "存档文件夹路径:" << Gpath << endl;//new
+        newFile << "存档备份存储路径:" << Bpath << endl;
+		string keyPath = "Software\\7-Zip"; 
+		string valueName = "Path";
+		string softw=GetRegistryValue(keyPath, valueName),softww="";
+		for(int i=0;i<softw.size();++i)
+			if(softw[i]==' ') softww+='"',softww+=' ',softww+='"';
+			else softww+=softw[i];
+        newFile << "压缩软件路径:" << softww+"7z.exe" << endl;
+        newFile << "备份前先还原:0" << endl;
+        newFile << "工具箱置顶:0" << endl;
+        newFile << "手动选择还原(默认选最新):0" << endl;
+        newFile << "过程显示:1" << endl;
+        newFile << "压缩等级:5" << endl;
+        newFile << "保留的备份数量(0表示不限制):0" << endl; 
+	}
+	printf("\n有以下存档文件夹:\n\n"); 
+	for(int i=0;i<=summ;++i)
+	{
+		bool ifalias=true; // 是否手动设置别名 
+		cout << endl; 
+		std::vector<std::string> subdirectories;
+		listSubdirectories(Gpath2[i], subdirectories);
+	    for (const auto& folderName : subdirectories)
+	    {
+			std::string NGpath=Gpath2[i]+"\\"+folderName;
+	        std::string modificationDate = getModificationDate(NGpath);
+	        std::cout << "存档名称: " << folderName << endl;
+	        std::cout << "最近游玩时间: " << modificationDate << endl;
+	        std::cout << "-----------" << endl;
+	    }
+	    Sleep(1000);
+	    sprint("你是否希望给所有存档设置别名？(0/1)\n\n",30);
+	    cin>>ifalias; 
+	    if(ifalias) sprint("接下来，你需要给这些文件夹起一个易于你自己理解的别名。\n\n",30);
+		else sprint("那么将自动以存档文件夹名为别名，如果需要修改别名，请在“设置”中手动修改。\n",30);
+		for (const auto& folderName : subdirectories)
+	    {
+	        string alias;
+	        B:
+	        if(ifalias)
+			{
+				cout << "请输入以下存档的别名(可以是一段描述) " << folderName << endl;
+	        	cin >> alias;
+			}
+			else alias = folderName;
+	        if(!checkupName(alias))
+			{
+				printf("文件夹名称不能包含符号 \\  /  :  *  ?  \"  <  >  | ，请重新命名");
+				goto B;
+			}
+			newFile << folderName << endl << alias << endl;
+	    }
+	    newFile << "$" << endl;
+	}
+    newFile << "*" << endl;
+    newFile.close();
+    return ;
+}
+
+//创建新的备份文件 
 void CreateConfig()
 {
 	printf("\n你需要创建 (1)一般配置 还是 (2)全自动配置\n\n");
@@ -471,68 +626,10 @@ void Main()
 	string filename = "config.ini";
     ifstream file(filename);
     if (!file.is_open()) {
-		printf("\n正在建立配置文件......\n"); 
-    	ofstream newFile(filename);
-    	printf("请输入存档文件夹的储存路径 (多个文件夹路径间用$分隔): ");
-		getline(cin,Gpath);
-		printf("请输入存档备份存储路径:");
-		getline(cin,Bpath);
-		int summ=PreSolve(Gpath);
-        if (newFile.is_open()) {
-        	newFile << "使用的配置文件序号:0" << endl;
-        	newFile << "存档文件夹路径:" << Gpath << endl;//new
-            newFile << "存档备份存储路径:" << Bpath << endl;
-			string keyPath = "Software\\7-Zip"; 
-			string valueName = "Path";
-			string softw=GetRegistryValue(keyPath, valueName),softww="";
-			for(int i=0;i<softw.size();++i)
-				if(softw[i]==' ') softww+='"',softww+=' ',softww+='"';
-				else softww+=softw[i];
-            newFile << "压缩软件路径:" << softww+"7z.exe" << endl;
-            newFile << "备份前先还原:0" << endl;
-            newFile << "工具箱置顶:0" << endl;
-            newFile << "手动选择还原(默认选最新):0" << endl;
-            newFile << "过程显示:1" << endl;
-            newFile << "压缩等级:5" << endl;
-            newFile << "保留的备份数量(0表示不限制):0" << endl; 
-    	}
-    	printf("\n有以下存档文件夹:\n\n"); 
-    	for(int i=0;i<=summ;++i)
-    	{
-    		cout << endl; 
-    		std::vector<std::string> subdirectories;
-			listSubdirectories(Gpath2[i], subdirectories);
-		    for (const auto& folderName : subdirectories)
-		    {
-				std::string NGpath=Gpath2[i]+"\\"+folderName;
-		        std::string modificationDate = getModificationDate(NGpath);
-		        std::cout << "存档名称: " << folderName << endl;
-		        std::cout << "最近游玩时间: " << modificationDate << endl;
-		        std::cout << "-----------" << endl;
-		    }
-		    Sleep(2000);
-		    sprint("接下来，你需要给这些文件夹起一个易于你自己理解的别名。\n\n",40);
-			for (const auto& folderName : subdirectories)
-		    {
-		        string alias;
-		        B:
-		        cout << "请输入以下存档的别名(可以是一段描述) " << folderName << endl;
-		        cin >> alias;
-		        if(!checkupName(alias))
-				{
-					printf("文件夹名称不能包含符号 \\  /  :  *  ?  \"  <  >  | ，请重新命名");
-					goto B;
-				}
-				newFile << folderName << endl << alias << endl;
-		    }
-		    newFile << "$" << endl;
-		}
-	    newFile << "*" << endl;
-	    newFile.close();
+    	//现在将创建配置文件整合为一个函数 SetConfig() 
+		SetConfig(filename, true, 0);
         return ;
     }
-    
-    
     
     freopen("config.ini","r",stdin);
     Qread();
@@ -911,7 +1008,7 @@ void Main()
 		        return ;
 		    }
 		    File files;
-		    if(!choice)//Look for the latest backup
+		    if(!choice)//寻找最新备份 
 		    {
 			    struct dirent* entry;
 			    while ((entry = readdir(directory))) {
@@ -952,50 +1049,7 @@ void Main()
 		}
 		else if(ch=='3')
 		{
-			freopen("CON","r",stdin);
-        	ofstream cfile("config.ini");
-        	cfile << "使用的配置文件序号:0\n";
-        	cfile << "存档文件夹路径:" << Gpath2[0] << '$';
-        	for(int i=1;i<summ;++i)
-        		cfile << Gpath2[i] << '$';
-        	cfile << Gpath2[summ] << endl;
-        	cfile << "存档备份存储路径:" << Bpath << endl;
-			string keyPath = "Software\\7-Zip"; 
-			string valueName = "Path";
-            cfile << "压缩软件路径:" << GetRegistryValue(keyPath, valueName)+"7z.exe" << endl;
-            cfile << "备份前还原:" << prebf << endl;
-            cfile << "工具箱置顶:" << ontop << endl;
-            cfile << "手动选择备份:" << choice << endl;
-            cfile << "过程显示:" << echos << endl;
-            cfile << "压缩等级:" << lv << endl;
-            cfile << "保留的备份数量(0表示不限制):" << limitnum << endl; 
-        	printf("\n在文件夹中有以下存档: \n\n"); 
-	    	for(int i=0;i<=summ;++i)
-	    	{
-	    		vector<string> subdirectories;
-				listSubdirectories(Gpath2[i], subdirectories);
-			    for (const auto& folderName : subdirectories)
-			    {
-					string NGpath=Gpath2[i]+"\\"+folderName;
-			        string modificationDate = getModificationDate(NGpath);
-			        cout << "存档名称: " << folderName << endl;
-			        cout << "最近游玩时间: " << modificationDate << endl;
-			        cout << "-----------" << endl;
-			    }
-			    Sleep(2000);
-			    sprint("接下来，你需要给这些文件夹起一个易于你自己理解的别名。\n\n",50);
-				for (const auto& folderName : subdirectories)
-			    {
-			        string alias;
-			        cout << "请输入以下存档的别名(可以是一段描述) " << endl << folderName;
-			        cin >> alias;
-					cfile << folderName << endl << alias << endl;
-			    }
-			    cfile << "$" << endl;
-			}
-		    cfile << "*" << endl;
-	    	puts("\n\n更新存档完成\n\n");
-	    	cfile.close(); 
+			SetConfig("config.ini",false,summ); 
 		}
 		else if(ch=='4')
 		{
