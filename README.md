@@ -26,3 +26,8 @@ Help documentation is being written.✒️
 
 The language standard for which this code is written is C++11, and you compile it using compilers such as Dev-C++ and Visual Studio.
 For Dev-C++, you need to adjust the language standard to ISO C++11 in Tools → Compile Options → Code Generation Optimization/Generation → Code Generation.
+
+## 📄Project References
+
+[7-Zip](https://github.com/ip7z/7zip)(7-zip.org)
+- Who provides 7z.exe for MineBackup Portable Version.
