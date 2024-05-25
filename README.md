@@ -30,4 +30,4 @@ For Dev-C++, you need to adjust the language standard to ISO C++11 in Tools → 
 ## 📄Project References
 
 [7-Zip](https://github.com/ip7z/7zip)(7-zip.org)
-- Who provides 7z.exe for MineBackup Portable Version.
+> Who provides 7z.exe for MineBackup Portable Version.
