@@ -34,16 +34,9 @@ inline void neglect(int x)//read ignore x line
 		ch=getchar();
 		if(ch=='\n') ++num;
 	}
-	/*string tmp;
-	int num=0;
-	while(num<x)
-	{
-		getline(cin,tmp);
-		++num;
-	 } */
 }
 
-bool isDirectory(const std::string& path)//寻找文件夹 
+bool isDirectory(const std::string& path)//whether the folder exists or not 
 {
 #ifdef _WIN32
     DWORD attr = GetFileAttributes(path.c_str());
@@ -148,12 +141,21 @@ void ListFiles(const std::string& folderPath) {
         FindClose(hFind);
     }
 }
-//Pre-read (until. 
+//pre-read (until;
 void Qread()
 {
 	char ch;
 	ch=getchar();
-	while(ch!=':') ch=getchar();
+	if(ch=='#')
+		while(ch!='\n')
+			ch=getchar();
+	while(ch!=':')
+	{
+		ch=getchar();
+		if(ch=='#') // if it's a comment line, then skip this line 
+			while(ch!='\n')
+				ch=getchar();	
+	}
 	return ;
 }
 // Get the registry value 
@@ -190,8 +192,8 @@ struct names{
 	string real,alias;
 	int x;
 }name[100];
-string rname2[30],Bpath,command,yasuo,lv;//archive real name backup folder path cmd command 7-Zip path compression level 
-bool prebf,ontop,choice,echos;//backup before archive Toolkit top manually select Showback 
+string rname2[30],Bpath,command,yasuo,lv,format;//archive real name Backup folder path cmd command 7-Zip path Compression level 
+bool prebf,ontop,choice,echos,smart;//backup before archive Toolkit top manually select Backup Smart Backup 
 int limitnum;
 HWND hwnd;
 struct File {
@@ -256,7 +258,7 @@ void checkup(string folderPath,int limit)
     int checknum=0;
     while ((entry = readdir(directory))) {
 	    string fileName = entry->d_name;
-		string filePath = folderPath + fileName;
+		string filePath = folderPath + fileName;; folderPath + fileName;
 		struct stat fileStat;
 		stat(filePath.c_str(), &fileStat);
 	    if (S_ISREG(fileStat.st_mode)) {
@@ -267,11 +269,11 @@ void checkup(string folderPath,int limit)
     struct dirent* entry2;
     while (checknum > limit)
     {
-	    directory = opendir(folderPath.c_str());//putting it outside will cause read duplicates, it will only be deleted once, and won't be found after that. 
+	    directory = opendir(folderPath.c_str());//putting it outside will cause read duplicates, it will only be deleted once, and won't be found after that;
 		bool fl=0;
 		while ((entry2 = readdir(directory))) {
 		    string fileName = entry2->d_name;
-		    string filePath = folderPath + fileName;
+		    string filePath = folderPath + fileName;; folderPath + fileName; folderPath + fileName;
 		    struct stat fileStat;
 		    if(!fl) files.modifiedTime=fileStat.st_mtime,fl=1; //reset files 
 		    if (stat(filePath.c_str(), &fileStat) != -1) {
@@ -304,7 +306,7 @@ void Backup(int bf,bool echo)
 	if(isFileLocked(name[bf].real+"\\region\\\r.0.0.mca"))
 	{
 		isFileLock = true; 
-		printf("The archive is detected as open and a temporary folder has been created under it. \n\nAll files in the archive folder are being copied to [1 temporary folder], then backup will begin \nPlease do not click at random during this process \n");;
+		printf("The archive is detected as open and a temporary folder has been created under it. \n\nAll files in the archive folder are being copied to [1 temporary folder], then backup will begin \nPlease do not click at random during this process \n");
 		command = "start \"\"\"" + name[bf].real + "\"\"";//this opens without reporting errors 
 		system(command.c_str());
 		Sleep(2000);
@@ -339,7 +341,7 @@ void Backup(int bf,bool echo)
 	        // Wait a while before checking to avoid high CPU usage
 	        Sleep(2000); // wait 2 seconds
 	        sumtime+=2;
-	        // Check to see if the window is still active, or if it copied too fast and didn't catch the window at all. 
+	        // Check to see if the window is still active, or if it copied too fast and didn't catch the window at all;
 	        if (!IsWindow(hForegroundWindow) || sumtime > 10)
 	        {
 	        cout << "File copy complete" << endl;
@@ -360,24 +362,9 @@ void Backup(int bf,bool echo)
 	}
 	else // Record the block modification time during the backup, to facilitate the construction of fast compression in the future 
 	{
-		string time = name[bf].real+"\\Time.txt";
-		freopen(time.c_str(), "w",stdout);
-		struct dirent* entry;
-		time = name[bf].real+"\\region";
-		DIR* directory3 = opendir(time.c_str());
-	    while ((entry = readdir(directory3))) {
-	        string fileName = entry->d_name;
-	        string filePath = time + "\\" + fileName;
-	        struct stat fileStat;
-	        if (stat(filePath.c_str(), &fileStat) != -1) {
-	            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
-					cout << fileName << " " << fileStat.st_mtime << endl;
-	            }
-	        }
-	    }
-	    closedir(directory3);
-		
+		// Recorded only in QuickBackup now! 
 	}
+	
 	time_t now = time(0);
     tm *ltm = localtime(&now);
     string com=asctime(ltm),tmp="";
@@ -390,10 +377,9 @@ void Backup(int bf,bool echo)
     
     string Real = name[bf].real;
     if(isFileLock)
-	    Real+="\\\1 Temporary Folder";
-    
-	if(echo) command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+Real+"\"\*";
-	else command=yasuo+" a -t7z -bd -mx="+lv+" "+tmp+" \""+Real+"\"\\* > nul 2>&1";
+	    Real+="\\\1Temporary Folder"; 
+	if(echo) command=yasuo+" a -t "+format+" -mx="+lv+" "+tmp+" \""+Real+"\"\\*";
+	else command=yasuo+" a -t "+format+" -mx="+lv+" "+tmp+" \""+Real+"\"\\* > nul 2>&1";
 	//cout<< endl << command <<endl;//debug 
 	system(command.c_str());
 	if(echo) command="move "+tmp+".7z "+folderName;
@@ -409,20 +395,168 @@ void Backup(int bf,bool echo)
 	freopen("CON", "w",stdout);
 	return ;
 }
+
+//Smart Backup (Fast Backup) 
+void QuickBackup(int bf, bool echo)
+{
+	string folderName = Bpath + "\\" + name[bf].alias; // Set folder name
+	mkdir(folderName.c_str());
+	
+	// Not recorded yet, record the block modification time at the time of the backup;
+	struct stat fileStat;
+	string time1 = name[bf].real+"\\region\\r.0.0.mca";
+	if(stat(time1.c_str(), &fileStat))//If no mca file exists, then it's a bedrock version of the archive, currently under-researched 
+		return ;
+	string accesss=name[bf].real+"\\Time.txt"; 
+	struct dirent* entry;
+	time1 = name[bf].real+"\\region";
+	DIR* directory3 = opendir(time1.c_str());
+	if(access(accesss.c_str(), F_OK) != 0)
+	{
+		time1 = name[bf].real+"\\Time.txt";
+		ofstream newFile(time1);
+		time1 = name[bf].real+"\\region";
+	    while ((entry = readdir(directory3))) {
+	        string fileName = entry->d_name;
+	        string filePath = time1 + "\\" + fileName;
+	        if (stat(filePath.c_str(), &fileStat) != -1) {
+	            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
+					newFile << fileName << " " << fileStat.st_mtime << endl;
+	            }
+	        }
+	    }
+	    newFile << "* -1" << endl ;
+	    closedir(directory3);
+	}
+	
+    time_t now = time(0);
+	tm *ltm = localtime(&now);
+	string com=asctime(ltm),tmp="";
+    for(int j=0;j<com.size();++j) //initial processing of filenames 
+	    if(j>=11 && j<=18)
+    		 if(j==13 || j==16) tmp+="-";
+    		 else tmp+=com[j];
+    tmp="Q["+tmp+"]"+name[bf].alias; //quick backup filename multiple Qs 
+    accesss = name[bf].real+"\\Time.txt"; 
+	//freopen(accesses.c_str(), "r",stdin);
+	ifstream usage;
+	usage.open(accesss.c_str());
+	string mca[500],number,backlist="";
+	long long moditime[500],ii=0;
+	while(moditime[ii] != -1) //read the time from Time.txt 
+	{
+		getline(usage,mca[++ii],' ');
+		getline(usage,number,'\n');
+		moditime[ii]=stoi(number); //convert number to integer 
+	}
+	freopen("CON", "r",stdin);
+	time1 = name[bf].real+"\\region";
+    while ((entry = readdir(directory3))) {// back up the new mca file
+        string fileName = entry->d_name;
+        string filePath = time1 + "\\" + fileName;
+        if (stat(filePath.c_str(), &fileStat) != -1) {
+            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
+				bool mcaok = false;
+				for(int i=1;i<=ii;++i)
+				{
+					if(fileName == mca[i])
+					{
+						mcaok = true; 
+						if(fileStat.st_mtime == moditime[i])
+							mcaok = false;
+					}
+				}
+				if(mcaok)
+				{
+					string Real = name[bf].real + "\\region\\" + fileName;
+					backlist = backlist + " \"" + Real + "\"";
+				}
+            }
+        }
+    }
+    if(backlist.size()<=5)//no changes made 
+		return ; 
+    if(echo) command=yasuo+" a -t "+format+" -mx="+lv+""+tmp+backlist;
+	else command=yasuo+" a -t "+format+" -mx="+lv+" "+tmp+backlist+" > nul 2>&1";
+	system(command.c_str());
+	if(echo) command="move "+tmp+".7z "+folderName;
+	else command="move "+tmp+".7z "+folderName+" > nul 2>&1";
+	system(command.c_str());
+	checkup(folderName+"\\",limitnum);
+	freopen("CON", "w",stdout);
+	
+	directory3 = opendir(time1.c_str());
+	// Record the backup time again 
+	time1 = name[bf].real+"\\Time.txt";
+	ofstream newFile(time1);
+	time1 = name[bf].real+"\\region";
+    while ((entry = readdir(directory3))) {
+        string fileName = entry->d_name;
+        string filePath = time1 + "\\" + fileName;
+        if (stat(filePath.c_str(), &fileStat) != -1) {
+            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
+				newFile << fileName << " " << fileStat.st_mtime << endl;
+            }
+        }
+    }
+    newFile << "* -1" << endl ;
+    closedir(directory3);
+	
+	return ;
+	
+}
+
+// Cleverly return environment variables 
+string GetSpPath(string sp)
+{
+	freopen("temp", "w",stdout);
+	system(sp.c_str());
+	ifstream tmp("temp");
+	freopen("CON", "w",stdout);
+	string ans;
+	getline(tmp, ans, '\n');
+// system("del temp"); this will cause freopen to error out;
+	return ans;
+}
+
 //Initial settings/Update settings 
 void SetConfig(string filename, bool ifreset, int summ)
 {
 	// Now consolidate the creation of the configuration file into a single function SetConfig() 
 	freopen("CON", "r",stdin);
+	cin.clear();
 	printf("\n is building configuration file ...... \n");
 	ofstream newFile(filename);
 	if(ifreset)
 	{
-		printf("Please enter the storage path of the archive folder (multiple folder paths are separated by $): ");
+		printf("Trying to find known game archive path... \n");
+		string searchPath = "", searchTemp = GetSpPath("echo %Appdata%") + "\\.minecraft\\saves";
+		if(isDirectory(searchTemp)) // For environment variables like %Appdata%, special handling is required 
+		{
+			printf("Found official launcher JAVA version archive, is it added to the path? (Yes:1 No:0)\n");
+			char ifadd = getch();
+			if(ifadd == '1')
+				searchPath += "$" + searchTemp;
+		}
+		else
+			printf("JAVA version of the archive was not found, if it exists, please enter it manually afterwards\n");
+		searchTemp = GetSpPath("echo %LOCALAPPDATA%") + "\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\ minecraftWorlds";
+		if(isDirectory(searchTemp)) 
+		{
+			printf("Found the official launcher bedrock version archive, is it added to the path? (Yes:1 No:0)\n");
+			char ifadd = getch();
+			if(ifadd == '1')
+				searchPath += "$" + searchTemp;
+		}
+		else
+			printf("No bedrock version of the archive found. \n");
+		printf("Please enter the path to the folder where the archive folder is stored (written on one line, multiple folder paths are separated by $): ");
 		getline(cin,Gpath);
+		Gpath += searchPath; 
 		printf("Please enter the path to the archive backup storage:");
 		getline(cin,Bpath);
 		summ=PreSolve(Gpath);
+		system("del temp");
 	}
 	else
 	{
@@ -435,8 +569,8 @@ void SetConfig(string filename, bool ifreset, int summ)
     if (newFile.is_open()) {
 	    newFile << "Used profile serial number:0" << endl;
 	    newFile << "Archive folder path:" << Gpath << endl;//new
-        newFile << "Archive Backup Storage Path:" << Bpath << endl;
-		string keyPath = "Software\\7-Zip"; 
+        newFile << "Archived backup storage path:" << Bpath << endl;
+		string keyPath = "Software\\\7-Zip"; 
 		string valueName = "Path";
 		string softw=GetRegistryValue(keyPath, valueName),softww="";
 		for(int i=0;i<softw.size();++i)
@@ -447,13 +581,15 @@ void SetConfig(string filename, bool ifreset, int summ)
         newFile << "Toolbox topping:0" << endl;
         newFile << "Manually select restore (default is latest):0" << endl;
         newFile << "Procedure display:1" << endl;
+        newFile << "Compression Format:7z" << endl;
         newFile << "Compression level:5" << endl;
-        newFile << "Number of backups retained (0 means unlimited):0" << endl; 
+        newFile << "Number of backups retained (0 means unlimited):0" << endl;
+        newFile << "SmartBackup:0" << endl;
 	}
 	printf("\n has the following archive folders:\n\n"); 
 	for(int i=0;i<=summ;++i)
 	{
-		bool ifalias=true; // whether to manually set the alias 
+		bool ifalias=true; // Whether to set aliases manually 
 		cout << endl;
 		std::vector<std::string> subdirectories;
 		listSubdirectories(Gpath2[i], subdirectories);
@@ -468,8 +604,8 @@ void SetConfig(string filename, bool ifreset, int summ)
 	    Sleep(1000);
 	    sprint("Do you wish to set aliases for all archives? (0/1)\n\n",30);
 	    cin>>ifalias; 
-	    if(ifalias) sprint("Next, you need to give these folders aliases that are easy for you to understand on your own. \n\n",30);
-		else sprint("Then it will automatically take the archive folder name as alias, if you need to change the alias, please change it manually in \"config.ini\".",10);
+	    if(ifalias) sprint("Next, you need to give these folders aliases that are easy for you to understand on your own\n\n",30);
+		else sprint("Then it will automatically take the archive folder name as alias, if you need to change the alias, please change it manually in \"Settings\". \nIf you need to change the alias, please change it manually in \"Settings\".",10);
 		for (const auto& folderName : subdirectories)
 	    {
 	        string alias;
@@ -540,8 +676,10 @@ void CreateConfig()
             newFile << "Toolbox topping:0" << endl;
             newFile << "Manually selecting backup:0" << endl;
             newFile << "Procedure display:1" << endl;
-            newFile << "Compression level (the higher, the lower the compression rate, but the slower):5" << endl;
-            newFile << "Number of backups retained (0 means unlimited):0" << endl; 
+            newFile << "Compression Format:7z" << endl;
+	        newFile << "Compression level:5" << endl;
+	        newFile << "Number of backups retained (0 means unlimited):0" << endl;
+	        newFile << "SmartBackup:0" << endl;
 	    }
 	    printf("\n has the following archive:\n\n");
 	    for(int i=0;i<=summ;++i)
@@ -558,7 +696,7 @@ void CreateConfig()
 		        std::cout << "-----------" << endl;
 		    }
 		    Sleep(2000);
-		    sprint("Next, you need to give these folders aliases that are easy for you to understand on your own. \n\n",50);
+		    sprint("Next, you need to give these folders aliases that are easy for you to understand on your own\n\n",50);
 			for (const auto& folderName : subdirectories)
 		    {
 		        string alias;
@@ -587,14 +725,14 @@ void CreateConfig()
 		printf("Do you need (1) a timed backup or (2) an intermittent backup\n");
 		ch=getch();
 		if(ch=='1'){
-			printf("Enter the time at which you want to back up: 1. Please enter the month and enter (enter 0 for every month):");
+			printf("Enter the time at which you want to back up: 1Please enter the month and enter (enter 0 for every month):");
 			int mon,day,hour,min;
 			scanf("%d",&mon);
-			printf("2. Please enter the date, and then enter (enter 0 for every day):");
+			printf("2Please enter the date, and then enter (enter 0 for every day):");
 			scanf("%d",&day);
-			printf("3. Please enter the hour and then enter (enter 0 for every hour):");
+			printf("3Please enter the hour and then enter (enter 0 for every hour):");
 			scanf("%d",&hour);
-			printf("4. Please enter the minutes and then enter:");
+			printf("4Please enter the minutes and then enter:");
 			scanf("%d",&min);
 			newFile << "Mode:1\nTime:" << mon << " " << day << " " << hour << " " << min << endl;
 		} 
@@ -659,7 +797,7 @@ void Main()
 			if(mode==1)
 			{
 				Qread();
-				scanf("%d %d %d %d %d",&month,&day,&hour,&min);//Here if read in error, followed by correct ...... 
+				scanf("%d %d %d %d %d",&month,&day,&hour,&min);//Here if read in error, followed by correct .....;
 				//2023.12.31 solve it, just one more string after the config file 
 			}
 			else if(mode==2)
@@ -678,20 +816,20 @@ void Main()
 				char inputs[1000];
 				for(int i=0;;++i)
 				{
-					inputs[i]=getchar();
-					if(inputs[i]=='\n'){
-						inputs[i]='\0';break;
+					inputs[i] = getchar();
+					if(inputs[i] == '\n'){
+						inputs[i] = '\0';break;
 					}
 				}
 				tempss=inputs;
 			    int summ=PreSolve(tempss);
 			    Qread();
-			    memset(inputs,'\0',sizeof(inputs));;
+			    memset(inputs,'\0',sizeof(inputs));
 			    for(int i=0;;++i)
 				{
-					inputs[i]=getchar();
-					if(inputs[i]=='\n'){
-						inputs[i]='\0';break;
+					inputs[i] = getchar();
+					if(inputs[i] == '\n'){
+						inputs[i] = '\0';break;
 					}
 				}
 				Bpath=inputs;
@@ -699,21 +837,27 @@ void Main()
 				memset(inputs,'\0',sizeof(inputs));;
 			    for(int i=0;;++i)
 				{
-					inputs[i]=getchar();
-					if(inputs[i]=='\n'){
-						inputs[i]='\0';break;
+					inputs[i] = getchar();
+					if(inputs[i] == '\n'){
+						inputs[i] = '\0';break;
 					}
 				}
-				yasuo=inputs;
+				yasuo = inputs;
 				neglect(4);
 				Qread();
 				memset(inputs,'\0',sizeof(inputs));;
-				inputs[0]=getchar();
-				lv=inputs;
+				inputs[0] = getchar(),inputs[1] = getchar();
+				format = inputs;
 				Qread();
-				cin>>limitnum;
-			    int i=0,ttt=0;//number of archives serial number of the archive folder where the archive is located 
-			    inputs[0]=getchar();// addition
+				memset(inputs,'\0',sizeof(inputs));;
+				inputs[0] = getchar();
+				lv = inputs;
+				Qread();
+				cin >> smart;
+				Qread();
+				cin >> limitnum;
+			    int i = 0,ttt = 0;//number of archives Serial number of the archive folder where the archive is located 
+			    inputs[0] = getchar();// addition
 			    while(true)
 			    {
 					memset(inputs,'\0',sizeof(inputs));;
@@ -757,7 +901,7 @@ void Main()
 						--ix;// -1 on comparison because of one extra, but fails to deal with the reduced case 
 				    // Inconsistent, then list
 				    ifnew=true;
-						printf("\nNew archive detected as follows:\n");;
+						printf("\n New archive detected as follows:\n");
 						string NGpath=Gpath2[i]+"/"+folderName;
 				        string modificationDate = getModificationDate(NGpath);
 				        cout << "Archive Name: " << folderName << endl;
@@ -767,10 +911,10 @@ void Main()
 				}
 				if(ifnew) // if there is an update, ask if the profile is updated
 				{
-					printf("Update the configuration file? (0/1)\n");
+					printf("Please update the configuration file? (0/1)\n");
 					char ch;
 					ch=getch();
-					printf("\nPlease manually update the \"real name\" and \"alias\"\n of the new archive by adding them after the corresponding location\n");; 
+					printf("\nPlease manually update the \"real name\" and \"alias\"\n 	of the new archive by adding them after the corresponding location");
 					if(ch=='1')
 						system("start config.ini");
 				}
@@ -781,7 +925,7 @@ void Main()
 			    char configss[10];
 				temps="config "+temps+".ini";
 				for(int i=0;i<temps.size();++i)
-					configss[i]=temps[i];
+					configss[i] = temps[i];
 				freopen(configss, "r",stdin);
 				string tmp;
 				getline(cin,tmp);
@@ -793,10 +937,14 @@ void Main()
 			    Qread();
 			    getline(cin,yasuo);
 			    neglect(4);
+			    Qread();
+				getline(cin,format);
 				Qread();
 				getline(cin,lv);
 				Qread();
 				cin>>limitnum;
+				Qread();
+				cin>>smart;
 			    int i=0;
 			    int ttt=0;
 			    while(true)
@@ -826,20 +974,20 @@ void Main()
 						--ix;// -1 on comparison because of one extra, but fails to deal with the reduced case 
 				    // Inconsistent, then list
 				    ifnew=true;
-						printf("\n New archive detected as follows:\n");;
+						printf("\n New archive detected as follows:\n");
 						string NGpath=Gpath2[i]+"\\"+folderName;
 				        string modificationDate = getModificationDate(NGpath);
 				        cout << "Archive Name: " << folderName << endl;
-				        cout << "Recent playtime: " << modificationDate << endl;
+				        cout << "Last playtime: " << modificationDate << endl;
 				        cout << "-----------" << endl;
 				    }
 				}
 				if(ifnew) // if there is an update, ask if the profile is updated
 				{
-					printf("Update the configuration file? (0/1)\n");
+					printf("Please update the configuration file? (0/1)\n");
 					char ch;
 					ch=getch();
-					printf("\nPlease manually update the \"real name\" and \"alias\"\n of the new archive by adding them after the corresponding location\n"); 
+					printf("\nPlease manually update the \"real name\" and \"alias\"\n of the new archive by adding them after the corresponding location");
 					string command="start "+temps;
 					if(ch=='1')
 						system(command.c_str());
@@ -897,7 +1045,8 @@ void Main()
 				        std::time_t wait_time = std::difftime(std::mktime(&target_time), std::mktime(local_time));
 				        // Wait for the specified time
 				        std::this_thread::sleep_for(std::chrono::seconds(wait_time));
-				        Backup(bfnum,false);
+				        if(!smart) Backup(bfnum,false);
+				        else QuickBackup(bfnum,false);
 				    }
 				}
 			} 
@@ -905,9 +1054,10 @@ void Main()
 			{
 				while(true)
 				{
-				    // Put the thread to sleep for a specified amount of time
+				    // Let the thread sleep for a specified amount of time
 				    std::this_thread::sleep_for(std::chrono::seconds(60*bftime));
-				    Backup(bfnum,false);
+				    if(!smart) Backup(bfnum,false);
+				    else QuickBackup(bfnum,false);
 				}
 			}
 		}
@@ -928,12 +1078,16 @@ void Main()
 	Qread();
 	cin>>echos;
 	Qread();
+	getline(cin,format);
+	Qread();
 	getline(cin,lv);
 	Qread();
 	cin>>limitnum;
+	Qread();
+	cin>>smart;
     int i=0,ttt=0;//number of archives serial number of the archive folder where the archive is located 
     printf("The following archive is available:\n\n");
-    char ch=getchar();//DEBUG because getline ... //bug why?now ok?
+    char ch=getchar();//DEBUG because getline ..//bug why?now ok?;
     while(true)
     {
 	    getline(cin,name[++i].real);
@@ -964,7 +1118,7 @@ void Main()
 			--ix;// -1 on comparison because of one extra, but fails to deal with the reduced case 
 	    // Inconsistent, then list
 	    ifnew=true;
-			printf("\nNew archive detected as follows:\n");;
+			printf("\n New archive detected as follows:\n");
 			string NGpath=Gpath2[i]+"\\"+folderName;
 	        string modificationDate = getModificationDate(NGpath);
 	        cout << "Archive Name: " << folderName << endl;
@@ -974,10 +1128,10 @@ void Main()
 	}
 	if(ifnew) // if there is an update, ask if the profile is updated
 	{
-		printf("Update the configuration file? (0/1)\n");
+		printf("Please update the configuration file? (0/1)\n");
 		char ch;
 		ch=getch();
-		printf("\nPlease manually update the \"real name\" and \"alias\"\n of the new archive by adding them after the corresponding location\n");
+		printf("\nPlease manually update the \"real name\" and \"alias\"\n of the new archive by adding them after the corresponding location");; 
 		if(ch=='1')
 			system("start config.ini");
 	}
@@ -991,7 +1145,8 @@ void Main()
 			printf("Enter the serial number before the archive to complete the backup:");
 			int bf;
 			scanf("%d",&bf);
-			Backup(bf,echos);
+			if(!smart) Backup(bf,echos);
+			else QuickBackup(bf,echos);
 			sprint("\n\n Backup complete! ! ! ! \n\n",40);
 		}
 		else if(ch=='2')
@@ -1004,11 +1159,11 @@ void Main()
 			string folderPath=Bpath+"\\"+name[bf].alias+"\\";
 			DIR* directory = opendir(folderPath.c_str());
 		    if (!directory) {
-		        printf("Backup does not exist and cannot be restored! You may not have made a backup yet \n");
+		        printf("Backup does not exist and could not be restored! You probably haven't made a backup \n");
 		        return ;
 		    }
 		    File files;
-		    if(!choice)//find the latest backups 
+		    if(!choice)//find latest backups 
 		    {
 			    struct dirent* entry;
 			    while ((entry = readdir(directory))) {
@@ -1034,7 +1189,7 @@ void Main()
 			else
 			{
 				string folderName2 = Bpath + "\\" + name[bf].alias;
-				printf("The following is the backup archive \n\n");
+				printf("The following is a backup archive \n\n");
 				ListFiles(folderName2);
 				printf("Enter the serial number before the backup to complete the restoration:");
 				int bf2;
@@ -1042,7 +1197,8 @@ void Main()
 				files.name=temp[bf2];
 			}
 		    if(prebf)
-		    Backup(bf,false);
+		    if(!smart) Backup(bf,false);
+		    else QuickBackup(bf,false);
 			command=yasuo+" x "+Bpath+"\\"+name[bf].alias+"\\"+files.name+" -o "+name[bf].real+" -y";
 			system(command.c_str());
 			sprint("\n\n Restore Successful! ! ! ! !\n\n",40);
@@ -1053,7 +1209,7 @@ void Main()
 		}
 		else if(ch=='4')
 		{
-			printf("Please enter the serial number of the archive you want to back up:");
+			printf("Please enter the serial number of the archive you wish to back up:");
 			int bf,tim;
 			scanf("%d",&bf);
 			printf("Backups every few minutes: ");
@@ -1061,7 +1217,8 @@ void Main()
 			printf("Entered automatic backup mode, backing up every %d minutes",tim);
 			while(true)
 			{
-				Backup(bf,false);
+				if(!smart) Backup(bf,false);
+				else QuickBackup(bf,false);
 				Sleep(tim*60000);
 			}
 		}
@@ -1087,11 +1244,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         switch (buttonId)
         {
 	        case 1:
-	        {
-        		 int x=0;
-	        while(!Gpath2[x].empty())
-	        {
-	        		 command="start "+Gpath2[x++];
+        	{
+        		int x=0;
+	        	while(!Gpath2[x].empty())
+	        	{
+	        		command="start "+Gpath2[x++];
 					system(command.c_str());
 				}
 	            break;
@@ -1134,12 +1291,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         hInstance,
         NULL
     );
-    CreateWindow("button", "Open archive folder",
+    CreateWindow("button", "Archive Folder",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         20, 10, 120, 35,
         hwnd, (HMENU)1, hInstance, NULL);
 
-    CreateWindow("button", "Open Backup Folder",
+    CreateWindow("button", "Backup Folder",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         150, 10, 120, 35,
         hwnd, (HMENU)2, hInstance, NULL);
@@ -1153,7 +1310,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     std::thread MainThread(Main);
     MSG msg = {};
     
-    //The thread sleeps, in order to wait for the ontop to finish reading. 
+    //The thread sleeps, in order to wait for the ontop to finish reading;
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     if(ontop)
 		SetWindowPos(hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE | SWP_NOSIZE);//Top the window
