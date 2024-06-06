@@ -34,16 +34,9 @@ inline void neglect(int x)//读取忽略 x 行
 		ch=getchar();
 		if(ch=='\n') ++num;
 	}
-	/*string tmp;
-	int num=0;
-	while(num<x)
-	{
-		getline(cin,tmp);
-		++num;
-	 } */
 }
 
-bool isDirectory(const std::string& path)//寻找文件夹 
+bool isDirectory(const std::string& path)//文件夹是否存在 
 {
 #ifdef _WIN32
     DWORD attr = GetFileAttributes(path.c_str());
@@ -153,7 +146,16 @@ void Qread()
 {
 	char ch;
 	ch=getchar();
-	while(ch!=':') ch=getchar();
+	if(ch=='#')
+		while(ch!='\n')
+			ch=getchar();
+	while(ch!=':')
+	{
+		ch=getchar();
+		if(ch=='#') //如果是注释行，那么跳过本行 
+			while(ch!='\n')
+				ch=getchar();	
+	}
 	return ;
 }
 //获取注册表的值 
@@ -190,8 +192,8 @@ struct names{
 	string real,alias;
 	int x;
 }name[100];
-string rname2[30],Bpath,command,yasuo,lv;//存档真实名 备份文件夹路径 cmd指令 7-Zip路径 压缩等级 
-bool prebf,ontop,choice,echos;//回档前备份 工具箱置顶 手动选择 回显 
+string rname2[30],Bpath,command,yasuo,lv,format;//存档真实名 备份文件夹路径 cmd指令 7-Zip路径 压缩等级 
+bool prebf,ontop,choice,echos,smart;//回档前备份 工具箱置顶 手动选择 回显 智能备份 
 int limitnum;
 HWND hwnd;
 struct File {
@@ -360,24 +362,9 @@ void Backup(int bf,bool echo)
 	}
 	else //记录一下备份时区块修改时间，方便以后快速压缩的构建 
 	{
-		string time = name[bf].real+"\\Time.txt";
-		freopen(time.c_str(),"w",stdout);
-		struct dirent* entry;
-		time = name[bf].real+"\\region";
-		DIR* directory3 = opendir(time.c_str());
-	    while ((entry = readdir(directory3))) {
-	        string fileName = entry->d_name;
-	        string filePath = time + "\\" + fileName;
-	        struct stat fileStat;
-	        if (stat(filePath.c_str(), &fileStat) != -1) {
-	            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
-					cout << fileName << " " << fileStat.st_mtime << endl;
-	            }
-	        }
-	    }
-	    closedir(directory3);
-		
+		//现在在QuickBackup中才记录 
 	}
+	
 	time_t now = time(0);
     tm *ltm = localtime(&now);
     string com=asctime(ltm),tmp="";
@@ -391,9 +378,8 @@ void Backup(int bf,bool echo)
     string Real = name[bf].real;
     if(isFileLock)
     	Real+="\\1临时文件夹"; 
-    
-	if(echo) command=yasuo+" a -t7z -mx="+lv+" "+tmp+" \""+Real+"\"\\*";
-	else command=yasuo+" a -t7z -bd -mx="+lv+" "+tmp+" \""+Real+"\"\\* > nul 2>&1";
+	if(echo) command=yasuo+" a -t"+format+" -mx="+lv+" "+tmp+" \""+Real+"\"\\*";
+	else command=yasuo+" a -t"+format+" -mx="+lv+" "+tmp+" \""+Real+"\"\\* > nul 2>&1";
 //	cout<< endl << command <<endl;//debug 
 	system(command.c_str());
 	if(echo) command="move "+tmp+".7z "+folderName;
@@ -409,20 +395,168 @@ void Backup(int bf,bool echo)
 	freopen("CON","w",stdout);
 	return ;
 }
+
+//智能备份（快速备份） 
+void QuickBackup(int bf, bool echo)
+{
+	string folderName = Bpath + "\\" + name[bf].alias; // Set folder name
+	mkdir(folderName.c_str());
+	
+	//还没有记录过，记录一下备份时区块修改时间
+	struct stat fileStat;
+	string time1 = name[bf].real+"\\region\\r.0.0.mca";
+	if(stat(time1.c_str(), &fileStat))//如果不存在mca文件，那么是基岩版存档，目前未研究透彻 
+		return ;
+	string accesss=name[bf].real+"\\Time.txt"; 
+	struct dirent* entry;
+	time1 = name[bf].real+"\\region";
+	DIR* directory3 = opendir(time1.c_str());
+	if(access(accesss.c_str(), F_OK) != 0)
+	{
+		time1 = name[bf].real+"\\Time.txt";
+		ofstream newFile(time1);
+		time1 = name[bf].real+"\\region";
+	    while ((entry = readdir(directory3))) {
+	        string fileName = entry->d_name;
+	        string filePath = time1 + "\\" + fileName;
+	        if (stat(filePath.c_str(), &fileStat) != -1) {
+	            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
+					newFile << fileName << " " << fileStat.st_mtime << endl;
+	            }
+	        }
+	    }
+	    newFile << "* -1" << endl ;
+	    closedir(directory3);	
+	}
+	
+    time_t now = time(0);
+	tm *ltm = localtime(&now);
+	string com=asctime(ltm),tmp="";
+    for(int j=0;j<com.size();++j) //初步处理文件名 
+    	if(j>=11 && j<=18)
+    		if(j==13 || j==16) tmp+="-";
+    		else tmp+=com[j];
+    tmp="Q["+tmp+"]"+name[bf].alias; //快速备份文件名多个Q 
+    accesss = name[bf].real+"\\Time.txt"; 
+//	freopen(accesss.c_str(),"r",stdin);
+	ifstream usage;
+	usage.open(accesss.c_str());
+	string mca[500],number,backlist="";
+	long long moditime[500],ii=0;
+	while(moditime[ii] != -1) //从Time.txt中读取时间 
+	{
+		getline(usage,mca[++ii],' ');
+		getline(usage,number,'\n');
+		moditime[ii]=stoi(number); //将number转为整型 
+	}
+	freopen("CON","r",stdin);
+	time1 = name[bf].real+"\\region";
+    while ((entry = readdir(directory3))) {// 将新的mca文件备份
+        string fileName = entry->d_name;
+        string filePath = time1 + "\\" + fileName;
+        if (stat(filePath.c_str(), &fileStat) != -1) {
+            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
+				bool mcaok = false;
+				for(int i=1;i<=ii;++i)
+				{
+					if(fileName == mca[i])
+					{
+						mcaok = true; 
+						if(fileStat.st_mtime == moditime[i])
+							mcaok = false;
+					}
+				}
+				if(mcaok)
+				{
+					string Real = name[bf].real + "\\region\\" + fileName;
+					backlist = backlist + " \"" + Real + "\"";
+				}
+            }
+        }
+    }
+    if(backlist.size()<=5)//没有任何改动 
+		return ; 
+    if(echo) command=yasuo+" a -t"+format+" -mx="+lv+" "+tmp+backlist;
+	else command=yasuo+" a -t"+format+" -mx="+lv+" "+tmp+backlist+" > nul 2>&1";
+	system(command.c_str());
+	if(echo) command="move "+tmp+".7z "+folderName;
+	else command="move "+tmp+".7z "+folderName+" > nul 2>&1";
+	system(command.c_str());
+	checkup(folderName+"\\",limitnum);
+	freopen("CON","w",stdout);
+	
+	directory3 = opendir(time1.c_str());
+	//再次记录备份时间 
+	time1 = name[bf].real+"\\Time.txt";
+	ofstream newFile(time1);
+	time1 = name[bf].real+"\\region";
+    while ((entry = readdir(directory3))) {
+        string fileName = entry->d_name;
+        string filePath = time1 + "\\" + fileName;
+        if (stat(filePath.c_str(), &fileStat) != -1) {
+            if (S_ISREG(fileStat.st_mode)) { // Only regular files are processed
+				newFile << fileName << " " << fileStat.st_mtime << endl;
+            }
+        }
+    }
+    newFile << "* -1" << endl ;
+    closedir(directory3);
+	
+	return ;
+	
+}
+
+//巧妙地返回环境变量 
+string GetSpPath(string sp)
+{
+	freopen("temp","w",stdout);
+	system(sp.c_str());
+	ifstream tmp("temp");
+	freopen("CON","w",stdout);
+	string ans;
+	getline(tmp, ans, '\n');
+//    system("del temp"); 这样会导致freopen出错 
+	return ans;
+}
+
 //初始设置/更新设置 
 void SetConfig(string filename, bool ifreset, int summ)
 {
 	//现在将创建配置文件整合为一个函数 SetConfig() 
 	freopen("CON","r",stdin);
+	cin.clear();
 	printf("\n正在建立配置文件......\n"); 
 	ofstream newFile(filename);
 	if(ifreset)
 	{
-		printf("请输入存档文件夹的储存路径 (多个文件夹路径间用$分隔): ");
+		printf("正在尝试寻找已知游戏存档路径...\n");
+		string searchPath = "", searchTemp = GetSpPath("echo %Appdata%") + "\\.minecraft\\saves";
+		if(isDirectory(searchTemp)) //对于%Appdata%这样的环境变量，需要特殊处理 
+		{
+			printf("找到官方启动器JAVA版本存档，是否加入路径？(是:1 否:0)\n");
+			char ifadd = getch();
+			if(ifadd == '1')
+				searchPath += "$" + searchTemp;
+		}
+		else
+			printf("未发现JAVA版存档，若存在，请之后手动输入。\n");
+		searchTemp = GetSpPath("echo %LOCALAPPDATA%") + "\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
+		if(isDirectory(searchTemp)) 
+		{
+			printf("找到官方启动器基岩版本存档，是否加入路径？(是:1 否:0)\n");
+			char ifadd = getch();
+			if(ifadd == '1')
+				searchPath += "$" + searchTemp;
+		}
+		else
+			printf("未发现基岩版存档。\n");
+		printf("请输入存放存档文件夹的文件夹路径 (写为一行，多个文件夹路径间用$分隔): ");
 		getline(cin,Gpath);
+		Gpath += searchPath; 
 		printf("请输入存档备份存储路径:");
 		getline(cin,Bpath);
 		summ=PreSolve(Gpath);
+		system("del temp"); 
 	}
 	else
 	{
@@ -447,8 +581,10 @@ void SetConfig(string filename, bool ifreset, int summ)
         newFile << "工具箱置顶:0" << endl;
         newFile << "手动选择还原(默认选最新):0" << endl;
         newFile << "过程显示:1" << endl;
+        newFile << "压缩格式:7z" << endl;
         newFile << "压缩等级:5" << endl;
-        newFile << "保留的备份数量(0表示不限制):0" << endl; 
+        newFile << "保留的备份数量(0表示不限制):0" << endl;
+        newFile << "智能备份:0" << endl;
 	}
 	printf("\n有以下存档文件夹:\n\n"); 
 	for(int i=0;i<=summ;++i)
@@ -540,8 +676,10 @@ void CreateConfig()
             newFile << "工具箱置顶:0" << endl;
             newFile << "手动选择备份:0" << endl;
             newFile << "过程显示:1" << endl;
-            newFile << "压缩等级(越高，压缩率越低，但速度越慢):5" << endl;
-            newFile << "保留的备份数量(0表示不限制):0" << endl; 
+            newFile << "压缩格式:7z" << endl;
+	        newFile << "压缩等级:5" << endl;
+	        newFile << "保留的备份数量(0表示不限制):0" << endl;
+	        newFile << "智能备份:0" << endl;
     	}
     	printf("\n有以下存档:\n\n"); 
     	for(int i=0;i<=summ;++i)
@@ -678,9 +816,9 @@ void Main()
 				char inputs[1000];
 				for(int i=0;;++i)
 				{
-					inputs[i]=getchar();
-					if(inputs[i]=='\n'){
-						inputs[i]='\0';break;
+					inputs[i] = getchar();
+					if(inputs[i] == '\n'){
+						inputs[i] = '\0';break;
 					}
 				}
 				tempss=inputs;
@@ -689,9 +827,9 @@ void Main()
 			    memset(inputs,'\0',sizeof(inputs));
 			    for(int i=0;;++i)
 				{
-					inputs[i]=getchar();
-					if(inputs[i]=='\n'){
-						inputs[i]='\0';break;
+					inputs[i] = getchar();
+					if(inputs[i] == '\n'){
+						inputs[i] = '\0';break;
 					}
 				}
 				Bpath=inputs;
@@ -699,21 +837,27 @@ void Main()
 				memset(inputs,'\0',sizeof(inputs));
 			    for(int i=0;;++i)
 				{
-					inputs[i]=getchar();
-					if(inputs[i]=='\n'){
-						inputs[i]='\0';break;
+					inputs[i] = getchar();
+					if(inputs[i] == '\n'){
+						inputs[i] = '\0';break;
 					}
 				}
-				yasuo=inputs;
+				yasuo = inputs;
 				neglect(4);
 				Qread();
 				memset(inputs,'\0',sizeof(inputs));
-				inputs[0]=getchar();
-				lv=inputs;
+				inputs[0] = getchar(),inputs[1] = getchar();
+				format = inputs;
 				Qread();
-				cin>>limitnum;
-			    int i=0,ttt=0;//存档数量 存档所在存档文件夹序号 
-			    inputs[0]=getchar();// addition
+				memset(inputs,'\0',sizeof(inputs));
+				inputs[0] = getchar();
+				lv = inputs;
+				Qread();
+				cin >> smart;
+				Qread();
+				cin >> limitnum;
+			    int i = 0,ttt = 0;//存档数量 存档所在存档文件夹序号 
+			    inputs[0] = getchar();// addition
 			    while(true)
 			    {
 					memset(inputs,'\0',sizeof(inputs));
@@ -781,7 +925,7 @@ void Main()
 			    char configss[10];
 				temps="config"+temps+".ini";
 				for(int i=0;i<temps.size();++i)
-					configss[i]=temps[i];
+					configss[i] = temps[i];
 				freopen(configss,"r",stdin);
 				string tmp;
 				getline(cin,tmp);
@@ -793,10 +937,14 @@ void Main()
 			    Qread();
 			    getline(cin,yasuo);
 			    neglect(4);
+			    Qread();
+				getline(cin,format);
 				Qread();
 				getline(cin,lv);
 				Qread();
 				cin>>limitnum;
+				Qread();
+				cin>>smart;
 			    int i=0;
 			    int ttt=0;
 			    while(true)
@@ -897,7 +1045,8 @@ void Main()
 				        std::time_t wait_time = std::difftime(std::mktime(&target_time), std::mktime(local_time));
 				        // 等待指定的时间
 				        std::this_thread::sleep_for(std::chrono::seconds(wait_time));
-				        Backup(bfnum,false);
+				        if(!smart) Backup(bfnum,false);
+				        else QuickBackup(bfnum,false);
 				    }
 				}
 			} 
@@ -907,7 +1056,8 @@ void Main()
 				{
 				    // 让线程休眠指定的时间
 				    std::this_thread::sleep_for(std::chrono::seconds(60*bftime));
-				    Backup(bfnum,false);
+				    if(!smart) Backup(bfnum,false);
+				    else QuickBackup(bfnum,false);
 				}
 			}
 		}
@@ -928,9 +1078,13 @@ void Main()
 	Qread();
 	cin>>echos;
 	Qread();
+	getline(cin,format);
+	Qread();
 	getline(cin,lv);
 	Qread();
 	cin>>limitnum;
+	Qread();
+	cin>>smart;
     int i=0,ttt=0;//存档数量 存档所在存档文件夹序号 
     printf("有以下存档:\n\n"); 
     char ch=getchar();//DEBUG because getline ...//bug why?now ok?
@@ -991,7 +1145,8 @@ void Main()
 			printf("输入存档前的序号来完成备份:");
 			int bf;
 			scanf("%d",&bf);
-			Backup(bf,echos);
+			if(!smart) Backup(bf,echos);
+			else QuickBackup(bf,echos);
 			sprint("\n\n备份完成! ! !\n\n",40);
 		}
 		else if(ch=='2')
@@ -1004,7 +1159,7 @@ void Main()
 			string folderPath=Bpath+"\\"+name[bf].alias+"\\";
 			DIR* directory = opendir(folderPath.c_str());
 		    if (!directory) {
-		        printf("备份不存在，无法还原！你可以还没有进行过备份\n");
+		        printf("备份不存在，无法还原！你可能还没有进行过备份\n");
 		        return ;
 		    }
 		    File files;
@@ -1042,7 +1197,8 @@ void Main()
 				files.name=temp[bf2];
 			}
 		    if(prebf)
-		    	Backup(bf,false);
+		    	if(!smart) Backup(bf,false);
+		    	else QuickBackup(bf,false);
 			command=yasuo+" x "+Bpath+"\\"+name[bf].alias+"\\"+files.name+" -o"+name[bf].real+" -y";
 			system(command.c_str());
 			sprint("\n\n还原成功! ! !\n\n",40);
@@ -1061,7 +1217,8 @@ void Main()
 			printf("已进入自动备份模式，每隔 %d 分钟进行备份",tim);
 			while(true)
 			{
-				Backup(bf,false);
+				if(!smart) Backup(bf,false);
+				else QuickBackup(bf,false);
 				Sleep(tim*60000);
 			}
 		}
