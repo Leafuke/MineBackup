@@ -2,7 +2,7 @@
 
 # MineBackup - Minecraft Archive Backup Program
 
-MineBackup is a user-friendly application designed to help you easily back up, restore, and export your game save files. It's based on another copy of my open source code **Folder-High-Compression-Backup**. And you can simply run this program using Dev-C++.
+MineBackup is a user-friendly application designed to help you easily back up, restore, and export your game save files. It's based on another copy of my open source code **Folder Highly Compressed Backup** , which means it works with almost any version of Minecraft! And you can simply run this program using Dev-C++.
 
 ## 📸Features
 
