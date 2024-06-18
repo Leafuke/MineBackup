@@ -30,8 +30,8 @@
 
 ## 🔗项目延伸
 
-MineBackup for Netease
-> 一个针对网易我的世界优化修改过后的 MineBackup （即将开源）
+[MineBackup for Netease](https://github.com/Leafuke/MineBackup-for-NetEase)
+> 一个针对网易我的世界优化修改过后的 MineBackup
 
 ## 📄项目引用
 
