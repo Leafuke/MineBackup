@@ -22,7 +22,7 @@ MineBackup is a user-friendly application designed to help you easily back up, r
 ## 🗃️Support
 
 For issues, feature requests, or contributions, please visit the [GitHub issues](https://github.com/Leafuke/MineBackup/issues).
-You can help internationalize this project by translating the Languages.txt file.
+You can help internationalize this project by translating the [Languages.txt](Languages.txt).
 Help documentation is being written.✒️
 
 ## 🛠️Compilation Guide
