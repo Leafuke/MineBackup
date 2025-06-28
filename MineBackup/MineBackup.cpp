@@ -1,11 +1,3 @@
-// Dear ImGui: standalone example application for DirectX 11
-
-// Learn about Dear ImGui:
-// - FAQ                  https://dearimgui.com/faq
-// - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
-// - Introduction, links and more at the top of imgui.cpp
-
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_impl_dx11.h"
@@ -18,10 +10,18 @@
 #include <filesystem>
 #include <fstream>
 #include <shobjidl.h>
+#include <locale>
+#include <fcntl.h>
+#include <io.h>
 
 #include <string>
 #include <map>
 using namespace std;
+using std::wstring;
+using std::wifstream;
+using std::wofstream;
+using std::wcout;
+using std::wcin;
 int aaa = 0;
 // Data
 static ID3D11Device* g_pd3dDevice = nullptr;
@@ -39,18 +39,18 @@ void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // 设置项变量（全局）
-std::vector<std::string> savePaths = { "" };
-char backupPath[256] = "C:\\Users\\User\\Documents\\Minecraft备份";
-char zipPath[256] = "C:\\Program Files\\7-Zip\\7z.exe";
+std::vector<wstring> savePaths = { L"" };
+wchar_t backupPath[256] = L"C:\\Users\\User\\Documents\\Minecraft备份";
+wchar_t zipPath[256] = L"C:\\Program Files\\7-Zip\\7z.exe";
 int compressLevel = 5;
 
 // 每个配置块的结构
 struct Config {
-    std::string saveRoot;
-    std::vector<std::pair<std::string, std::string>> worlds; // {name, desc}
-    std::string backupPath;
-    std::string zipPath;
-    std::string zipFormat;
+    wstring saveRoot;
+    std::vector<std::pair<wstring, wstring>> worlds; // {name, desc}
+    wstring backupPath;
+    wstring zipPath;
+    wstring zipFormat;
     int zipLevel;
     int keepCount;
     bool smartBackup;
@@ -66,7 +66,7 @@ std::map<int, Config> configs;
 
 
 //选择文件
-string SelectFileDialog(HWND hwndOwner = NULL) {
+wstring SelectFileDialog(HWND hwndOwner = NULL) {
     IFileDialog* pfd;
     HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
         IID_IFileDialog, reinterpret_cast<void**>(&pfd));
@@ -79,20 +79,20 @@ string SelectFileDialog(HWND hwndOwner = NULL) {
             if (SUCCEEDED(hr)) {
                 PWSTR path = nullptr;
                 psi->GetDisplayName(SIGDN_FILESYSPATH, &path);
-                std::wstring wpath(path);
+                wstring wpath(path);
                 CoTaskMemFree(path);
                 psi->Release();
-                return std::string(wpath.begin(), wpath.end());
+                return wpath; 
             }
         }
         pfd->Release();
     }
-    return "";
+    return L"";
 }
 
 
 //选择文件夹
-static string SelectFolderDialog(HWND hwndOwner = NULL) {
+static wstring SelectFolderDialog(HWND hwndOwner = NULL) {
     IFileDialog* pfd;
     HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
         IID_IFileDialog, reinterpret_cast<void**>(&pfd));
@@ -111,76 +111,92 @@ static string SelectFolderDialog(HWND hwndOwner = NULL) {
                 wstring wpath(path);
                 CoTaskMemFree(path);
                 psi->Release();
-                return string(wpath.begin(), wpath.end());
+                return wpath;
             }
         }
         pfd->Release();
     }
-    return "";
+    return L"";
+}
+
+// 辅助函数：wstring <-> utf8 string（使用WinAPI，兼容C++17+）
+static std::string wstring_to_utf8(const std::wstring& wstr) {
+    if (wstr.empty()) return std::string();
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), NULL, 0, NULL, NULL);
+    std::string strTo(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
+    return strTo;
+}
+static std::wstring utf8_to_wstring(const std::string& str) {
+    if (str.empty()) return std::wstring();
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), NULL, 0);
+    std::wstring wstrTo(size_needed, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), &wstrTo[0], size_needed);
+    return wstrTo;
 }
 
 // 读取配置文件
-static void LoadConfigs(const std::string& filename = "config.ini") {
+static void LoadConfigs(const wstring& filename = L"config.ini") {
     configs.clear();
-    std::ifstream in(filename);
+    wifstream in(filename, std::ios::binary);
     if (!in.is_open()) return;
 
-    std::string line, section;
+    wstring line, section;
     Config* cur = nullptr;
     while (std::getline(in, line)) {
         if (line.empty()) continue;
-        if (line.front() == '[' && line.back() == ']') {
+        if (line.front() == L'[' && line.back() == L']') {
             section = line.substr(1, line.size() - 2);
-            if (section == "General") { cur = nullptr; }
-            else if (section.rfind("Config", 0) == 0) {
+            if (section == L"General") { cur = nullptr; }
+            else if (section.rfind(L"Config", 0) == 0) {
                 int idx = std::stoi(section.substr(6));
                 configs[idx] = Config();
                 cur = &configs[idx];
             }
             continue;
         }
-        if (section == "General") {
-            auto pos = line.find('=');
-            if (pos != std::string::npos && line.rfind("当前使用配置编号=", 0) == 0) {
+        if (section == L"General") {
+            auto pos = line.find(L'=');
+            if (pos != wstring::npos && line.rfind(L"当前使用配置编号=", 0) == 0) {
                 currentConfigIndex = std::stoi(line.substr(pos + 1));
             }
         }
         else if (cur) {
             // 键值
-            auto pos = line.find('=');
-            if (pos == std::string::npos) continue;
-            std::string key = line.substr(0, pos);
-            std::string val = line.substr(pos + 1);
+            auto pos = line.find(L'=');
+            if (pos == wstring::npos) continue;
+            wstring key = line.substr(0, pos);
+            wstring val = line.substr(pos + 1);
 
-            if (key == "存档路径") {
+            if (key == L"存档路径") {
                 cur->saveRoot = val;
                 // 自动扫描子目录为世界名
                 if (std::filesystem::exists(val)) {
                     for (auto& entry : std::filesystem::directory_iterator(val)) {
                         if (entry.is_directory())
-                            cur->worlds.push_back({ entry.path().filename().string(), "" });
+                            cur->worlds.push_back({ entry.path().filename().wstring(), L"" });
                     }
                 }
             }
-            else if (key.find("存档名称+存档描述") == 0) {
+            else if (key.find(L"存档名称+存档描述") == 0) {
                 // 多行直到 '*'
-                while (std::getline(in, line) && line != "*") {
-                    std::string name = line;
-                    if (!std::getline(in, line) || line == "*") break;
-                    std::string desc = line;
+                while (std::getline(in, line) && line != L"*") {
+                    wstring name = line;
+                    if (!std::getline(in, line) || line == L"*") break;
+                    wstring desc = line;
                     cur->worlds.push_back({ name, desc });
                 }
             }
-            else if (key == "备份路径") cur->backupPath = val;
-            else if (key == "压缩程序") cur->zipPath = val;
-            else if (key == "压缩格式") cur->zipFormat = val;
-            else if (key == "压缩等级") cur->zipLevel = std::stoi(val);
-            else if (key == "保留数量") cur->keepCount = std::stoi(val);
-            else if (key == "智能备份") cur->smartBackup = (val != "0");
-            else if (key == "备份前还原") cur->restoreBefore = (val != "0");
-            else if (key == "置顶窗口") cur->topMost = (val != "0");
-            else if (key == "手动选择还原") cur->manualRestore = (val != "0");
-            else if (key == "显示过程") cur->showProgress = (val != "0");
+            else if (key == L"备份路径") cur->backupPath = val;
+            else if (key == L"压缩程序") cur->zipPath = val;
+            else if (key == L"压缩格式") cur->zipFormat = val;
+            else if (key == L"压缩等级") cur->zipLevel = std::stoi(val);
+            else if (key == L"保留数量") cur->keepCount = std::stoi(val);
+            else if (key == L"智能备份") cur->smartBackup = (val != L"0");
+            else if (key == L"备份前还原") cur->restoreBefore = (val != L"0");
+            else if (key == L"置顶窗口") cur->topMost = (val != L"0");
+            else if (key == L"手动选择还原") cur->manualRestore = (val != L"0");
+            else if (key == L"显示过程") cur->showProgress = (val != L"0");
         }
     }
 }
@@ -191,33 +207,33 @@ Config& cfg = configs[currentConfigIndex];
 bool showSettings = false;
 
 // 保存
-static void SaveConfigs(const std::string& filename = "config.ini") {
-    std::ofstream out(filename);
+static void SaveConfigs(const wstring& filename = L"config.ini") {
+    wofstream out(filename, std::ios::binary);
     if (!out.is_open()) {
-        MessageBoxA(nullptr, u8"无法写入 config.ini！", "错误", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, L"无法写入 config.ini！", L"错误", MB_OK | MB_ICONERROR);
         return;
     }
-    out << u8"[General]\n";
-    out << u8"当前使用配置编号=" << currentConfigIndex << "\n\n";
+    out << L"[General]\n";
+    out << L"当前使用配置编号=" << currentConfigIndex << L"\n\n";
     for (auto& kv : configs) {
         int idx = kv.first;
         Config& c = kv.second;
-        out << u8"[Config" << idx << "]\n";
-        out << u8"存档路径=" << c.saveRoot << "\n";
-        out << u8"存档名称+存档描述(一行名称一行描述)=\n";
+        out << L"[Config" << idx << L"]\n";
+        out << L"存档路径=" << c.saveRoot << L"\n";
+        out << L"存档名称+存档描述(一行名称一行描述)=\n";
         for (auto& p : c.worlds)
-            out << p.first << "\n" << p.second << "\n";
-        out << u8"*\n";
-        out << u8"备份路径=" << c.backupPath << "\n";
-        out << u8"压缩程序=" << c.zipPath << "\n";
-        out << u8"压缩格式=" << c.zipFormat << "\n";
-        out << u8"压缩等级=" << c.zipLevel << "\n";
-        out << u8"保留数量=" << c.keepCount << "\n";
-        out << u8"智能备份=" << (c.smartBackup ? 1 : 0) << "\n";
-        out << u8"备份前还原=" << (c.restoreBefore ? 1 : 0) << "\n";
-        out << u8"置顶窗口=" << (c.topMost ? 1 : 0) << "\n";
-        out << u8"手动选择还原=" << (c.manualRestore ? 1 : 0) << "\n";
-        out << u8"显示过程=" << (c.showProgress ? 1 : 0) << "\n\n";
+            out << p.first << L"\n" << p.second << L"\n";
+        out << L"*\n";
+        out << L"备份路径=" << c.backupPath << L"\n";
+        out << L"压缩程序=" << c.zipPath << L"\n";
+        out << L"压缩格式=" << c.zipFormat << L"\n";
+        out << L"压缩等级=" << c.zipLevel << L"\n";
+        out << L"保留数量=" << c.keepCount << L"\n";
+        out << L"智能备份=" << (c.smartBackup ? 1 : 0) << L"\n";
+        out << L"备份前还原=" << (c.restoreBefore ? 1 : 0) << L"\n";
+        out << L"置顶窗口=" << (c.topMost ? 1 : 0) << L"\n";
+        out << L"手动选择还原=" << (c.manualRestore ? 1 : 0) << L"\n";
+        out << L"显示过程=" << (c.showProgress ? 1 : 0) << L"\n\n";
     }
     out.close();
 }
@@ -230,7 +246,7 @@ void ShowMainUI() {
 }
 
 // 本地多字节编码（如GBK）转UTF-8
-static string GbkToUtf8(const string& gbk)
+static std::string GbkToUtf8(const std::string& gbk)
 {
     int lenW = MultiByteToWideChar(CP_ACP, 0, gbk.c_str(), -1, nullptr, 0);
     std::wstring wstr(lenW, 0);
@@ -250,14 +266,18 @@ void ShowSettingsWindow() {
     ImGui::Begin(u8"设置", &showSettings, ImGuiWindowFlags_AlwaysAutoResize);
 
     // 存档根路径
-    char rootBuf[256];
-    strncpy_s(rootBuf, cfg.saveRoot.c_str(), sizeof(rootBuf));
-    ImGui::InputText(u8"存档根路径", rootBuf, 256);
+    std::string rootBuf = wstring_to_utf8(cfg.saveRoot);
+    char rootBufA[256];
+    strncpy_s(rootBufA, rootBuf.c_str(), sizeof(rootBufA));
+    ImGui::InputText(u8"存档根路径", rootBufA, 256);
     if (ImGui::Button(u8"选择")) {
-        std::string sel = SelectFolderDialog();
-        if (!sel.empty()) strncpy_s(rootBuf, sel.c_str(), 256);
+        std::wstring sel = SelectFolderDialog();
+        if (!sel.empty()) {
+            std::string selu8 = wstring_to_utf8(sel);
+            strncpy_s(rootBufA, selu8.c_str(), 256);
+        }
     }
-    cfg.saveRoot = rootBuf;
+    cfg.saveRoot = utf8_to_wstring(rootBufA);
 
     // 自动扫描 worlds（可选刷新按钮）
     if (ImGui::Button(u8"扫描存档")) {
@@ -265,7 +285,7 @@ void ShowSettingsWindow() {
         if (std::filesystem::exists(cfg.saveRoot))
             for (auto& e : std::filesystem::directory_iterator(cfg.saveRoot))
                 if (e.is_directory())
-                    cfg.worlds.push_back({ e.path().filename().string(), "" });
+                    cfg.worlds.push_back({ e.path().filename().wstring(), L"" });
     }
 
     // 每个存档的名称+描述编辑
@@ -273,55 +293,49 @@ void ShowSettingsWindow() {
     ImGui::Text(u8"存档名称与描述：");
     for (size_t i = 0; i < cfg.worlds.size(); ++i) {
         ImGui::PushID(int(i));
+        std::string nameA = wstring_to_utf8(cfg.worlds[i].first);
+        std::string descA = wstring_to_utf8(cfg.worlds[i].second);
         char name[256], desc[512];
-        string nameTemp = "00000000000000000000000000000000", descTemp = "00000000000000000000000000000000"; //用迂回方式解决GBK和Uint_8问题
-        strncpy_s(name, cfg.worlds[i].first.c_str(), sizeof(name));
-        strncpy_s(desc, cfg.worlds[i].second.c_str(), sizeof(desc));
-        
-        for (int j = 0;; ++j) //sizeof(name)一直是256
-        {
-            if (name[j] == '\0')
-                break;
-            nameTemp[j] = name[j];
-        }
-        /*for (int i = 0; i < sizeof(desc); ++i)
-            descTemp[i] = desc[i];*/
-        //nameTemp = GbkToUtf8(nameTemp);
-        //descTemp = GbkToUtf8(descTemp);
-        for (int j = 0;; ++j) //sizeof(name)一直是256
-        {
-            if (name[j] == '\0')
-                break;
-            name[j] = nameTemp[j];
-        }
-        /*for (int i = 0; i < sizeof(desc); ++i)
-            desc[i] = descTemp[i];*/
+        strncpy_s(name, nameA.c_str(), sizeof(name));
+        strncpy_s(desc, descA.c_str(), sizeof(desc));
         ImGui::InputText(u8"名称", name, 256);
         ImGui::InputText(u8"描述", desc, 512);
-        cfg.worlds[i].first = name;
-        cfg.worlds[i].second = desc;
+        cfg.worlds[i].first = utf8_to_wstring(name);
+        cfg.worlds[i].second = utf8_to_wstring(desc);
         ImGui::PopID();
     }
 
     // 其他设置项
+    std::string backupPathA = wstring_to_utf8(cfg.backupPath);
     char buf[256];
-    strncpy_s(buf, cfg.backupPath.c_str(), sizeof(buf));
+    strncpy_s(buf, backupPathA.c_str(), sizeof(buf));
     ImGui::InputText(u8"备份路径", buf, 256);
     if (ImGui::Button(u8"选择")) {
-        std::string sel = SelectFolderDialog();
-        if (!sel.empty()) strncpy_s(buf, sel.c_str(), 256);
+        std::wstring sel = SelectFolderDialog();
+        if (!sel.empty()) {
+            std::string selu8 = wstring_to_utf8(sel);
+            strncpy_s(buf, selu8.c_str(), 256);
+        }
     }
-    cfg.backupPath = buf;
+    cfg.backupPath = utf8_to_wstring(buf);
 
-    strncpy_s(buf, cfg.zipPath.c_str(), sizeof(buf));
+    std::string zipPathA = wstring_to_utf8(cfg.zipPath);
+    strncpy_s(buf, zipPathA.c_str(), sizeof(buf));
     ImGui::InputText(u8"压缩程序", buf, 256);
     if (ImGui::Button(u8"选择")) {
-        std::string sel = SelectFileDialog();
-        if (!sel.empty()) strncpy_s(buf, sel.c_str(), 256);
+        std::wstring sel = SelectFileDialog();
+        if (!sel.empty()) {
+            std::string selu8 = wstring_to_utf8(sel);
+            strncpy_s(buf, selu8.c_str(), 256);
+        }
     }
-    cfg.zipPath = buf;
+    cfg.zipPath = utf8_to_wstring(buf);
 
-    ImGui::InputText(u8"压缩格式", &cfg.zipFormat[0], 16);
+    std::string zipFormatA = wstring_to_utf8(cfg.zipFormat);
+    char zipFormatBuf[16];
+    strncpy_s(zipFormatBuf, zipFormatA.c_str(), sizeof(zipFormatBuf));
+    ImGui::InputText(u8"压缩格式", zipFormatBuf, 16);
+    cfg.zipFormat = utf8_to_wstring(zipFormatBuf);
     ImGui::SliderInt(u8"压缩等级", &cfg.zipLevel, 0, 9);
     ImGui::InputInt(u8"保留数量", &cfg.keepCount);
 
@@ -338,43 +352,8 @@ void ShowSettingsWindow() {
     ImGui::End();
 }
 
-
-// 设置界面窗口old
-/*
-void ShowSettingsWindow() {
-    if (!showSettingsWindow) return;
-
-    ImGui::Begin(u8"设置", &showSettingsWindow, ImGuiWindowFlags_AlwaysAutoResize);
-
-    // 动态输入多个存档路径
-    ImGui::Text(u8"多个存档路径：");
-    for (size_t i = 0; i < savePaths.size(); ++i) {
-        char buf[256];
-        strncpy_s(buf, savePaths[i].c_str(), sizeof(buf));
-        if (ImGui::InputText((u8"路径 " + std::to_string(i + 1)).c_str(), buf, sizeof(buf))) {
-            savePaths[i] = buf;
-        }
-    }
-    if (ImGui::Button(u8"添加存档路径")) {
-        savePaths.push_back("");
-    }
-
-    // 其他设置项
-    ImGui::InputText(u8"备份位置", backupPath, sizeof(backupPath));
-    ImGui::InputText(u8"压缩软件路径", zipPath, sizeof(zipPath));
-    ImGui::SliderInt(u8"压缩等级", &compressLevel, 0, 9);
-
-    // 保存配置按钮
-    if (ImGui::Button(u8"保存配置")) {
-        SaveConfigs();
-        MessageBoxA(nullptr, "配置已保存到 config.ini", "提示", MB_OK | MB_ICONINFORMATION);
-    }
-
-    ImGui::End();
-}*/
-
 //文件存在判断
-static bool Exists(string &files) {
+static bool Exists(wstring &files) {
     return std::filesystem::exists(files);
 }
 
@@ -414,7 +393,6 @@ struct Console
 
     Console()
     {
-        //IMGUI_DEMO_MARKER("Examples/Console");???
         ClearLog();
         memset(InputBuf, 0, sizeof(InputBuf));
         HistoryPos = -1;
@@ -764,6 +742,8 @@ static void ShowExampleAppConsole(bool* p_open)
 // Main code
 int main(int, char**)
 {
+    _setmode(_fileno(stdout), _O_U16TEXT);
+    _setmode(_fileno(stdin), _O_U16TEXT);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     //初始化
 
@@ -820,8 +800,8 @@ int main(int, char**)
     bool show_demo_window = true;
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-    string fileName = "config.ini";
-    bool isFirstRun = !Exists(fileName);
+    std::string fileName = "config.ini";
+    bool isFirstRun = !std::filesystem::exists(fileName);
     static bool showConfigWizard = isFirstRun;
     static bool showMainApp = !isFirstRun;
 
@@ -902,9 +882,11 @@ int main(int, char**)
             else if (page == 2) {
                 ImGui::Text(u8"第2步：选择备份文件夹路径");
                 if (ImGui::Button(u8"选择备份路径")) {
-                    std::string selected = SelectFolderDialog();
-                    if (!selected.empty())
-                        strncpy_s(backupPath, selected.c_str(), sizeof(backupPath));
+                    std::wstring selected = SelectFolderDialog();
+                    if (!selected.empty()) {
+                        std::string selu8 = wstring_to_utf8(selected);
+                        strncpy_s(backupPath, selu8.c_str(), sizeof(backupPath));
+                    }
                 }
                 ImGui::InputText(u8"备份路径", backupPath, IM_ARRAYSIZE(backupPath));
                 if (ImGui::Button(u8"下一步")) page++;
@@ -912,9 +894,11 @@ int main(int, char**)
             else if (page == 3) {
                 ImGui::Text(u8"第3步：配置压缩程序");
                 if (ImGui::Button(u8"选择 7z.exe")) {
-                    std::string selected = SelectFileDialog(); // 支持选择 .exe 文件
-                    if (!selected.empty())
-                        strncpy_s(zipPath, selected.c_str(), sizeof(zipPath));
+                    std::wstring selected = SelectFileDialog(); // 支持选择 .exe 文件
+                    if (!selected.empty()) {
+                        std::string selu8 = wstring_to_utf8(selected);
+                        strncpy_s(zipPath, selu8.c_str(), sizeof(zipPath));
+                    }
                 }
                 ImGui::InputText(u8"7z 路径", zipPath, IM_ARRAYSIZE(zipPath));
                 if (ImGui::Button(u8"完成配置")) {
@@ -940,154 +924,6 @@ int main(int, char**)
             ImGui::End();
         }
 
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        /*if (show_demo_window)
-        {
-            ShowExampleAppConsole(&show_demo_window);
-            static int page = 0;
-            static char savesPath[256] = "C:\\Users\\User\\AppData\\Roaming\\.minecraft\\saves";
-            static char backupPath[256] = "C:\\Users\\User\\Documents\\Minecraft备份";
-            static char zipPath[256] = "C:\\Program Files\\7-Zip\\7z.exe";
-
-            ImGui::Begin(u8"首次启动设置向导", &show_demo_window, ImGuiWindowFlags_AlwaysAutoResize);
-
-            if (page == 0) {
-                ImGui::Text(u8"欢迎使用 Minecraft 存档备份工具！");
-                ImGui::Separator();
-                ImGui::TextWrapped(u8"本工具用于帮助您自动备份 Minecraft 的存档文件。");
-                if (ImGui::Button(u8"开始配置")) page++;
-            }
-
-            else if (page == 1) {
-                static char folderPath[256] = "";
-                ImGui::Text(u8"第1步：选择 Minecraft 存档路径");
-                if (ImGui::Button(u8"选择存档路径")) {
-                    std::string selected = SelectFolderDialog();  // WinAPI 文件夹对话框
-                    if (!selected.empty()) {
-                        strncpy_s(folderPath, selected.c_str(), sizeof(folderPath));
-                    }
-                }
-                ImGui::InputText(u8"存档路径", folderPath, IM_ARRAYSIZE(folderPath));
-
-                if (ImGui::Button(u8"下一步")) page++;
-            }
-
-            else if (page == 2) {
-                ImGui::Text(u8"第2步：选择备份文件夹路径");
-                ImGui::InputText(u8"备份路径", backupPath, IM_ARRAYSIZE(backupPath));
-                if (ImGui::Button(u8"下一步")) page++;
-            }
-
-            else if (page == 3) {
-                ImGui::Text(u8"第3步：配置压缩程序");
-                ImGui::InputText(u8"7z路径", zipPath, IM_ARRAYSIZE(zipPath));
-                if (ImGui::Button(u8"完成配置")) {
-                    // Save to config file...
-                    page++;
-                }
-            }
-
-            else if (page == 4) {
-                ImGui::Text(u8"配置完成！");
-                ImGui::Text(u8"您现在可以开始使用程序。");
-                if (ImGui::Button(u8"关闭向导")) {}
-            }
-
-            ImGui::End();
-
-            /*static bool window_open = true;
-            if (window_open)
-                ImGui::Begin(u8"小窗子", &window_open, ImGuiWindowFlags_MenuBar);
-            else
-                return 0;
-            if (ImGui::Button(u8"关闭小窗子"))
-            {
-                aaa = 1;
-                cout << "关闭小窗子" << endl;
-            }
-            if (aaa == 1)
-            {
-                ImGui::Text(u8"小窗子已关闭");
-            }
-            else
-            {
-                ImGui::Text(u8"小窗子未关闭");
-            }
-            static int aaa = 0; //如果用int就无法选择了
-            static bool bbb = false; // 如果用bool就可以选择了
-            ImGui::SmallButton(u8"小按钮"); // 小按钮
-            ImGui::InvisibleButton(u8"不可见按钮", ImVec2(100, 50)); // 不可见按钮
-            ImGui::ArrowButton(u8"箭头按钮", ImGuiDir_Right); // 箭头按钮
-            ImGui::ProgressBar(0.5f, ImVec2(0.0f, 0.0f), u8"进度条"); // 进度条
-            ImGui::BulletText(u8"这是一个项目符号文本"); // 项目符号文本
-            ImGui::TextLinkOpenURL(u8"这是一个链接", "https://www.dearimgui.com"); // 链接文本
-            ImGui::RadioButton(u8"选项1", &aaa, 0);
-            ImGui::RadioButton(u8"选项2", &aaa, 1);
-            ImGui::RadioButton(u8"选项3", &aaa, 2);
-            ImGui::Checkbox(u8"选项4", &bbb); // 复选框
-            if (bbb)
-            {
-                ImGui::Text(u8"你选择了选项4");
-            }
-            else
-            {
-                ImGui::Text(u8"你没有选择选项4");
-            }
-            switch (aaa)
-            {
-            case 0: {
-                ImGui::Text(u8"你选择了选项1");
-                break;
-                }
-            case 1: {
-                ImGui::Text(u8"你选择了选项2");
-                break;
-            }
-            default:
-                break;
-            }
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), u8"这是红色文字");
-            ImGui::Text("Hello, world!"); // Display some text (you can use a format strings too)
-            ImGui::Text("This is a simple example of Dear ImGui with DirectX11.");
-            ImGui::Text("You can use this as a starting point for your own applications.");
-            ImGui::Text("Press ESC to close the application.");
-            ImGui::End();
-        }
-        /*    ImGui::ShowDemoWindow(&show_demo_window);
-
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
-
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::End();
-        }
-
-        // 3. Show another simple window.
-        if (show_another_window)
-        {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
-        }*/
-        
         // Rendering渲染清理
         ImGui::Render();
         const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
@@ -1109,7 +945,7 @@ int main(int, char**)
     CleanupDeviceD3D();
     ::DestroyWindow(hwnd);
     ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-    std::cin.get(); // Wait for user input before exiting
+    std::wcin.get(); // Wait for user input before exiting
     return 0;
 }
 
