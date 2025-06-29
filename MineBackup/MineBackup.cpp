@@ -14,7 +14,7 @@
 #include <vector>
 #include <fcntl.h>
 #include <io.h>
-
+#include <thread>
 #include <string>
 #include <map>
 using namespace std;
@@ -46,6 +46,9 @@ wchar_t zipPath[256] = L"C:\\Program Files\\7-Zip\\7z.exe";
 int compressLevel = 5;
 
 // 每个配置块的结构
+enum ThemeType { THEME_DARK = 0, THEME_LIGHT = 1, THEME_CLASSIC = 2 };
+enum BackupFolderNameType { NAME_BY_WORLD = 0, NAME_BY_DESC = 1 };
+
 struct Config {
     wstring saveRoot;
     std::vector<std::pair<wstring, wstring>> worlds; // {name, desc}
@@ -59,12 +62,15 @@ struct Config {
     bool topMost;
     bool manualRestore;
     bool showProgress;
+    ThemeType theme = THEME_DARK;
+    BackupFolderNameType folderNameType = NAME_BY_WORLD;
+    int autoBackupInterval = 0; // 单位：分钟，0为不自动
+    std::string autoBackupTime; // 格式：HH:MM，空为不定时
 };
 
 // 全部配置
 int currentConfigIndex = 1;
 std::map<int, Config> configs;
-
 
 //选择文件
 wstring SelectFileDialog(HWND hwndOwner = NULL) {
@@ -90,7 +96,6 @@ wstring SelectFileDialog(HWND hwndOwner = NULL) {
     }
     return L"";
 }
-
 
 //选择文件夹
 static wstring SelectFolderDialog(HWND hwndOwner = NULL) {
@@ -134,6 +139,15 @@ static std::wstring utf8_to_wstring(const std::string& str) {
     std::wstring wstrTo(size_needed, 0);
     MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), &wstrTo[0], size_needed);
     return wstrTo;
+}
+
+// 新增：主题应用函数
+void ApplyTheme(ThemeType theme) {
+    switch (theme) {
+    case THEME_DARK: ImGui::StyleColorsDark(); break;
+    case THEME_LIGHT: ImGui::StyleColorsLight(); break;
+    case THEME_CLASSIC: ImGui::StyleColorsClassic(); break;
+    }
 }
 
 // 读取配置文件
@@ -198,6 +212,10 @@ static void LoadConfigs(const wstring& filename = L"config.ini") {
             else if (key == L"置顶窗口") cur->topMost = (val != L"0");
             else if (key == L"手动选择还原") cur->manualRestore = (val != L"0");
             else if (key == L"显示过程") cur->showProgress = (val != L"0");
+            else if (key == L"主题") cur->theme = (ThemeType)std::stoi(val);
+            else if (key == L"备份命名方式") cur->folderNameType = (BackupFolderNameType)std::stoi(val);
+            else if (key == L"自动备份间隔") cur->autoBackupInterval = std::stoi(val);
+            else if (key == L"自动备份时间") cur->autoBackupTime = wstring_to_utf8(val);
         }
     }
 }
@@ -235,9 +253,12 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
         out << L"备份前还原=" << (c.restoreBefore ? 1 : 0) << L"\n";
         out << L"置顶窗口=" << (c.topMost ? 1 : 0) << L"\n";
         out << L"手动选择还原=" << (c.manualRestore ? 1 : 0) << L"\n";
-        out << L"显示过程=" << (c.showProgress ? 1 : 0) << L"\n\n";
+        out << L"显示过程=" << (c.showProgress ? 1 : 0) << L"\n";
+        out << L"主题=" << c.theme << L"\n";
+        out << L"备份命名方式=" << c.folderNameType << L"\n";
+        out << L"自动备份间隔=" << c.autoBackupInterval << L"\n";
+        out << L"自动备份时间=" << utf8_to_wstring(c.autoBackupTime) << L"\n\n";
     }
-    //out.close();
 }
 
 // 主界面按钮触发设置窗口
@@ -417,6 +438,31 @@ void ShowSettingsWindow() {
     ImGui::Checkbox(u8"置顶窗口", &cfg.topMost);
     ImGui::Checkbox(u8"手动选择还原", &cfg.manualRestore);
     ImGui::Checkbox(u8"显示过程", &cfg.showProgress);
+
+    // 新增：主题设置
+    ImGui::Separator();
+    ImGui::Text(u8"主题设置:");
+    int theme_choice = (int)cfg.theme;
+    if (ImGui::RadioButton(u8"暗色", &theme_choice, THEME_DARK)) { cfg.theme = THEME_DARK; ApplyTheme(cfg.theme); } ImGui::SameLine();
+    if (ImGui::RadioButton(u8"亮色", &theme_choice, THEME_LIGHT)) { cfg.theme = THEME_LIGHT; ApplyTheme(cfg.theme); } ImGui::SameLine();
+    if (ImGui::RadioButton(u8"经典", &theme_choice, THEME_CLASSIC)) { cfg.theme = THEME_CLASSIC; ApplyTheme(cfg.theme); }
+
+    // 新增：备份命名方式设置
+    ImGui::Separator();
+    ImGui::Text(u8"备份命名方式:");
+    int folder_name_choice = (int)cfg.folderNameType;
+    if (ImGui::RadioButton(u8"按世界名", &folder_name_choice, NAME_BY_WORLD)) { cfg.folderNameType = NAME_BY_WORLD; } ImGui::SameLine();
+    if (ImGui::RadioButton(u8"按描述", &folder_name_choice, NAME_BY_DESC)) { cfg.folderNameType = NAME_BY_DESC; }
+
+    // 新增：自动备份设置
+    ImGui::Separator();
+    ImGui::Text(u8"自动备份设置:");
+    ImGui::InputInt(u8"间隔时间 (分钟)", &cfg.autoBackupInterval);
+    char autoBackupTimeBuf[6];
+    strncpy_s(autoBackupTimeBuf, cfg.autoBackupTime.c_str(), sizeof(autoBackupTimeBuf));
+    if (ImGui::InputText(u8"定时备份时间 (HH:MM)", autoBackupTimeBuf, sizeof(autoBackupTimeBuf))) {
+        cfg.autoBackupTime = autoBackupTimeBuf;
+    }
 
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     if (ImGui::Button(u8"保存并关闭", ImVec2(120, 0))) {
@@ -783,12 +829,140 @@ struct Console
     }
 };
 
-
 //展示控制台窗口——需要在主函数中调用
 static void ShowExampleAppConsole(bool* p_open)
 {
     static Console console;
     console.Draw(u8"MineBackup 监控台", p_open);
+}
+
+//在后台静默执行一个命令行程序（如7z.exe），并等待其完成。
+//这是实现备份和还原功能的核心，避免了GUI卡顿和黑窗口弹出。
+// 参数:
+//   - command: 要执行的完整命令行（宽字符）。
+//   - console: 监控台对象的引用，用于输出日志信息。
+void RunCommandInBackground(wstring command, Console& console) {
+    // CreateProcessW需要一个可写的C-style字符串，所以我们将wstring复制到vector<wchar_t>
+    std::vector<wchar_t> cmd_line(command.begin(), command.end());
+    cmd_line.push_back(L'\0'); // 添加字符串结束符
+
+    STARTUPINFOW si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+    si.dwFlags |= STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE; // 隐藏子进程的窗口
+
+    // 开始创建进程
+    console.AddLog(u8"[提示] 正在执行命令: %s", wstring_to_utf8(command).c_str());
+
+    if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        console.AddLog(u8"[error] 创建进程失败！错误码: %d", GetLastError());
+        return;
+    }
+
+    // 等待子进程执行完毕
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    // 检查子进程的退出代码
+    DWORD exit_code;
+    if (GetExitCodeProcess(pi.hProcess, &exit_code)) {
+        if (exit_code == 0) {
+            console.AddLog(u8"[成功] 命令执行成功，操作完成。");
+        }
+        else {
+            console.AddLog(u8"[error] 命令执行失败，退出代码: %d", exit_code);
+        }
+    }
+    else {
+        console.AddLog(u8"[error] 无法获取进程退出代码。");
+    }
+
+    // 清理句柄
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+}
+
+// 执行单个世界的备份操作。
+// 参数:
+//   - config: 当前使用的配置。
+//   - world:  要备份的世界（名称+描述）。
+//   - console: 监控台对象的引用，用于输出日志信息。
+void DoBackup(const Config config, const std::pair<wstring, wstring> world, Console& console) {
+    console.AddLog(u8"---------- 开始备份 ----------");
+    console.AddLog(u8"准备备份世界: %s", wstring_to_utf8(world.first).c_str());
+
+    // 1. 检查7z.exe是否存在
+    if (!std::filesystem::exists(config.zipPath)) {
+        console.AddLog(u8"[error] 找不到压缩程序: %s", wstring_to_utf8(config.zipPath).c_str());
+        console.AddLog(u8"请在“设置”中指定正确的 7z.exe 路径。");
+        return;
+    }
+
+    // 2. 准备路径
+    wstring sourcePath = config.saveRoot + L"\\" + world.first;
+    wstring destinationFolder = config.backupPath + L"\\" + world.first;
+
+    // 3. 创建备份目标文件夹（如果不存在）
+    try {
+        std::filesystem::create_directories(destinationFolder);
+        console.AddLog(u8"备份目录: %s", wstring_to_utf8(destinationFolder).c_str());
+    }
+    catch (const std::filesystem::filesystem_error& e) {
+        console.AddLog(u8"[error] 创建备份目录失败: %s", e.what());
+        return;
+    }
+
+    // 4. 生成带时间戳的文件名
+    time_t now = time(0);
+    tm ltm;
+    localtime_s(&ltm, &now);
+    wchar_t timeBuf[80];
+    wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+
+    // 如果有描述，使用描述作为文件名；否则用世界名
+    wstring archiveNameBase = world.second.empty() ? world.first : world.second;
+    wstring archivePath = destinationFolder + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+
+    // 5. 构建7-Zip命令行
+    // 格式: "C:\7z.exe" a -t[格式] -mx=[等级] "目标压缩包路径" "源文件夹路径\*"
+    wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + std::to_wstring(config.zipLevel) +
+        L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+
+    // 6. 在后台线程中执行命令
+    RunCommandInBackground(command, console);
+    console.AddLog(u8"---------- 备份结束 ----------");
+}
+
+// 执行单个世界的还原操作。
+// 参数:
+//   - config: 当前使用的配置。
+//   - worldName: 要还原的世界名。
+//   - backupFile: 要用于还原的备份文件名。
+//   - console: 监控台对象的引用，用于输出日志信息。
+void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console) {
+    console.AddLog(u8"---------- 开始还原 ----------");
+    console.AddLog(u8"准备还原世界: %s", wstring_to_utf8(worldName).c_str());
+    console.AddLog(u8"使用备份文件: %s", wstring_to_utf8(backupFile).c_str());
+
+    // 1. 检查7z.exe是否存在
+    if (!std::filesystem::exists(config.zipPath)) {
+        console.AddLog(u8"[error] 找不到压缩程序: %s", wstring_to_utf8(config.zipPath).c_str());
+        console.AddLog(u8"请在“设置”中指定正确的 7z.exe 路径。");
+        return;
+    }
+
+    // 2. 准备路径
+    wstring sourceArchive = config.backupPath + L"\\" + worldName + L"\\" + backupFile;
+    wstring destinationFolder = config.saveRoot + L"\\" + worldName;
+
+    // 3. 构建7-Zip命令行
+    // 格式: "C:\7z.exe" x "源压缩包路径" -o"目标文件夹路径" -y
+    // 'x' 表示带路径解压, '-o' 指定输出目录, '-y' 表示对所有提示回答“是”（例如覆盖文件）
+    wstring command = L"\"" + config.zipPath + L"\" x \"" + sourceArchive + L"\" -o\"" + destinationFolder + L"\" -y";
+
+    // 4. 在后台线程中执行命令
+    RunCommandInBackground(command, console);
+    console.AddLog(u8"---------- 还原结束 ----------");
 }
 
 // Main code
@@ -798,6 +972,8 @@ int main(int, char**)
     _setmode(_fileno(stdin), _O_U16TEXT);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     //初始化
+
+    static Console console;
 
     // Create application window
     //ImGui_ImplWin32_EnableDpiAwareness();
@@ -1027,16 +1203,141 @@ int main(int, char**)
             ImGui::End();
         }
         if (showMainApp) {
+            // 用于跟踪用户在列表中选择的世界
+            static int selectedWorldIndex = -1;
+            // 用于弹出还原窗口
+            static bool openRestorePopup = false;
+
+            // --- 主窗口 ---
             ImGui::Begin(u8"我的世界存档备份器");
 
-            ImGui::Text(u8"欢迎回来！");
-            ImGui::Text(u8"此处将显示备份管理界面。");
-            ShowMainUI();         // 显示主界面上的“设置”按钮
-            ShowSettingsWindow(); // 显示设置窗口
-            ShowExampleAppConsole(&showMainApp); // 显示监控台
-            if (ImGui::Button(u8"退出")) {
-                done = true;
+            // --- 左侧面板：世界列表和操作 ---
+            ImGui::BeginChild(u8"左侧面板", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0), true);
+
+            ImGui::SeparatorText(u8"存档列表");
+
+            // 获取当前配置
+            Config& cfg = configs[currentConfigIndex];
+
+            // 使用表格来显示世界列表，更美观
+            if (ImGui::BeginTable(u8"世界列表", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn(u8"世界名称");
+                ImGui::TableSetupColumn(u8"描述/别名");
+                ImGui::TableHeadersRow();
+
+                for (int i = 0; i < cfg.worlds.size(); ++i) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    // 将每个世界名称作为可选项目
+                    bool is_selected = (selectedWorldIndex == i);
+                    if (ImGui::Selectable(wstring_to_utf8(cfg.worlds[i].first).c_str(), is_selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                        selectedWorldIndex = i; // 更新当前选择的索引
+                    }
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", wstring_to_utf8(cfg.worlds[i].second).c_str());
+                }
+                ImGui::EndTable();
             }
+
+            ImGui::Separator();
+
+            // --- 核心操作按钮 ---
+            // 如果没有选择任何世界，则禁用按钮
+            bool no_world_selected = (selectedWorldIndex == -1);
+            if (no_world_selected) {
+                ImGui::BeginDisabled();
+            }
+
+            if (ImGui::Button(u8"备份选中存档", ImVec2(-1, 0))) {
+                // 创建一个后台线程来执行备份，防止UI卡死
+                std::thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], std::ref(console));
+                backup_thread.detach(); // 分离线程，让它在后台独立运行
+            }
+
+            if (ImGui::Button(u8"还原选中存档", ImVec2(-1, 0))) {
+                openRestorePopup = true; // 打开还原选择弹窗
+                ImGui::OpenPopup(u8"选择备份文件");
+            }
+
+            if (no_world_selected) {
+                ImGui::EndDisabled();
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), u8"请先在上方列表中选择一个存档");
+            }
+
+            // --- 还原文件选择弹窗 ---
+            if (ImGui::BeginPopupModal(u8"选择备份文件", &openRestorePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text(u8"请为世界“%s”选择一个备份文件进行还原:", wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+
+                wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
+                static int selectedBackupIndex = -1;
+                std::vector<wstring> backupFiles;
+
+                // 遍历备份目录，找到所有文件
+                if (std::filesystem::exists(backupDir)) {
+                    for (const auto& entry : std::filesystem::directory_iterator(backupDir)) {
+                        if (entry.is_regular_file()) {
+                            backupFiles.push_back(entry.path().filename().wstring());
+                        }
+                    }
+                }
+
+                // 显示备份文件列表
+                if (ImGui::BeginListBox("##backupfiles", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing()))) {
+                    for (int i = 0; i < backupFiles.size(); ++i) {
+                        const bool is_selected = (selectedBackupIndex == i);
+                        if (ImGui::Selectable(wstring_to_utf8(backupFiles[i]).c_str(), is_selected)) {
+                            selectedBackupIndex = i;
+                        }
+                    }
+                    ImGui::EndListBox();
+                }
+
+                ImGui::Separator();
+
+                // 确认还原按钮
+                bool no_backup_selected = (selectedBackupIndex == -1);
+                if (no_backup_selected) ImGui::BeginDisabled();
+
+                if (ImGui::Button(u8"确认还原", ImVec2(120, 0))) {
+                    // 创建后台线程执行还原
+                    std::thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], std::ref(console));
+                    restore_thread.detach();
+                    openRestorePopup = false; // 关闭弹窗
+                    ImGui::CloseCurrentPopup();
+                }
+                if (no_backup_selected) ImGui::EndDisabled();
+
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (ImGui::Button(u8"取消", ImVec2(120, 0))) {
+                    openRestorePopup = false;
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
+            ImGui::EndChild();
+
+            ImGui::SameLine();
+
+            // --- 右侧面板：监控台和其他 ---
+            ImGui::BeginChild(u8"右侧面板");
+
+            // 显示主界面上的“设置”和“退出”按钮
+            if (ImGui::Button(u8"设置")) showSettings = true;
+            ImGui::SameLine();
+            if (ImGui::Button(u8"退出")) done = true;
+
+            // 显示设置窗口（如果showSettings为true）
+            ShowSettingsWindow();
+
+            // 显示监控台
+            // 注意：我们将静态的console实例传递给它
+            console.Draw(u8"MineBackup 监控台", &showMainApp);
+
+            ImGui::EndChild();
+
 
             ImGui::End();
         }
