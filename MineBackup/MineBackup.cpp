@@ -11,6 +11,7 @@
 #include <fstream>
 #include <shobjidl.h>
 #include <locale>
+#include <vector>
 #include <fcntl.h>
 #include <io.h>
 
@@ -201,8 +202,8 @@ static void LoadConfigs(const wstring& filename = L"config.ini") {
     }
 }
 
-// 当前正在编辑的配置引用
-Config& cfg = configs[currentConfigIndex];
+// 当前正在编辑的配置引用（已移除）
+//Config& cfg = configs[currentConfigIndex];
 
 bool showSettings = false;
 
@@ -213,6 +214,7 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
         MessageBoxW(nullptr, L"无法写入 config.ini！", L"错误", MB_OK | MB_ICONERROR);
         return;
     }
+    out.imbue(locale("chs"));
     out << L"[General]\n";
     out << L"当前使用配置编号=" << currentConfigIndex << L"\n\n";
     for (auto& kv : configs) {
@@ -235,7 +237,7 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
         out << L"手动选择还原=" << (c.manualRestore ? 1 : 0) << L"\n";
         out << L"显示过程=" << (c.showProgress ? 1 : 0) << L"\n\n";
     }
-    out.close();
+    //out.close();
 }
 
 // 主界面按钮触发设置窗口
@@ -261,26 +263,96 @@ static std::string GbkToUtf8(const std::string& gbk)
     return u8str;
 }
 
+//设置窗口
 void ShowSettingsWindow() {
     if (!showSettings) return;
     ImGui::Begin(u8"设置", &showSettings, ImGuiWindowFlags_AlwaysAutoResize);
 
-    // 存档根路径
-    std::string rootBuf = wstring_to_utf8(cfg.saveRoot);
-    char rootBufA[256];
-    strncpy_s(rootBufA, rootBuf.c_str(), sizeof(rootBufA));
-    ImGui::InputText(u8"存档根路径", rootBufA, 256);
-    if (ImGui::Button(u8"选择")) {
-        std::wstring sel = SelectFolderDialog();
-        if (!sel.empty()) {
-            std::string selu8 = wstring_to_utf8(sel);
-            strncpy_s(rootBufA, selu8.c_str(), 256);
+    // ******************************************************************
+    // ** 新增：配置管理 **
+    // ******************************************************************
+    ImGui::SeparatorText(u8"配置管理");
+
+    // 获取当前选中的配置，确保后续UI都作用于正确的配置上
+    // 如果configs为空(例如，首次运行但跳过了向导)，则创建一个临时的
+    if (configs.empty()) {
+        configs[1] = Config();
+        currentConfigIndex = 1;
+    }
+    Config& cfg = configs[currentConfigIndex];
+
+    // 1. 配置选择下拉框
+    std::string current_config_label = u8"配置 " + std::to_string(currentConfigIndex);
+    if (ImGui::BeginCombo(u8"当前配置", current_config_label.c_str())) {
+        for (auto const& [idx, val] : configs) {
+            const bool is_selected = (currentConfigIndex == idx);
+            std::string label = u8"配置 " + std::to_string(idx);
+            if (ImGui::Selectable(label.c_str(), is_selected)) {
+                currentConfigIndex = idx;
+            }
+            if (is_selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    
+    // 2. 添加和删除按钮
+    if (ImGui::Button(u8"添加新配置")) {
+        // 找到最大的现有ID，然后+1作为新ID
+        int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
+        configs[new_index] = Config(); // 创建一个默认配置
+        currentConfigIndex = new_index; // 自动切换到新创建的配置
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(u8"删除当前配置")) {
+        // 增加一个确认弹窗，防止误删
+        if (configs.size() > 1) { // 至少保留一个配置
+            ImGui::OpenPopup(u8"确认删除");
         }
     }
-    cfg.saveRoot = utf8_to_wstring(rootBufA);
+    
+    // 删除确认弹窗的逻辑
+    if (ImGui::BeginPopupModal(u8"确认删除", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text(u8"您确定要删除“配置 %d”吗？\n此操作无法撤销！\n", currentConfigIndex);
+        ImGui::Separator();
+        if (ImGui::Button(u8"确定", ImVec2(120, 0))) {
+            int old_index = currentConfigIndex;
+            configs.erase(old_index);
+            // 切换到剩下的第一个可用配置
+            currentConfigIndex = configs.begin()->first;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(u8"取消", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    ImGui::SeparatorText(u8"当前配置详情");
+    // ******************************************************************
+    // ** 配置详情 (现在会根据上面选择的配置动态显示) **
+    // ******************************************************************
+
+    // 存档根路径
+    char rootBufA[256];
+    strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
+    if (ImGui::Button(u8"选择存放存档的文件夹")) {
+        std::wstring sel = SelectFolderDialog();
+        if (!sel.empty()) {
+            cfg.saveRoot = sel; // 直接赋值给当前配置
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::InputText(u8"存档根路径", rootBufA, 256)) {
+        cfg.saveRoot = utf8_to_wstring(rootBufA);
+    }
+
 
     // 自动扫描 worlds（可选刷新按钮）
-    if (ImGui::Button(u8"扫描存档")) {
+    if (ImGui::Button(u8"扫描存档（根据上方根路径）")) {
         cfg.worlds.clear();
         if (std::filesystem::exists(cfg.saveRoot))
             for (auto& e : std::filesystem::directory_iterator(cfg.saveRoot))
@@ -293,60 +365,62 @@ void ShowSettingsWindow() {
     ImGui::Text(u8"存档名称与描述：");
     for (size_t i = 0; i < cfg.worlds.size(); ++i) {
         ImGui::PushID(int(i));
-        std::string nameA = wstring_to_utf8(cfg.worlds[i].first);
-        std::string descA = wstring_to_utf8(cfg.worlds[i].second);
         char name[256], desc[512];
-        strncpy_s(name, nameA.c_str(), sizeof(name));
-        strncpy_s(desc, descA.c_str(), sizeof(desc));
-        ImGui::InputText(u8"名称", name, 256);
-        ImGui::InputText(u8"描述", desc, 512);
-        cfg.worlds[i].first = utf8_to_wstring(name);
-        cfg.worlds[i].second = utf8_to_wstring(desc);
+        strncpy_s(name, wstring_to_utf8(cfg.worlds[i].first).c_str(), sizeof(name));
+        strncpy_s(desc, wstring_to_utf8(cfg.worlds[i].second).c_str(), sizeof(desc));
+
+        if (ImGui::InputText(u8"名称", name, 256))
+            cfg.worlds[i].first = utf8_to_wstring(name);
+        if (ImGui::InputText(u8"描述", desc, 512))
+            cfg.worlds[i].second = utf8_to_wstring(desc);
+
         ImGui::PopID();
     }
 
     // 其他设置项
-    std::string backupPathA = wstring_to_utf8(cfg.backupPath);
     char buf[256];
-    strncpy_s(buf, backupPathA.c_str(), sizeof(buf));
-    ImGui::InputText(u8"备份路径", buf, 256);
-    if (ImGui::Button(u8"选择")) {
+    strncpy_s(buf, wstring_to_utf8(cfg.backupPath).c_str(), sizeof(buf));
+    if (ImGui::Button(u8"选择备份存放路径")) {
         std::wstring sel = SelectFolderDialog();
         if (!sel.empty()) {
-            std::string selu8 = wstring_to_utf8(sel);
-            strncpy_s(buf, selu8.c_str(), 256);
+            cfg.backupPath = sel;
         }
     }
-    cfg.backupPath = utf8_to_wstring(buf);
+    ImGui::SameLine();
+    if (ImGui::InputText(u8"##备份路径值", buf, 256)) { // 使用##隐藏标签，避免重复
+        cfg.backupPath = utf8_to_wstring(buf);
+    }
 
-    std::string zipPathA = wstring_to_utf8(cfg.zipPath);
-    strncpy_s(buf, zipPathA.c_str(), sizeof(buf));
-    ImGui::InputText(u8"压缩程序", buf, 256);
-    if (ImGui::Button(u8"选择")) {
+    char zipBuf[256];
+    strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
+    if (ImGui::Button(u8"选择压缩程序 7z.exe")) {
         std::wstring sel = SelectFileDialog();
         if (!sel.empty()) {
-            std::string selu8 = wstring_to_utf8(sel);
-            strncpy_s(buf, selu8.c_str(), 256);
+            cfg.zipPath = sel;
         }
     }
-    cfg.zipPath = utf8_to_wstring(buf);
+    ImGui::SameLine();
+    if(ImGui::InputText(u8"##压缩程序路径", zipBuf, 256)) {
+        cfg.zipPath = utf8_to_wstring(zipBuf);
+    }
+    
+    // 压缩格式单选按钮
+    int format_choice = (cfg.zipFormat == L"zip") ? 1 : 0;
+    ImGui::Text(u8"压缩格式:"); ImGui::SameLine();
+    if (ImGui::RadioButton(u8"7z", &format_choice, 0)) { cfg.zipFormat = L"7z"; } ImGui::SameLine();
+    if (ImGui::RadioButton(u8"zip", &format_choice, 1)) { cfg.zipFormat = L"zip"; }
 
-    std::string zipFormatA = wstring_to_utf8(cfg.zipFormat);
-    char zipFormatBuf[16];
-    strncpy_s(zipFormatBuf, zipFormatA.c_str(), sizeof(zipFormatBuf));
-    ImGui::InputText(u8"压缩格式", zipFormatBuf, 16);
-    cfg.zipFormat = utf8_to_wstring(zipFormatBuf);
     ImGui::SliderInt(u8"压缩等级", &cfg.zipLevel, 0, 9);
     ImGui::InputInt(u8"保留数量", &cfg.keepCount);
-
     ImGui::Checkbox(u8"智能备份", &cfg.smartBackup);
     ImGui::Checkbox(u8"备份前还原", &cfg.restoreBefore);
     ImGui::Checkbox(u8"置顶窗口", &cfg.topMost);
     ImGui::Checkbox(u8"手动选择还原", &cfg.manualRestore);
     ImGui::Checkbox(u8"显示过程", &cfg.showProgress);
 
-    if (ImGui::Button(u8"保存并关闭")) {
-        SaveConfigs();
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    if (ImGui::Button(u8"保存并关闭", ImVec2(120, 0))) {
+        SaveConfigs(); // 保存所有配置
         showSettings = false;
     }
     ImGui::End();
@@ -355,28 +429,6 @@ void ShowSettingsWindow() {
 //文件存在判断
 static bool Exists(wstring &files) {
     return std::filesystem::exists(files);
-}
-
-//自适应窗口
-// Demonstrate creating a window which gets auto-resized according to its content.
-static void ShowExampleAppAutoResize(bool* p_open)
-{
-    if (!ImGui::Begin("Example: Auto-resizing window", p_open, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::End();
-        return;
-    }
-    //IMGUI_DEMO_MARKER("Examples/Auto-resizing window");
-
-    static int lines = 10;
-    ImGui::TextUnformatted(
-        "Window will resize every-frame to the size of its content.\n"
-        "Note that you probably don't want to query the window size to\n"
-        "output your content because that would create a feedback loop.");
-    ImGui::SliderInt("Number of lines", &lines, 1, 20);
-    for (int i = 0; i < lines; i++)
-        ImGui::Text("%*sThis is line %d", i * 4, "", i); // Pad with space to extend size horizontally
-    ImGui::End();
 }
 
 // 控制台，演示版本——要改成监控台
@@ -450,13 +502,13 @@ struct Console
 
         // As a specific feature guaranteed by the library, after calling Begin() the last Item represent the title bar.
         // So e.g. IsItemHovered() will return true when hovering the title bar.
-        // Here we create a context menu only available from the title bar.
-        if (ImGui::BeginPopupContextItem())
+        // Here we create a context menu only available from the title bar.(暂时无用
+        /*if (ImGui::BeginPopupContextItem())
         {
             if (ImGui::MenuItem(u8"关闭"))
                 *p_open = false;
             ImGui::EndPopup();
-        }
+        }*/
 
         ImGui::TextWrapped(
             u8"在这个监控台中，你可以看到"
@@ -495,11 +547,11 @@ struct Console
         const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
         if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar))
         {
-            if (ImGui::BeginPopupContextWindow())
+            /*if (ImGui::BeginPopupContextWindow())
             {
-                if (ImGui::Selectable("Clear")) ClearLog();
+                if (ImGui::Selectable("清空")) ClearLog();
                 ImGui::EndPopup();
-            }
+            }*/
 
             // Display every line as a separate entry so we can change their color or add custom widgets.
             // If you only want raw text you can use ImGui::TextUnformatted(log.begin(), log.end());
@@ -562,7 +614,7 @@ struct Console
         // Command-line
         bool reclaim_focus = false;
         ImGuiInputTextFlags input_text_flags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_EscapeClearsAll | ImGuiInputTextFlags_CallbackCompletion | ImGuiInputTextFlags_CallbackHistory;
-        if (ImGui::InputText("Input", InputBuf, IM_ARRAYSIZE(InputBuf), input_text_flags, &TextEditCallbackStub, (void*)this))
+        if (ImGui::InputText(u8"输入", InputBuf, IM_ARRAYSIZE(InputBuf), input_text_flags, &TextEditCallbackStub, (void*)this))
         {
             char* s = InputBuf;
             Strtrim(s);
@@ -658,7 +710,7 @@ struct Console
             if (candidates.Size == 0)
             {
                 // No match
-                AddLog("No match for \"%.*s\"!\n", (int)(word_end - word_start), word_start);
+                AddLog("无法匹配 \"%.*s\"!\n", (int)(word_end - word_start), word_start);
             }
             else if (candidates.Size == 1)
             {
@@ -693,7 +745,7 @@ struct Console
                 }
 
                 // List matches
-                AddLog("Possible matches:\n");
+                AddLog("可能的匹配:\n");
                 for (int i = 0; i < candidates.Size; i++)
                     AddLog("- %s\n", candidates[i]);
             }
@@ -843,68 +895,132 @@ int main(int, char**)
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
-
+        
         if (showConfigWizard) {
+            // 首次启动向导使用的静态变量
             static int page = 0;
-            static std::vector<std::string> savePaths = { "" }; // 初始化时至少有一个
-            static char backupPath[256] = "C:\\Users\\User\\Documents\\Minecraft备份";
-            static char zipPath[256] = "C:\\Program Files\\7-Zip\\7z.exe";
+            static char saveRootPath[256] = ""; // 修改为单个存档根路径
+            static char backupPath[256] = "";
+            static char zipPath[256] = "C:\\Program Files\\7-Zip\\7z.exe"; // 提供一个常用默认值
 
-            ImGui::Begin(u8"首次启动设置向导", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::Begin(u8"首次启动设置向导", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
 
             if (page == 0) {
                 ImGui::Text(u8"欢迎使用 Minecraft 存档备份工具！");
                 ImGui::Separator();
-                ImGui::TextWrapped(u8"本工具用于帮助您自动备份 Minecraft 的存档文件。");
-                if (ImGui::Button(u8"开始配置")) page++;
+                ImGui::TextWrapped(u8"本向导将帮助您设置您的第一套备份配置。");
+                ImGui::TextWrapped(u8"如果您有多个游戏启动器或存档目录，");
+                ImGui::TextWrapped(u8"可以在完成向导后，进入主界面的“设置”中添加更多独立的配置方案。");
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
+                if (ImGui::Button(u8"开始配置", ImVec2(120, 0))) {
+                    page++;
+                }
             }
             else if (page == 1) {
-                ImGui::Text(u8"第1步：选择 Minecraft 存档路径");
-                ImGui::Text(u8"请输入一个或多个 Minecraft 存档路径：");
+                ImGui::Text(u8"第1步：选择 Minecraft 存档根目录");
+                ImGui::TextWrapped(u8"请选择您的 Minecraft 游戏存档所在的文件夹。");
+                ImGui::TextWrapped(u8"通常是游戏根目录下的 'saves' 文件夹。");
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-                for (size_t i = 0; i < savePaths.size(); ++i) {
-                    char buf[256];
-                    strncpy_s(buf, savePaths[i].c_str(), sizeof(buf));
-                    if (ImGui::InputText((u8"路径 " + std::to_string(i + 1)).c_str(), buf, sizeof(buf))) {
-                        savePaths[i] = buf;
+                // 添加“选择文件夹”按钮
+                if (ImGui::Button(u8"选择文件夹...")) {
+                    std::wstring selected_folder = SelectFolderDialog();
+                    if (!selected_folder.empty()) {
+                        std::string sel_utf8 = wstring_to_utf8(selected_folder);
+                        strncpy_s(saveRootPath, sel_utf8.c_str(), sizeof(saveRootPath));
                     }
                 }
+                ImGui::SameLine();
+                ImGui::InputText(u8"存档根路径", saveRootPath, IM_ARRAYSIZE(saveRootPath));
 
-                if (ImGui::Button(u8"添加路径")) {
-                    savePaths.push_back("");
+                ImGui::Dummy(ImVec2(0.0f, 20.0f));
+                if (ImGui::Button(u8"下一步", ImVec2(120, 0))) {
+                    // 简单验证路径非空
+                    if (strlen(saveRootPath) > 0) {
+                        page++;
+                    }
+                    else {
+                        // 可以添加一个弹出提示或文本提示
+                    }
                 }
-
-                ImGui::Text(u8"当前输入了 %d 个路径", (int)savePaths.size());
-                
-                 
-                if (ImGui::Button(u8"下一步")) page++;
             }
             else if (page == 2) {
-                ImGui::Text(u8"第2步：选择备份文件夹路径");
-                if (ImGui::Button(u8"选择备份路径")) {
-                    std::wstring selected = SelectFolderDialog();
-                    if (!selected.empty()) {
-                        std::string selu8 = wstring_to_utf8(selected);
-                        strncpy_s(backupPath, selu8.c_str(), sizeof(backupPath));
+                ImGui::Text(u8"第2步：选择备份文件存放路径");
+                ImGui::TextWrapped(u8"请选择一个用于存放所有存档备份文件的文件夹。");
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+                if (ImGui::Button(u8"选择文件夹...")) {
+                    std::wstring selected_folder = SelectFolderDialog();
+                    if (!selected_folder.empty()) {
+                        std::string sel_utf8 = wstring_to_utf8(selected_folder);
+                        strncpy_s(backupPath, sel_utf8.c_str(), sizeof(backupPath));
                     }
                 }
-                ImGui::InputText(u8"备份路径", backupPath, IM_ARRAYSIZE(backupPath));
-                if (ImGui::Button(u8"下一步")) page++;
+                ImGui::SameLine();
+                ImGui::InputText(u8"备份存放路径", backupPath, IM_ARRAYSIZE(backupPath));
+
+                ImGui::Dummy(ImVec2(0.0f, 20.0f));
+                if (ImGui::Button(u8"上一步", ImVec2(120, 0))) page--;
+                ImGui::SameLine();
+                if (ImGui::Button(u8"下一步", ImVec2(120, 0))) {
+                    if (strlen(backupPath) > 0) {
+                        page++;
+                    }
+                }
             }
             else if (page == 3) {
-                ImGui::Text(u8"第3步：配置压缩程序");
-                if (ImGui::Button(u8"选择 7z.exe")) {
-                    std::wstring selected = SelectFileDialog(); // 支持选择 .exe 文件
-                    if (!selected.empty()) {
-                        std::string selu8 = wstring_to_utf8(selected);
-                        strncpy_s(zipPath, selu8.c_str(), sizeof(zipPath));
+                ImGui::Text(u8"第3步：配置压缩程序 (7-Zip)");
+                ImGui::TextWrapped(u8"本工具需要 7-Zip 来进行压缩。请指定其主程序 7z.exe 的位置。");
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+                if (ImGui::Button(u8"选择 7z.exe...")) {
+                    std::wstring selected_file = SelectFileDialog();
+                    if (!selected_file.empty()) {
+                        std::string sel_utf8 = wstring_to_utf8(selected_file);
+                        strncpy_s(zipPath, sel_utf8.c_str(), sizeof(zipPath));
                     }
                 }
-                ImGui::InputText(u8"7z 路径", zipPath, IM_ARRAYSIZE(zipPath));
-                if (ImGui::Button(u8"完成配置")) {
-                    SaveConfigs();
-                    showConfigWizard = false;
-                    showMainApp = true;
+                ImGui::SameLine();
+                ImGui::InputText(u8"7z.exe 路径", zipPath, IM_ARRAYSIZE(zipPath));
+
+                ImGui::Dummy(ImVec2(0.0f, 20.0f));
+                if (ImGui::Button(u8"上一步", ImVec2(120, 0))) page--;
+                ImGui::SameLine();
+                if (ImGui::Button(u8"完成配置", ImVec2(120, 0))) {
+                    if (strlen(saveRootPath) > 0 && strlen(backupPath) > 0 && strlen(zipPath) > 0) {
+                        // 创建并填充第一个配置
+                        currentConfigIndex = 1;
+                        Config& initialConfig = configs[currentConfigIndex];
+
+                        // 1. 保存向导中收集的路径
+                        initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
+                        initialConfig.backupPath = utf8_to_wstring(backupPath);
+                        initialConfig.zipPath = utf8_to_wstring(zipPath);
+
+                        // 2. 自动扫描存档目录，填充世界列表
+                        if (std::filesystem::exists(initialConfig.saveRoot)) {
+                            for (auto& entry : std::filesystem::directory_iterator(initialConfig.saveRoot)) {
+                                if (entry.is_directory()) {
+                                    initialConfig.worlds.push_back({ entry.path().filename().wstring(), L"" }); // 名称为文件夹名，描述为空
+                                }
+                            }
+                        }
+
+                        // 3. 设置合理的默认值
+                        initialConfig.zipFormat = L"7z";
+                        initialConfig.zipLevel = 5;
+                        initialConfig.keepCount = 10;
+                        initialConfig.smartBackup = true;
+                        initialConfig.restoreBefore = false;
+                        initialConfig.topMost = false;
+                        initialConfig.manualRestore = true;
+                        initialConfig.showProgress = true;
+
+                        // 4. 保存到文件并切换到主应用界面
+                        SaveConfigs();
+                        showConfigWizard = false;
+                        showMainApp = true;
+                    }
                 }
             }
 
@@ -917,6 +1033,7 @@ int main(int, char**)
             ImGui::Text(u8"此处将显示备份管理界面。");
             ShowMainUI();         // 显示主界面上的“设置”按钮
             ShowSettingsWindow(); // 显示设置窗口
+            ShowExampleAppConsole(&showMainApp); // 显示监控台
             if (ImGui::Button(u8"退出")) {
                 done = true;
             }
