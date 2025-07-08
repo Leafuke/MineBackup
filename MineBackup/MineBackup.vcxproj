@@ -143,6 +143,20 @@
     <ClInclude Include="imgui\imstb_rectpack.h" />
     <ClInclude Include="imgui\imstb_textedit.h" />
     <ClInclude Include="imgui\imstb_truetype.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="resource1.h" />
+    <ClInclude Include="resource2.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Resource.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="..\..\..\favicon (1).ico" />
+    <Image Include="..\..\..\favicon (2).ico" />
+    <Image Include="..\..\..\favicon (3).ico" />
+    <Image Include="..\..\..\favicon (4).ico" />
+    <Image Include="..\..\..\favicon.ico" />
+    <Image Include="..\..\..\favicon5.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

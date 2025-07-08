@@ -1,6 +1,7 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_dx11.h"
 #include "imgui/imgui_impl_win32.h"
+#include "resource2.h"
 #include <d3d11.h>
 #include <tchar.h>
 #pragma comment (lib,"d3d11.lib") 
@@ -418,6 +419,7 @@ void ShowSettingsWindow() {
         currentConfigIndex = new_index; // 自动切换到新创建的配置
 
         //设置初始值
+        Config& cfg = configs[currentConfigIndex]; //很关键！
         cfg.zipFormat = L"7z";
         cfg.zipLevel = 5;
         cfg.keepCount = 10;
@@ -443,7 +445,8 @@ void ShowSettingsWindow() {
             int old_index = currentConfigIndex;
             configs.erase(old_index);
             // 切换到剩下的第一个可用配置
-            currentConfigIndex = configs.begin()->first;
+            /*currentConfigIndex = configs.begin()->first;*/
+            currentConfigIndex = 1; //这样不容易出错
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -764,6 +767,7 @@ struct Console
                 bool has_color = false;
                 if (strstr(item, "[error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
                 else if (strncmp(item, "# ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+                else if (strncmp(item, u8"[提示] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
                 if (has_color)
                     ImGui::PushStyleColor(ImGuiCol_Text, color);
                 ImGui::TextUnformatted(item);
@@ -963,6 +967,48 @@ static void ShowExampleAppConsole(bool* p_open)
     console.Draw(u8"MineBackup 监控台", p_open);
 }
 
+// 限制备份文件数量，超出则自动删除最旧的
+void LimitBackupFiles(const std::wstring& folderPath, int limit, Console* console = nullptr)
+{
+    if (limit <= 0) return;
+    namespace fs = std::filesystem;
+    std::vector<fs::directory_entry> files;
+
+    // 收集所有常规文件
+    try {
+        if (!fs::exists(folderPath) || !fs::is_directory(folderPath))
+            return;
+        for (const auto& entry : fs::directory_iterator(folderPath)) {
+            if (entry.is_regular_file())
+                files.push_back(entry);
+        }
+    }
+    catch (const fs::filesystem_error& e) {
+        if (console) console->AddLog(u8"[error] 遍历备份目录失败: %s", e.what());
+        return;
+    }
+
+    // 如果未超出限制，无需处理
+    if ((int)files.size() <= limit) return;
+
+    // 按最后写入时间升序排序（最旧的在前）
+    std::sort(files.begin(), files.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
+        return fs::last_write_time(a) < fs::last_write_time(b);
+        });
+
+    // 删除多余的最旧文件
+    int to_delete = (int)files.size() - limit;
+    for (int i = 0; i < to_delete; ++i) {
+        try {
+            fs::remove(files[i]);
+            if (console) console->AddLog(u8"[提示] 已自动删除旧备份: %s", wstring_to_utf8(files[i].path().filename().wstring()).c_str());
+        }
+        catch (const fs::filesystem_error& e) {
+            if (console) console->AddLog(u8"[error] 删除备份文件失败: %s", e.what());
+        }
+    }
+}
+
 //在后台静默执行一个命令行程序（如7z.exe），并等待其完成。
 //这是实现备份和还原功能的核心，避免了GUI卡顿和黑窗口弹出。
 // 参数:
@@ -1058,6 +1104,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
     // 6. 在后台线程中执行命令
     RunCommandInBackground(command, console);
     console.AddLog(u8"---------- 备份结束 ----------");
+    LimitBackupFiles(destinationFolder, config.keepCount, &console);
 }
 
 // 执行单个世界的还原操作。
@@ -1169,6 +1216,21 @@ int main(int, char**)
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
     //IM_ASSERT(font != nullptr);
+    //加载任务栏图标
+    HICON hIcon = (HICON)LoadImage(
+        GetModuleHandle(NULL),
+        MAKEINTRESOURCE(IDI_ICON5),
+        IMAGE_ICON,
+        0, 0,
+        LR_DEFAULTSIZE
+    );
+
+    if (hIcon) {
+        // 设置大图标（任务栏/Alt+Tab）
+        SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+        // 设置小图标（窗口标题栏）
+        SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+    }
 
     // Our state
     bool show_demo_window = true;
@@ -1179,9 +1241,9 @@ int main(int, char**)
     bool isFirstRun = !filesystem::exists(fileName);
     static bool showConfigWizard = isFirstRun;
     static bool showMainApp = !isFirstRun;
+    ImGui::StyleColorsLight();//默认亮色
     LoadConfigs(fileName);
     ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
-
     // Main loop
     bool done = false;
     while (!done)
@@ -1270,7 +1332,7 @@ int main(int, char**)
                     }
                 }
                 if (errorShow)
-                    ImGui::TextColored(ImVec4(0.8f, 0.1f, 0.1f, 1.0f), u8"路径为空或者文件夹不存在！");
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"路径为空或者文件夹不存在！");
             }
             else if (page == 2) {
                 ImGui::Text(u8"第2步：选择备份文件存放路径");
@@ -1300,7 +1362,7 @@ int main(int, char**)
                     }
                 }
                 if (errorShow)
-                    ImGui::TextColored(ImVec4(0.8f, 0.1f, 0.1f, 1.0f), u8"路径为空或者文件夹不存在！");
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"路径为空或者文件夹不存在！");
             }
             else if (page == 3) {
                 ImGui::Text(u8"第3步：配置压缩程序 (7-Zip)");
@@ -1378,7 +1440,7 @@ int main(int, char**)
             static int selectedWorldIndex = -1;
             // 用于弹出还原窗口
             static bool openRestorePopup = false;
-
+            ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
             // --- 主窗口 ---
             ImGui::Begin(u8"我的世界存档备份器");
 
@@ -1386,7 +1448,6 @@ int main(int, char**)
             ImGui::BeginChild(u8"左侧面板", ImVec2(ImGui::GetContentRegionAvail().x * 0.9f, 0), true);
 
             ImGui::SeparatorText(u8"存档列表");
-
             // 获取当前配置
             Config& cfg = configs[currentConfigIndex];
 
@@ -1452,7 +1513,7 @@ int main(int, char**)
 
             if (no_world_selected) {
                 ImGui::EndDisabled();
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), u8"请先在上方列表中选择一个存档");
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"请先在上方列表中选择一个存档");
             }
 
             if (ImGui::BeginPopupModal(u8"自动备份设置", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
