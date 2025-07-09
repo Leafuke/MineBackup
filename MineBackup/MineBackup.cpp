@@ -1285,6 +1285,21 @@ int main(int, char**)
     ImGui::StyleColorsLight();//默认亮色
     LoadConfigs(fileName);
     ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+    
+    wstring g_7zTempPath;
+    bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
+
+    if (sevenZipExtracted) {
+        console.AddLog(u8"[提示] 已成功释放内置的 7z.exe。本次运行将优先使用该程序。");
+        // C. 如果释放成功，更新所有已加载配置的 zipPath
+        for (auto& [idx, cfg] : configs) {
+            cfg.zipPath = g_7zTempPath;
+        }
+    }
+    else {
+        console.AddLog(u8"[error] 释放内置 7z.exe 失败。程序将回退使用 config.ini 中配置的路径。");
+    }
+    
     // Main loop
     bool done = false;
     while (!done)
@@ -1409,18 +1424,26 @@ int main(int, char**)
                 ImGui::Text(u8"第3步：配置压缩程序 (7-Zip)");
                 ImGui::TextWrapped(u8"本工具需要 7-Zip 来进行压缩。请指定其主程序 7z.exe 的位置。");
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
-                //先寻找电脑上是否存在7z
-                if (filesystem::exists("7z.exe"))
-                {
-                    strncpy_s(zipPath, "7z.exe", sizeof(zipPath));
-                    ImGui::Text(u8"已自动找到压缩程序");
+                // 检查内嵌的7z是否已释放成功
+                if (sevenZipExtracted) {
+                    string extracted_path_utf8 = wstring_to_utf8(g_7zTempPath);
+                    strncpy_s(zipPath, extracted_path_utf8.c_str(), sizeof(zipPath));
+                    ImGui::TextColored(ImVec4(0.4f, 0.7f, 0.4f, 1.0f), u8"已自动使用内置的压缩程序！");
                 }
-                else
-                {
-                    static string zipTemp = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
-                    strncpy_s(zipPath, zipTemp.c_str(), sizeof(zipPath));
-                    if (strlen(zipPath) != 0)
+                else {
+                    // 如果释放失败，执行原来的自动检测逻辑
+                    if (filesystem::exists("7z.exe"))
+                    {
+                        strncpy_s(zipPath, "7z.exe", sizeof(zipPath));
                         ImGui::Text(u8"已自动找到压缩程序");
+                    }
+                    else
+                    {
+                        static string zipTemp = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
+                        strncpy_s(zipPath, zipTemp.c_str(), sizeof(zipPath));
+                        if (strlen(zipPath) != 0)
+                            ImGui::Text(u8"已自动找到压缩程序");
+                    }
                 }
                 if (ImGui::Button(u8"选择 7z.exe...")) {
                     wstring selected_file = SelectFileDialog();
@@ -1710,7 +1733,10 @@ int main(int, char**)
     CleanupDeviceD3D();
     ::DestroyWindow(hwnd);
     ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-    wcin.get(); // Wait for user input before exiting
+    // 清除临时的7zip
+    if (!g_7zTempPath.empty()) {
+        DeleteFileW(g_7zTempPath.c_str());
+    }
     return 0;
 }
 
