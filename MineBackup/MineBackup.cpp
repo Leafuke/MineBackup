@@ -72,12 +72,14 @@ struct Config {
     bool showProgress;
     ThemeType theme = THEME_LIGHT;
     BackupFolderNameType folderNameType = NAME_BY_WORLD;
+    wstring themeColor;
 };
 
 // 全部配置
 wstring Fontss = L"c:\\Windows\\Fonts\\msyh.ttc";
 int currentConfigIndex = 1;
 map<int, Config> configs;
+ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
 // 放在全局变量区域
 struct AutoBackupTask {
@@ -372,6 +374,13 @@ static void LoadConfigs(const string& filename = "config.ini") {
                 cur->zipFonts = val;
                 Fontss = val;
             }
+            else if (key == L"背景颜色") {
+                cur->themeColor = val;
+                float r, g, b, a;
+                if (swscanf_s(val.c_str(), L"%f %f %f %f", &r, &g, &b, &a) == 4) {
+                    clear_color = ImVec4(r, g, b, a);
+                }
+            }
             ApplyTheme(cur->theme);
         }
     }
@@ -412,6 +421,7 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
         out << L"显示过程=" << (c.showProgress ? 1 : 0) << L"\n";
         out << L"主题=" << c.theme << L"\n";
         out << L"字体=" << c.zipFonts << L"\n";
+        out << L"背景颜色=" << c.themeColor << L"\n";
         out << L"备份命名方式=" << c.folderNameType << L"\n";
     }
 }
@@ -471,6 +481,7 @@ void ShowSettingsWindow() {
         cfg.manualRestore = true;
         cfg.showProgress = true;
         cfg.zipFonts = L"c:\\Windows\\Fonts\\msyh.ttc";
+        cfg.themeColor = L"0.45 0.55 0.60 1.00";
     }
     ImGui::SameLine();
     if (ImGui::Button(u8"删除当前配置")) {
@@ -619,6 +630,7 @@ void ShowSettingsWindow() {
     if (ImGui::SliderFloat(u8"窗口透明度", &window_alpha, 0.2f, 1.0f, "%.2f")) {
         ImGui::GetStyle().Alpha = window_alpha;
     }
+    ImGui::ColorEdit3(u8"背景颜色", (float*)&clear_color);
 
     ImGui::Text(u8"字体设置(在 C:\\Windows\\Fonts 路径下，需手动填写):");
     char Fonts[constant1];
@@ -636,6 +648,10 @@ void ShowSettingsWindow() {
 
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     if (ImGui::Button(u8"保存并关闭", ImVec2(120, 0))) {
+        // 将当前颜色同步到配置
+        wchar_t colorBuf[64];
+        swprintf(colorBuf, 64, L"%.2f %.2f %.2f %.2f", clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+        cfg.themeColor = colorBuf;
         SaveConfigs(); // 保存所有配置
         showSettings = false;
     }
@@ -1277,7 +1293,6 @@ int main(int, char**)
     bool show_demo_window = true;
     bool show_another_window = false;
     bool errorShow = false;
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
     string fileName = "config.ini";
     bool isFirstRun = !filesystem::exists(fileName);
     static bool showConfigWizard = isFirstRun;
