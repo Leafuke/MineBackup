@@ -2,7 +2,9 @@
 
 # MineBackup - Minecraft Archive Backup Program
 
-MineBackup is a user-friendly application designed to help you easily back up, restore, and export your game save files. It works with almost any version of Minecraft!
+MineBackup is a user-friendly application designed to help you easily back up, restore, and export your files. It works with almost any version of Minecraft!
+
+Well, you can actually use it to backup any folders in your computer :P
 
 ## 📸Features
 
