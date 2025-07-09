@@ -1706,6 +1706,7 @@ int main(int, char**)
             if (ImGui::Button(u8"设置")) showSettings = true;
             //ImGui::SameLine();
             if (ImGui::Button(u8"退出")) done = true;
+            ImGui::TextLinkOpenURL(u8"检查更新", "github.com/Leafuke/MineBackup/releases");
 
             // 显示设置窗口（如果showSettings为true）
             ShowSettingsWindow();
