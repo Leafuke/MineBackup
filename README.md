@@ -27,7 +27,7 @@ Help documentation is being written.✒️
 
 ## 🛠️Compilation Guide
 
-The language standard for which this code is C++17, and you compile it using compilers such as Visual Studio and VSCode.
+The language standard for which this code is C++17 and you can compile it using compilers such as Visual Studio and VSCode.
 
 ## 📄Project References
 
