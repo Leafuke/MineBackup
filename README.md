@@ -14,7 +14,7 @@ Well, you can actually use it to backup any folders in your computer :P
 - **High-Compression**: Use 7-Zip to compress your archive and save storage space on your computer.
 - **Intelligent**: You can save space by backing up only the changes. (v1.3.0-)
 - **Backup Path**: Set a custom path for your backups according to your storage preferences.
-- **Multilanguage**: We have supported two languages by now, but they can be more with your help! (NOT accessible currently in v1.5.0, but v1.3.0 is ok.)
+- **Multilanguage**: We have supported two languages by now, but they can be more with your help! (NOT accessible currently in v1.5.0, but in v1.3.0, it is ok.)
 
 ## ⚙️Installation
 
@@ -29,7 +29,7 @@ Help documentation is being written.✒️
 
 ## 🛠️Compilation Guide
 
-The language standard for which this code is C++17 and you can compile it using compilers such as Visual Studio and VSCode.
+The language standard for which this code is C++17. Link imgui library.
 
 ## 📄Project References
 
