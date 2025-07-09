@@ -1,20 +1,9 @@
-#include "imgui/imgui.h"
-#include "imgui/imgui_impl_dx11.h"
-#include "imgui/imgui_impl_win32.h"
-#include "resource.h"
-#include "resource2.h"
-#include <d3d11.h>
-#include <tchar.h>
-#pragma comment (lib,"d3d11.lib") 
-//↑需要手动添加d3d11.lib库文件，否则编译会报错。
-#include <windows.h>
+#include "imgui-all.h"
 #include <iostream>
 #include <filesystem>
 #include <fstream>
-#include <shobjidl.h>
 #include <locale>
 #include <codecvt>
-#include <vector>
 #include <fcntl.h>
 #include <io.h>
 #include <thread>
@@ -25,11 +14,6 @@
 #define constant1 256
 #define constant2 512
 using namespace std;
-using std::wstring;
-using std::wifstream;
-using std::wofstream;
-using std::wcout;
-using std::wcin;
 int aaa = 0;
 // Data
 static ID3D11Device* g_pd3dDevice = nullptr;
@@ -51,10 +35,7 @@ vector<wstring> savePaths = { L"" };
 wchar_t backupPath[constant1] = L"";
 wchar_t zipPath[constant1] = L"";
 int compressLevel = 5;
-
-// 每个配置块的结构 枚举 但是这么写其实没必要...
-enum ThemeType { THEME_DARK = 0, THEME_LIGHT = 1, THEME_CLASSIC = 2 };
-enum BackupFolderNameType { NAME_BY_WORLD = 0, NAME_BY_DESC = 1 };
+bool showSettings = false;
 
 struct Config {
     wstring saveRoot;
@@ -70,8 +51,8 @@ struct Config {
     bool topMost;
     bool manualRestore;
     bool showProgress;
-    ThemeType theme = THEME_LIGHT;
-    BackupFolderNameType folderNameType = NAME_BY_WORLD;
+    int theme = 1;
+    int folderNameType = 0;
     wstring themeColor;
 };
 
@@ -90,213 +71,24 @@ struct AutoBackupTask {
 static map<int, AutoBackupTask> g_active_auto_backups; // key: worldIndex, value: task
 static mutex g_task_mutex; // 专门用于保护上面 g_active_auto_backups 的互斥锁
 
+string wstring_to_utf8(const wstring& wstr);
+wstring utf8_to_wstring(const string& str);
+string GbkToUtf8(const string& gbk);
 
-bool Extract7zToTempFile(wstring& extractedPath) {
-    // 用主模块句柄
-    HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_EXE1), L"EXE");
-    if (!hRes) return false;
+bool Extract7zToTempFile(wstring& extractedPath);
+wstring SelectFileDialog(HWND hwndOwner = NULL);
+wstring SelectFolderDialog(HWND hwndOwner = NULL);
 
-    HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
-    if (!hData) return false;
+string GetRegistryValue(const string& keyPath, const string& valueName);
+wstring GetLastOpenTime(const wstring& worldPath);
+wstring GetLastBackupTime(const wstring& backupDir);
 
-    DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
-    if (dataSize == 0) return false;
-
-    LPVOID pData = LockResource(hData);
-    if (!pData) return false;
-
-    wchar_t tempPath[MAX_PATH];
-    if (!GetTempPathW(MAX_PATH, tempPath)) return false;
-
-    wchar_t tempFile[MAX_PATH];
-    if (!GetTempFileNameW(tempPath, L"7z", 0, tempFile)) return false;
-
-    // 改名为7z.exe
-    std::wstring finalPath = tempFile;
-    finalPath += L".exe";
-    MoveFileW(tempFile, finalPath.c_str());
-
-    HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-
-    DWORD bytesWritten;
-    BOOL ok = WriteFile(hFile, pData, dataSize, &bytesWritten, nullptr);
-    CloseHandle(hFile);
-    if (!ok || bytesWritten != dataSize) {
-        DeleteFileW(finalPath.c_str());
-        return false;
-    }
-
-    extractedPath = finalPath;
-    return true;
-}
-
-//选择文件
-wstring SelectFileDialog(HWND hwndOwner = NULL) {
-    IFileDialog* pfd;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
-        IID_IFileDialog, reinterpret_cast<void**>(&pfd));
-
-    if (SUCCEEDED(hr)) {
-        hr = pfd->Show(hwndOwner);
-        if (SUCCEEDED(hr)) {
-            IShellItem* psi;
-            hr = pfd->GetResult(&psi);
-            if (SUCCEEDED(hr)) {
-                PWSTR path = nullptr;
-                psi->GetDisplayName(SIGDN_FILESYSPATH, &path);
-                wstring wpath(path);
-                CoTaskMemFree(path);
-                psi->Release();
-                return wpath;
-            }
-        }
-        pfd->Release();
-    }
-    return L"";
-}
-
-//选择文件夹
-static wstring SelectFolderDialog(HWND hwndOwner = NULL) {
-    IFileDialog* pfd;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
-        IID_IFileDialog, reinterpret_cast<void**>(&pfd));
-
-    if (SUCCEEDED(hr)) {
-        DWORD options;
-        pfd->GetOptions(&options);
-        pfd->SetOptions(options | FOS_PICKFOLDERS); // 设置为选择文件夹
-        hr = pfd->Show(hwndOwner);
-        if (SUCCEEDED(hr)) {
-            IShellItem* psi;
-            hr = pfd->GetResult(&psi);
-            if (SUCCEEDED(hr)) {
-                PWSTR path = nullptr;
-                psi->GetDisplayName(SIGDN_FILESYSPATH, &path);
-                wstring wpath(path);
-                CoTaskMemFree(path);
-                psi->Release();
-                return wpath;
-            }
-        }
-        pfd->Release();
-    }
-    return L"";
-}
-
-// 注册表查询
-string GetRegistryValue(const string& keyPath, const string& valueName)
+inline void ApplyTheme(int theme)
 {
-    HKEY hKey;
-    string valueData;
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        char buffer[1024];
-        DWORD dataSize = sizeof(buffer);
-        if (RegGetValueA(hKey, NULL, valueName.c_str(), RRF_RT_ANY, NULL, buffer, &dataSize) == ERROR_SUCCESS) {
-            valueData = buffer;
-        }
-        RegCloseKey(hKey);
-    }
-    else
-        return "";
-    return valueData;
-}
-
-static wstring GetLastOpenTime(const wstring& worldPath) {
-    try {
-        auto ftime = filesystem::last_write_time(worldPath);
-        // 转换为 system_clock::time_point
-        auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
-            ftime - filesystem::file_time_type::clock::now()
-            + chrono::system_clock::now()
-        );
-        time_t cftime = chrono::system_clock::to_time_t(sctp);
-        wchar_t buf[64];
-        struct tm timeinfo;
-        //wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtime要换成更安全的localtime
-        if (localtime_s(&timeinfo, &cftime) == 0) { 
-            wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
-            return buf;
-        }
-        else {
-            return L"未知";
-        }
-    }
-    catch (...) {
-        return L"未知";
-    }
-}
-
-static wstring GetLastBackupTime(const wstring& backupDir) {
-    time_t latest = 0;
-    try {
-        if (filesystem::exists(backupDir)) {
-            for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-                if (entry.is_regular_file()) {
-                    auto ftime = entry.last_write_time();
-                    // 转换为 system_clock::time_point
-                    auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
-                        ftime - filesystem::file_time_type::clock::now()
-                        + chrono::system_clock::now()
-                    );
-                    time_t cftime = chrono::system_clock::to_time_t(sctp);
-                    if (cftime > latest) latest = cftime;
-                }
-            }
-        }
-        if (latest == 0) return L"无备份";
-        wchar_t buf[64];
-        struct tm timeinfo;
-        //wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtime要换成更安全的localtime
-        if (localtime_s(&timeinfo, &latest) == 0) {
-            wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
-            return buf;
-        }
-        else {
-            return L"未知";
-        }
-    }
-    catch (...) {
-        return L"未知";
-    }
-}
-
-// 辅助函数：wstring <-> utf8 string（使用WinAPI，兼容C++17+）本地多字节编码（GBK）转UTF-8
-static string wstring_to_utf8(const wstring& wstr) {
-    if (wstr.empty()) return string();
-    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), NULL, 0, NULL, NULL);
-    string strTo(size_needed, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
-    return strTo;
-}
-static wstring utf8_to_wstring(const string& str) {
-    if (str.empty()) return wstring();
-    int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), NULL, 0);
-    wstring wstrTo(size_needed, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), &wstrTo[0], size_needed);
-    return wstrTo;
-}
-static string GbkToUtf8(const string& gbk)
-{
-    int lenW = MultiByteToWideChar(CP_ACP, 0, gbk.c_str(), -1, nullptr, 0);
-    wstring wstr(lenW, 0);
-    MultiByteToWideChar(CP_ACP, 0, gbk.c_str(), -1, &wstr[0], lenW);
-
-    int lenU8 = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    string u8str(lenU8, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &u8str[0], lenU8, nullptr, nullptr);
-
-    // 去掉末尾的\0
-    if (!u8str.empty() && u8str.back() == '\0') u8str.pop_back();
-    return u8str;
-}
-
-// 主题应用函数
-void ApplyTheme(ThemeType theme) {
     switch (theme) {
-    case THEME_DARK: ImGui::StyleColorsDark(); break;
-    case THEME_LIGHT: ImGui::StyleColorsLight(); break;
-    case THEME_CLASSIC: ImGui::StyleColorsClassic(); break;
+    case 0: ImGui::StyleColorsDark(); break;
+    case 1: ImGui::StyleColorsLight(); break;
+    case 2: ImGui::StyleColorsClassic(); break;
     }
 }
 
@@ -368,8 +160,11 @@ static void LoadConfigs(const string& filename = "config.ini") {
             else if (key == L"置顶窗口") cur->topMost = (val != L"0");
             else if (key == L"手动选择还原") cur->manualRestore = (val != L"0");
             else if (key == L"显示过程") cur->showProgress = (val != L"0");
-            else if (key == L"主题") cur->theme = (ThemeType)stoi(val);
-            else if (key == L"备份命名方式") cur->folderNameType = (BackupFolderNameType)stoi(val);
+            else if (key == L"备份命名方式") cur->folderNameType = stoi(val);
+            else if (key == L"主题") {
+                cur->theme = stoi(val);
+                ApplyTheme(cur->theme);
+            }
             else if (key == L"字体") {
                 cur->zipFonts = val;
                 Fontss = val;
@@ -381,12 +176,9 @@ static void LoadConfigs(const string& filename = "config.ini") {
                     clear_color = ImVec4(r, g, b, a);
                 }
             }
-            ApplyTheme(cur->theme);
         }
     }
 }
-
-bool showSettings = false;
 
 // 保存
 static void SaveConfigs(const wstring& filename = L"config.ini") {
@@ -423,13 +215,6 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
         out << L"字体=" << c.zipFonts << L"\n";
         out << L"背景颜色=" << c.themeColor << L"\n";
         out << L"备份命名方式=" << c.folderNameType << L"\n";
-    }
-}
-
-// 主界面按钮触发设置窗口
-void ShowMainUI() {
-    if (ImGui::Button(u8"设置")) {
-        showSettings = true;
     }
 }
 
@@ -615,15 +400,15 @@ void ShowSettingsWindow() {
     ImGui::Separator();
     ImGui::Text(u8"备份命名方式:");
     int folder_name_choice = (int)cfg.folderNameType;
-    if (ImGui::RadioButton(u8"按世界名", &folder_name_choice, NAME_BY_WORLD)) { cfg.folderNameType = NAME_BY_WORLD; } ImGui::SameLine();
-    if (ImGui::RadioButton(u8"按描述", &folder_name_choice, NAME_BY_DESC)) { cfg.folderNameType = NAME_BY_DESC; }
+    if (ImGui::RadioButton(u8"按世界名", &folder_name_choice, 0)) { cfg.folderNameType = 0; } ImGui::SameLine();
+    if (ImGui::RadioButton(u8"按描述", &folder_name_choice, 1)) { cfg.folderNameType = 1; }
 
     ImGui::Separator();
     ImGui::Text(u8"主题设置:");
     int theme_choice = (int)cfg.theme;
-    if (ImGui::RadioButton(u8"暗色", &theme_choice, THEME_DARK)) { cfg.theme = THEME_DARK; ApplyTheme(cfg.theme); } ImGui::SameLine();
-    if (ImGui::RadioButton(u8"亮色", &theme_choice, THEME_LIGHT)) { cfg.theme = THEME_LIGHT; ApplyTheme(cfg.theme); } ImGui::SameLine();
-    if (ImGui::RadioButton(u8"经典", &theme_choice, THEME_CLASSIC)) { cfg.theme = THEME_CLASSIC; ApplyTheme(cfg.theme); }
+    if (ImGui::RadioButton(u8"暗色", &theme_choice, 0)) { cfg.theme = 0; ApplyTheme(cfg.theme); } ImGui::SameLine();
+    if (ImGui::RadioButton(u8"亮色", &theme_choice, 1)) { cfg.theme = 1; ApplyTheme(cfg.theme); } ImGui::SameLine();
+    if (ImGui::RadioButton(u8"经典", &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); }
     
     // 透明度设置
     static float window_alpha = ImGui::GetStyle().Alpha;
@@ -656,11 +441,6 @@ void ShowSettingsWindow() {
         showSettings = false;
     }
     ImGui::End();
-}
-
-//文件存在判断
-static bool Exists(wstring& files) {
-    return filesystem::exists(files);
 }
 
 struct Console
@@ -1017,13 +797,6 @@ struct Console
         return 0;
     }
 };
-
-//展示控制台窗口——需要在主函数中调用
-static void ShowExampleAppConsole(bool* p_open)
-{
-    static Console console;
-    console.Draw(u8"MineBackup 监控台", p_open);
-}
 
 // 限制备份文件数量，超出则自动删除最旧的
 void LimitBackupFiles(const std::wstring& folderPath, int limit, Console* console = nullptr)
