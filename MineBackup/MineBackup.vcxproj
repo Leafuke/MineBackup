@@ -158,6 +158,9 @@
     <Image Include="..\..\..\favicon.ico" />
     <Image Include="..\..\..\favicon5.ico" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\7z.exe" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

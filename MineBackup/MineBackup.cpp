@@ -1,6 +1,7 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_dx11.h"
 #include "imgui/imgui_impl_win32.h"
+#include "resource.h"
 #include "resource2.h"
 #include <d3d11.h>
 #include <tchar.h>
@@ -76,7 +77,7 @@ struct Config {
 // 全部配置
 wstring Fontss = L"c:\\Windows\\Fonts\\msyh.ttc";
 int currentConfigIndex = 1;
-std::map<int, Config> configs;
+map<int, Config> configs;
 
 // 放在全局变量区域
 struct AutoBackupTask {
@@ -86,6 +87,47 @@ struct AutoBackupTask {
 
 static map<int, AutoBackupTask> g_active_auto_backups; // key: worldIndex, value: task
 static mutex g_task_mutex; // 专门用于保护上面 g_active_auto_backups 的互斥锁
+
+
+bool Extract7zToTempFile(wstring& extractedPath) {
+    // 用主模块句柄
+    HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_EXE1), L"EXE");
+    if (!hRes) return false;
+
+    HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
+    if (!hData) return false;
+
+    DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
+    if (dataSize == 0) return false;
+
+    LPVOID pData = LockResource(hData);
+    if (!pData) return false;
+
+    wchar_t tempPath[MAX_PATH];
+    if (!GetTempPathW(MAX_PATH, tempPath)) return false;
+
+    wchar_t tempFile[MAX_PATH];
+    if (!GetTempFileNameW(tempPath, L"7z", 0, tempFile)) return false;
+
+    // 改名为7z.exe
+    std::wstring finalPath = tempFile;
+    finalPath += L".exe";
+    MoveFileW(tempFile, finalPath.c_str());
+
+    HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    DWORD bytesWritten;
+    BOOL ok = WriteFile(hFile, pData, dataSize, &bytesWritten, nullptr);
+    CloseHandle(hFile);
+    if (!ok || bytesWritten != dataSize) {
+        DeleteFileW(finalPath.c_str());
+        return false;
+    }
+
+    extractedPath = finalPath;
+    return true;
+}
 
 //选择文件
 wstring SelectFileDialog(HWND hwndOwner = NULL) {
@@ -1166,7 +1208,6 @@ int main(int, char**)
     _setmode(_fileno(stdout), _O_U16TEXT);
     _setmode(_fileno(stdin), _O_U16TEXT);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    //初始化
 
     static Console console;
 
