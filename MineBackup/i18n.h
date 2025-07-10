@@ -9,7 +9,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
         {"BACKUP", u8"备份选中存档"},
         {"RESTORE", u8"还原选中存档"},
         {"EXIT", u8"退出"},
-        {"MAIN_WINDOW_TITLE", u8"我的世界存档备份器 - v1.5.0"},
+        {"MAIN_WINDOW_TITLE", u8"我的世界存档备份器"},
         {"WIZARD_TITLE", u8"首次启动设置向导"},
         {"CONSOLE_TITLE", u8"MineBackup 监控台"},
         {"ERROR_TITLE", u8"错误"},
@@ -213,7 +213,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
         {"INTERVAL_MINUTES", "Interval (minutes)"},
         {"RESTORE_POPUP_TITLE", "Select Backup File"},
         {"RESTORE_PROMPT", "Please select a backup file to restore for world '%s':"},
-        {"CHECK_FOR_UPDATES", "Check for Updates"},
+        {"CHECK_FOR_UPDATES", "Updates"},
         {"WIZARD_WELCOME", "Welcome to the Minecraft Backup Tool!"},
         {"WIZARD_INTRO1", "This wizard will help you set up your first backup configuration."},
         {"WIZARD_INTRO2", "If you have multiple game launchers or save directories,"},
@@ -265,7 +265,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
         {"ERROR_CONFIG_WRITE_FAIL", "Failed to write to config.ini!"}
     }},
 };
-std::string g_CurrentLang = "zh-CN"; // Default language
+std::string g_CurrentLang; // Default language
 const char* lang_codes[] = { "zh-CN", "en-US" };
 const char* langs[] = { u8"简体中文", "English" };
 

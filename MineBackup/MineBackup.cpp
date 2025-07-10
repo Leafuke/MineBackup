@@ -189,7 +189,7 @@ static void LoadConfigs(const string& filename = "config.ini") {
 static void SaveConfigs(const wstring& filename = L"config.ini") {
     wofstream out(filename, ios::binary);
     if (!out.is_open()) {
-        MessageBoxW(nullptr, L"无法写入 config.ini！", L"错误", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, utf8_to_wstring(L("ERROR_CONFIG_WRITE_FAIL")).c_str(), utf8_to_wstring(L("ERROR_TITLE")).c_str(), MB_OK | MB_ICONERROR);
         return;
     }
     //out.imbue(locale("chs"));//不能用这个，变ANSI啦
@@ -478,7 +478,6 @@ struct Console
         Commands.push_back("CLASSIFY");
         AutoScroll = true;                  //自动滚动好呀
         ScrollToBottom = false;             //不用滚动条，但可以鼠标滚
-        AddLog(L("CONSOLE_WELCOME"));
     }
     ~Console()
     {
@@ -602,7 +601,7 @@ struct Console
                 ImVec4 color;
                 bool has_color = false;
                 if (strstr(item, "[error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
-                else if (strncmp(item, "# ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+                else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[INFO] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
                 else if (strncmp(item, u8"[提示] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
                 if (has_color)
                     ImGui::PushStyleColor(ImGuiCol_Text, color);
@@ -996,7 +995,7 @@ int main(int, char**)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
     ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.5", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.1", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -1016,9 +1015,6 @@ int main(int, char**)
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-
-    // Setup Dear ImGui style
-    //ImGui::StyleColorsLight();
 
     // Setup Platform/Renderer backends
     ImGui_ImplWin32_Init(hwnd);
@@ -1068,6 +1064,16 @@ int main(int, char**)
     
     wstring g_7zTempPath;
     bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
+    if (isFirstRun)
+    {
+        LANGID lang_id = GetUserDefaultUILanguage();
+
+        if (lang_id == 2052 || lang_id == 1028) //设置成中文 
+            g_CurrentLang = "zh-CN";
+        else g_CurrentLang = "en-US"; //英文
+    }
+
+    console.AddLog(L("CONSOLE_WELCOME"));
 
     if (sevenZipExtracted) {
         console.AddLog(L("LOG_7Z_EXTRACT_SUCCESS"));
@@ -1203,7 +1209,7 @@ int main(int, char**)
                 if (sevenZipExtracted) {
                     string extracted_path_utf8 = wstring_to_utf8(g_7zTempPath);
                     strncpy_s(zipPath, extracted_path_utf8.c_str(), sizeof(zipPath));
-                    ImGui::TextColored(ImVec4(0.4f, 0.7f, 0.4f, 1.0f), u8"已自动使用内置的压缩程序！");
+                    ImGui::TextColored(ImVec4(0.4f, 0.7f, 0.4f, 1.0f), L("WIZARD_USING_EMBEDDED_7Z"));
                 }
                 else {
                     // 如果释放失败，执行原来的自动检测逻辑
