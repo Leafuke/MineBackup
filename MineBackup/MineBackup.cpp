@@ -1,4 +1,5 @@
 #include "imgui-all.h"
+#include "i18n.h"
 #include <iostream>
 #include <filesystem>
 #include <fstream>
@@ -7,8 +8,6 @@
 #include <fcntl.h>
 #include <io.h>
 #include <thread>
-#include <string>
-#include <map>
 #include <atomic> // 用于线程安全的标志
 #include <mutex>  // 用于互斥锁
 #define constant1 256
@@ -92,6 +91,13 @@ inline void ApplyTheme(int theme)
     }
 }
 
+const char* L(const char* key) {
+    auto it = g_LangTable[g_CurrentLang].find(key);
+    if (it != g_LangTable[g_CurrentLang].end())
+        return it->second.c_str();
+    return key;
+}
+
 // 读取配置文件
 static void LoadConfigs(const string& filename = "config.ini") {
     configs.clear();
@@ -103,77 +109,76 @@ static void LoadConfigs(const string& filename = "config.ini") {
     Config* cur = nullptr;
     while (getline(in, line1)) {
         line = utf8_to_wstring(line1);
-        if (line.empty()) continue;
+        if (line.empty() || line.front() == L'#') continue;
         if (line.front() == L'[' && line.back() == L']') {
             section = line.substr(1, line.size() - 2);
             if (section == L"General") {
                 cur = nullptr;
-                getline(in, line1);
-                line = utf8_to_wstring(line1);
-                auto pos = line.find(L'=');
-                wcout << line;
-                if (pos != wstring::npos && line.find(L"当前使用配置编号=", 0) == 0) {
-                    currentConfigIndex = stoi(line.substr(pos + 1));
-                }
             }
             else if (section.find(L"Config", 0) == 0) {
                 int idx = stoi(section.substr(6));
                 configs[idx] = Config();
                 cur = &configs[idx];
             }
-        }
-        if (cur) {
-            // 键值
+        } else {
             auto pos = line.find(L'=');
             if (pos == wstring::npos) continue;
             wstring key = line.substr(0, pos);
             wstring val = line.substr(pos + 1);
 
-            if (key == L"存档路径") {
-                cur->saveRoot = val;
-                // 自动扫描子目录为世界名
-                if (filesystem::exists(val)) {
-                    for (auto& entry : filesystem::directory_iterator(val)) {
-                        if (entry.is_directory())
-                            cur->worlds.push_back({ entry.path().filename().wstring(), L"" });
+            if (cur) { // Inside a [ConfigN] section
+                if (key == L"SavePath") {
+                    cur->saveRoot = val;
+                    if (filesystem::exists(val)) {
+                        for (auto& entry : filesystem::directory_iterator(val)) {
+                            if (entry.is_directory())
+                                cur->worlds.push_back({ entry.path().filename().wstring(), L"" });
+                        }
+                    }
+                }
+                else if (key == L"WorldData") {
+                    while (getline(in, line1) && line1 != "*") {
+                        line = utf8_to_wstring(line1);
+                        wstring name = line;
+                        if (!getline(in, line1) || line1 == "*") break;
+                        line = utf8_to_wstring(line1);
+                        wstring desc = line;
+                        cur->worlds.push_back({ name, desc });
+                    }
+                }
+                else if (key == L"BackupPath") cur->backupPath = val;
+                else if (key == L"ZipProgram") cur->zipPath = val;
+                else if (key == L"ZipFormat") cur->zipFormat = val;
+                else if (key == L"ZipLevel") cur->zipLevel = stoi(val);
+                else if (key == L"KeepCount") cur->keepCount = stoi(val);
+                else if (key == L"SmartBackup") cur->smartBackup = (val != L"0");
+                else if (key == L"RestoreBeforeBackup") cur->restoreBefore = (val != L"0");
+                else if (key == L"TopMost") cur->topMost = (val != L"0");
+                else if (key == L"ManualRestore") cur->manualRestore = (val != L"0");
+                else if (key == L"ShowProgress") cur->showProgress = (val != L"0");
+                else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
+                else if (key == L"Theme") {
+                    cur->theme = stoi(val);
+                    ApplyTheme(cur->theme);
+                }
+                else if (key == L"Font") {
+                    cur->zipFonts = val;
+                    Fontss = val;
+                }
+                else if (key == L"ThemeColor") {
+                    cur->themeColor = val;
+                    float r, g, b, a;
+                    if (swscanf_s(val.c_str(), L"%f %f %f %f", &r, &g, &b, &a) == 4) {
+                        clear_color = ImVec4(r, g, b, a);
                     }
                 }
             }
-            else if (key.find(L"存档名称+存档描述") == 0) {
-                // 多行直到 '*'
-                while (getline(in, line1) && line1 != "*") {
-                    line = utf8_to_wstring(line1);
-                    wstring name = line;
-                    if (!getline(in, line1) || line1 == "*") break;
-                    line = utf8_to_wstring(line1);
-                    wstring desc = line;
-                    cur->worlds.push_back({ name, desc });
+            else if (section == L"General") { // Inside [General] section
+                if (key == L"CurrentConfig") {
+                    currentConfigIndex = stoi(val);
                 }
-            }
-            else if (key == L"备份路径") cur->backupPath = val;
-            else if (key == L"压缩程序") cur->zipPath = val;
-            else if (key == L"压缩格式") cur->zipFormat = val;
-            else if (key == L"压缩等级") cur->zipLevel = stoi(val);
-            else if (key == L"保留数量") cur->keepCount = stoi(val);
-            else if (key == L"智能备份") cur->smartBackup = (val != L"0");
-            else if (key == L"备份前还原") cur->restoreBefore = (val != L"0");
-            else if (key == L"置顶窗口") cur->topMost = (val != L"0");
-            else if (key == L"手动选择还原") cur->manualRestore = (val != L"0");
-            else if (key == L"显示过程") cur->showProgress = (val != L"0");
-            else if (key == L"备份命名方式") cur->folderNameType = stoi(val);
-            else if (key == L"主题") {
-                cur->theme = stoi(val);
-                ApplyTheme(cur->theme);
-            }
-            else if (key == L"字体") {
-                cur->zipFonts = val;
-                Fontss = val;
-            }
-            else if (key == L"背景颜色") {
-                cur->themeColor = val;
-                float r, g, b, a;
-                if (swscanf_s(val.c_str(), L"%f %f %f %f", &r, &g, &b, &a) == 4) {
-                    clear_color = ImVec4(r, g, b, a);
+                else if (key == L"Language") {
+                    g_CurrentLang = wstring_to_utf8(val);
                 }
             }
         }
@@ -191,53 +196,55 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
     out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
     //out.imbue(locale(out.getloc(), new codecvt_utf8<wchar_t>));//将UTF8转为UTF，现在C++17也不对了……但是我们有define！
     out << L"[General]\n";
-    out << L"当前使用配置编号=" << currentConfigIndex << L"\n\n";
+    out << L"CurrentConfig=" << currentConfigIndex << L"\n";
+    out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n\n";
+
     for (auto& kv : configs) {
         int idx = kv.first;
         Config& c = kv.second;
         out << L"[Config" << idx << L"]\n";
-        out << L"存档路径=" << c.saveRoot << L"\n";
-        out << L"存档名称+存档描述(一行名称一行描述)=\n";
+        out << L"SavePath=" << c.saveRoot << L"\n";
+        out << L"# One line for name, one line for description, terminated by '*'\n";
+        out << L"WorldData=\n";
         for (auto& p : c.worlds)
             out << p.first << L"\n" << p.second << L"\n";
         out << L"*\n";
-        out << L"备份路径=" << c.backupPath << L"\n";
-        out << L"压缩程序=" << c.zipPath << L"\n";
-        out << L"压缩格式=" << c.zipFormat << L"\n";
-        out << L"压缩等级=" << c.zipLevel << L"\n";
-        out << L"保留数量=" << c.keepCount << L"\n";
-        out << L"智能备份=" << (c.smartBackup ? 1 : 0) << L"\n";
-        out << L"备份前还原=" << (c.restoreBefore ? 1 : 0) << L"\n";
-        out << L"置顶窗口=" << (c.topMost ? 1 : 0) << L"\n";
-        out << L"手动选择还原=" << (c.manualRestore ? 1 : 0) << L"\n";
-        out << L"显示过程=" << (c.showProgress ? 1 : 0) << L"\n";
-        out << L"主题=" << c.theme << L"\n";
-        out << L"字体=" << c.zipFonts << L"\n";
-        out << L"背景颜色=" << c.themeColor << L"\n";
-        out << L"备份命名方式=" << c.folderNameType << L"\n";
+        out << L"BackupPath=" << c.backupPath << L"\n";
+        out << L"ZipProgram=" << c.zipPath << L"\n";
+        out << L"ZipFormat=" << c.zipFormat << L"\n";
+        out << L"ZipLevel=" << c.zipLevel << L"\n";
+        out << L"KeepCount=" << c.keepCount << L"\n";
+        out << L"SmartBackup=" << (c.smartBackup ? 1 : 0) << L"\n";
+        out << L"RestoreBeforeBackup=" << (c.restoreBefore ? 1 : 0) << L"\n";
+        out << L"TopMost=" << (c.topMost ? 1 : 0) << L"\n";
+        out << L"ManualRestore=" << (c.manualRestore ? 1 : 0) << L"\n";
+        out << L"ShowProgress=" << (c.showProgress ? 1 : 0) << L"\n";
+        out << L"Theme=" << c.theme << L"\n";
+        out << L"Font=" << c.zipFonts << L"\n";
+        out << L"ThemeColor=" << c.themeColor << L"\n";
+        out << L"BackupNaming=" << c.folderNameType << L"\n\n";
     }
 }
 
 //设置窗口
 void ShowSettingsWindow() {
     if (!showSettings) return;
-    ImGui::Begin(u8"设置", &showSettings, ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::SeparatorText(u8"配置管理");
+    ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::SeparatorText(L("CONFIG_MANAGEMENT"));
 
-    // 获取当前选中的配置，确保后续UI都作用于正确的配置上
-    // 如果configs为空(例如，首次运行但跳过了向导)，则创建一个临时的
     if (configs.empty()) {
         configs[1] = Config();
         currentConfigIndex = 1;
     }
     Config& cfg = configs[currentConfigIndex];
 
-    // 1. 配置选择下拉框
-    string current_config_label = u8"配置 " + to_string(currentConfigIndex);
-    if (ImGui::BeginCombo(u8"当前配置", current_config_label.c_str())) {
+    // 1. Config selection dropdown
+    string current_config_label = string(L("CONFIG_N")) + to_string(currentConfigIndex);
+    if (ImGui::BeginCombo(L("CURRENT_CONFIG"), current_config_label.c_str())) {
         for (auto const& [idx, val] : configs) {
             const bool is_selected = (currentConfigIndex == idx);
-            string label = u8"配置 " + to_string(idx);
+            string label = string(L("CONFIG_N")) + to_string(idx);
+
             if (ImGui::Selectable(label.c_str(), is_selected)) {
                 currentConfigIndex = idx;
             }
@@ -248,72 +255,80 @@ void ShowSettingsWindow() {
         ImGui::EndCombo();
     }
 
-    // 2. 添加和删除按钮
-    if (ImGui::Button(u8"添加新配置")) {
-        // 找到最大的现有ID，然后+1作为新ID
+    // 2. Add and delete buttons
+    if (ImGui::Button(L("BUTTON_ADD_CONFIG"))) {
         int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
-        configs[new_index] = Config(); // 创建一个默认配置
-        currentConfigIndex = new_index; // 自动切换到新创建的配置
+        configs[new_index] = Config(); // Create default config
+        currentConfigIndex = new_index; // Switch to the new one
 
-        //设置初始值
-        Config& cfg = configs[currentConfigIndex]; //很关键！
-        cfg.zipFormat = L"7z";
-        cfg.zipLevel = 5;
-        cfg.keepCount = 10;
-        cfg.smartBackup = true;
-        cfg.restoreBefore = false;
-        cfg.topMost = false;
-        cfg.manualRestore = true;
-        cfg.showProgress = true;
-        cfg.zipFonts = L"c:\\Windows\\Fonts\\msyh.ttc";
-        cfg.themeColor = L"0.45 0.55 0.60 1.00";
+        Config& new_cfg = configs[currentConfigIndex];
+        new_cfg.zipFormat = L"7z";
+        new_cfg.zipLevel = 5;
+        new_cfg.keepCount = 10;
+        new_cfg.smartBackup = true;
+        new_cfg.restoreBefore = false;
+        new_cfg.topMost = false;
+        new_cfg.manualRestore = true;
+        new_cfg.showProgress = true;
+        new_cfg.zipFonts = L"c:\\Windows\\Fonts\\msyh.ttc";
+        new_cfg.themeColor = L"0.45 0.55 0.60 1.00";
     }
     ImGui::SameLine();
-    if (ImGui::Button(u8"删除当前配置")) {
-        if (configs.size() > 1) { // 至少保留一个配置
-            ImGui::OpenPopup(u8"确认删除");
+    if (ImGui::Button(L("BUTTON_DELETE_CONFIG"))) {
+        if (configs.size() > 1) { // Keep at least one config
+            ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
         }
     }
 
-    // 删除确认弹窗的逻辑
-    if (ImGui::BeginPopupModal(u8"确认删除", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text(u8"您确定要删除“配置 %d”吗？\n此操作无法撤销！\n", currentConfigIndex);
+    // Deletion confirmation popup
+    if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex);
         ImGui::Separator();
-        if (ImGui::Button(u8"确定", ImVec2(120, 0))) {
-            int old_index = currentConfigIndex;
-            configs.erase(old_index);
-            // 切换到剩下的第一个可用配置
-            /*currentConfigIndex = configs.begin()->first;*/
-            currentConfigIndex = 1; //这样不容易出错
+        if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+            configs.erase(currentConfigIndex);
+            currentConfigIndex = configs.begin()->first;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(u8"取消", ImVec2(120, 0))) {
+        if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
 
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
-    ImGui::SeparatorText(u8"当前配置详情");
+    ImGui::SeparatorText(L("CURRENT_CONFIG_DETAILS"));
 
-    // 存档根路径
+    // Language selection
+    int lang_idx = 0;
+    for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
+        if (g_CurrentLang == lang_codes[i]) {
+            lang_idx = i;
+            break;
+        }
+    }
+    if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
+        g_CurrentLang = lang_codes[lang_idx];
+        //ReloadFonts(); // Reload fonts for the new language
+    }
+
+
+    // Saves root path
     char rootBufA[constant1];
     strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
-    if (ImGui::Button(u8"选择存放存档的文件夹")) {
+    if (ImGui::Button(L("BUTTON_SELECT_SAVES_DIR"))) {
         wstring sel = SelectFolderDialog();
         if (!sel.empty()) {
-            cfg.saveRoot = sel; // 直接赋值给当前配置
+            cfg.saveRoot = sel;
         }
     }
     ImGui::SameLine();
-    if (ImGui::InputText(u8"存档根路径", rootBufA, constant1)) {
+    if (ImGui::InputText(L("SAVES_ROOT_PATH"), rootBufA, constant1)) {
         cfg.saveRoot = utf8_to_wstring(rootBufA);
     }
 
-
-    // 自动扫描 worlds（可选刷新按钮）
-    if (ImGui::Button(u8"扫描存档（根据上方根路径）")) {
+    // Auto-scan worlds
+    if (ImGui::Button(L("BUTTON_SCAN_SAVES"))) {
         cfg.worlds.clear();
         if (filesystem::exists(cfg.saveRoot))
             for (auto& e : filesystem::directory_iterator(cfg.saveRoot))
@@ -321,123 +336,118 @@ void ShowSettingsWindow() {
                     cfg.worlds.push_back({ e.path().filename().wstring(), L"" });
     }
 
-    // 每个存档的名称+描述编辑
+    // World name + description editor
     ImGui::Separator();
-    ImGui::Text(u8"存档名称与描述：");
+    ImGui::Text(L("WORLD_NAME_AND_DESC"));
     for (size_t i = 0; i < cfg.worlds.size(); ++i) {
         ImGui::PushID(int(i));
         char name[constant1], desc[constant2];
         strncpy_s(name, wstring_to_utf8(cfg.worlds[i].first).c_str(), sizeof(name));
         strncpy_s(desc, wstring_to_utf8(cfg.worlds[i].second).c_str(), sizeof(desc));
 
-        if (ImGui::InputText(u8"名称", name, constant1))
+        if (ImGui::InputText(L("WORLD_NAME"), name, constant1))
             cfg.worlds[i].first = utf8_to_wstring(name);
-        if (ImGui::InputText(u8"描述", desc, constant2))
+        if (ImGui::InputText(L("WORLD_DESC"), desc, constant2))
             cfg.worlds[i].second = utf8_to_wstring(desc);
 
         ImGui::PopID();
     }
 
-    // 其他设置项
+    // Other settings
     char buf[constant1];
     strncpy_s(buf, wstring_to_utf8(cfg.backupPath).c_str(), sizeof(buf));
-    if (ImGui::Button(u8"选择备份存放路径")) {
+    if (ImGui::Button(L("BUTTON_SELECT_BACKUP_DIR"))) {
         wstring sel = SelectFolderDialog();
         if (!sel.empty()) {
             cfg.backupPath = sel;
         }
     }
     ImGui::SameLine();
-    if (ImGui::InputText(u8"##备份路径值", buf, constant1)) { // 使用##隐藏标签，避免重复
+    if (ImGui::InputText(L("BACKUP_DEST_PATH_LABEL"), buf, constant1)) {
         cfg.backupPath = utf8_to_wstring(buf);
     }
 
     char zipBuf[constant1];
     strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
-    //先寻找电脑上是否存在7z
-    if (filesystem::exists("7z.exe") && cfg.zipPath.empty())
-    {
+    if (filesystem::exists("7z.exe") && cfg.zipPath.empty()) {
         cfg.zipPath = L"7z.exe";
-        ImGui::Text(u8"已自动找到压缩程序");
+        ImGui::Text(L("AUTODETECTED_7Z"));
     }
-    else if(cfg.zipPath.empty())
-    {
-        string zipPath = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
-        cfg.zipPath = utf8_to_wstring(zipPath);
-        if(!zipPath.empty())
-            ImGui::Text(u8"已自动找到压缩程序");
+    else if (cfg.zipPath.empty()) {
+        string zipPathStr = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
+        if (filesystem::exists(zipPathStr)) {
+            cfg.zipPath = utf8_to_wstring(zipPathStr);
+            ImGui::Text(L("AUTODETECTED_7Z"));
+        }
     }
-    if (ImGui::Button(u8"选择压缩程序 7z.exe")) {
+    if (ImGui::Button(L("BUTTON_SELECT_7Z"))) {
         wstring sel = SelectFileDialog();
         if (!sel.empty()) {
             cfg.zipPath = sel;
         }
     }
     ImGui::SameLine();
-    if (ImGui::InputText(u8"##压缩程序路径", zipBuf, constant1)) {
+    if (ImGui::InputText(L("7Z_PATH_LABEL"), zipBuf, constant1)) {
         cfg.zipPath = utf8_to_wstring(zipBuf);
     }
 
-    // 压缩格式单选按钮
-    static int format_choice = 0;//默认7z
-    format_choice = (cfg.zipFormat == L"zip") ? 1 : 0;
-    ImGui::Text(u8"压缩格式:"); ImGui::SameLine();
-    if (ImGui::RadioButton(u8"7z", &format_choice, 0)) { cfg.zipFormat = L"7z"; } ImGui::SameLine();
-    if (ImGui::RadioButton(u8"zip", &format_choice, 1)) { cfg.zipFormat = L"zip"; }
+    // Compression format
+    static int format_choice = (cfg.zipFormat == L"zip") ? 1 : 0;
+    ImGui::Text(L("COMPRESSION_FORMAT")); ImGui::SameLine();
+    if (ImGui::RadioButton("7z", &format_choice, 0)) { cfg.zipFormat = L"7z"; } ImGui::SameLine();
+    if (ImGui::RadioButton("zip", &format_choice, 1)) { cfg.zipFormat = L"zip"; }
 
-    ImGui::SliderInt(u8"压缩等级", &cfg.zipLevel, 0, 9);
-    ImGui::InputInt(u8"保留数量", &cfg.keepCount);
-    ImGui::Checkbox(u8"智能备份", &cfg.smartBackup);
-    ImGui::SameLine();
-    ImGui::Checkbox(u8"备份前还原", &cfg.restoreBefore);
-    ImGui::SameLine();
-    ImGui::Checkbox(u8"置顶窗口", &cfg.topMost);
-    ImGui::SameLine();
-    ImGui::Checkbox(u8"手动选择还原", &cfg.manualRestore);
-    ImGui::SameLine();
-    ImGui::Checkbox(u8"显示过程", &cfg.showProgress);
+    ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
+    ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
+    ImGui::Checkbox(L("SMART_BACKUP"), &cfg.smartBackup); ImGui::SameLine();
+    ImGui::Checkbox(L("RESTORE_BEFORE_BACKUP"), &cfg.restoreBefore); ImGui::SameLine();
+    ImGui::Checkbox(L("ALWAYS_ON_TOP"), &cfg.topMost);
+    ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
+    ImGui::Checkbox(L("SHOW_PROGRESS"), &cfg.showProgress);
 
     ImGui::Separator();
-    ImGui::Text(u8"备份命名方式:");
+    ImGui::Text(L("BACKUP_NAMING"));
     int folder_name_choice = (int)cfg.folderNameType;
-    if (ImGui::RadioButton(u8"按世界名", &folder_name_choice, 0)) { cfg.folderNameType = 0; } ImGui::SameLine();
-    if (ImGui::RadioButton(u8"按描述", &folder_name_choice, 1)) { cfg.folderNameType = 1; }
+    if (ImGui::RadioButton(L("NAME_BY_WORLD"), &folder_name_choice, 0)) { cfg.folderNameType = 0; } ImGui::SameLine();
+    if (ImGui::RadioButton(L("NAME_BY_DESC"), &folder_name_choice, 1)) { cfg.folderNameType = 1; }
 
     ImGui::Separator();
-    ImGui::Text(u8"主题设置:");
+    ImGui::Text(L("THEME_SETTINGS"));
     int theme_choice = (int)cfg.theme;
-    if (ImGui::RadioButton(u8"暗色", &theme_choice, 0)) { cfg.theme = 0; ApplyTheme(cfg.theme); } ImGui::SameLine();
-    if (ImGui::RadioButton(u8"亮色", &theme_choice, 1)) { cfg.theme = 1; ApplyTheme(cfg.theme); } ImGui::SameLine();
-    if (ImGui::RadioButton(u8"经典", &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); }
-    
-    // 透明度设置
+    if (ImGui::RadioButton(L("THEME_DARK"), &theme_choice, 0)) { cfg.theme = 0; ApplyTheme(cfg.theme); } ImGui::SameLine();
+    if (ImGui::RadioButton(L("THEME_LIGHT"), &theme_choice, 1)) { cfg.theme = 1; ApplyTheme(cfg.theme); } ImGui::SameLine();
+    if (ImGui::RadioButton(L("THEME_CLASSIC"), &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); }
+
     static float window_alpha = ImGui::GetStyle().Alpha;
-    if (ImGui::SliderFloat(u8"窗口透明度", &window_alpha, 0.2f, 1.0f, "%.2f")) {
+    if (ImGui::SliderFloat(L("WINDOW_OPACITY"), &window_alpha, 0.2f, 1.0f, "%.2f")) {
         ImGui::GetStyle().Alpha = window_alpha;
     }
-    ImGui::ColorEdit3(u8"背景颜色", (float*)&clear_color);
+    ImGui::ColorEdit3(L("BG_COLOR"), (float*)&clear_color);
 
-    ImGui::Text(u8"字体设置(在 C:\\Windows\\Fonts 路径下，需手动填写):");
+    ImGui::Text(L("FONT_SETTINGS"));
     char Fonts[constant1];
     strncpy_s(Fonts, wstring_to_utf8(cfg.zipFonts).c_str(), sizeof(Fonts));
-    if (ImGui::Button(u8"选择字体存放路径")) {
+    if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
         wstring sel = SelectFileDialog();
         if (!sel.empty()) {
             cfg.zipFonts = sel;
+            Fontss = sel;
+            //ReloadFonts();
         }
     }
     ImGui::SameLine();
-    if (ImGui::InputText(u8"##字体路径值", Fonts, constant1)) {
+    if (ImGui::InputText("##zipFontsValue", Fonts, constant1)) {
         cfg.zipFonts = utf8_to_wstring(Fonts);
+        Fontss = cfg.zipFonts;
+        //ReloadFonts();
     }
 
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
-    if (ImGui::Button(u8"保存并关闭", ImVec2(120, 0))) {
-        // 将当前颜色同步到配置
+    if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(120, 0))) {
         wchar_t colorBuf[64];
         swprintf(colorBuf, 64, L"%.2f %.2f %.2f %.2f", clear_color.x, clear_color.y, clear_color.z, clear_color.w);
         cfg.themeColor = colorBuf;
-        SaveConfigs(); // 保存所有配置
+        SaveConfigs();
         showSettings = false;
     }
     ImGui::End();
@@ -468,7 +478,7 @@ struct Console
         Commands.push_back("CLASSIFY");
         AutoScroll = true;                  //自动滚动好呀
         ScrollToBottom = false;             //不用滚动条，但可以鼠标滚
-        AddLog(u8"欢迎使用 MineBackup 状态监控台");
+        AddLog(L("CONSOLE_WELCOME"));
     }
     ~Console()
     {
@@ -524,37 +534,25 @@ struct Console
             ImGui::EndPopup();
         }*/
 
-        ImGui::TextWrapped(
-            u8"在这个监控台中，你可以看到"
-            u8"运行错误提示、存档备份状态、");
-        ImGui::TextWrapped(u8"输入'HELP'来查看帮助");
+        ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT1"));
+        ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT2"));
 
-        // TODO: display items starting from the bottom
-
-        //if (ImGui::SmallButton("Add Debug Text")) { AddLog("%d some text", Items.Size); AddLog("some more text"); AddLog("display very important message here!"); }
-        //ImGui::SameLine();
-        /*if (ImGui::SmallButton("Add Debug Error")) { AddLog("[error] wrong"); }
-        ImGui::SameLine();*/
-        if (ImGui::SmallButton(u8"清空")) { ClearLog(); }
+        if (ImGui::SmallButton(L("BUTTON_CLEAR"))) { ClearLog(); }
         ImGui::SameLine();
-        bool copy_to_clipboard = ImGui::SmallButton(u8"复制");
-        //static float t = 0.0f; if (ImGui::GetTime() - t > 0.02f) { t = ImGui::GetTime(); AddLog("Spam %f", t); }
-
+        bool copy_to_clipboard = ImGui::SmallButton(L("BUTTON_COPY"));
         ImGui::Separator();
 
-        // Options menu
-        if (ImGui::BeginPopup(u8"选项"))
+        if (ImGui::BeginPopup(L("BUTTON_OPTIONS")))
         {
-            ImGui::Checkbox(u8"自动滚动", &AutoScroll);
+            ImGui::Checkbox(L("CONSOLE_AUTO_SCROLL"), &AutoScroll);
             ImGui::EndPopup();
         }
 
-        // Options, Filter
         ImGui::SetNextItemShortcut(ImGuiMod_Ctrl | ImGuiKey_O, ImGuiInputFlags_Tooltip);
-        if (ImGui::Button(u8"选项"))
-            ImGui::OpenPopup(u8"选项");
+        if (ImGui::Button(L("BUTTON_OPTIONS")))
+            ImGui::OpenPopup(L("BUTTON_OPTIONS"));
         ImGui::SameLine();
-        Filter.Draw(u8"筛选器 (\"完成,提示\") (\"error\")", 180);
+        Filter.Draw(L("CONSOLE_FILTER_HINT"), 180);
         ImGui::Separator();
 
         // Reserve enough left-over height for 1 separator + 1 input text
@@ -629,7 +627,7 @@ struct Console
         // Command-line
         bool reclaim_focus = false;
         ImGuiInputTextFlags input_text_flags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_EscapeClearsAll | ImGuiInputTextFlags_CallbackCompletion | ImGuiInputTextFlags_CallbackHistory;
-        if (ImGui::InputText(u8"输入", InputBuf, IM_ARRAYSIZE(InputBuf), input_text_flags, &TextEditCallbackStub, (void*)this))
+        if (ImGui::InputText(L("CONSOLE_INPUT_LABEL"), InputBuf, IM_ARRAYSIZE(InputBuf), input_text_flags, &TextEditCallbackStub, (void*)this))
         {
             char* s = InputBuf;
             Strtrim(s);
@@ -682,7 +680,7 @@ struct Console
         }
         else
         {
-            AddLog("Unknown command: '%s'\n", command_line);
+            AddLog(L("CONSOLE_CMD_UNKNOWN"), command_line);
         }
 
         // On command input, we scroll to bottom even if AutoScroll==false
@@ -698,14 +696,10 @@ struct Console
 
     int     TextEditCallback(ImGuiInputTextCallbackData* data)
     {
-        //AddLog("cursor: %d, selection: %d-%d", data->CursorPos, data->SelectionStart, data->SelectionEnd);
         switch (data->EventFlag)
         {
         case ImGuiInputTextFlags_CallbackCompletion:
         {
-            // Example of TEXT COMPLETION
-
-            // Locate beginning of current word
             const char* word_end = data->Buf + data->CursorPos;
             const char* word_start = word_end;
             while (word_start > data->Buf)
@@ -725,7 +719,7 @@ struct Console
             if (candidates.Size == 0)
             {
                 // No match
-                AddLog("无法匹配 \"%.*s\"!\n", (int)(word_end - word_start), word_start);
+                AddLog(L("CONSOLE_CMD_MATCH_NONE"), (int)(word_end - word_start), word_start);
             }
             else if (candidates.Size == 1)
             {
@@ -760,7 +754,7 @@ struct Console
                 }
 
                 // List matches
-                AddLog("可能的匹配:\n");
+                AddLog(L("CONSOLE_CMD_MATCH_MULTIPLE"));
                 for (int i = 0; i < candidates.Size; i++)
                     AddLog("- %s\n", candidates[i]);
             }
@@ -815,7 +809,7 @@ void LimitBackupFiles(const std::wstring& folderPath, int limit, Console* consol
         }
     }
     catch (const fs::filesystem_error& e) {
-        if (console) console->AddLog(u8"[error] 遍历备份目录失败: %s", e.what());
+        if (console) console->AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
         return;
     }
 
@@ -832,10 +826,10 @@ void LimitBackupFiles(const std::wstring& folderPath, int limit, Console* consol
     for (int i = 0; i < to_delete; ++i) {
         try {
             fs::remove(files[i]);
-            if (console) console->AddLog(u8"[提示] 已自动删除旧备份: %s", wstring_to_utf8(files[i].path().filename().wstring()).c_str());
+            if (console) console->AddLog(L("LOG_DELETE_OLD_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
         }
         catch (const fs::filesystem_error& e) {
-            if (console) console->AddLog(u8"[error] 删除备份文件失败: %s", e.what());
+            if (console) console->AddLog(L("LOG_ERROR_DELETE_BACKUP"), e.what());
         }
     }
 }
@@ -857,10 +851,10 @@ void RunCommandInBackground(wstring command, Console& console) {
     si.wShowWindow = SW_HIDE; // 隐藏子进程的窗口
 
     // 开始创建进程
-    console.AddLog(u8"[提示] 正在执行命令: %s", wstring_to_utf8(command).c_str());
+    console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
 
     if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        console.AddLog(u8"[error] 创建进程失败！错误码: %d", GetLastError());
+        console.AddLog(L("LOG_ERROR_CREATE_PROCESS"), GetLastError());
         return;
     }
 
@@ -871,14 +865,14 @@ void RunCommandInBackground(wstring command, Console& console) {
     DWORD exit_code;
     if (GetExitCodeProcess(pi.hProcess, &exit_code)) {
         if (exit_code == 0) {
-            console.AddLog(u8"[成功] 命令执行成功，操作完成。");
+            console.AddLog(L("LOG_SUCCESS_CMD"));
         }
         else {
-            console.AddLog(u8"[error] 命令执行失败，退出代码: %d", exit_code);
+            console.AddLog(L("LOG_ERROR_CMD_FAILED"), exit_code);
         }
     }
     else {
-        console.AddLog(u8"[error] 无法获取进程退出代码。");
+        console.AddLog(L("LOG_ERROR_GET_EXIT_CODE"));
     }
 
     // 清理句柄
@@ -892,13 +886,12 @@ void RunCommandInBackground(wstring command, Console& console) {
 //   - world:  要备份的世界（名称+描述）。
 //   - console: 监控台对象的引用，用于输出日志信息。
 void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console) {
-    console.AddLog(u8"---------- 开始备份 ----------");
-    console.AddLog(u8"准备备份世界: %s", wstring_to_utf8(world.first).c_str());
+    console.AddLog(L("LOG_BACKUP_START_HEADER"));
+    console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(world.first).c_str());
 
-    // 1. 检查7z.exe是否存在
     if (!filesystem::exists(config.zipPath)) {
-        console.AddLog(u8"[error] 找不到压缩程序: %s", wstring_to_utf8(config.zipPath).c_str());
-        console.AddLog(u8"请在“设置”中指定正确的 7z.exe 路径。");
+        console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
+        console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
         return;
     }
 
@@ -909,10 +902,10 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
     // 3. 创建备份目标文件夹（如果不存在）
     try {
         filesystem::create_directories(destinationFolder);
-        console.AddLog(u8"备份目录: %s", wstring_to_utf8(destinationFolder).c_str());
+        console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder).c_str());
     }
     catch (const filesystem::filesystem_error& e) {
-        console.AddLog(u8"[error] 创建备份目录失败: %s", e.what());
+        console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
         return;
     }
 
@@ -934,7 +927,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
     // 6. 在后台线程中执行命令
     RunCommandInBackground(command, console);
-    console.AddLog(u8"---------- 备份结束 ----------");
+    console.AddLog(L("LOG_BACKUP_END_HEADER"));
     LimitBackupFiles(destinationFolder, config.keepCount, &console);
 }
 
@@ -945,14 +938,14 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 //   - backupFile: 要用于还原的备份文件名。
 //   - console: 监控台对象的引用，用于输出日志信息。
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console) {
-    console.AddLog(u8"---------- 开始还原 ----------");
-    console.AddLog(u8"准备还原世界: %s", wstring_to_utf8(worldName).c_str());
-    console.AddLog(u8"使用备份文件: %s", wstring_to_utf8(backupFile).c_str());
+    console.AddLog(L("LOG_RESTORE_START_HEADER"));
+    console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
+    console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
 
     // 1. 检查7z.exe是否存在
     if (!filesystem::exists(config.zipPath)) {
-        console.AddLog(u8"[error] 找不到压缩程序: %s", wstring_to_utf8(config.zipPath).c_str());
-        console.AddLog(u8"请在“设置”中指定正确的 7z.exe 路径。");
+        console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
+        console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
         return;
     }
 
@@ -967,25 +960,24 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 
     // 4. 在后台线程中执行命令
     RunCommandInBackground(command, console);
-    console.AddLog(u8"---------- 还原结束 ----------");
+    console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
 
 void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, Console* console) {
-    console->AddLog(u8"[自动备份] 已为世界 #%d 启动，间隔 %d 分钟。", worldIdx, intervalMinutes);
-
+    console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
     while (true) {
         // 等待指定的时间，但每秒检查一次是否需要停止
         for (int i = 0; i < intervalMinutes * 60; ++i) {
             // 安全地检查停止标志
             if (g_active_auto_backups.at(worldIdx).stop_flag) {
-                console->AddLog(u8"[自动备份] 已手动停止世界 #%d 的任务。", worldIdx);
+                console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
                 return; // 结束线程
             }
             this_thread::sleep_for(chrono::seconds(1));
         }
 
         // 时间到了，开始备份
-        console->AddLog(u8"[自动备份] 正在为世界 #%d 执行例行备份...", worldIdx);
+        console->AddLog(L("LOG_AUTOBACKUP_ROUTINE"), worldIdx);
         // 直接调用已经存在的 DoBackup 函数
         DoBackup(configs[configIdx], configs[configIdx].worlds[worldIdx], *console);
     }
@@ -997,14 +989,14 @@ int main(int, char**)
     _setmode(_fileno(stdout), _O_U16TEXT);
     _setmode(_fileno(stdin), _O_U16TEXT);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-
+    
     static Console console;
 
     // Create application window
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
     ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.0", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.5", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -1078,14 +1070,14 @@ int main(int, char**)
     bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
 
     if (sevenZipExtracted) {
-        console.AddLog(u8"[提示] 已成功释放内置的 7z.exe。本次运行将优先使用该程序。");
-        // C. 如果释放成功，更新所有已加载配置的 zipPath
+        console.AddLog(L("LOG_7Z_EXTRACT_SUCCESS"));
+        // 如果释放成功，更新所有已加载配置的 zipPath
         for (auto& [idx, cfg] : configs) {
             cfg.zipPath = g_7zTempPath;
         }
     }
     else {
-        console.AddLog(u8"[error] 释放内置 7z.exe 失败。程序将回退使用 config.ini 中配置的路径。");
+        console.AddLog(L("LOG_7Z_EXTRACT_FAIL"));
     }
     
     // Main loop
@@ -1102,8 +1094,6 @@ int main(int, char**)
             if (msg.message == WM_QUIT)
                 done = true;
         }
-        //if (done)
-        //    break;
 
         // Handle window being minimized or screen locked
         if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED)
@@ -1130,43 +1120,40 @@ int main(int, char**)
         if (showConfigWizard) {
             // 首次启动向导使用的静态变量
             static int page = 0;
-            static char saveRootPath[constant1] = ""; // 修改为单个存档根路径
+            static char saveRootPath[constant1] = "";
             static char backupPath[constant1] = "";
             static char zipPath[constant1] = "C:\\Program Files\\7-Zip\\7z.exe"; // 提供一个常用默认值
 
-            ImGui::Begin(u8"首次启动设置向导", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::Begin(L("WIZARD_TITLE"), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
 
             if (page == 0) {
-                ImGui::Text(u8"欢迎使用 Minecraft 存档备份工具！");
+                ImGui::Text(L("WIZARD_WELCOME"));
                 ImGui::Separator();
-                ImGui::TextWrapped(u8"本向导将帮助您设置您的第一套备份配置。");
-                ImGui::TextWrapped(u8"如果您有多个游戏启动器或存档根目录，");
-                ImGui::TextWrapped(u8"可以在完成向导后，进入主界面的“设置”中添加更多独立的配置方案。");
+                ImGui::TextWrapped(L("WIZARD_INTRO1"));
+                ImGui::TextWrapped(L("WIZARD_INTRO2"));
+                ImGui::TextWrapped(L("WIZARD_INTRO3"));
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
-                if (ImGui::Button(u8"开始配置", ImVec2(120, 0))) {
+                if (ImGui::Button(L("BUTTON_START_CONFIG"), ImVec2(120, 0))) {
                     page++;
                 }
             }
             else if (page == 1) {
-                ImGui::Text(u8"第1步：选择 Minecraft 存档根目录");
-                ImGui::TextWrapped(u8"请选择您的 Minecraft 游戏存档文件夹\"所在的\"文件夹。");
-                ImGui::TextWrapped(u8"通常是游戏根目录下的 'saves' 文件夹。");
+                ImGui::Text(L("WIZARD_STEP1_TITLE"));
+                ImGui::TextWrapped(L("WIZARD_STEP1_DESC1"));
+                ImGui::TextWrapped(L("WIZARD_STEP1_DESC2"));
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-                // 添加“选择文件夹”按钮
-                if (ImGui::Button(u8"选择文件夹...")) {
+                if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
                     wstring selected_folder = SelectFolderDialog();
                     if (!selected_folder.empty()) {
-                        string sel_utf8 = wstring_to_utf8(selected_folder);
-                        strncpy_s(saveRootPath, sel_utf8.c_str(), sizeof(saveRootPath));
+                        strncpy_s(saveRootPath, wstring_to_utf8(selected_folder).c_str(), sizeof(saveRootPath));
                     }
                 }
                 ImGui::SameLine();
-                ImGui::InputText(u8"存档根路径", saveRootPath, IM_ARRAYSIZE(saveRootPath));
+                ImGui::InputText(L("SAVES_ROOT_PATH"), saveRootPath, IM_ARRAYSIZE(saveRootPath));
 
                 ImGui::Dummy(ImVec2(0.0f, 20.0f));
-                if (ImGui::Button(u8"下一步", ImVec2(120, 0))) {
-                    // 简单验证路径非空, 注意 exists 检查的路径有中文要是gbk的
+                if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
                     if (strlen(saveRootPath) > 0 && filesystem::exists(utf8_to_wstring(saveRootPath))) {
                         page++;
                         errorShow = false;
@@ -1176,27 +1163,27 @@ int main(int, char**)
                     }
                 }
                 if (errorShow)
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"路径为空或者文件夹不存在！");
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("WIZARD_PATH_EMPTY_OR_INVALID"));
             }
             else if (page == 2) {
-                ImGui::Text(u8"第2步：选择备份文件存放路径");
-                ImGui::TextWrapped(u8"请选择一个用于存放所有存档备份文件的文件夹。");
+                ImGui::Text(L("WIZARD_STEP2_TITLE"));
+                ImGui::TextWrapped(L("WIZARD_STEP2_DESC"));
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-                if (ImGui::Button(u8"选择文件夹...")) {
+                if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
                     wstring selected_folder = SelectFolderDialog();
                     if (!selected_folder.empty()) {
-                        string sel_utf8 = wstring_to_utf8(selected_folder);
-                        strncpy_s(backupPath, sel_utf8.c_str(), sizeof(backupPath));
+                        strncpy_s(backupPath, wstring_to_utf8(selected_folder).c_str(), sizeof(backupPath));
                     }
                 }
                 ImGui::SameLine();
-                ImGui::InputText(u8"备份存放路径", backupPath, IM_ARRAYSIZE(backupPath));
+                ImGui::InputText(L("WIZARD_BACKUP_PATH"), backupPath, IM_ARRAYSIZE(backupPath));
 
                 ImGui::Dummy(ImVec2(0.0f, 20.0f));
-                if (ImGui::Button(u8"上一步", ImVec2(120, 0))) page--;
+                if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
                 ImGui::SameLine();
-                if (ImGui::Button(u8"下一步", ImVec2(120, 0))) {
+                if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
+                    // 存在中文路径，要gbk
                     if (strlen(backupPath) > 0 && filesystem::exists(utf8_to_wstring(backupPath))) {
                         page++;
                         errorShow = false;
@@ -1206,11 +1193,11 @@ int main(int, char**)
                     }
                 }
                 if (errorShow)
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"路径为空或者文件夹不存在！");
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("WIZARD_PATH_EMPTY_OR_INVALID"));
             }
             else if (page == 3) {
-                ImGui::Text(u8"第3步：配置压缩程序 (7-Zip)");
-                ImGui::TextWrapped(u8"本工具需要 7-Zip 来进行压缩。请指定其主程序 7z.exe 的位置。");
+                ImGui::Text(L("WIZARD_STEP3_TITLE"));
+                ImGui::TextWrapped(L("WIZARD_STEP3_DESC"));
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
                 // 检查内嵌的7z是否已释放成功
                 if (sevenZipExtracted) {
@@ -1223,30 +1210,29 @@ int main(int, char**)
                     if (filesystem::exists("7z.exe"))
                     {
                         strncpy_s(zipPath, "7z.exe", sizeof(zipPath));
-                        ImGui::Text(u8"已自动找到压缩程序");
+                        ImGui::Text(L("AUTODETECTED_7Z"));
                     }
                     else
                     {
                         static string zipTemp = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
                         strncpy_s(zipPath, zipTemp.c_str(), sizeof(zipPath));
                         if (strlen(zipPath) != 0)
-                            ImGui::Text(u8"已自动找到压缩程序");
+                            ImGui::Text(L("AUTODETECTED_7Z"));
                     }
                 }
-                if (ImGui::Button(u8"选择 7z.exe...")) {
+                if (ImGui::Button(L("BUTTON_SELECT_FILE"))) {
                     wstring selected_file = SelectFileDialog();
                     if (!selected_file.empty()) {
-                        string sel_utf8 = wstring_to_utf8(selected_file);
-                        strncpy_s(zipPath, sel_utf8.c_str(), sizeof(zipPath));
+                        strncpy_s(zipPath, wstring_to_utf8(selected_file).c_str(), sizeof(zipPath));
                     }
                 }
                 ImGui::SameLine();
-                ImGui::InputText(u8"7z.exe 路径", zipPath, IM_ARRAYSIZE(zipPath));
+                ImGui::InputText(L("WIZARD_7Z_PATH"), zipPath, IM_ARRAYSIZE(zipPath));
 
                 ImGui::Dummy(ImVec2(0.0f, 20.0f));
-                if (ImGui::Button(u8"上一步", ImVec2(120, 0))) page--;
+                if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
                 ImGui::SameLine();
-                if (ImGui::Button(u8"完成配置", ImVec2(120, 0))) {
+                if (ImGui::Button(L("BUTTON_FINISH_CONFIG"), ImVec2(120, 0))) {
                     if (strlen(saveRootPath) > 0 && strlen(backupPath) > 0 && strlen(zipPath) > 0) {
                         // 创建并填充第一个配置
                         currentConfigIndex = 1;
@@ -1293,20 +1279,22 @@ int main(int, char**)
             // 用于弹出还原窗口
             static bool openRestorePopup = false;
             ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
-            // --- 主窗口 ---
-            ImGui::Begin(u8"我的世界存档备份器");
+            ImGui::Begin(L("MAIN_WINDOW_TITLE"));
 
             // --- 左侧面板：世界列表和操作 ---
-            ImGui::BeginChild(u8"左侧面板", ImVec2(ImGui::GetContentRegionAvail().x * 0.9f, 0), true);
-
-            ImGui::SeparatorText(u8"存档列表");
+            ImGui::BeginChild(L("LEFT_PANE"), ImVec2(ImGui::GetContentRegionAvail().x * 0.9f, 0), true);
+            ImGui::SeparatorText(L("WORLD_LIST"));
             // 获取当前配置
+            if (configs.find(currentConfigIndex) == configs.end()) {
+                if (!configs.empty()) currentConfigIndex = configs.begin()->first;
+                else configs[1] = Config(); // 新建
+            }
             Config& cfg = configs[currentConfigIndex];
 
-            if (ImGui::BeginTable(u8"世界列表", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn(u8"世界名称", ImGuiTableColumnFlags_WidthStretch, 0.3f);
-                ImGui::TableSetupColumn(u8"描述/别名", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                ImGui::TableSetupColumn(u8"最近打开时间|备份时间", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+            if (ImGui::BeginTable("WorldListTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn(L("TABLE_WORLD_NAME"), ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                ImGui::TableSetupColumn(L("TABLE_WORLD_DESC"), ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                ImGui::TableSetupColumn(L("TABLE_WORLD_TIMES"), ImGuiTableColumnFlags_WidthFixed, 160.0f);
                 ImGui::TableHeadersRow();
 
                 for (int i = 0; i < cfg.worlds.size(); ++i) {
@@ -1345,30 +1333,30 @@ int main(int, char**)
                 ImGui::BeginDisabled();
             }
 
-            if (ImGui::Button(u8"备份选中存档", ImVec2(-1, 0))) {
+            if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(-1, 0))) {
                 // 创建一个后台线程来执行备份，防止UI卡死
                 thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console));
                 backup_thread.detach(); // 分离线程，让它在后台独立运行
             }
 
-            if (ImGui::Button(u8"自动备份选中存档", ImVec2(-1, 0))) {
+            if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(-1, 0))) {
                 // 只有选中了世界才能打开弹窗
                 if (selectedWorldIndex != -1) {
-                    ImGui::OpenPopup(u8"自动备份设置");
+                    ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
                 }
             }
 
-            if (ImGui::Button(u8"还原选中存档", ImVec2(-1, 0))) {
-                openRestorePopup = true; // 打开还原选择弹窗
-                ImGui::OpenPopup(u8"选择备份文件");
+            if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(-1, 0))) {
+                openRestorePopup = true;
+                ImGui::OpenPopup(L("RESTORE_POPUP_TITLE"));
             }
 
             if (no_world_selected) {
                 ImGui::EndDisabled();
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"请先在上方列表中选择一个存档");
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("PROMPT_SELECT_WORLD"));
             }
 
-            if (ImGui::BeginPopupModal(u8"自动备份设置", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
                 bool is_task_running = false;
                 {
                     // 检查任务是否正在运行时，也需要加锁
@@ -1377,9 +1365,9 @@ int main(int, char**)
                 }
 
                 if (is_task_running) {
-                    ImGui::Text(u8"世界 '%s' 的自动备份正在运行中。", wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+                    ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
                     ImGui::Separator();
-                    if (ImGui::Button(u8"停止自动备份", ImVec2(-1, 0))) {
+                    if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(-1, 0))) {
                         lock_guard<mutex> lock(g_task_mutex);
                         // 1. 设置停止标志
                         g_active_auto_backups.at(selectedWorldIndex).stop_flag = true;
@@ -1393,13 +1381,13 @@ int main(int, char**)
                     }
                 }
                 else {
-                    ImGui::Text(u8"为世界 '%s' 设置自动备份:", wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+                    ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
                     ImGui::Separator();
                     static int interval = 15; // 默认15分钟
-                    ImGui::InputInt(u8"间隔时间 (分钟)", &interval);
+                    ImGui::InputInt(L("INTERVAL_MINUTES"), &interval);
                     if (interval < 1) interval = 1; // 最小间隔1分钟
 
-                    if (ImGui::Button(u8"开始", ImVec2(120, 0))) {
+                    if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
                         lock_guard<mutex> lock(g_task_mutex);
                         auto& task = g_active_auto_backups[selectedWorldIndex];
                         task.stop_flag = false;
@@ -1408,7 +1396,7 @@ int main(int, char**)
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button(u8"取消", ImVec2(120, 0))) {
+                    if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
                         ImGui::CloseCurrentPopup();
                     }
                 }
@@ -1416,9 +1404,8 @@ int main(int, char**)
             }
 
             // --- 还原文件选择弹窗 ---
-            if (ImGui::BeginPopupModal(u8"选择备份文件", &openRestorePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::Text(u8"请为世界“%s”选择一个备份文件进行还原:", wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
-
+            if (ImGui::BeginPopupModal(L("RESTORE_POPUP_TITLE"), &openRestorePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text(L("RESTORE_PROMPT"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
                 wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
                 static int selectedBackupIndex = -1;
                 vector<wstring> backupFiles;
@@ -1449,7 +1436,7 @@ int main(int, char**)
                 bool no_backup_selected = (selectedBackupIndex == -1);
                 if (no_backup_selected) ImGui::BeginDisabled();
 
-                if (ImGui::Button(u8"确认还原", ImVec2(120, 0))) {
+                if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
                     // 创建后台线程执行还原
                     thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console));
                     restore_thread.detach();
@@ -1460,37 +1447,22 @@ int main(int, char**)
 
                 ImGui::SetItemDefaultFocus();
                 ImGui::SameLine();
-                if (ImGui::Button(u8"取消", ImVec2(120, 0))) {
+                if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
                     openRestorePopup = false;
                     ImGui::CloseCurrentPopup();
                 }
 
                 ImGui::EndPopup();
             }
-
             ImGui::EndChild();
-
             ImGui::SameLine();
-
-            // --- 右侧面板：监控台和其他 ---
-            ImGui::BeginChild(u8"右侧面板");
-
-            // 显示主界面上的“设置”和“退出”按钮
-            if (ImGui::Button(u8"设置")) showSettings = true;
-            //ImGui::SameLine();
-            if (ImGui::Button(u8"退出")) done = true;
-            ImGui::TextLinkOpenURL(u8"检查更新", "github.com/Leafuke/MineBackup/releases");
-
-            // 显示设置窗口（如果showSettings为true）
+            ImGui::BeginChild(L("RIGHT_PANE"));
+            if (ImGui::Button(L("SETTINGS"))) showSettings = true;
+            if (ImGui::Button(L("EXIT"))) done = true;
+            ImGui::TextLinkOpenURL(L("CHECK_FOR_UPDATES"), "github.com/Leafuke/MineBackup/releases");
             ShowSettingsWindow();
-
-            // 显示监控台
-            // 注意：我们将静态的console实例传递给它
-            console.Draw(u8"MineBackup 监控台", &showMainApp);
-
+            console.Draw(L("CONSOLE_TITLE"), &showMainApp);
             ImGui::EndChild();
-
-
             ImGui::End();
         }
 

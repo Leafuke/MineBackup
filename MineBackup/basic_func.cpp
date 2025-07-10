@@ -38,11 +38,11 @@ wstring GetLastOpenTime(const wstring& worldPath) {
             return buf;
         }
         else {
-            return L"未知";
+            return L"N/A";
         }
     }
     catch (...) {
-        return L"未知";
+        return L"N/A";
     }
 }
 
@@ -63,7 +63,7 @@ wstring GetLastBackupTime(const wstring& backupDir) {
                 }
             }
         }
-        if (latest == 0) return L"无备份";
+        if (latest == 0) return L"/";
         wchar_t buf[64];
         struct tm timeinfo;
         //wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtime要换成更安全的localtime
@@ -72,10 +72,10 @@ wstring GetLastBackupTime(const wstring& backupDir) {
             return buf;
         }
         else {
-            return L"未知";
+            return L"N/A";
         }
     }
     catch (...) {
-        return L"未知";
+        return L"N/A";
     }
 }

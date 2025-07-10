@@ -85,8 +85,11 @@
     <ClInclude Include="resource2.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="i18n.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
     <ClInclude Include="imgui-all.h">
-      <Filter>源文件</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -138,6 +138,7 @@
     <ClCompile Include="text_to_text.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="i18n.h" />
     <ClInclude Include="imgui-all.h" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
