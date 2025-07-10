@@ -14,7 +14,7 @@ Well, you can actually use it to backup any folders in your computer :P
 - **High-Compression**: Use 7-Zip to compress your archive and save storage space on your computer.
 - **Intelligent**: You can save space by backing up only the changes. (v1.3.0-)
 - **Backup Path**: Set a custom path for your backups according to your storage preferences.
-- **Multilanguage**: We have supported two languages by now, but they can be more with your help! (NOT accessible currently in v1.5.0, but in v1.3.0, it is ok.)
+- **Multilanguage**: We have supported two languages by now, but they can be more with your help!
 
 ## ⚙️Installation
 
@@ -24,7 +24,7 @@ Well, you can actually use it to backup any folders in your computer :P
 ## 🗃️Support
 
 For issues, feature requests, or contributions, please visit the [GitHub issues](https://github.com/Leafuke/MineBackup/issues). <br />
-You can help internationalize this project by translating the [Languages.txt](Languages.txt).<br />
+You can help internationalize this project by translating the [i18n.h](MineBackup/i18n.h).<br />
 Help documentation is being written.✒️
 
 ## 🛠️Compilation Guide
