@@ -1,5 +1,7 @@
 #include <string>
+#include <map>
 #include <filesystem>
+#include <fstream>
 #include <Windows.h>
 using namespace std;
 
@@ -78,4 +80,58 @@ wstring GetLastBackupTime(const wstring& backupDir) {
     catch (...) {
         return L"N/A";
     }
+}
+
+// 计算文件的哈希值（这是一个简单的实现，很不严格哒）
+size_t CalculateFileHash(const std::filesystem::path& filepath) {
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file) return 0;
+
+    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::hash<std::string> hasher;
+    return hasher(content);
+}
+
+// 获取已更改的文件列表，并更新状态文件
+vector<std::filesystem::path> GetChangedFiles(const std::filesystem::path& worldPath, const std::filesystem::path& metadataPath) {
+    std::vector<std::filesystem::path> changedFiles;
+    std::map<std::wstring, size_t> lastState;
+    std::map<std::wstring, size_t> currentState;
+    std::filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
+
+    // 1. 读取上一次的状态
+    std::wifstream stateFileIn(stateFilePath);
+    if (stateFileIn.is_open()) {
+        std::wstring path;
+        size_t hash;
+        while (stateFileIn >> path >> hash) {
+            lastState[path] = hash;
+        }
+        stateFileIn.close();
+    }
+
+    // 2. 计算当前状态并与上次状态比较
+    if (std::filesystem::exists(worldPath)) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(worldPath)) {
+            if (entry.is_regular_file()) {
+                std::filesystem::path relativePath = std::filesystem::relative(entry.path(), worldPath);
+                size_t currentHash = CalculateFileHash(entry.path());
+                currentState[relativePath.wstring()] = currentHash;
+
+                // 如果文件是新的，或者哈希值不同，则判定为已更改
+                if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
+                    changedFiles.push_back(entry.path());
+                }
+            }
+        }
+    }
+
+    // 3. 将当前状态写入文件，供下次使用
+    std::wofstream stateFileOut(stateFilePath, std::ios::trunc);
+    for (const auto& pair : currentState) {
+        stateFileOut << pair.first << L" " << pair.second << std::endl;
+    }
+    stateFileOut.close();
+
+    return changedFiles;
 }

@@ -37,15 +37,16 @@ int compressLevel = 5;
 bool showSettings = false;
 
 struct Config {
+    int backupMode;
     wstring saveRoot;
-    std::vector<std::pair<wstring, wstring>> worlds; // {name, desc}
+    vector<pair<wstring, wstring>> worlds; // {name, desc}
     wstring backupPath;
     wstring zipPath;
     wstring zipFormat;
     wstring zipFonts;
     int zipLevel;
     int keepCount;
-    bool smartBackup;
+    bool hotBackup;
     bool restoreBefore;
     bool topMost;
     bool manualRestore;
@@ -56,7 +57,7 @@ struct Config {
 };
 
 // 全部配置
-wstring Fontss = L"c:\\Windows\\Fonts\\msyh.ttc";
+wstring Fontss;
 int currentConfigIndex = 1;
 map<int, Config> configs;
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
@@ -78,6 +79,8 @@ bool Extract7zToTempFile(wstring& extractedPath);
 wstring SelectFileDialog(HWND hwndOwner = NULL);
 wstring SelectFolderDialog(HWND hwndOwner = NULL);
 
+vector<std::filesystem::path> GetChangedFiles(const std::filesystem::path& worldPath, const filesystem::path& metadataPath);
+size_t CalculateFileHash(const filesystem::path& filepath);
 string GetRegistryValue(const string& keyPath, const string& valueName);
 wstring GetLastOpenTime(const wstring& worldPath);
 wstring GetLastBackupTime(const wstring& backupDir);
@@ -151,8 +154,9 @@ static void LoadConfigs(const string& filename = "config.ini") {
                 else if (key == L"ZipFormat") cur->zipFormat = val;
                 else if (key == L"ZipLevel") cur->zipLevel = stoi(val);
                 else if (key == L"KeepCount") cur->keepCount = stoi(val);
-                else if (key == L"SmartBackup") cur->smartBackup = (val != L"0");
+                else if (key == L"SmartBackup") cur->backupMode = stoi(val);
                 else if (key == L"RestoreBeforeBackup") cur->restoreBefore = (val != L"0");
+                else if (key == L"HotBackup") cur->hotBackup = (val != L"0");
                 else if (key == L"TopMost") cur->topMost = (val != L"0");
                 else if (key == L"ManualRestore") cur->manualRestore = (val != L"0");
                 else if (key == L"ShowProgress") cur->showProgress = (val != L"0");
@@ -214,8 +218,9 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
         out << L"ZipFormat=" << c.zipFormat << L"\n";
         out << L"ZipLevel=" << c.zipLevel << L"\n";
         out << L"KeepCount=" << c.keepCount << L"\n";
-        out << L"SmartBackup=" << (c.smartBackup ? 1 : 0) << L"\n";
+        out << L"SmartBackup=" << c.backupMode << L"\n";
         out << L"RestoreBeforeBackup=" << (c.restoreBefore ? 1 : 0) << L"\n";
+        out << L"HotBackup=" << (c.hotBackup ? 1 : 0) << L"\n";
         out << L"TopMost=" << (c.topMost ? 1 : 0) << L"\n";
         out << L"ManualRestore=" << (c.manualRestore ? 1 : 0) << L"\n";
         out << L"ShowProgress=" << (c.showProgress ? 1 : 0) << L"\n";
@@ -265,12 +270,16 @@ void ShowSettingsWindow() {
         new_cfg.zipFormat = L"7z";
         new_cfg.zipLevel = 5;
         new_cfg.keepCount = 10;
-        new_cfg.smartBackup = true;
+        new_cfg.backupMode = 1;
+        new_cfg.hotBackup = false;
         new_cfg.restoreBefore = false;
         new_cfg.topMost = false;
         new_cfg.manualRestore = true;
         new_cfg.showProgress = true;
-        new_cfg.zipFonts = L"c:\\Windows\\Fonts\\msyh.ttc";
+        if (g_CurrentLang == "zh-CN")
+            new_cfg.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttc";
+        else
+            new_cfg.zipFonts = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
         new_cfg.themeColor = L"0.45 0.55 0.60 1.00";
     }
     ImGui::SameLine();
@@ -397,10 +406,26 @@ void ShowSettingsWindow() {
     if (ImGui::RadioButton("7z", &format_choice, 0)) { cfg.zipFormat = L"7z"; } ImGui::SameLine();
     if (ImGui::RadioButton("zip", &format_choice, 1)) { cfg.zipFormat = L"zip"; }
 
+    ImGui::Text(L("TEXT_BACKUP_MODE")); ImGui::SameLine();
+    ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_NORMAL"), &cfg.backupMode, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_SMART"), &cfg.backupMode, 2);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(L("TIP_SMART_BACKUP"));
+    }
+    ImGui::SameLine();
+    ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_OVERWRITE"), &cfg.backupMode, 3);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(L("TIP_OVERWRITE_BACKUP"));
+    }
+
     ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
     ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
-    ImGui::Checkbox(L("SMART_BACKUP"), &cfg.smartBackup); ImGui::SameLine();
     ImGui::Checkbox(L("RESTORE_BEFORE_BACKUP"), &cfg.restoreBefore); ImGui::SameLine();
+    ImGui::Checkbox(L("IS_HOT_BACKUP"), &cfg.hotBackup); ImGui::SameLine();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
+    }
     ImGui::Checkbox(L("ALWAYS_ON_TOP"), &cfg.topMost);
     ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
     ImGui::Checkbox(L("SHOW_PROGRESS"), &cfg.showProgress);
@@ -791,12 +816,47 @@ struct Console
     }
 };
 
+// 创建快照，用于热备份
+wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console) {
+    try {
+        // 创建一个唯一的临时目录
+        filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
+
+        // 如果旧的临时目录存在，先清理掉
+        if (filesystem::exists(tempDir)) {
+            filesystem::remove_all(tempDir);
+        }
+        filesystem::create_directories(tempDir);
+        console.AddLog(L("LOG_BACKUP_HOT_INFO"));
+
+        // 递归复制，并尝试忽略单个文件错误
+        auto copyOptions = filesystem::copy_options::recursive | filesystem::copy_options::overwrite_existing;
+        error_code ec;
+        filesystem::copy(worldPath, tempDir, copyOptions, ec);
+
+        if (ec) {
+            // 虽然发生了错误（可能是某个文件被锁定了），但大部分文件可能已经复制成功
+            console.AddLog("[WARNING] Hot backup snapshot created with errors (some files might be locked): %s", ec.message().c_str());
+        }
+        else {
+            console.AddLog("[SUCCESS] Snapshot created successfully at: %s", wstring_to_utf8(tempDir.wstring()).c_str());
+        }
+
+        return tempDir.wstring();
+
+    }
+    catch (const filesystem::filesystem_error& e) {
+        console.AddLog("[error] Failed to create snapshot: %s", e.what());
+        return L"";
+    }
+}
+
 // 限制备份文件数量，超出则自动删除最旧的
-void LimitBackupFiles(const std::wstring& folderPath, int limit, Console* console = nullptr)
+void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = nullptr)
 {
     if (limit <= 0) return;
-    namespace fs = std::filesystem;
-    std::vector<fs::directory_entry> files;
+    namespace fs = filesystem;
+    vector<fs::directory_entry> files;
 
     // 收集所有常规文件
     try {
@@ -816,7 +876,7 @@ void LimitBackupFiles(const std::wstring& folderPath, int limit, Console* consol
     if ((int)files.size() <= limit) return;
 
     // 按最后写入时间升序排序（最旧的在前）
-    std::sort(files.begin(), files.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
+    sort(files.begin(), files.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
         return fs::last_write_time(a) < fs::last_write_time(b);
         });
 
@@ -894,13 +954,26 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
         return;
     }
 
-    // 2. 准备路径
+    // 准备路径
     wstring sourcePath = config.saveRoot + L"\\" + world.first;
     wstring destinationFolder = config.backupPath + L"\\" + world.first;
+    wstring metadataFolder = config.backupPath + L"\\_metadata\\" + world.first; // 元数据文件夹
+    wstring command;
+    wstring archivePath;
+    wstring archiveNameBase = world.second.empty() ? world.first : world.second;
 
-    // 3. 创建备份目标文件夹（如果不存在）
+    // 生成带时间戳的文件名
+    time_t now = time(0);
+    tm ltm;
+    localtime_s(&ltm, &now);
+    wchar_t timeBuf[80];
+    wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+    archivePath = destinationFolder + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+
+    // 创建备份目标文件夹（如果不存在）
     try {
         filesystem::create_directories(destinationFolder);
+        filesystem::create_directories(metadataFolder); // 确保元数据文件夹存在
         console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder).c_str());
     }
     catch (const filesystem::filesystem_error& e) {
@@ -908,26 +981,87 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
         return;
     }
 
-    // 4. 生成带时间戳的文件名
-    time_t now = time(0);
-    tm ltm;
-    localtime_s(&ltm, &now);
-    wchar_t timeBuf[80];
-    wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+    // 如果打开了热备份
+    if (config.hotBackup) {
+        wstring snapshotPath = CreateWorldSnapshot(sourcePath, console);
+        if (!snapshotPath.empty()) {
+            sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
+        }
+        else {
+            console.AddLog(L("LOG_ERROR_SNAPSHOT"));
+            return;
+        }
+    }
 
-    // 如果有描述，使用描述作为文件名；否则用世界名
-    wstring archiveNameBase = world.second.empty() ? world.first : world.second;
-    wstring archivePath = destinationFolder + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+    if (config.backupMode == 1) // 普通备份
+    {
+        archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+        command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+            L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+    }
+    else if (config.backupMode == 2) // 智能备份
+    {
+        std::vector<std::filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
 
-    // 5. 构建7-Zip命令行
-    // 格式: "C:\7z.exe" a -t[格式] -mx=[等级] "目标压缩包路径" "源文件夹路径\*"
-    wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-        L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+        if (filesToBackup.empty()) {
+            console.AddLog("[INFO] No changes detected. Backup skipped.");
+            return; // 没有变化，直接返回
+        }
 
-    // 6. 在后台线程中执行命令
+        console.AddLog("[INFO] Smart Backup: %zu file(s) have changed.", filesToBackup.size());
+
+        // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
+        std::ofstream ofs("7z.txt");
+        for (const auto& file : filesToBackup) {
+            ofs << file.string() << endl; // 这里用 wstring 会有莫名其妙的bug，以后研究下
+        }
+        
+        ofs.close();
+        archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+        
+        command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
+            + to_wstring(config.zipLevel) + L" \"" + archivePath + L"\" @7z.txt";
+    }
+    else if (config.backupMode == 3) // 覆盖备份
+    {
+        console.AddLog(L("LOG_OVERWRITE"));
+        filesystem::path latestBackupPath;
+        auto latest_time = std::filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
+        bool found = false;
+
+        for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+            if (entry.is_regular_file() && entry.path().extension().wstring() == L"." + config.zipFormat) {
+                if (entry.last_write_time() > latest_time) {
+                    latest_time = entry.last_write_time();
+                    latestBackupPath = entry.path();
+                    found = true;
+                }
+            }
+        }
+        if (found) {
+            // 2. A previous backup was found. Use the 7-Zip 'u' (update) command.
+            console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
+            command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
+        }
+        else {
+            // 3. No previous backup found. Perform a normal full backup.
+            console.AddLog(L("LOG_NO_BACKUP_FOUND"));
+            archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+            command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+                L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+        }
+    }
+    // 在后台线程中执行命令
     RunCommandInBackground(command, console);
     console.AddLog(L("LOG_BACKUP_END_HEADER"));
     LimitBackupFiles(destinationFolder, config.keepCount, &console);
+    std::filesystem::remove_all("7z.txt");
+    if (config.hotBackup && sourcePath != (config.saveRoot + L"\\" + world.first)) {
+        console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
+        std::error_code ec;
+        std::filesystem::remove_all(sourcePath, ec);
+        if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
+    }
 }
 
 // 执行单个世界的还原操作。
@@ -941,24 +1075,70 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
     console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
     console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
 
-    // 1. 检查7z.exe是否存在
+    // 检查7z.exe是否存在
     if (!filesystem::exists(config.zipPath)) {
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
         return;
     }
 
-    // 2. 准备路径
-    wstring sourceArchive = config.backupPath + L"\\" + worldName + L"\\" + backupFile;
+    // 准备路径
+    wstring sourceDir = config.backupPath + L"\\" + worldName;
     wstring destinationFolder = config.saveRoot + L"\\" + worldName;
 
-    // 3. 构建7-Zip命令行
+    // 收集所有相关的备份文件
+    std::vector<std::filesystem::path> backupsToApply;
+    std::filesystem::path targetBackupPath = std::filesystem::path(sourceDir) / backupFile;
+
+    // 如果目标是完整备份，直接还原它
+    if(backupFile.find(L"[Smart]") != wstring::npos) { // 目标是增量备份
+        // 寻找基础的完整备份
+        std::filesystem::path baseFullBackup;
+        auto baseFullTime = std::filesystem::file_time_type{};
+
+        for (const auto& entry : std::filesystem::directory_iterator(sourceDir)) {
+            if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
+                if (entry.last_write_time() < std::filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
+                    baseFullTime = entry.last_write_time();
+                    baseFullBackup = entry.path();
+                }
+            }
+        }
+
+        if (baseFullBackup.empty()) {
+            console.AddLog("[error] Cannot restore: No suitable [Full] backup found before the selected [Smart] backup.");
+            return;
+        }
+
+        console.AddLog("[INFO] Found base full backup: %s", wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
+        backupsToApply.push_back(baseFullBackup);
+
+        // 收集从基础备份到目标备份之间的所有增量备份
+        for (const auto& entry : std::filesystem::directory_iterator(sourceDir)) {
+            if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
+                if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= std::filesystem::last_write_time(targetBackupPath)) {
+                    backupsToApply.push_back(entry.path());
+                }
+            }
+        }
+    } else { //当成完整备份处理
+        backupsToApply.push_back(targetBackupPath);
+    }
+
     // 格式: "C:\7z.exe" x "源压缩包路径" -o"目标文件夹路径" -y
     // 'x' 表示带路径解压, '-o' 指定输出目录, '-y' 表示对所有提示回答“是”（例如覆盖文件）
-    wstring command = L"\"" + config.zipPath + L"\" x \"" + sourceArchive + L"\" -o\"" + destinationFolder + L"\" -y";
+    // 按时间顺序排序所有需要应用的备份
+    std::sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+        return std::filesystem::last_write_time(a) < std::filesystem::last_write_time(b);
+    });
 
-    // 4. 在后台线程中执行命令
-    RunCommandInBackground(command, console);
+    // 依次执行还原
+    for (size_t i = 0; i < backupsToApply.size(); ++i) {
+        const auto& backup = backupsToApply[i];
+        console.AddLog("[INFO] Restoring step %zu/%zu: %s", i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
+        wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder + L"\" -y";
+        RunCommandInBackground(command, console);
+    }
     console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
 
@@ -995,7 +1175,7 @@ int main(int, char**)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
     ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.1", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.2", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -1060,18 +1240,27 @@ int main(int, char**)
     static bool showMainApp = !isFirstRun;
     ImGui::StyleColorsLight();//默认亮色
     LoadConfigs(fileName);
-    ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+//C:\Windows\Fonts\SegoeUI.ttf
+
     
     wstring g_7zTempPath;
     bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
-    if (isFirstRun)
-    {
+    if (isFirstRun) {
         LANGID lang_id = GetUserDefaultUILanguage();
 
-        if (lang_id == 2052 || lang_id == 1028) //设置成中文 
+        if (lang_id == 2052 || lang_id == 1028) {
             g_CurrentLang = "zh-CN";
-        else g_CurrentLang = "en-US"; //英文
+            Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
+        }
+        else {
+            g_CurrentLang = "en-US"; //英文
+            Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
+        }
     }
+    if(g_CurrentLang == "zh-CN")
+        ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+    else
+        ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
 
     console.AddLog(L("CONSOLE_WELCOME"));
 
@@ -1262,12 +1451,16 @@ int main(int, char**)
                         initialConfig.zipFormat = L"7z";
                         initialConfig.zipLevel = 5;
                         initialConfig.keepCount = 10;
-                        initialConfig.smartBackup = true;
+                        initialConfig.backupMode = 1;
+                        initialConfig.hotBackup = false;
                         initialConfig.restoreBefore = false;
                         initialConfig.topMost = false;
                         initialConfig.manualRestore = true;
                         initialConfig.showProgress = true;
-                        initialConfig.zipFonts = L"c:\\Windows\\Fonts\\msyh.ttc";
+                        if (g_CurrentLang == "zh-CN")
+                            initialConfig.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttc";
+                        else
+                            initialConfig.zipFonts = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 
                         // 4. 保存到文件并切换到主应用界面
                         SaveConfigs();
