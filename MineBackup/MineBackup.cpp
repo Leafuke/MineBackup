@@ -75,11 +75,12 @@ string wstring_to_utf8(const wstring& wstr);
 wstring utf8_to_wstring(const string& str);
 string GbkToUtf8(const string& gbk);
 
+void SaveStateFile(const filesystem::path& metadataPath);
 bool Extract7zToTempFile(wstring& extractedPath);
 wstring SelectFileDialog(HWND hwndOwner = NULL);
 wstring SelectFolderDialog(HWND hwndOwner = NULL);
 
-vector<std::filesystem::path> GetChangedFiles(const std::filesystem::path& worldPath, const filesystem::path& metadataPath);
+vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath);
 size_t CalculateFileHash(const filesystem::path& filepath);
 string GetRegistryValue(const string& keyPath, const string& valueName);
 wstring GetLastOpenTime(const wstring& worldPath);
@@ -426,7 +427,7 @@ void ShowSettingsWindow() {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
     }
-    ImGui::Checkbox(L("ALWAYS_ON_TOP"), &cfg.topMost);
+    ImGui::Checkbox(L("ALWAYS_ON_TOP"), &cfg.topMost); ImGui::SameLine();
     ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
     ImGui::Checkbox(L("SHOW_PROGRESS"), &cfg.showProgress);
 
@@ -836,17 +837,17 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console)
 
         if (ec) {
             // 虽然发生了错误（可能是某个文件被锁定了），但大部分文件可能已经复制成功
-            console.AddLog("[WARNING] Hot backup snapshot created with errors (some files might be locked): %s", ec.message().c_str());
+            console.AddLog(L("LOG_BACKUP_HOT_INFO2"), ec.message().c_str());
         }
         else {
-            console.AddLog("[SUCCESS] Snapshot created successfully at: %s", wstring_to_utf8(tempDir.wstring()).c_str());
+            console.AddLog(L("LOG_BACKUP_HOT_INFO3"), wstring_to_utf8(tempDir.wstring()).c_str());
         }
 
         return tempDir.wstring();
 
     }
     catch (const filesystem::filesystem_error& e) {
-        console.AddLog("[error] Failed to create snapshot: %s", e.what());
+        console.AddLog(L("LOG_BACKUP_HOT_INFO4"), e.what());
         return L"";
     }
 }
@@ -898,7 +899,7 @@ void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = n
 // 参数:
 //   - command: 要执行的完整命令行（宽字符）。
 //   - console: 监控台对象的引用，用于输出日志信息。
-void RunCommandInBackground(wstring command, Console& console) {
+bool RunCommandInBackground(wstring command, Console& console, const wstring& workingDirectory = L"") {
     // CreateProcessW需要一个可写的C-style字符串，所以我们将wstring复制到vector<wchar_t>
     vector<wchar_t> cmd_line(command.begin(), command.end());
     cmd_line.push_back(L'\0'); // 添加字符串结束符
@@ -910,11 +911,12 @@ void RunCommandInBackground(wstring command, Console& console) {
     si.wShowWindow = SW_HIDE; // 隐藏子进程的窗口
 
     // 开始创建进程
+    const wchar_t* pWorkingDir = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
     console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
 
-    if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+    if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, pWorkingDir, &si, &pi)) {
         console.AddLog(L("LOG_ERROR_CREATE_PROCESS"), GetLastError());
-        return;
+        return false;
     }
 
     // 等待子进程执行完毕
@@ -937,6 +939,7 @@ void RunCommandInBackground(wstring command, Console& console) {
     // 清理句柄
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    return true;
 }
 
 // 执行单个世界的备份操作。
@@ -955,7 +958,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
     }
 
     // 准备路径
-    wstring sourcePath = config.saveRoot + L"\\" + world.first;
+    wstring originalSourcePath = config.saveRoot + L"\\" + world.first;
+    wstring sourcePath = originalSourcePath; // 默认使用原始路径
     wstring destinationFolder = config.backupPath + L"\\" + world.first;
     wstring metadataFolder = config.backupPath + L"\\_metadata\\" + world.first; // 元数据文件夹
     wstring command;
@@ -986,6 +990,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
         wstring snapshotPath = CreateWorldSnapshot(sourcePath, console);
         if (!snapshotPath.empty()) {
             sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
+            originalSourcePath = snapshotPath;
+
         }
         else {
             console.AddLog(L("LOG_ERROR_SNAPSHOT"));
@@ -993,7 +999,19 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
         }
     }
 
-    if (config.backupMode == 1) // 普通备份
+    bool forceFullBackup = true;
+    if (filesystem::exists(destinationFolder)) {
+        for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+            if (entry.is_regular_file()) {
+                forceFullBackup = false;
+                break;
+            }
+        }
+    }
+    if(forceFullBackup)
+        console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
+
+    if (config.backupMode == 1 || forceFullBackup) // 普通备份
     {
         archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
         command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
@@ -1001,32 +1019,39 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
     }
     else if (config.backupMode == 2) // 智能备份
     {
-        std::vector<std::filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
+        
+        vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
 
         if (filesToBackup.empty()) {
-            console.AddLog("[INFO] No changes detected. Backup skipped.");
+            console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+            if (config.hotBackup) // 清理快照
+                filesystem::remove_all(sourcePath);
             return; // 没有变化，直接返回
         }
 
-        console.AddLog("[INFO] Smart Backup: %zu file(s) have changed.", filesToBackup.size());
+        console.AddLog(L("LOG_BACKUP_SMART_INFO"), filesToBackup.size());
 
         // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
-        std::ofstream ofs("7z.txt");
+        filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot";
+        if(!filesystem::exists(tempDir))
+            filesystem::create_directories(tempDir);
+        wofstream ofs(tempDir.string() + "\\7z.txt");
+        ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
         for (const auto& file : filesToBackup) {
-            ofs << file.string() << endl; // 这里用 wstring 会有莫名其妙的bug，以后研究下
+            ofs << file.wstring().substr(originalSourcePath.size() + 1) << endl; // 输出相对路径，以及，必须utf8！
         }
-        
+
         ofs.close();
         archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
         
         command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
-            + to_wstring(config.zipLevel) + L" \"" + archivePath + L"\" @7z.txt";
+            + to_wstring(config.zipLevel) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
     }
     else if (config.backupMode == 3) // 覆盖备份
     {
         console.AddLog(L("LOG_OVERWRITE"));
         filesystem::path latestBackupPath;
-        auto latest_time = std::filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
+        auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
         bool found = false;
 
         for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
@@ -1048,18 +1073,22 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
             archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
             command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-                L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+                L"-spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+            // -spf 强制使用完整路径，-spf2 使用相对路径
         }
     }
     // 在后台线程中执行命令
-    RunCommandInBackground(command, console);
-    console.AddLog(L("LOG_BACKUP_END_HEADER"));
-    LimitBackupFiles(destinationFolder, config.keepCount, &console);
-    std::filesystem::remove_all("7z.txt");
+    if (RunCommandInBackground(command, console, originalSourcePath))
+    {
+        console.AddLog(L("LOG_BACKUP_END_HEADER"));
+        LimitBackupFiles(destinationFolder, config.keepCount, &console);
+        SaveStateFile(metadataFolder);
+    }
+    filesystem::remove_all("7z.txt");
     if (config.hotBackup && sourcePath != (config.saveRoot + L"\\" + world.first)) {
         console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
-        std::error_code ec;
-        std::filesystem::remove_all(sourcePath, ec);
+        error_code ec;
+        filesystem::remove_all(sourcePath, ec);
         if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
     }
 }
@@ -1087,18 +1116,18 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
     wstring destinationFolder = config.saveRoot + L"\\" + worldName;
 
     // 收集所有相关的备份文件
-    std::vector<std::filesystem::path> backupsToApply;
-    std::filesystem::path targetBackupPath = std::filesystem::path(sourceDir) / backupFile;
+    vector<filesystem::path> backupsToApply;
+    filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
 
     // 如果目标是完整备份，直接还原它
     if(backupFile.find(L"[Smart]") != wstring::npos) { // 目标是增量备份
         // 寻找基础的完整备份
-        std::filesystem::path baseFullBackup;
-        auto baseFullTime = std::filesystem::file_time_type{};
+        filesystem::path baseFullBackup;
+        auto baseFullTime = filesystem::file_time_type{};
 
-        for (const auto& entry : std::filesystem::directory_iterator(sourceDir)) {
+        for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
             if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
-                if (entry.last_write_time() < std::filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
+                if (entry.last_write_time() < filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
                     baseFullTime = entry.last_write_time();
                     baseFullBackup = entry.path();
                 }
@@ -1114,9 +1143,9 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
         backupsToApply.push_back(baseFullBackup);
 
         // 收集从基础备份到目标备份之间的所有增量备份
-        for (const auto& entry : std::filesystem::directory_iterator(sourceDir)) {
+        for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
             if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
-                if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= std::filesystem::last_write_time(targetBackupPath)) {
+                if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= filesystem::last_write_time(targetBackupPath)) {
                     backupsToApply.push_back(entry.path());
                 }
             }
@@ -1128,8 +1157,8 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
     // 格式: "C:\7z.exe" x "源压缩包路径" -o"目标文件夹路径" -y
     // 'x' 表示带路径解压, '-o' 指定输出目录, '-y' 表示对所有提示回答“是”（例如覆盖文件）
     // 按时间顺序排序所有需要应用的备份
-    std::sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
-        return std::filesystem::last_write_time(a) < std::filesystem::last_write_time(b);
+    sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+        return filesystem::last_write_time(a) < filesystem::last_write_time(b);
     });
 
     // 依次执行还原
@@ -1175,7 +1204,7 @@ int main(int, char**)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
     ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.2", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.4", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))

@@ -83,26 +83,26 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 }
 
 // 计算文件的哈希值（这是一个简单的实现，很不严格哒）
-size_t CalculateFileHash(const std::filesystem::path& filepath) {
-    std::ifstream file(filepath, std::ios::binary);
+size_t CalculateFileHash(const filesystem::path& filepath) {
+    ifstream file(filepath, ios::binary);
     if (!file) return 0;
 
-    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    std::hash<std::string> hasher;
+    string content((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
+    hash<string> hasher;
     return hasher(content);
 }
-
+// 作为全局变量，方便二者修改
+map<wstring, size_t> currentState;
 // 获取已更改的文件列表，并更新状态文件
-vector<std::filesystem::path> GetChangedFiles(const std::filesystem::path& worldPath, const std::filesystem::path& metadataPath) {
-    std::vector<std::filesystem::path> changedFiles;
-    std::map<std::wstring, size_t> lastState;
-    std::map<std::wstring, size_t> currentState;
-    std::filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
+vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath) {
+    vector<filesystem::path> changedFiles;
+    map<wstring, size_t> lastState;
+    filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
 
     // 1. 读取上一次的状态
-    std::wifstream stateFileIn(stateFilePath);
+    wifstream stateFileIn(stateFilePath);
     if (stateFileIn.is_open()) {
-        std::wstring path;
+        wstring path;
         size_t hash;
         while (stateFileIn >> path >> hash) {
             lastState[path] = hash;
@@ -111,10 +111,10 @@ vector<std::filesystem::path> GetChangedFiles(const std::filesystem::path& world
     }
 
     // 2. 计算当前状态并与上次状态比较
-    if (std::filesystem::exists(worldPath)) {
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(worldPath)) {
+    if (filesystem::exists(worldPath)) {
+        for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
             if (entry.is_regular_file()) {
-                std::filesystem::path relativePath = std::filesystem::relative(entry.path(), worldPath);
+                filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
                 size_t currentHash = CalculateFileHash(entry.path());
                 currentState[relativePath.wstring()] = currentHash;
 
@@ -125,13 +125,14 @@ vector<std::filesystem::path> GetChangedFiles(const std::filesystem::path& world
             }
         }
     }
-
-    // 3. 将当前状态写入文件，供下次使用
-    std::wofstream stateFileOut(stateFilePath, std::ios::trunc);
+    return changedFiles;
+}
+// 新的函数，专门用于保存状态文件
+void SaveStateFile(const filesystem::path& metadataPath) {
+    filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
+    wofstream stateFileOut(stateFilePath, ios::trunc);
     for (const auto& pair : currentState) {
-        stateFileOut << pair.first << L" " << pair.second << std::endl;
+        stateFileOut << pair.first << L" " << pair.second << endl;
     }
     stateFileOut.close();
-
-    return changedFiles;
 }
