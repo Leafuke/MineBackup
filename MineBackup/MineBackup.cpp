@@ -35,6 +35,7 @@ wchar_t backupPath[CONSTANT1] = L"";
 wchar_t zipPath[CONSTANT1] = L"";
 int compressLevel = 5;
 bool showSettings = false;
+bool isSilence = false;
 
 struct Config {
 	int backupMode;
@@ -47,10 +48,9 @@ struct Config {
 	int zipLevel;
 	int keepCount;
 	bool hotBackup;
-	bool restoreBefore;
+	bool backupBefore;
 	bool topMost;
 	bool manualRestore;
-	bool showProgress;
 	int theme = 1;
 	int folderNameType = 0;
 	wstring themeColor;
@@ -158,12 +158,13 @@ static void LoadConfigs(const string& filename = "config.ini") {
 				else if (key == L"ZipLevel") cur->zipLevel = stoi(val);
 				else if (key == L"KeepCount") cur->keepCount = stoi(val);
 				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
-				else if (key == L"RestoreBeforeBackup") cur->restoreBefore = (val != L"0");
+				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
 				else if (key == L"HotBackup") cur->hotBackup = (val != L"0");
 				else if (key == L"TopMost") cur->topMost = (val != L"0");
 				else if (key == L"ManualRestore") cur->manualRestore = (val != L"0");
-				else if (key == L"ShowProgress") cur->showProgress = (val != L"0");
+				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
+				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					ApplyTheme(cur->theme);
@@ -222,15 +223,16 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
 		out << L"ZipLevel=" << c.zipLevel << L"\n";
 		out << L"KeepCount=" << c.keepCount << L"\n";
 		out << L"SmartBackup=" << c.backupMode << L"\n";
-		out << L"RestoreBeforeBackup=" << (c.restoreBefore ? 1 : 0) << L"\n";
+		out << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
 		out << L"HotBackup=" << (c.hotBackup ? 1 : 0) << L"\n";
 		out << L"TopMost=" << (c.topMost ? 1 : 0) << L"\n";
 		out << L"ManualRestore=" << (c.manualRestore ? 1 : 0) << L"\n";
-		out << L"ShowProgress=" << (c.showProgress ? 1 : 0) << L"\n";
+		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"Theme=" << c.theme << L"\n";
 		out << L"Font=" << c.zipFonts << L"\n";
 		out << L"ThemeColor=" << c.themeColor << L"\n";
-		out << L"BackupNaming=" << c.folderNameType << L"\n\n";
+		out << L"BackupNaming=" << c.folderNameType << L"\n";
+		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n\n\n";
 	}
 }
 
@@ -275,10 +277,10 @@ void ShowSettingsWindow() {
 		new_cfg.keepCount = 10;
 		new_cfg.backupMode = 1;
 		new_cfg.hotBackup = false;
-		new_cfg.restoreBefore = false;
+		new_cfg.backupBefore = false;
 		new_cfg.topMost = false;
 		new_cfg.manualRestore = true;
-		new_cfg.showProgress = true;
+		isSilence = false;
 		if (g_CurrentLang == "zh-CN")
 			new_cfg.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttc";
 		else
@@ -424,14 +426,14 @@ void ShowSettingsWindow() {
 
 	ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
 	ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
-	ImGui::Checkbox(L("RESTORE_BEFORE_BACKUP"), &cfg.restoreBefore); ImGui::SameLine();
+	ImGui::Checkbox(L("BACKUP_BEFORE_RESTORE"), &cfg.backupBefore); ImGui::SameLine();
 	ImGui::Checkbox(L("IS_HOT_BACKUP"), &cfg.hotBackup); ImGui::SameLine();
 	if (ImGui::IsItemHovered()) {
 		ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
 	}
 	ImGui::Checkbox(L("ALWAYS_ON_TOP"), &cfg.topMost); ImGui::SameLine();
 	ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
-	ImGui::Checkbox(L("SHOW_PROGRESS"), &cfg.showProgress);
+	ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
 
 	ImGui::Separator();
 	ImGui::Text(L("BACKUP_NAMING"));
@@ -531,6 +533,7 @@ struct Console
 	//显示消息
 	void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
 	{
+		if (isSilence) return;
 		lock_guard<mutex> lock(logMutex);
 		// FIXME-OPT
 		char buf[1024];
@@ -885,8 +888,13 @@ void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = n
 
 	// 删除多余的最旧文件
 	int to_delete = (int)files.size() - limit;
-	for (int i = 0; i < to_delete; ++i) {
+	for (int i = 0; i < to_delete && to_delete <= (int)files.size(); ++i) {
 		try {
+			if (files[i].path().filename().wstring().find(L"[Smart]") == 0 || files[i + 1].path().filename().wstring().find(L"[Smart]") == 0) // 如果是智能备份，不能删除！如果是完整备份，不能是基底
+			{
+				to_delete += 1;
+				continue;
+			}
 			fs::remove(files[i]);
 			if (console) console->AddLog(L("LOG_DELETE_OLD_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 		}
@@ -1482,10 +1490,10 @@ int main(int, char**)
 						initialConfig.keepCount = 10;
 						initialConfig.backupMode = 1;
 						initialConfig.hotBackup = false;
-						initialConfig.restoreBefore = false;
+						initialConfig.backupBefore = false;
 						initialConfig.topMost = false;
 						initialConfig.manualRestore = true;
-						initialConfig.showProgress = true;
+						isSilence = false;
 						if (g_CurrentLang == "zh-CN")
 							initialConfig.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttc";
 						else
@@ -1575,8 +1583,35 @@ int main(int, char**)
 			}
 
 			if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(-1, 0))) {
-				openRestorePopup = true;
-				ImGui::OpenPopup(L("RESTORE_POPUP_TITLE"));
+				if (cfg.manualRestore) { // 手动选择还原
+					openRestorePopup = true;
+					ImGui::OpenPopup(L("RESTORE_POPUP_TITLE"));
+				}
+				else { // 自动还原最新备份
+					vector<filesystem::directory_entry> files;
+					
+					wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
+					// 收集所有常规文件
+					try {
+						for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+							if (entry.is_regular_file())
+								files.push_back(entry);
+						}
+					}
+					catch (const filesystem::filesystem_error& e) {
+						console.AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
+						continue;
+					}
+					// 按最后写入时间排序（最新的在前）
+					sort(files.begin(), files.end(), [](const filesystem::directory_entry& a, const filesystem::directory_entry& b) {
+						return filesystem::last_write_time(a) > filesystem::last_write_time(b);
+						});
+					if (cfg.backupBefore) {
+						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console));
+						backup_thread.detach(); // 分离线程，让它在后台独立运行
+					}
+					DoRestore(cfg, cfg.worlds[selectedWorldIndex].first, files.front().path().filename().wstring(), ref(console));
+				}
 			}
 
 			if (no_world_selected) {
@@ -1666,6 +1701,10 @@ int main(int, char**)
 
 				if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
 					// 创建后台线程执行还原
+					if (cfg.backupBefore) {
+						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console));
+						backup_thread.detach(); // 分离线程，让它在后台独立运行
+					}
 					thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console));
 					restore_thread.detach();
 					openRestorePopup = false; // 关闭弹窗
