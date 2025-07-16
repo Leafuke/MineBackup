@@ -1,5 +1,7 @@
 [中文](README-zn.md) | **English** <!-- lang -->
 
+![MineBackup](MineBackup/MineBackup.png)
+
 # MineBackup - Minecraft Archive Backup Program
 
 MineBackup is a user-friendly application designed to help you easily back up, restore, and export your files. It works with almost any version of Minecraft!
