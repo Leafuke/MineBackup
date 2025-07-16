@@ -1249,7 +1249,7 @@ int main(int, char**)
 	//ImGui_ImplWin32_EnableDpiAwareness();
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.5.5", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.0", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
@@ -1301,7 +1301,7 @@ int main(int, char**)
 	//加载任务栏图标
 	HICON hIcon = (HICON)LoadImage(
 		GetModuleHandle(NULL),
-		MAKEINTRESOURCE(IDI_ICON5),
+		MAKEINTRESOURCE(IDI_ICON11),
 		IMAGE_ICON,
 		0, 0,
 		LR_DEFAULTSIZE
