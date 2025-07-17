@@ -5,6 +5,7 @@
 #include "imgui/imgui_impl_dx11.h"
 #include "imgui/imgui_impl_win32.h"
 #include "stb_image.h"
+#include "IconsFontAwesome6.h"
 #include "resource.h"
 #include "resource2.h"
 #include <d3d11.h>

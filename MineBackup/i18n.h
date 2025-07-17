@@ -80,7 +80,6 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"WORLD_LIST", u8"存档列表"},
 		{"TABLE_WORLD_NAME", u8"世界名称"},
 		{"TABLE_WORLD_DESC", u8"描述/别名"},
-		{"TABLE_WORLD_TIMES", u8"最近打开时间|备份时间"},
 		{"PROMPT_SELECT_WORLD", u8"请先在上方列表中选择一个存档"},
 		{"AUTOBACKUP_SETTINGS", u8"自动备份设置"},
 		{"AUTOBACKUP_RUNNING", u8"世界 '%s' 的自动备份正在运行中。"},
@@ -166,7 +165,12 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "BACKGROUND_IMAGE_PATH", u8"图片路径" },
 		{"ERROR_CONFIG_WRITE_FAIL", u8"无法写入 config.ini！"},
 		{ "OPEN_BACKUP_FOLDER", u8"备份文件夹" },
-		{ "OPEN_SAVEROOT_FOLDER", u8"存档文件夹" }
+		{ "OPEN_SAVEROOT_FOLDER", u8"存档文件夹" },
+		{ "TABLE_LAST_OPEN", u8"最近打开时间" },
+		{ "TABLE_LAST_BACKUP", u8"最近备份时间" },
+		{ "TOOLTIP_AUTOBACKUP_RUNNING", u8"自动备份任务正在运行" },
+		{ "TOOLTIP_NEEDS_BACKUP", u8"已在游戏中打开，但尚未备份" },
+		{ "TOOLTIP_UP_TO_DATE", u8"存档已是最新" }
 	}},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -244,7 +248,6 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"WORLD_LIST", "World List"},
 		{"TABLE_WORLD_NAME", "World Name"},
 		{"TABLE_WORLD_DESC", "Description/Alias"},
-		{"TABLE_WORLD_TIMES", "Last Opened | Last Backup"},
 		{"PROMPT_SELECT_WORLD", "Please select a world from the list above first"},
 		{"AUTOBACKUP_SETTINGS", "Auto-Backup Settings"},
 		{"AUTOBACKUP_RUNNING", "Auto-backup for world '%s' is running."},
@@ -331,7 +334,12 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "BACKGROUND_IMAGE_PATH", "Image Path" },
 		{"ERROR_CONFIG_WRITE_FAIL", "Failed to write to config.ini!"},
 		{ "OPEN_BACKUP_FOLDER", "Backup Folder" },
-		{ "OPEN_SAVEROOT_FOLDER", "Save Folder" }
+		{ "OPEN_SAVEROOT_FOLDER", "Save Folder" },
+		{ "TABLE_LAST_OPEN", "Last Open" },
+		{ "TABLE_LAST_BACKUP", "Last Backup" },
+		{ "TOOLTIP_AUTOBACKUP_RUNNING", "Auto-backup task is active" },
+		{ "TOOLTIP_NEEDS_BACKUP", "Played since last backup" },
+		{ "TOOLTIP_UP_TO_DATE", "Archive is up-to-date" }
 	}},
 };
 std::string g_CurrentLang; // Default language

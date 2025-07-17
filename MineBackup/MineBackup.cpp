@@ -1348,6 +1348,20 @@ int main(int, char**)
 	else
 		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
 
+	// 准备合并图标字体
+	ImFontConfig config2;
+	config2.MergeMode = true;
+	config2.PixelSnapH = true;
+	config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
+	// 定义要从图标字体中加载的图标范围
+	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+
+	// 加载并合并
+	io.Fonts->AddFontFromFileTTF("fontawesome.otf", 20.0f, &config2, icon_ranges);
+
+	// 构建字体图谱
+	io.Fonts->Build();
+
 	console.AddLog(L("CONSOLE_WELCOME"));
 
 	if (sevenZipExtracted) {
@@ -1628,40 +1642,90 @@ int main(int, char**)
 			ImGui::BeginChild("LeftPane", ImVec2(ImGui::GetContentRegionAvail().x * 0.875f, 0), true);
 
 			ImGui::SeparatorText(L("WORLD_LIST"));
-			if (ImGui::BeginTable("WorldListTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
-				ImGui::TableSetupColumn(L("TABLE_WORLD_NAME"), ImGuiTableColumnFlags_WidthStretch, 0.3f);
-				ImGui::TableSetupColumn(L("TABLE_WORLD_DESC"), ImGuiTableColumnFlags_WidthStretch, 0.4f);
-				ImGui::TableSetupColumn(L("TABLE_WORLD_TIMES"), ImGuiTableColumnFlags_WidthFixed, 160.0f);
-				ImGui::TableHeadersRow();
 
-				for (int i = 0; i < cfg.worlds.size(); ++i) {
-					ImGui::PushID(i); // 为当前循环迭代创建一个唯一的ID作用域
+			// 新的自定义卡片
+			ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // 预留底部按钮空间
 
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn();
+			for (int i = 0; i < cfg.worlds.size(); ++i) {
+				ImGui::PushID(i);
+				bool is_selected = (selectedWorldIndex == i);
 
-					bool is_selected = (selectedWorldIndex == i);
-					// 为了避免Selectable的标签冲突，可以使用隐藏标签"##label"的技巧
-					// 这样即使世界名称为空，也不会有问题
-					if (ImGui::Selectable(wstring_to_utf8(cfg.worlds[i].first).c_str(), is_selected, ImGuiSelectableFlags_SpanAllColumns)) {
-						selectedWorldIndex = i;
-					}
+				// --- 状态逻辑 (为图标做准备) ---
+				lock_guard<mutex> lock(g_task_mutex); // 访问 g_active_auto_backups 需要加锁
+				bool is_task_running = g_active_auto_backups.count(i);
 
-					ImGui::TableNextColumn();
-					ImGui::Text("%s", wstring_to_utf8(cfg.worlds[i].second).c_str());
-					ImGui::TableNextColumn();
-					wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
-					wstring backupFolder = cfg.backupPath + L"\\" + cfg.worlds[i].first;
-					wstring openTime = GetLastOpenTime(worldFolder);
-					wstring backupTime = GetLastBackupTime(backupFolder);
-					ImGui::Text("%s\n%s", wstring_to_utf8(openTime).c_str(), wstring_to_utf8(backupTime).c_str());
+				// 如果最后打开时间比最后备份时间新，则认为需要备份
+				wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
+				wstring backupFolder = cfg.backupPath + L"\\" + cfg.worlds[i].first;
+				bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
 
-					ImGui::PopID(); // 弹出ID作用域，为下一次循环做准备
+				// 整个区域作为一个可选项
+				// ImGuiSelectableFlags_AllowItemOverlap 允许我们在可选项上面绘制其他控件
+				if (ImGui::Selectable("##world_selectable", is_selected, ImGuiSelectableFlags_AllowItemOverlap, ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2.5f))) {
+					selectedWorldIndex = i;
 				}
-				ImGui::EndTable();
+
+				// 如果当前项被选中，我们给它一个边框突出显示
+				if (is_selected) {
+					ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_HeaderActive), 4.0f);
+				}
+
+				// 我们在可选项的相同位置开始绘制我们的自定义内容
+				ImGui::SameLine();
+				ImGui::BeginGroup(); // 将所有内容组合在一起
+
+				// --- 第一行：世界名和描述 (自动换行) ---
+				string name_utf8 = wstring_to_utf8(cfg.worlds[i].first);
+				string desc_utf8 = wstring_to_utf8(cfg.worlds[i].second);
+				if (!desc_utf8.empty()) {
+					ImGui::TextWrapped("%s  |  %s", name_utf8.c_str(), desc_utf8.c_str());
+				}
+				else {
+					ImGui::TextWrapped("%s", name_utf8.c_str());
+				}
+
+				// --- 第二行：时间和状态 ---
+				wstring openTime = GetLastOpenTime(worldFolder);
+				wstring backupTime = GetLastBackupTime(backupFolder);
+
+				// 将次要信息颜色变灰，更具层次感
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+				ImGui::Text("%s: %s | %s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(openTime).c_str(), L("TABLE_LAST_BACKUP"), wstring_to_utf8(backupTime).c_str());
+				ImGui::PopStyleColor();
+
+				ImGui::EndGroup();
+
+				// --- 右侧的状态图标 ---
+				float icon_pane_width = 40.0f;
+				ImGui::SameLine(ImGui::GetContentRegionAvail().x - icon_pane_width);
+				ImGui::BeginGroup();
+				ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 0.25f)); // 垂直居中一点
+				if (is_task_running) {
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); // 蓝色
+					ImGui::Text(ICON_FA_ROTATE); // 旋转图标，表示正在运行
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_AUTOBACKUP_RUNNING"));
+					ImGui::PopStyleColor();
+				}
+				else if (needs_backup) {
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f)); // 黄色
+					ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION); // 警告图标
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_NEEDS_BACKUP"));
+					ImGui::PopStyleColor();
+				}
+				else {
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.6f, 1.0f)); // 绿色
+					ImGui::Text(ICON_FA_CIRCLE_CHECK); // 对勾图标
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_UP_TO_DATE"));
+					ImGui::PopStyleColor();
+				}
+				ImGui::EndGroup();
+
+
+				ImGui::PopID();
+				ImGui::Separator();
 			}
 
-			ImGui::Separator();
+			ImGui::EndChild(); // 结束 WorldListChild
 
 			// --- 核心操作按钮 ---
 			// 如果没有选择任何世界，则禁用按钮
