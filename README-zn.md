@@ -1,5 +1,7 @@
 **中文** | [English](README.md) <!-- lang -->
 
+![MineBackup](MineBackup/MineBackup.png)
+
 # MineBackup - 存档时光机
 
 存档时光机 是一款用户友好型应用程序，旨在帮助您轻松备份、恢复和导出Minecraft游戏存档文件文件，几乎适用于任何版本的Minecraft。

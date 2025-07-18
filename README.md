@@ -1,5 +1,7 @@
 [中文](README-zn.md) | **English** <!-- lang -->
 
+![MineBackup](MineBackup/MineBackup.png)
+
 # MineBackup - Minecraft Archive Backup Program
 
 MineBackup is a user-friendly application designed to help you easily back up, restore, and export your files. It works with almost any version of Minecraft!
@@ -38,3 +40,6 @@ The language standard for which this code is C++17. Link imgui library.
 
 [imgui](https://github.com/ocornut/imgui) 
 > Who provides useful functions and GUI for MineBackup v1.5.0+
+
+[stb](https://github.com/nothings/stb) 
+> Who helps MineBackup to load image
