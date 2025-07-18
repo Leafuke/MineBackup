@@ -15,7 +15,6 @@
 #define CONSTANT1 256
 #define CONSTANT2 512
 using namespace std;
-int aaa = 0;
 // Data
 static ID3D11Device* g_pd3dDevice = nullptr;
 static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
@@ -69,7 +68,6 @@ int currentConfigIndex = 1;
 map<int, Config> configs;
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
-// 放在全局变量区域
 struct AutoBackupTask {
 	thread worker;
 	atomic<bool> stop_flag{ false }; // 原子布尔值，用于安全地通知线程停止
@@ -1252,7 +1250,7 @@ int main(int, char**)
 	//ImGui_ImplWin32_EnableDpiAwareness();
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.0", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.1", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
@@ -1657,21 +1655,20 @@ int main(int, char**)
 			for (int i = 0; i < cfg.worlds.size(); ++i) {
 				ImGui::PushID(i);
 				bool is_selected = (selectedWorldIndex == i);
-
-
-				// 准备路径
 				wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
 
 				// --- 左侧图标区 ---
 				float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
 				// 延迟加载或重载 icon.png
 				if (!worldIconTextures[i]) {
-					
 					std::string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")); // 不能是utf8，再不济也要gbk
 					LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+				} else {
+					ImGui::Image((ImTextureID)worldIconTextures[i],
+						ImVec2(iconSz, iconSz),
+						ImVec2(0.0f, 0.0f),
+						ImVec2(1.0f, 1.0f));
 				}
-				// 绘制图标
-				ImGui::Image((ImTextureID)worldIconTextures[i], ImVec2(iconSz, iconSz));
 				// 点击更换图标
 				if (ImGui::IsItemClicked()) {
 					wstring sel = SelectFileDialog();
@@ -1683,7 +1680,7 @@ int main(int, char**)
 							worldIconTextures[i]->Release();
 							worldIconTextures[i] = nullptr;
 						}
-						std::string newPath = wstring_to_utf8(worldFolder + L"\\icon.png");
+						std::string newPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
 						LoadTextureFromFile(newPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
 					}
 				}
@@ -1703,9 +1700,20 @@ int main(int, char**)
 					selectedWorldIndex = i;
 				}
 
-				// 如果当前项被选中，我们给它一个边框突出显示
+				ImDrawList* draw_list = ImGui::GetWindowDrawList();
+				ImVec2 p_min = ImGui::GetItemRectMin();
+				ImVec2 p_max = ImGui::GetItemRectMax();
+				
+				// --- 卡片背景和高亮 ---
+				if (ImGui::IsItemHovered()) {
+					draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBg), 4.0f);
+				}
+				else if (is_selected) {
+					draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgActive, 0.5f), 4.0f);
+				}
+				
 				if (is_selected) {
-					ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_HeaderActive), 4.0f);
+					draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f, 0, 2.0f);
 				}
 
 				// 我们在可选项的相同位置开始绘制我们的自定义内容
@@ -1966,6 +1974,15 @@ int main(int, char**)
 			pair.second.worker.join(); // 等待线程执行完毕
 		}
 	}
+	for (auto& tex : worldIconTextures) {
+		if (tex) {
+			tex->Release();
+			tex = nullptr;
+		}
+	}
+	worldIconTextures.clear();
+	worldIconWidths.clear();
+	worldIconHeights.clear();
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();
