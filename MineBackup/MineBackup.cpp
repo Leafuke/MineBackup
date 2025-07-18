@@ -1649,7 +1649,7 @@ int main(int, char**)
 			worldIconWidths.resize(worldCount, 0);
 			worldIconHeights.resize(worldCount, 0);
 
-			ImGui::SetNextWindowSize(ImVec2(760, 720), ImGuiCond_FirstUseEver);
+			ImGui::SetNextWindowSize(ImVec2(740, 720), ImGuiCond_FirstUseEver);
 			ImGui::Begin(L("MAIN_WINDOW_TITLE"));
 
 			// --- 左侧面板：世界列表和操作 ---
