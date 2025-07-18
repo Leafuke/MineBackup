@@ -21,7 +21,7 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{d4f5c0c8-036a-4619-98b2-812eb38fdbc1}</ProjectGuid>
+    <ProjectGuid>{e9f4f082-2812-4c6c-a65a-82bb9b613f49}</ProjectGuid>
     <RootNamespace>MineBackup</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -76,6 +76,8 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard_C>Default</LanguageStandard_C>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -90,6 +92,8 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard_C>Default</LanguageStandard_C>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -139,6 +143,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="i18n.h" />
+    <ClInclude Include="IconsFontAwesome6.h" />
     <ClInclude Include="imgui-all.h" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
@@ -154,17 +159,20 @@
     <ClInclude Include="stb_image.h" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="Resource.rc" />
+    <ResourceCompile Include="MineBackup.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\7z.exe" />
+    <None Include="..\7za.exe" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="..\..\..\..\Desktop\mine10.ico" />
-    <Image Include="..\..\..\..\Desktop\mine20.ico" />
-    <Image Include="..\..\..\..\Desktop\mine30.ico" />
-    <Image Include="..\..\..\..\Desktop\mine40.ico" />
-    <Image Include="..\..\..\..\Desktop\mine50.ico" />
+    <Image Include="..\..\..\..\Pictures\图标\mine10.ico" />
+    <Image Include="..\..\..\..\Pictures\图标\mine20.ico" />
+    <Image Include="..\..\..\..\Pictures\图标\mine30.ico" />
+    <Image Include="..\..\..\..\Pictures\图标\mine40.ico" />
+    <Image Include="..\..\..\..\Pictures\图标\mine50.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Font Include="..\fontawesome-sp.otf" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

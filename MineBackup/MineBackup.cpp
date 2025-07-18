@@ -3,6 +3,7 @@
 #include "imgui-all.h"
 #include "i18n.h"
 #include <iostream>
+#include <vector>
 #include <filesystem>
 #include <fstream>
 #include <locale>
@@ -83,6 +84,7 @@ string utf8_to_gbk(const string& utf8);
 
 bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 void SaveStateFile(const filesystem::path& metadataPath);
+bool ExtractFontToTempFile(wstring& extractedPath);
 bool Extract7zToTempFile(wstring& extractedPath);
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 wstring SelectFileDialog(HWND hwndOwner = NULL);
@@ -1302,7 +1304,7 @@ int main(int, char**)
 	//加载任务栏图标
 	HICON hIcon = (HICON)LoadImage(
 		GetModuleHandle(NULL),
-		MAKEINTRESOURCE(IDI_ICON11),
+		MAKEINTRESOURCE(IDI_ICON1),
 		IMAGE_ICON,
 		0, 0,
 		LR_DEFAULTSIZE
@@ -1330,8 +1332,14 @@ int main(int, char**)
 	ImGui::StyleColorsLight();//默认亮色
 	LoadConfigs(fileName);
 
-	wstring g_7zTempPath;
+	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
+	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
+	if (!ExtractFontToTempFile(g_FontTempPath)) {
+		printf("\a");
+		return 0;
+	}
+
 	if (isFirstRun) {
 		LANGID lang_id = GetUserDefaultUILanguage();
 
@@ -1358,7 +1366,7 @@ int main(int, char**)
 	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
 	// 加载并合并
-	io.Fonts->AddFontFromFileTTF("fontawesome.otf", 20.0f, &config2, icon_ranges);
+	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
 
 	// 构建字体图谱
 	io.Fonts->Build();
