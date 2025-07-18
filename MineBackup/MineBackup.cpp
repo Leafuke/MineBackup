@@ -23,6 +23,8 @@ static IDXGISwapChain* g_pSwapChain = nullptr;
 static bool                     g_SwapChainOccluded = false;
 static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
+static std::vector<ID3D11ShaderResourceView*> worldIconTextures;
+static std::vector<int> worldIconWidths, worldIconHeights;
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -78,7 +80,8 @@ static mutex g_task_mutex; // 专门用于保护上面 g_active_auto_backups 的互斥锁
 
 string wstring_to_utf8(const wstring& wstr);
 wstring utf8_to_wstring(const string& str);
-string GbkToUtf8(const string& gbk);
+string gbk_to_utf8(const string& gbk);
+string utf8_to_gbk(const string& utf8);
 
 bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 void SaveStateFile(const filesystem::path& metadataPath);
@@ -1635,6 +1638,11 @@ int main(int, char**)
 			}
 			Config& cfg = configs[currentConfigIndex];
 
+			int worldCount = (int)cfg.worlds.size();
+			worldIconTextures.resize(worldCount, nullptr);
+			worldIconWidths.resize(worldCount, 0);
+			worldIconHeights.resize(worldCount, 0);
+
 			ImGui::SetNextWindowSize(ImVec2(760, 720), ImGuiCond_FirstUseEver);
 			ImGui::Begin(L("MAIN_WINDOW_TITLE"));
 
@@ -1650,12 +1658,42 @@ int main(int, char**)
 				ImGui::PushID(i);
 				bool is_selected = (selectedWorldIndex == i);
 
+
+				// 准备路径
+				wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
+
+				// --- 左侧图标区 ---
+				float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+				// 延迟加载或重载 icon.png
+				if (!worldIconTextures[i]) {
+					
+					std::string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")); // 不能是utf8，再不济也要gbk
+					LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+				}
+				// 绘制图标
+				ImGui::Image((ImTextureID)worldIconTextures[i], ImVec2(iconSz, iconSz));
+				// 点击更换图标
+				if (ImGui::IsItemClicked()) {
+					wstring sel = SelectFileDialog();
+					if (!sel.empty()) {
+						// 覆盖原 icon.png
+						CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
+						// 释放旧纹理并重新加载
+						if (worldIconTextures[i]) {
+							worldIconTextures[i]->Release();
+							worldIconTextures[i] = nullptr;
+						}
+						std::string newPath = wstring_to_utf8(worldFolder + L"\\icon.png");
+						LoadTextureFromFile(newPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+					}
+				}
+				ImGui::SameLine();
 				// --- 状态逻辑 (为图标做准备) ---
 				lock_guard<mutex> lock(g_task_mutex); // 访问 g_active_auto_backups 需要加锁
 				bool is_task_running = g_active_auto_backups.count(i);
 
 				// 如果最后打开时间比最后备份时间新，则认为需要备份
-				wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
+				//wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
 				wstring backupFolder = cfg.backupPath + L"\\" + cfg.worlds[i].first;
 				bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
 

@@ -16,7 +16,7 @@ wstring utf8_to_wstring(const string& str) {
     MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), &wstrTo[0], size_needed);
     return wstrTo;
 }
-string GbkToUtf8(const string& gbk)
+string gbk_to_utf8(const string& gbk)
 {
     int lenW = MultiByteToWideChar(CP_ACP, 0, gbk.c_str(), -1, nullptr, 0);
     wstring wstr(lenW, 0);
@@ -29,4 +29,61 @@ string GbkToUtf8(const string& gbk)
     // 去掉末尾的\0
     if (!u8str.empty() && u8str.back() == '\0') u8str.pop_back();
     return u8str;
+}
+string utf8_to_gbk(const string& utf8)
+{
+    if (utf8.empty())
+        return string();
+
+    // 1. 先把 UTF-8 转成宽字符 (UTF-16)
+    int wide_len = ::MultiByteToWideChar(
+        CP_UTF8,            // 源是 UTF-8
+        0,                  // 默认转换方式
+        utf8.c_str(),
+        (int)utf8.length(),
+        nullptr,
+        0
+    );
+    if (wide_len == 0)
+        return string();
+
+    std::wstring wide;
+    wide.resize(wide_len);
+    ::MultiByteToWideChar(
+        CP_UTF8,
+        0,
+        utf8.c_str(),
+        (int)utf8.length(),
+        &wide[0],
+        wide_len
+    );
+
+    // 2. 再把宽字符转换成 ANSI (即 GBK)
+    int gbk_len = ::WideCharToMultiByte(
+        CP_ACP,             // ANSI code page (GBK)
+        0,
+        wide.c_str(),
+        wide_len,
+        nullptr,
+        0,
+        nullptr,
+        nullptr
+    );
+    if (gbk_len == 0)
+        return string();
+
+    string gbk;
+    gbk.resize(gbk_len);
+    ::WideCharToMultiByte(
+        CP_ACP,
+        0,
+        wide.c_str(),
+        wide_len,
+        &gbk[0],
+        gbk_len,
+        nullptr,
+        nullptr
+    );
+
+    return gbk;
 }
