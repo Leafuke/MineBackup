@@ -53,7 +53,6 @@ struct Config {
 	int keepCount;
 	bool hotBackup;
 	bool backupBefore;
-	bool topMost;
 	bool manualRestore;
 	int theme = 1;
 	int folderNameType = 0;
@@ -169,7 +168,6 @@ static void LoadConfigs(const string& filename = "config.ini") {
 				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
 				else if (key == L"HotBackup") cur->hotBackup = (val != L"0");
-				else if (key == L"TopMost") cur->topMost = (val != L"0");
 				else if (key == L"ManualRestore") cur->manualRestore = (val != L"0");
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
@@ -242,7 +240,6 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
 		out << L"SmartBackup=" << c.backupMode << L"\n";
 		out << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
 		out << L"HotBackup=" << (c.hotBackup ? 1 : 0) << L"\n";
-		out << L"TopMost=" << (c.topMost ? 1 : 0) << L"\n";
 		out << L"ManualRestore=" << (c.manualRestore ? 1 : 0) << L"\n";
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"Theme=" << c.theme << L"\n";
@@ -294,7 +291,6 @@ void ShowSettingsWindow() {
 		new_cfg.backupMode = 1;
 		new_cfg.hotBackup = false;
 		new_cfg.backupBefore = false;
-		new_cfg.topMost = false;
 		new_cfg.manualRestore = true;
 		isSilence = false;
 		if (g_CurrentLang == "zh-CN")
@@ -452,7 +448,6 @@ void ShowSettingsWindow() {
 		if (ImGui::IsItemHovered()) {
 			ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
 		}
-		ImGui::Checkbox(L("ALWAYS_ON_TOP"), &cfg.topMost); ImGui::SameLine();
 		ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
 		ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
 		ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
@@ -1064,6 +1059,9 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	if (forceFullBackup)
 		console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
 
+	// 无论什么备份模式，都要获得状态，便于成功后更新状态
+	vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
+
 	if (config.backupMode == 1 || forceFullBackup) // 普通备份
 	{
 		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
@@ -1072,8 +1070,6 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	}
 	else if (config.backupMode == 2) // 智能备份
 	{
-
-		vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
 
 		if (filesToBackup.empty()) {
 			console.AddLog(L("LOG_NO_CHANGE_FOUND"));
@@ -1182,11 +1178,11 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		}
 
 		if (baseFullBackup.empty()) {
-			console.AddLog("[Error] Cannot restore: No suitable [Full] backup found before the selected [Smart] backup.");
+			console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
 			return;
 		}
 
-		console.AddLog("[Info] Found base full backup: %s", wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
+		console.AddLog(L("LOG_BACKUP_SMART_FOUND"), wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
 		backupsToApply.push_back(baseFullBackup);
 
 		// 收集从基础备份到目标备份之间的所有增量备份
@@ -1252,7 +1248,7 @@ int main(int, char**)
 	//ImGui_ImplWin32_EnableDpiAwareness();
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.1", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.2", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
@@ -1614,7 +1610,6 @@ int main(int, char**)
 						initialConfig.backupMode = 1;
 						initialConfig.hotBackup = false;
 						initialConfig.backupBefore = false;
-						initialConfig.topMost = false;
 						initialConfig.manualRestore = true;
 						isSilence = false;
 						if (g_CurrentLang == "zh-CN")
