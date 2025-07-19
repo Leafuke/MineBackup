@@ -674,8 +674,8 @@ struct Console
 				// (e.g. make Items[] an array of structure, store color/type etc.)
 				ImVec4 color;
 				bool has_color = false;
-				if (strstr(item, "[error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
-				else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[INFO] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+				if (strstr(item, "[Error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
+				else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[Info] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
 				else if (strncmp(item, u8"[提示] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
 				if (has_color)
 					ImGui::PushStyleColor(ImGuiCol_Text, color);
@@ -1182,11 +1182,11 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		}
 
 		if (baseFullBackup.empty()) {
-			console.AddLog("[error] Cannot restore: No suitable [Full] backup found before the selected [Smart] backup.");
+			console.AddLog("[Error] Cannot restore: No suitable [Full] backup found before the selected [Smart] backup.");
 			return;
 		}
 
-		console.AddLog("[INFO] Found base full backup: %s", wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
+		console.AddLog("[Info] Found base full backup: %s", wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
 		backupsToApply.push_back(baseFullBackup);
 
 		// 收集从基础备份到目标备份之间的所有增量备份
@@ -1212,7 +1212,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	// 依次执行还原
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
-		console.AddLog("[INFO] Restoring step %zu/%zu: %s", i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
+		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
 		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder + L"\" -y";
 		RunCommandInBackground(command, console);
 	}
@@ -1485,14 +1485,14 @@ int main(int, char**)
 
 				// 找路径
 				string pathTemp;
-				if (ImGui::Button(u8"自动选择 Java版 存档路径")) {
+				if (ImGui::Button(L("BUTTON_AUTO_JAVA"))) {
 					if (filesystem::exists((string)getenv("APPDATA") + "\\.minecraft\\saves")) {
 						pathTemp = (string)getenv("APPDATA") + "\\.minecraft\\saves";
 						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
 					}
 				}
 				ImGui::SameLine();
-				if (ImGui::Button(u8"自动选择 基岩版 存档路径")) { // 不能用 getenv，改成_dupenv_s了...
+				if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) { // 不能用 getenv，改成_dupenv_s了...
 					if (filesystem::exists("C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
 						pathTemp = "C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
 						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
