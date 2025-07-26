@@ -6,6 +6,7 @@
 #include <vector>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <locale>
 #include <codecvt>
 #include <fcntl.h>
@@ -60,7 +61,28 @@ struct Config {
 	wstring backgroundImagePath;
 	bool backgroundImageEnabled = false;
 	float backgroundImageAlpha = 0.5f;
+	int cpuThreads = 0; // 0 for auto/default
+	bool useLowPriority = false;
 };
+
+struct SpecialConfig {
+	bool autoExecute = false;
+	vector<wstring> commands;
+	vector<pair<int, int>> autoBackupTasks; // {configIndex, worldIndex}
+	bool exitAfterExecution = false;
+	string name;
+	int zipLevel = 5;
+	int keepCount = 10;
+	int cpuThreads = 0;
+	bool useLowPriority = true;
+	bool hotBackup = false;
+};
+
+map<int, SpecialConfig> specialConfigs;
+static bool specialConfigMode = false; // 用来开启简单UI
+static atomic<bool> specialTasksRunning = false;
+static atomic<bool> specialTasksComplete = false;
+static mutex specialConfigMutex;
 
 // 全部配置
 wstring Fontss;
@@ -114,24 +136,31 @@ const char* L(const char* key) {
 // 读取配置文件
 static void LoadConfigs(const string& filename = "config.ini") {
 	configs.clear();
+	specialConfigs.clear();
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) return;
 	string line1;
 	wstring line, section;
 	// cur作为一个指针，指向 configs 这个全局 map<int, Config> 中的元素 Config
 	Config* cur = nullptr;
+	SpecialConfig* spCur = nullptr;
+
 	while (getline(in, line1)) {
 		line = utf8_to_wstring(line1);
 		if (line.empty() || line.front() == L'#') continue;
 		if (line.front() == L'[' && line.back() == L']') {
 			section = line.substr(1, line.size() - 2);
-			if (section == L"General") {
-				cur = nullptr;
-			}
-			else if (section.find(L"Config", 0) == 0) {
+			spCur = nullptr;
+			cur = nullptr;
+			if (section.find(L"Config", 0) == 0) {
 				int idx = stoi(section.substr(6));
 				configs[idx] = Config();
 				cur = &configs[idx];
+			}
+			else if (section.find(L"SpCfg", 0) == 0) {
+				int idx = stoi(section.substr(5));
+				specialConfigs[idx] = SpecialConfig();
+				spCur = &specialConfigs[idx];
 			}
 		}
 		else {
@@ -172,6 +201,8 @@ static void LoadConfigs(const string& filename = "config.ini") {
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
+				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
+				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					ApplyTheme(cur->theme);
@@ -195,6 +226,25 @@ static void LoadConfigs(const string& filename = "config.ini") {
 					else
 						cur->backgroundImageEnabled = false;
 				}
+			}
+			else if (spCur) {
+				if (key == L"Name") spCur->name = wstring_to_utf8(val);
+				else if (key == L"AutoExecute") spCur->autoExecute = (val != L"0");
+				else if (key == L"ExitAfter") spCur->exitAfterExecution = (val != L"0");
+				else if (key == L"Command") spCur->commands.push_back(val);
+				else if (key == L"AutoBackup") {
+					wstringstream ss(val);
+					int cfgIdx, worldIdx;
+					wchar_t comma;
+					ss >> cfgIdx >> comma >> worldIdx;
+					spCur->autoBackupTasks.push_back({ cfgIdx, worldIdx });
+				}
+				else if (key == L"ZipLevel") spCur->zipLevel = stoi(val);
+				else if (key == L"KeepCount") spCur->keepCount = stoi(val);
+				else if (key == L"CpuThreads") spCur->cpuThreads = stoi(val);
+
+				else if (key == L"UseLowPriority") spCur->useLowPriority = (val != L"0");
+				else if (key == L"HotBackup") spCur->hotBackup = (val != L"0");
 			}
 			else if (section == L"General") { // Inside [General] section
 				if (key == L"CurrentConfig") {
@@ -236,6 +286,8 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
 		out << L"ZipProgram=" << c.zipPath << L"\n";
 		out << L"ZipFormat=" << c.zipFormat << L"\n";
 		out << L"ZipLevel=" << c.zipLevel << L"\n";
+		out << L"CpuThreads=" << c.cpuThreads << L"\n";
+		out << L"UseLowPriority=" << (c.useLowPriority ? 1 : 0) << L"\n";
 		out << L"KeepCount=" << c.keepCount << L"\n";
 		out << L"SmartBackup=" << c.backupMode << L"\n";
 		out << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
@@ -249,7 +301,30 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"BackgroundImage=" << c.backgroundImagePath << L"\n\n\n";
 	}
+
+	for (auto& kv : specialConfigs) {
+		int idx = kv.first;
+		SpecialConfig& sc = kv.second;
+		out << L"[SpCfg" << idx << L"]\n";
+		out << L"Name=" << utf8_to_wstring(sc.name) << L"\n";
+		out << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
+		for (const auto& cmd : sc.commands) {
+			out << L"Command=" << cmd << L"\n";
+		}
+		for (const auto& task : sc.autoBackupTasks) {
+			out << L"AutoBackup=" << task.first << L"," << task.second << L"\n";
+		}
+		out << L"ExitAfter=" << (sc.exitAfterExecution ? 1 : 0) << L"\n";
+
+		out << L"ZipLevel=" << sc.zipLevel << L"\n";
+		out << L"KeepCount=" << sc.keepCount << L"\n";
+		out << L"CpuThreads=" << sc.cpuThreads << L"\n";
+		out << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
+		out << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n\n";
+	}
 }
+
+bool specialSetting = false;
 
 //设置窗口
 void ShowSettingsWindow() {
@@ -263,18 +338,39 @@ void ShowSettingsWindow() {
 	}
 	Config& cfg = configs[currentConfigIndex];
 
-	string current_config_label = string(L("CONFIG_N")) + to_string(currentConfigIndex);
+	string current_config_label = "None";
+	if (specialSetting && specialConfigs.count(currentConfigIndex)) {
+		current_config_label = "[Special] " + specialConfigs[currentConfigIndex].name;
+	}
+	else if (!specialSetting && configs.count(currentConfigIndex)) {
+		current_config_label = string(L("CONFIG_N")) + to_string(currentConfigIndex);
+	}
+
 	if (ImGui::BeginCombo(L("CURRENT_CONFIG"), current_config_label.c_str())) {
+		// 普通配置
 		for (auto const& [idx, val] : configs) {
 			const bool is_selected = (currentConfigIndex == idx);
 			string label = string(L("CONFIG_N")) + to_string(idx);
 
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				currentConfigIndex = idx;
+				specialSetting = false;
 			}
 			if (is_selected) {
 				ImGui::SetItemDefaultFocus();
 			}
+		}
+		ImGui::Separator();
+		// 特殊配置
+		for (auto const& [idx, val] : specialConfigs) {
+			const bool is_selected = (currentConfigIndex == idx);
+			string label = "[Special] " + val.name;
+			if (ImGui::Selectable(label.c_str(), is_selected)) {
+				currentConfigIndex = idx;
+				specialSetting = true;
+				//specialConfigMode = true;
+			}
+			if (is_selected) ImGui::SetItemDefaultFocus();
 		}
 		ImGui::EndCombo();
 	}
@@ -283,6 +379,7 @@ void ShowSettingsWindow() {
 		int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
 		configs[new_index] = Config(); // Create default config
 		currentConfigIndex = new_index; // Switch to the new one
+		specialConfigMode = false;
 
 		Config& new_cfg = configs[currentConfigIndex];
 		new_cfg.zipFormat = L"7z";
@@ -292,6 +389,8 @@ void ShowSettingsWindow() {
 		new_cfg.hotBackup = false;
 		new_cfg.backupBefore = false;
 		new_cfg.manualRestore = true;
+		new_cfg.cpuThreads = 0;
+		new_cfg.useLowPriority = false;
 		isSilence = false;
 		if (g_CurrentLang == "zh-CN")
 			new_cfg.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttc";
@@ -300,19 +399,41 @@ void ShowSettingsWindow() {
 		new_cfg.themeColor = L"0.45 0.55 0.60 1.00";
 	}
 	ImGui::SameLine();
+	
+	if (ImGui::Button(L("ADD_SPECIAL_CONFIG"))) {
+		int new_index = specialConfigs.empty() ? 1 : specialConfigs.rbegin()->first + 1;
+		specialConfigs[new_index] = SpecialConfig();
+		specialConfigs[new_index].name = "New Auto Task";
+		currentConfigIndex = new_index;
+		specialSetting = true;
+		//specialConfigMode = true; 不能直接进入特殊模式，这样都没法设置了
+	}
+
+	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_DELETE_CONFIG"))) {
-		if (configs.size() > 1) { // Keep at least one config
+		if ((!specialConfigMode && configs.size() > 1) || (specialConfigMode && !specialConfigs.empty())) { // 至少保留一个
 			ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
 		}
 	}
 
-	// Deletion confirmation popup
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex);
+		if (specialConfigMode) {
+			ImGui::Text("Are you sure you want to delete Special Config '%s'?", specialConfigs[currentConfigIndex].name.c_str());
+		}
+		else {
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex);
+		}
 		ImGui::Separator();
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-			configs.erase(currentConfigIndex);
-			currentConfigIndex = configs.begin()->first;
+			if (specialConfigMode) {
+				specialConfigs.erase(currentConfigIndex);
+				specialConfigMode = false;
+				currentConfigIndex = configs.empty() ? 0 : configs.begin()->first;
+			}
+			else {
+				configs.erase(currentConfigIndex);
+				currentConfigIndex = configs.begin()->first;
+			}
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
@@ -325,200 +446,303 @@ void ShowSettingsWindow() {
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
 	ImGui::SeparatorText(L("CURRENT_CONFIG_DETAILS"));
 
-	if (ImGui::CollapsingHeader(L("GROUP_PATHS"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		char rootBufA[CONSTANT1];
-		strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
-		if (ImGui::Button(L("BUTTON_SELECT_SAVES_DIR"))) {
-			wstring sel = SelectFolderDialog();
-			if (!sel.empty()) {
-				cfg.saveRoot = sel;
+	if (specialSetting) {
+		if (!specialConfigs.count(currentConfigIndex)) {
+			specialSetting = false;
+			currentConfigIndex = configs.empty() ? 1 : configs.begin()->first;
+		}
+		else {
+			SpecialConfig& spCfg = specialConfigs[currentConfigIndex];
+
+			char buf[128];
+			strncpy_s(buf, spCfg.name.c_str(), sizeof(buf));
+			if (ImGui::InputText(L("SPECIAL_CONFIG_NAME"), buf, sizeof(buf))) {
+				spCfg.name = buf;
+			}
+
+			ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
+			ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
+
+			ImGui::SeparatorText(L("GROUP_BACKUP_BEHAVIOR"));
+			ImGui::Checkbox(L("IS_HOT_BACKUP"), &spCfg.hotBackup);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
+			ImGui::SameLine();
+			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_LOW_PRIORITY"));
+
+			int max_threads = std::thread::hardware_concurrency();
+			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &spCfg.cpuThreads, 0, max_threads);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_CPU_THREADS"));
+
+			ImGui::SliderInt(L("COMPRESSION_LEVEL"), &spCfg.zipLevel, 0, 9);
+			ImGui::InputInt(L("BACKUPS_TO_KEEP"), &spCfg.keepCount);
+
+
+			ImGui::SeparatorText(L("AUTOMATED_TASKS"));
+			ImGui::Text(L("WORLDS_TO_BACKUP"));
+			if (ImGui::Button(L("ADD_BACKUP_TASK"))) {
+				spCfg.autoBackupTasks.push_back({ -1, -1 });
+			}
+			for (int i = 0; i < spCfg.autoBackupTasks.size(); ++i) {
+				ImGui::PushID(1000 + i);
+
+				int selectedConfig = spCfg.autoBackupTasks[i].first;
+				string preview = selectedConfig == -1 ? "Select Config" : "Config " + to_string(selectedConfig);
+				if (ImGui::BeginCombo(L("CONFIG_COMBO"), preview.c_str())) {
+					for (auto const& [idx, val] : configs) {
+						if (ImGui::Selectable(("Config " + to_string(idx)).c_str(), selectedConfig == idx)) {
+							spCfg.autoBackupTasks[i].first = idx;
+							spCfg.autoBackupTasks[i].second = -1;
+						}
+					}
+					ImGui::EndCombo();
+				}
+
+				ImGui::SameLine();
+
+				int selectedWorld = spCfg.autoBackupTasks[i].second;
+				string worldPreview = "Select World";
+				if (selectedConfig != -1 && configs.count(selectedConfig) && selectedWorld != -1 && selectedWorld < configs[selectedConfig].worlds.size()) {
+					worldPreview = wstring_to_utf8(configs[selectedConfig].worlds[selectedWorld].first);
+				}
+
+				if (ImGui::BeginCombo(L("WORLD_COMBO"), worldPreview.c_str())) {
+					if (selectedConfig != -1 && configs.count(selectedConfig)) {
+						Config& tempCfg = configs[selectedConfig];
+						for (int w_idx = 0; w_idx < tempCfg.worlds.size(); ++w_idx) {
+							if (ImGui::Selectable(wstring_to_utf8(tempCfg.worlds[w_idx].first).c_str(), selectedWorld == w_idx)) {
+								spCfg.autoBackupTasks[i].second = w_idx;
+							}
+						}
+					}
+					ImGui::EndCombo();
+				}
+
+				ImGui::SameLine();
+				if (ImGui::Button("X")) {
+					spCfg.autoBackupTasks.erase(spCfg.autoBackupTasks.begin() + i);
+					ImGui::PopID();
+					break;
+				}
+
+				ImGui::PopID();
 			}
 		}
-		ImGui::SameLine();
-		if (ImGui::InputText(L("SAVES_ROOT_PATH"), rootBufA, CONSTANT1)) {
-			cfg.saveRoot = utf8_to_wstring(rootBufA);
+	} else {
+		if (!configs.count(currentConfigIndex)) {
+			// Handle case where config was deleted
+			if (configs.empty()) configs[1] = Config(); // create a new one if all were deleted
+			currentConfigIndex = configs.begin()->first;
 		}
-		
-		char buf[CONSTANT1];
-		strncpy_s(buf, wstring_to_utf8(cfg.backupPath).c_str(), sizeof(buf));
-		if (ImGui::Button(L("BUTTON_SELECT_BACKUP_DIR"))) {
-			wstring sel = SelectFolderDialog();
-			if (!sel.empty()) {
-				cfg.backupPath = sel;
-			}
-		}
-		//ImVec2 item_width = ImGui::CalcTextSize(L("BUTTON_SELECT_BACKUP_DIR"));
-		//item_width.x = abs(ImGui::CalcTextSize(L("BUTTON_SELECT_SAVES_DIR")).x - ImGui::CalcTextSize(L("BUTTON_SELECT_BACKUP_DIR")).x);
-		/*ImGui::SameLine();
-		ImGui::InvisibleButton("##width", item_width);*/
-		ImGui::SameLine();
-		if (ImGui::InputText(L("BACKUP_DEST_PATH_LABEL"), buf, CONSTANT1)) {
-			cfg.backupPath = utf8_to_wstring(buf);
-		}
-
-		char zipBuf[CONSTANT1];
-		strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
-		if (filesystem::exists("7z.exe") && cfg.zipPath.empty()) {
-			cfg.zipPath = L"7z.exe";
-			ImGui::Text(L("AUTODETECTED_7Z"));
-		}
-		else if (cfg.zipPath.empty()) {
-			string zipPathStr = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
-			if (filesystem::exists(zipPathStr)) {
-				cfg.zipPath = utf8_to_wstring(zipPathStr);
-				ImGui::Text(L("AUTODETECTED_7Z"));
-			}
-		}
-		if (ImGui::Button(L("BUTTON_SELECT_7Z"))) {
-			wstring sel = SelectFileDialog();
-			if (!sel.empty()) {
-				cfg.zipPath = sel;
-			}
-		}
-		ImGui::SameLine();
-		if (ImGui::InputText(L("7Z_PATH_LABEL"), zipBuf, CONSTANT1)) {
-			cfg.zipPath = utf8_to_wstring(zipBuf);
-		}
-	}
-
-	// Language selection
-	int lang_idx = 0;
-	for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
-		if (g_CurrentLang == lang_codes[i]) {
-			lang_idx = i;
-			break;
-		}
-	}
-	
-	if (ImGui::CollapsingHeader(L("GROUP_WORLD_MANAGEMENT"))) {
-		// Auto-scan worlds
-		if (ImGui::Button(L("BUTTON_SCAN_SAVES"))) {
-			cfg.worlds.clear();
-			if (filesystem::exists(cfg.saveRoot))
-				for (auto& e : filesystem::directory_iterator(cfg.saveRoot))
-					if (e.is_directory())
-						cfg.worlds.push_back({ e.path().filename().wstring(), L"" });
-		}
-
-		// World name + description editor
-		ImGui::Separator();
-		ImGui::Text(L("WORLD_NAME_AND_DESC"));
-		for (size_t i = 0; i < cfg.worlds.size(); ++i) {
-			ImGui::PushID(int(i));
-			char name[CONSTANT1], desc[CONSTANT2];
-			strncpy_s(name, wstring_to_utf8(cfg.worlds[i].first).c_str(), sizeof(name));
-			strncpy_s(desc, wstring_to_utf8(cfg.worlds[i].second).c_str(), sizeof(desc));
-
-			if (ImGui::InputText(L("WORLD_NAME"), name, CONSTANT1))
-				cfg.worlds[i].first = utf8_to_wstring(name);
-			if (cfg.worlds[i].second.find(L"\"") != wstring::npos || cfg.worlds[i].second.find(L":") != wstring::npos || cfg.worlds[i].second.find(L"\\") != wstring::npos || cfg.worlds[i].second.find(L"/") != wstring::npos || cfg.worlds[i].second.find(L">") != wstring::npos || cfg.worlds[i].second.find(L"<") != wstring::npos || cfg.worlds[i].second.find(L"|") != wstring::npos || cfg.worlds[i].second.find(L"?") != wstring::npos || cfg.worlds[i].second.find(L"*") != wstring::npos) {
-				memset(desc, '\0', sizeof(desc));
-				cfg.worlds[i].second = L"";
-			}
-			if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
-				cfg.worlds[i].second = utf8_to_wstring(desc);
-			
-			ImGui::PopID();
-		}
-	}
-	
-	if (ImGui::CollapsingHeader(L("GROUP_BACKUP_BEHAVIOR"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		// Compression format
-		static int format_choice = (cfg.zipFormat == L"zip") ? 1 : 0;
-		ImGui::Text(L("COMPRESSION_FORMAT")); ImGui::SameLine();
-		if (ImGui::RadioButton("7z", &format_choice, 0)) { cfg.zipFormat = L"7z"; } ImGui::SameLine();
-		if (ImGui::RadioButton("zip", &format_choice, 1)) { cfg.zipFormat = L"zip"; }
-
-		ImGui::Text(L("TEXT_BACKUP_MODE")); ImGui::SameLine();
-		ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_NORMAL"), &cfg.backupMode, 1);
-		ImGui::SameLine();
-		ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_SMART"), &cfg.backupMode, 2);
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip(L("TIP_SMART_BACKUP"));
-		}
-		ImGui::SameLine();
-		ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_OVERWRITE"), &cfg.backupMode, 3);
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip(L("TIP_OVERWRITE_BACKUP"));
-		}
-		ImGui::Text(L("BACKUP_NAMING"));
-		ImGui::SameLine();
-		int folder_name_choice = (int)cfg.folderNameType;
-		if (ImGui::RadioButton(L("NAME_BY_WORLD"), &folder_name_choice, 0)) { cfg.folderNameType = 0; } ImGui::SameLine();
-		if (ImGui::RadioButton(L("NAME_BY_DESC"), &folder_name_choice, 1)) { cfg.folderNameType = 1; }
-
-		ImGui::Checkbox(L("BACKUP_BEFORE_RESTORE"), &cfg.backupBefore); ImGui::SameLine();
-		ImGui::Checkbox(L("IS_HOT_BACKUP"), &cfg.hotBackup); ImGui::SameLine();
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
-		}
-		ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
-		ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
-		ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
-		ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
-	}
-
-	if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
-			g_CurrentLang = lang_codes[lang_idx];
-			//ReloadFonts(); // Reload fonts for the new language
-		}
-		ImGui::Separator();
-		ImGui::Text(L("THEME_SETTINGS"));
-		int theme_choice = (int)cfg.theme;
-		if (ImGui::RadioButton(L("THEME_DARK"), &theme_choice, 0)) { cfg.theme = 0; ApplyTheme(cfg.theme); } ImGui::SameLine();
-		if (ImGui::RadioButton(L("THEME_LIGHT"), &theme_choice, 1)) { cfg.theme = 1; ApplyTheme(cfg.theme); } ImGui::SameLine();
-		if (ImGui::RadioButton(L("THEME_CLASSIC"), &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); }
-
-		static float window_alpha = ImGui::GetStyle().Alpha;
-		if (ImGui::SliderFloat(L("WINDOW_OPACITY"), &window_alpha, 0.2f, 1.0f, "%.2f")) {
-			ImGui::GetStyle().Alpha = window_alpha;
-		}
-		ImGui::ColorEdit3(L("BG_COLOR"), (float*)&clear_color);
-
-		ImGui::Text(L("FONT_SETTINGS"));
-		char Fonts[CONSTANT1];
-		strncpy_s(Fonts, wstring_to_utf8(cfg.zipFonts).c_str(), sizeof(Fonts));
-		if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
-			wstring sel = SelectFileDialog();
-			if (!sel.empty()) {
-				cfg.zipFonts = sel;
-				Fontss = sel;
-				//ReloadFonts();
-			}
-		}
-		ImGui::SameLine();
-		if (ImGui::InputText("##zipFontsValue", Fonts, CONSTANT1)) {
-			cfg.zipFonts = utf8_to_wstring(Fonts);
-			Fontss = cfg.zipFonts;
-			//ReloadFonts();
-		}
-		ImGui::SeparatorText(L("BACKGROUND_IMAGE"));
 		Config& cfg = configs[currentConfigIndex];
-		ImGui::Checkbox(L("ENABLE_BACKGROUND_IMAGE"), &cfg.backgroundImageEnabled);
 
-		if (cfg.backgroundImageEnabled) {
-			ImGui::SliderFloat(L("BACKGROUND_IMAGE_OPACITY"), &cfg.backgroundImageAlpha, 0.0f, 1.0f);
-
-			char bgPathBuf[CONSTANT1];
-			strncpy_s(bgPathBuf, wstring_to_utf8(cfg.backgroundImagePath).c_str(), sizeof(bgPathBuf));
-
-			if (ImGui::Button(L("BUTTON_SELECT_IMAGE"))) {
-				wstring sel = SelectFileDialog();
+		if (ImGui::CollapsingHeader(L("GROUP_PATHS"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			char rootBufA[CONSTANT1];
+			strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
+			if (ImGui::Button(L("BUTTON_SELECT_SAVES_DIR"))) {
+				wstring sel = SelectFolderDialog();
 				if (!sel.empty()) {
-					cfg.backgroundImagePath = sel;
+					cfg.saveRoot = sel;
 				}
 			}
 			ImGui::SameLine();
-			ImGui::InputText(L("BACKGROUND_IMAGE_PATH"), bgPathBuf, CONSTANT1, ImGuiInputTextFlags_ReadOnly);
+			if (ImGui::InputText(L("SAVES_ROOT_PATH"), rootBufA, CONSTANT1)) {
+				cfg.saveRoot = utf8_to_wstring(rootBufA);
+			}
+
+			char buf[CONSTANT1];
+			strncpy_s(buf, wstring_to_utf8(cfg.backupPath).c_str(), sizeof(buf));
+			if (ImGui::Button(L("BUTTON_SELECT_BACKUP_DIR"))) {
+				wstring sel = SelectFolderDialog();
+				if (!sel.empty()) {
+					cfg.backupPath = sel;
+				}
+			}
+			//ImVec2 item_width = ImGui::CalcTextSize(L("BUTTON_SELECT_BACKUP_DIR"));
+			//item_width.x = abs(ImGui::CalcTextSize(L("BUTTON_SELECT_SAVES_DIR")).x - ImGui::CalcTextSize(L("BUTTON_SELECT_BACKUP_DIR")).x);
+			/*ImGui::SameLine();
+			ImGui::InvisibleButton("##width", item_width);*/
+			ImGui::SameLine();
+			if (ImGui::InputText(L("BACKUP_DEST_PATH_LABEL"), buf, CONSTANT1)) {
+				cfg.backupPath = utf8_to_wstring(buf);
+			}
+
+			char zipBuf[CONSTANT1];
+			strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
+			if (filesystem::exists("7z.exe") && cfg.zipPath.empty()) {
+				cfg.zipPath = L"7z.exe";
+				ImGui::Text(L("AUTODETECTED_7Z"));
+			}
+			else if (cfg.zipPath.empty()) {
+				string zipPathStr = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
+				if (filesystem::exists(zipPathStr)) {
+					cfg.zipPath = utf8_to_wstring(zipPathStr);
+					ImGui::Text(L("AUTODETECTED_7Z"));
+				}
+			}
+			if (ImGui::Button(L("BUTTON_SELECT_7Z"))) {
+				wstring sel = SelectFileDialog();
+				if (!sel.empty()) {
+					cfg.zipPath = sel;
+				}
+			}
+			ImGui::SameLine();
+			if (ImGui::InputText(L("7Z_PATH_LABEL"), zipBuf, CONSTANT1)) {
+				cfg.zipPath = utf8_to_wstring(zipBuf);
+			}
+		}
+
+		// Language selection
+		int lang_idx = 0;
+		for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
+			if (g_CurrentLang == lang_codes[i]) {
+				lang_idx = i;
+				break;
+			}
+		}
+
+		if (ImGui::CollapsingHeader(L("GROUP_WORLD_MANAGEMENT"))) {
+			// Auto-scan worlds
+			if (ImGui::Button(L("BUTTON_SCAN_SAVES"))) {
+				cfg.worlds.clear();
+				if (filesystem::exists(cfg.saveRoot))
+					for (auto& e : filesystem::directory_iterator(cfg.saveRoot))
+						if (e.is_directory())
+							cfg.worlds.push_back({ e.path().filename().wstring(), L"" });
+			}
+
+			// World name + description editor
+			ImGui::Separator();
+			ImGui::Text(L("WORLD_NAME_AND_DESC"));
+			for (size_t i = 0; i < cfg.worlds.size(); ++i) {
+				ImGui::PushID(int(i));
+				char name[CONSTANT1], desc[CONSTANT2];
+				strncpy_s(name, wstring_to_utf8(cfg.worlds[i].first).c_str(), sizeof(name));
+				strncpy_s(desc, wstring_to_utf8(cfg.worlds[i].second).c_str(), sizeof(desc));
+
+				if (ImGui::InputText(L("WORLD_NAME"), name, CONSTANT1))
+					cfg.worlds[i].first = utf8_to_wstring(name);
+				if (cfg.worlds[i].second.find(L"\"") != wstring::npos || cfg.worlds[i].second.find(L":") != wstring::npos || cfg.worlds[i].second.find(L"\\") != wstring::npos || cfg.worlds[i].second.find(L"/") != wstring::npos || cfg.worlds[i].second.find(L">") != wstring::npos || cfg.worlds[i].second.find(L"<") != wstring::npos || cfg.worlds[i].second.find(L"|") != wstring::npos || cfg.worlds[i].second.find(L"?") != wstring::npos || cfg.worlds[i].second.find(L"*") != wstring::npos) {
+					memset(desc, '\0', sizeof(desc));
+					cfg.worlds[i].second = L"";
+				}
+				if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
+					cfg.worlds[i].second = utf8_to_wstring(desc);
+
+				ImGui::PopID();
+			}
+		}
+
+		if (ImGui::CollapsingHeader(L("GROUP_BACKUP_BEHAVIOR"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			static int format_choice = (cfg.zipFormat == L"zip") ? 1 : 0;
+			ImGui::Text(L("COMPRESSION_FORMAT")); ImGui::SameLine();
+			if (ImGui::RadioButton("7z", &format_choice, 0)) { cfg.zipFormat = L"7z"; } ImGui::SameLine();
+			if (ImGui::RadioButton("zip", &format_choice, 1)) { cfg.zipFormat = L"zip"; }
+
+			ImGui::Text(L("TEXT_BACKUP_MODE")); ImGui::SameLine();
+			ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_NORMAL"), &cfg.backupMode, 1);
+			ImGui::SameLine();
+			ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_SMART"), &cfg.backupMode, 2);
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip(L("TIP_SMART_BACKUP"));
+			}
+			ImGui::SameLine();
+			ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_OVERWRITE"), &cfg.backupMode, 3);
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip(L("TIP_OVERWRITE_BACKUP"));
+			}
+			ImGui::Text(L("BACKUP_NAMING"));
+			ImGui::SameLine();
+			int folder_name_choice = (int)cfg.folderNameType;
+			if (ImGui::RadioButton(L("NAME_BY_WORLD"), &folder_name_choice, 0)) { cfg.folderNameType = 0; } ImGui::SameLine();
+			if (ImGui::RadioButton(L("NAME_BY_DESC"), &folder_name_choice, 1)) { cfg.folderNameType = 1; }
+
+			ImGui::Checkbox(L("BACKUP_BEFORE_RESTORE"), &cfg.backupBefore); ImGui::SameLine();
+			ImGui::Checkbox(L("IS_HOT_BACKUP"), &cfg.hotBackup); ImGui::SameLine();
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
+			}
+			ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
+			ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
+			// 低优先级
+			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &cfg.useLowPriority);
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip(L("TIP_LOW_PRIORITY"));
+			}
+			// CPU 线程
+			int max_threads = std::thread::hardware_concurrency();
+			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &cfg.cpuThreads, 0, max_threads);
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip(L("TIP_CPU_THREADS"));
+			}
+			ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
+			ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
+		}
+
+		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
+				g_CurrentLang = lang_codes[lang_idx];
+				//ReloadFonts(); // Reload fonts for the new language
+			}
+			ImGui::Separator();
+			ImGui::Text(L("THEME_SETTINGS"));
+			int theme_choice = (int)cfg.theme;
+			if (ImGui::RadioButton(L("THEME_DARK"), &theme_choice, 0)) { cfg.theme = 0; ApplyTheme(cfg.theme); } ImGui::SameLine();
+			if (ImGui::RadioButton(L("THEME_LIGHT"), &theme_choice, 1)) { cfg.theme = 1; ApplyTheme(cfg.theme); } ImGui::SameLine();
+			if (ImGui::RadioButton(L("THEME_CLASSIC"), &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); }
+
+			static float window_alpha = ImGui::GetStyle().Alpha;
+			if (ImGui::SliderFloat(L("WINDOW_OPACITY"), &window_alpha, 0.2f, 1.0f, "%.2f")) {
+				ImGui::GetStyle().Alpha = window_alpha;
+			}
+			ImGui::ColorEdit3(L("BG_COLOR"), (float*)&clear_color);
+
+			ImGui::Text(L("FONT_SETTINGS"));
+			char Fonts[CONSTANT1];
+			strncpy_s(Fonts, wstring_to_utf8(cfg.zipFonts).c_str(), sizeof(Fonts));
+			if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
+				wstring sel = SelectFileDialog();
+				if (!sel.empty()) {
+					cfg.zipFonts = sel;
+					Fontss = sel;
+					//ReloadFonts();
+				}
+			}
+			ImGui::SameLine();
+			if (ImGui::InputText("##zipFontsValue", Fonts, CONSTANT1)) {
+				cfg.zipFonts = utf8_to_wstring(Fonts);
+				Fontss = cfg.zipFonts;
+				//ReloadFonts();
+			}
+			ImGui::SeparatorText(L("BACKGROUND_IMAGE"));
+			Config& cfg = configs[currentConfigIndex];
+			ImGui::Checkbox(L("ENABLE_BACKGROUND_IMAGE"), &cfg.backgroundImageEnabled);
+
+			if (cfg.backgroundImageEnabled) {
+				ImGui::SliderFloat(L("BACKGROUND_IMAGE_OPACITY"), &cfg.backgroundImageAlpha, 0.0f, 1.0f);
+
+				char bgPathBuf[CONSTANT1];
+				strncpy_s(bgPathBuf, wstring_to_utf8(cfg.backgroundImagePath).c_str(), sizeof(bgPathBuf));
+
+				if (ImGui::Button(L("BUTTON_SELECT_IMAGE"))) {
+					wstring sel = SelectFileDialog();
+					if (!sel.empty()) {
+						cfg.backgroundImagePath = sel;
+					}
+				}
+				ImGui::SameLine();
+				ImGui::InputText(L("BACKGROUND_IMAGE_PATH"), bgPathBuf, CONSTANT1, ImGuiInputTextFlags_ReadOnly);
+			}
 		}
 	}
 
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
 	if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(120, 0))) {
-		wchar_t colorBuf[64];
-		swprintf(colorBuf, 64, L"%.2f %.2f %.2f %.2f", clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-		cfg.themeColor = colorBuf;
+		if (!specialConfigMode) {
+			wchar_t colorBuf[64];
+			swprintf(colorBuf, 64, L"%.2f %.2f %.2f %.2f", clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+			configs[currentConfigIndex].themeColor = colorBuf;
+		}
 		SaveConfigs();
 		showSettings = false;
 	}
@@ -951,7 +1175,7 @@ void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = n
 // 参数:
 //   - command: 要执行的完整命令行（宽字符）。
 //   - console: 监控台对象的引用，用于输出日志信息。
-bool RunCommandInBackground(wstring command, Console& console, const wstring& workingDirectory = L"") {
+bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"") {
 	// CreateProcessW需要一个可写的C-style字符串，所以我们将wstring复制到vector<wchar_t>
 	vector<wchar_t> cmd_line(command.begin(), command.end());
 	cmd_line.push_back(L'\0'); // 添加字符串结束符
@@ -961,6 +1185,11 @@ bool RunCommandInBackground(wstring command, Console& console, const wstring& wo
 	si.cb = sizeof(si);
 	si.dwFlags |= STARTF_USESHOWWINDOW;
 	si.wShowWindow = SW_HIDE; // 隐藏子进程的窗口
+
+	DWORD creationFlags = CREATE_NO_WINDOW;
+	if (useLowPriority) {
+		creationFlags |= BELOW_NORMAL_PRIORITY_CLASS;
+	}
 
 	// 开始创建进程
 	const wchar_t* pWorkingDir = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
@@ -1070,7 +1299,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	{
 		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-			L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
 	}
 	else if (config.backupMode == 2) // 智能备份
 	{
@@ -1096,9 +1325,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 		ofs.close();
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
-			+ to_wstring(config.zipLevel) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
+			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
 	}
 	else if (config.backupMode == 3) // 覆盖备份
 	{
@@ -1117,21 +1345,21 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 			}
 		}
 		if (found) {
-			// 2. A previous backup was found. Use the 7-Zip 'u' (update) command.
+			// A previous backup was found. Use the 7-Zip 'u' (update) command.
 			console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
 			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
 		}
 		else {
-			// 3. No previous backup found. Perform a normal full backup.
+			// No previous backup found. Perform a normal full backup.
 			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-				L"-spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
 			// -spf 强制使用完整路径，-spf2 使用相对路径
 		}
 	}
 	// 在后台线程中执行命令
-	if (RunCommandInBackground(command, console, originalSourcePath))
+	if (RunCommandInBackground(command, console, config.useLowPriority))
 	{
 		console.AddLog(L("LOG_BACKUP_END_HEADER"));
 		LimitBackupFiles(destinationFolder, config.keepCount, &console);
@@ -1214,7 +1442,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
 		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder + L"\" -y";
-		RunCommandInBackground(command, console);
+		RunCommandInBackground(command, console, config.useLowPriority);
 	}
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
@@ -1237,6 +1465,69 @@ void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, 
 		// 直接调用已经存在的 DoBackup 函数
 		DoBackup(configs[configIdx], configs[configIdx].worlds[worldIdx], *console);
 	}
+}
+
+void ExecuteSpecialConfig(int configId, Console& console) {
+	specialTasksRunning = true;
+	specialTasksComplete = false;
+
+	thread([configId, &console]() {
+		SpecialConfig spCfg;
+		{
+			lock_guard<mutex> lock(specialConfigMutex);
+			if (!specialConfigs.count(configId)) return; // Safety check
+			spCfg = specialConfigs[configId];
+		}
+
+		console.AddLog(L("SPECIAL_EXECUTING_CONFIG"), spCfg.name.c_str());
+
+		for (const auto& cmd : spCfg.commands) {
+			console.AddLog(L("SPECIAL_RUNNING_COMMAND"), wstring_to_utf8(cmd).c_str());
+			RunCommandInBackground(cmd, console, true);
+		}
+
+		for (const auto& task : spCfg.autoBackupTasks) {
+			int configIdx = task.first;
+			int worldIdx = task.second;
+
+			// 检查选择的世界是否存在
+			if (configs.count(configIdx) && worldIdx >= 0 && worldIdx < configs[configIdx].worlds.size()) {
+				console.AddLog(L("SPECIAL_AUTO_BACKING_UP"), wstring_to_utf8(configs[configIdx].worlds[worldIdx].first).c_str(), configIdx);
+
+				// Create a temporary Config object on-the-fly for DoBackup.
+				Config tempTaskConfig;
+
+				// 1. Get the ESSENTIALS (paths, names) from the referenced normal config.
+				const Config& baseConfig = configs[configIdx];
+				tempTaskConfig.saveRoot = baseConfig.saveRoot;
+				tempTaskConfig.backupPath = baseConfig.backupPath;
+				tempTaskConfig.zipPath = baseConfig.zipPath;
+				tempTaskConfig.zipFormat = baseConfig.zipFormat;
+				tempTaskConfig.backupMode = baseConfig.backupMode;
+
+				// 2. OVERRIDE with the specific parameters from our SpecialConfig.
+				tempTaskConfig.hotBackup = spCfg.hotBackup;
+				tempTaskConfig.zipLevel = spCfg.zipLevel;
+				tempTaskConfig.keepCount = spCfg.keepCount;
+				tempTaskConfig.cpuThreads = spCfg.cpuThreads;
+				tempTaskConfig.useLowPriority = spCfg.useLowPriority;
+
+				// 3. Get the world data for this specific task
+				const pair<wstring, wstring>& worldData = baseConfig.worlds[worldIdx];
+
+				DoBackup(tempTaskConfig, worldData, console);
+			}
+		}
+
+		console.AddLog(L("SPECIAL_TASKS_COMPLETED"));
+		specialTasksRunning = false;
+		specialTasksComplete = true;
+
+		if (spCfg.exitAfterExecution) {
+			this_thread::sleep_for(chrono::seconds(3));
+			PostQuitMessage(0);
+		}
+		}).detach();
 }
 
 // Main code
@@ -1331,6 +1622,11 @@ int main(int, char**)
 	static bool showMainApp = !isFirstRun;
 	ImGui::StyleColorsLight();//默认亮色
 	LoadConfigs(fileName);
+
+	if (specialConfigs.count(currentConfigIndex) && specialConfigs[currentConfigIndex].autoExecute) {
+		specialConfigMode = true;
+		ExecuteSpecialConfig(currentConfigIndex, console);
+	}
 
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
@@ -1630,8 +1926,40 @@ int main(int, char**)
 			}
 
 			ImGui::End();
+		} else if (specialConfigMode) {
+			ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+			ImGui::Begin(L("Automated Task Runner"), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+
+			if (specialTasksRunning) {
+				ImGui::Text("Executing automated tasks, please wait...");
+				ImGui::Text("See console window for detailed progress.");
+			}
+			else if (specialTasksComplete) {
+				ImGui::Text("All tasks have been completed.");
+				if (!specialConfigs[currentConfigIndex].exitAfterExecution) {
+					ImGui::Text("You can now close this window or switch configurations.");
+				}
+			}
+			else {
+				ImGui::Text("Preparing to run automated tasks...");
+			}
+
+			ImGui::Separator();
+
+			if (ImGui::Button(L("SWITCH_TO_MANUAL"), ImVec2(180, 0))) {
+				specialConfigMode = false;
+				// You might want to stop the running tasks here if necessary
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(L("EXIT"), ImVec2(120, 0))) {
+				done = true;
+			}
+
+			ImGui::End();
+			console.Draw(L("CONSOLE_TITLE"), &showMainApp); // Keep console visible
+
 		}
-		if (showMainApp) {
+		else if (showMainApp) {
 			// 用于跟踪用户在列表中选择的世界
 			static int selectedWorldIndex = -1;
 			// 用于弹出还原窗口
@@ -1665,18 +1993,39 @@ int main(int, char**)
 				wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
 
 				// --- 左侧图标区 ---
-				float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
-				// 延迟加载或重载 icon.png
+				ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+				float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
+				ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+				ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
+
+				// 绘制占位符和边框
+				draw_list->AddRectFilled(icon_pos, icon_end_pos, IM_COL32(50, 50, 50, 200), 4.0f);
+				draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
+
+				// 迟加载
 				if (!worldIconTextures[i]) {
-					if (filesystem::exists(worldFolder + L"\\icon.png")) {// 不能是utf8，再不济也要gbk
-						LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+					string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
+					if (filesystem::exists(iconPath)) {
+						LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
 					}
-				} else {
-					ImGui::Image((ImTextureID)worldIconTextures[i],
-						ImVec2(iconSz, iconSz),
-						ImVec2(0.0f, 0.0f),
-						ImVec2(1.0f, 1.0f));
 				}
+
+				if (worldIconTextures[i]) {
+					ImGui::GetWindowDrawList()->AddImageRounded((ImTextureID)worldIconTextures[i], icon_pos, icon_end_pos, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
+				}
+				else {
+					const char* placeholder_icon = ICON_FA_FOLDER;
+					ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
+					ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
+					draw_list->AddText(text_pos, IM_COL32(200, 200, 200, 255), placeholder_icon);
+				}
+
+				// 将光标移过图标区域
+				ImGui::Dummy(ImVec2(iconSz, iconSz));
+
+				ImGui::SetCursorScreenPos(icon_pos);
+				ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
 				// 点击更换图标
 				if (ImGui::IsItemClicked()) {
 					wstring sel = SelectFileDialog();
@@ -1707,7 +2056,6 @@ int main(int, char**)
 					selectedWorldIndex = i;
 				}
 
-				ImDrawList* draw_list = ImGui::GetWindowDrawList();
 				ImVec2 p_min = ImGui::GetItemRectMin();
 				ImVec2 p_max = ImGui::GetItemRectMax();
 				
