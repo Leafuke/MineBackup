@@ -411,9 +411,13 @@ void ShowSettingsWindow() {
 
 			if (ImGui::InputText(L("WORLD_NAME"), name, CONSTANT1))
 				cfg.worlds[i].first = utf8_to_wstring(name);
+			if (cfg.worlds[i].second.find(L"\"") != wstring::npos || cfg.worlds[i].second.find(L":") != wstring::npos || cfg.worlds[i].second.find(L"\\") != wstring::npos || cfg.worlds[i].second.find(L"/") != wstring::npos || cfg.worlds[i].second.find(L">") != wstring::npos || cfg.worlds[i].second.find(L"<") != wstring::npos || cfg.worlds[i].second.find(L"|") != wstring::npos || cfg.worlds[i].second.find(L"?") != wstring::npos || cfg.worlds[i].second.find(L"*") != wstring::npos) {
+				memset(desc, '\0', sizeof(desc));
+				cfg.worlds[i].second = L"";
+			}
 			if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
 				cfg.worlds[i].second = utf8_to_wstring(desc);
-
+			
 			ImGui::PopID();
 		}
 	}
@@ -1248,7 +1252,7 @@ int main(int, char**)
 	//ImGui_ImplWin32_EnableDpiAwareness();
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.2", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.3", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
@@ -1425,7 +1429,7 @@ int main(int, char**)
 					g_pBgTexture->Release();
 					g_pBgTexture = nullptr;
 				}
-				string path_utf8 = wstring_to_utf8(cfg.backgroundImagePath);
+				string path_utf8 = utf8_to_gbk(wstring_to_utf8(cfg.backgroundImagePath));
 				LoadTextureFromFile(path_utf8.c_str(), &g_pBgTexture, &g_bgWidth, &g_bgHeight);
 				g_loadedBgPath = cfg.backgroundImagePath;
 			}
@@ -1664,8 +1668,9 @@ int main(int, char**)
 				float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
 				// 延迟加载或重载 icon.png
 				if (!worldIconTextures[i]) {
-					std::string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")); // 不能是utf8，再不济也要gbk
-					LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+					if (filesystem::exists(worldFolder + L"\\icon.png")) {// 不能是utf8，再不济也要gbk
+						LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+					}
 				} else {
 					ImGui::Image((ImTextureID)worldIconTextures[i],
 						ImVec2(iconSz, iconSz),
@@ -1683,8 +1688,7 @@ int main(int, char**)
 							worldIconTextures[i]->Release();
 							worldIconTextures[i] = nullptr;
 						}
-						std::string newPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
-						LoadTextureFromFile(newPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+						LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
 					}
 				}
 				ImGui::SameLine();
@@ -1942,11 +1946,11 @@ int main(int, char**)
 			if (ImGui::Button(L("SETTINGS"))) showSettings = true;
 			if (ImGui::Button(L("EXIT"))) done = true;
 			if (ImGui::Button(L("OPEN_BACKUP_FOLDER"))) {
-				string openTemp = "start " + wstring_to_utf8(cfg.backupPath);
+				string openTemp = "start " + utf8_to_gbk(wstring_to_utf8(cfg.backupPath));
 				system(openTemp.c_str());
 			}
 			if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"))) {
-				string openTemp = "start " + wstring_to_utf8(cfg.saveRoot);
+				string openTemp = "start " + utf8_to_gbk(wstring_to_utf8(cfg.saveRoot));
 				system(openTemp.c_str());
 			}
 			ImGui::TextLinkOpenURL(L("CHECK_FOR_UPDATES"), "github.com/Leafuke/MineBackup/releases");

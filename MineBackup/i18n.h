@@ -51,7 +51,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"CONFIRM_DELETE_MSG", u8"您确定要删除“配置 %d”吗？\n此操作无法撤销！\n"},
 		{"CURRENT_CONFIG_DETAILS", u8"当前配置详情"},
 		{"SAVES_ROOT_PATH", u8"存档根路径"},
-		{"WORLD_NAME_AND_DESC", u8"存档名称与描述："},
+		{"WORLD_NAME_AND_DESC", u8"存档名称与描述(应符合文件夹命名规范)："},
 		{"WORLD_NAME", u8"名称"},
 		{"WORLD_DESC", u8"描述"},
 		{"BACKUP_DEST_PATH_LABEL", u8"备份路径"},
@@ -175,7 +175,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "TOOLTIP_AUTOBACKUP_RUNNING", u8"自动备份任务正在运行" },
 		{ "TOOLTIP_NEEDS_BACKUP", u8"已在游戏中打开，但尚未备份" },
 		{ "TOOLTIP_UP_TO_DATE", u8"存档已是最新" },
-		{ "RESTORE_STEPS", "[提示] 还原步骤 %zu/%zu: %s" }
+		{ "RESTORE_STEPS", u8"[提示] 还原步骤 %zu/%zu: %s" }
 	}},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -224,7 +224,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"CONFIRM_DELETE_MSG", "Are you sure you want to delete 'Config %d'?\nThis action cannot be undone!\n"},
 		{"CURRENT_CONFIG_DETAILS", "Current Configuration Details"},
 		{"SAVES_ROOT_PATH", "Saves Root Path"},
-		{"WORLD_NAME_AND_DESC", "World Name and Description:"},
+		{"WORLD_NAME_AND_DESC", "World Name and Desc. (Should comply with folder naming conventions):"},
 		{"WORLD_NAME", "Name"},
 		{"WORLD_DESC", "Description"},
 		{"BACKUP_DEST_PATH_LABEL", "Backup Path"},
