@@ -536,7 +536,7 @@ void ShowSettingsWindow() {
 		}
 		Config& cfg = configs[currentConfigIndex];
 
-		if (ImGui::CollapsingHeader(L("GROUP_PATHS"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::CollapsingHeader(L("GROUP_PATHS"))) {
 			char rootBufA[CONSTANT1];
 			strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
 			if (ImGui::Button(L("BUTTON_SELECT_SAVES_DIR"))) {
@@ -679,7 +679,7 @@ void ShowSettingsWindow() {
 			ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
 		}
 
-		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"))) {
 			if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
 				g_CurrentLang = lang_codes[lang_idx];
 				//ReloadFonts(); // Reload fonts for the new language
