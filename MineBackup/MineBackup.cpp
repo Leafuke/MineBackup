@@ -808,7 +808,7 @@ struct Console
 		vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
 		buf[IM_ARRAYSIZE(buf) - 1] = 0;
 		va_end(args);
-		Items.push_back(Strdup(buf));
+		Items.push_back(std::string(buf));
 	}
 
 	void    Draw(const char* title, bool* p_open)
