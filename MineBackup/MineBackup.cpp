@@ -63,6 +63,7 @@ struct Config {
 	float backgroundImageAlpha = 0.5f;
 	int cpuThreads = 0; // 0 for auto/default
 	bool useLowPriority = false;
+	vector<wstring> blacklist;
 };
 
 struct SpecialConfig {
@@ -203,6 +204,7 @@ static void LoadConfigs(const string& filename = "config.ini") {
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
+				else if (key == L"BlacklistItem") cur->blacklist.push_back(val); // ADDED
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					ApplyTheme(cur->theme);
@@ -300,6 +302,10 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
 		out << L"BackupNaming=" << c.folderNameType << L"\n";
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"BackgroundImage=" << c.backgroundImagePath << L"\n\n\n";
+		for (const auto& item : c.blacklist) {
+			out << L"BlacklistItem=" << item << L"\n";
+		}
+		out << L"\n";
 	}
 
 	for (auto& kv : specialConfigs) {
@@ -399,7 +405,7 @@ void ShowSettingsWindow() {
 		new_cfg.themeColor = L"0.45 0.55 0.60 1.00";
 	}
 	ImGui::SameLine();
-	
+
 	if (ImGui::Button(L("ADD_SPECIAL_CONFIG"))) {
 		int new_index = specialConfigs.empty() ? 1 : specialConfigs.rbegin()->first + 1;
 		specialConfigs[new_index] = SpecialConfig();
@@ -530,7 +536,7 @@ void ShowSettingsWindow() {
 		}
 	} else {
 		if (!configs.count(currentConfigIndex)) {
-			// Handle case where config was deleted
+			// 如果配置被删除
 			if (configs.empty()) configs[1] = Config(); // create a new one if all were deleted
 			currentConfigIndex = configs.begin()->first;
 		}
@@ -677,6 +683,37 @@ void ShowSettingsWindow() {
 			}
 			ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
 			ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
+			ImGui::SeparatorText(L("BLACKLIST_HEADER"));
+			if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
+				wstring sel = SelectFileDialog(); if (!sel.empty()) cfg.blacklist.push_back(sel);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
+				wstring sel = SelectFolderDialog(); if (!sel.empty()) cfg.blacklist.push_back(sel);
+			}
+			static int sel_bl_item = -1;  // 添加全局变量或成员变量声明
+
+			if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 5 * ImGui::GetTextLineHeightWithSpacing()))) {
+				// 检查 blacklist 是否为空
+				if (cfg.blacklist.empty()) {
+					ImGui::Text(L("No items in blacklist")); // 显示空列表提示
+				}
+				else {
+					// 遍历显示黑名单项
+					for (int n = 0; n < cfg.blacklist.size(); n++) {
+						string label = wstring_to_utf8(cfg.blacklist[n]);
+						if (ImGui::Selectable(label.c_str(), sel_bl_item == n)) {
+							sel_bl_item = n;
+						}
+					}
+				}
+				ImGui::EndListBox();
+			}
+			
+
+			if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item != -1) {
+				cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item); sel_bl_item = -1;
+			}
 		}
 
 		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"))) {
@@ -808,7 +845,7 @@ struct Console
 		vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
 		buf[IM_ARRAYSIZE(buf) - 1] = 0;
 		va_end(args);
-		Items.push_back(std::string(buf));
+		Items.push_back(Strdup(buf));
 	}
 
 	void    Draw(const char* title, bool* p_open)
@@ -1247,6 +1284,14 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	wstring archivePath;
 	wstring archiveNameBase = world.second.empty() ? world.first : world.second;
 
+	// 建立黑名单
+	wstringstream exclusion_ss;
+	for (const auto& item : config.blacklist) {
+		// The format is -x!"path"
+		exclusion_ss << L" -x!\"" << item << L"\"";
+	}
+	wstring exclusion_args = exclusion_ss.str();
+
 	// 生成带时间戳的文件名
 	time_t now = time(0);
 	tm ltm;
@@ -1299,7 +1344,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	{
 		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"" + exclusion_args;
 	}
 	else if (config.backupMode == 2) // 智能备份
 	{
@@ -1326,7 +1371,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		ofs.close();
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
-			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
+			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt" + exclusion_args;
 	}
 	else if (config.backupMode == 3) // 覆盖备份
 	{
@@ -1345,16 +1390,14 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 			}
 		}
 		if (found) {
-			// A previous backup was found. Use the 7-Zip 'u' (update) command.
 			console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
+			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel) + exclusion_args;
 		}
 		else {
-			// No previous backup found. Perform a normal full backup.
 			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"" + exclusion_args;
 			// -spf 强制使用完整路径，-spf2 使用相对路径
 		}
 	}
@@ -2058,7 +2101,7 @@ int main(int, char**)
 
 				ImVec2 p_min = ImGui::GetItemRectMin();
 				ImVec2 p_max = ImGui::GetItemRectMax();
-				
+
 				// --- 卡片背景和高亮 ---
 				if (ImGui::IsItemHovered()) {
 					draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBg), 4.0f);
@@ -2066,7 +2109,7 @@ int main(int, char**)
 				else if (is_selected) {
 					draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgActive, 0.5f), 4.0f);
 				}
-				
+
 				if (is_selected) {
 					draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f, 0, 2.0f);
 				}
