@@ -94,32 +94,28 @@ size_t CalculateFileHash(const filesystem::path& filepath) {
 // 作为全局变量，方便二者修改
 map<wstring, size_t> currentState;
 // 获取已更改的文件列表，并更新状态文件
-//string utf8_to_gbk(const string& utf8);
+wstring utf8_to_wstring(const string& str);
 vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath) {
 	vector<filesystem::path> changedFiles;
 	map<wstring, size_t> lastState;
 	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
 	// 1. 读取上一次的状态
-	wifstream stateFileIn(stateFilePath);
-	//stateFileIn.imbue(locale(stateFileIn.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+	ifstream stateFileIn(stateFilePath);
 	if (stateFileIn.is_open()) {
-		wstring path;
+		string path; // txt里千万不能有空格！
 		size_t hash;
 		while (stateFileIn >> path >> hash) {
-			lastState[path] = hash;
+			lastState[utf8_to_wstring(path)] = hash;
 		}
 		stateFileIn.close();
 	}
 
-	/*wofstream out("D:/awatest.txt", ios::binary);
-	out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));*/
 	// 2. 计算当前状态并与上次状态比较
 	if (filesystem::exists(worldPath)) {
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
 				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
 				size_t currentHash = CalculateFileHash(entry.path());
-				//out << entry.path() << endl;
 				currentState[relativePath.wstring()] = currentHash;
 
 				// 如果文件是新的，或者哈希值不同，则判定为已更改
@@ -129,30 +125,18 @@ vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, cons
 			}
 		}
 	}
-	//out.close();
 	return changedFiles;
 }
 // 新的函数，专门用于保存状态文件 从filesystem版本修改为wofstream试图解决中文问题
 void SaveStateFile(const filesystem::path& metadataPath) {
 	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
 	wofstream stateFileOut(stateFilePath, ios::trunc);
+	stateFileOut.imbue(locale(stateFileOut.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
 	for (const auto& pair : currentState) {
 		stateFileOut << pair.first << L" " << pair.second << endl;
 	}
 	stateFileOut.close();
 }
-//void SaveStateFile(const filesystem::path& metadataPath) {
-//	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
-//	wofstream out(stateFilePath, ios::binary);
-//	if (!out.is_open()) {
-//		return;
-//	}
-//	out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-//	for (const auto& pair : currentState) {
-//		out << pair.first << L" " << pair.second << endl;
-//	}
-//	out.close();
-//}
 
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList) {
 	for (const pair<wstring, wstring>& worldLi : worldList) {

@@ -1448,9 +1448,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 		ofs.close();
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-		// 智能备份还未加入黑名单功能
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
-			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
+			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt" + exclusion_args;
 	}
 	else if (config.backupMode == 3) // 覆盖备份
 	{
