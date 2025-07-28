@@ -60,6 +60,7 @@ struct Config {
 	int folderNameType = 0;
 	wstring themeColor;
 	wstring backgroundImagePath;
+	string name;
 	bool backgroundImageEnabled = false;
 	float backgroundImageAlpha = 0.5f;
 	int cpuThreads = 0; // 0 for auto/default
@@ -86,9 +87,9 @@ struct SpecialConfig {
 	int cpuThreads = 0;
 	bool useLowPriority = true;
 	bool hotBackup = false;
-	vector<wstring> blacklist; // ADDED: For excluding files/folders
-	bool runOnStartup = false; // ADDED: For autostart
-	bool hideWindow = false;   // ADDED: To run silently
+	vector<wstring> blacklist;
+	bool runOnStartup = false;
+	bool hideWindow = false; 
 };
 
 map<int, SpecialConfig> specialConfigs;
@@ -193,7 +194,8 @@ static void LoadConfigs(const string& filename = "config.ini") {
 			wstring val = line.substr(pos + 1);
 
 			if (cur) { // Inside a [ConfigN] section
-				if (key == L"SavePath") {
+				if (key == L"Name") cur->name = wstring_to_utf8(val);
+				else if (key == L"SavePath") {
 					cur->saveRoot = val;
 				}
 				else if (key == L"WorldData") {
@@ -229,7 +231,7 @@ static void LoadConfigs(const string& filename = "config.ini") {
 				else if (key == L"BlacklistItem") cur->blacklist.push_back(val); // ADDED
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
-					//ApplyTheme(cur->theme); 这个要转移至有gui之后，负责会直接导致崩溃
+					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
 				}
 				else if (key == L"Font") {
 					cur->zipFonts = val;
@@ -253,12 +255,16 @@ static void LoadConfigs(const string& filename = "config.ini") {
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
 				if (key == L"Name") spCur->name = wstring_to_utf8(val);
-				else if (key == L"AutoExecute") spCur->autoExecute = (val != L"0");
+				else if (key == L"AutoExecute") {
+					spCur->autoExecute = (val != L"0");
+					if (spCur->autoExecute)
+						specialConfigMode = true;
+				}
 				else if (key == L"ExitAfter") spCur->exitAfterExecution = (val != L"0");
-				else if (key == L"HideWindow") spCur->hideWindow = (val != L"0");     // ADDED
-				else if (key == L"RunOnStartup") spCur->runOnStartup = (val != L"0"); // ADDED
+				else if (key == L"HideWindow") spCur->hideWindow = (val != L"0");
+				else if (key == L"RunOnStartup") spCur->runOnStartup = (val != L"0");
 				else if (key == L"Command") spCur->commands.push_back(val);
-				else if (key == L"AutoBackupTask") { // UPDATED
+				else if (key == L"AutoBackupTask") {
 					wstringstream ss(val);
 					AutomatedTask task;
 					wchar_t delim;
@@ -270,7 +276,7 @@ static void LoadConfigs(const string& filename = "config.ini") {
 				else if (key == L"CpuThreads") spCur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") spCur->useLowPriority = (val != L"0");
 				else if (key == L"HotBackup") spCur->hotBackup = (val != L"0");
-				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val); // ADDED
+				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
 			}
 			else if (section == L"General") { // Inside [General] section
 				if (key == L"CurrentConfig") {
@@ -376,17 +382,17 @@ void ShowSettingsWindow() {
 
 	string current_config_label = "None";
 	if (specialSetting && specialConfigs.count(currentConfigIndex)) {
-		current_config_label = "[Special] " + specialConfigs[currentConfigIndex].name;
+		current_config_label = "[Sp." + to_string(currentConfigIndex) + "] " + specialConfigs[currentConfigIndex].name;
 	}
 	else if (!specialSetting && configs.count(currentConfigIndex)) {
-		current_config_label = string(L("CONFIG_N")) + to_string(currentConfigIndex);
+		current_config_label = "[No." + to_string(currentConfigIndex) + "] " + configs[currentConfigIndex].name;
 	}
-
+	//string(L("CONFIG_N")) + to_string(currentConfigIndex)
 	if (ImGui::BeginCombo(L("CURRENT_CONFIG"), current_config_label.c_str())) {
 		// 普通配置
 		for (auto const& [idx, val] : configs) {
 			const bool is_selected = (currentConfigIndex == idx);
-			string label = string(L("CONFIG_N")) + to_string(idx);
+			string label = "[No." + to_string(idx) + "] " + val.name;
 
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				currentConfigIndex = idx;
@@ -399,10 +405,10 @@ void ShowSettingsWindow() {
 		ImGui::Separator();
 		// 特殊配置
 		for (auto const& [idx, val] : specialConfigs) {
-			const bool is_selected = (currentConfigIndex == idx);
-			string label = "[Special] " + val.name;
+			const bool is_selected = (currentConfigIndex == (idx));
+			string label = "[Sp." + to_string((idx)) + "] " + val.name;
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
-				currentConfigIndex = idx;
+				currentConfigIndex = (idx);
 				specialSetting = true;
 				//specialConfigMode = true;
 			}
@@ -437,9 +443,9 @@ void ShowSettingsWindow() {
 	ImGui::SameLine();
 
 	if (ImGui::Button(L("ADD_SPECIAL_CONFIG"))) {
-		int new_index = specialConfigs.empty() ? 1 : specialConfigs.rbegin()->first + 1;
+		int new_index = specialConfigs.empty() ? 1 : (specialConfigs.rbegin()->first + 1);
 		specialConfigs[new_index] = SpecialConfig();
-		specialConfigs[new_index].name = "New Auto Task";
+		//specialConfigs[new_index].name = "New Auto Task";
 		currentConfigIndex = new_index;
 		specialSetting = true;
 		//specialConfigMode = true; 不能直接进入特殊模式，这样都没法设置了
@@ -447,21 +453,23 @@ void ShowSettingsWindow() {
 
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_DELETE_CONFIG"))) {
-		if ((!specialConfigMode && configs.size() > 1) || (specialConfigMode && !specialConfigs.empty())) { // 至少保留一个
+		if ((!specialSetting && configs.size() > 1) || (specialSetting && !specialConfigs.empty())) { // 至少保留一个
 			ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
 		}
 	}
 
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-		if (specialConfigMode) {
-			ImGui::Text("Are you sure you want to delete Special Config '%s'?", specialConfigs[currentConfigIndex].name.c_str());
+		if (specialSetting) {
+			ImGui::Text("[Sp.]");
+			ImGui::SameLine();
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex);
 		}
 		else {
 			ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex);
 		}
 		ImGui::Separator();
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-			if (specialConfigMode) {
+			if (specialSetting) {
 				specialConfigs.erase(currentConfigIndex);
 				specialConfigMode = false;
 				currentConfigIndex = configs.empty() ? 0 : configs.begin()->first;
@@ -492,7 +500,7 @@ void ShowSettingsWindow() {
 
 			char buf[128];
 			strncpy_s(buf, spCfg.name.c_str(), sizeof(buf));
-			if (ImGui::InputText(L("SPECIAL_CONFIG_NAME"), buf, sizeof(buf))) spCfg.name = buf;
+			if (ImGui::InputText(L("CONFIG_NAME"), buf, sizeof(buf))) spCfg.name = buf;
 
 			ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
 			ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
@@ -513,6 +521,31 @@ void ShowSettingsWindow() {
 			int max_threads = std::thread::hardware_concurrency();
 			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &spCfg.cpuThreads, 0, max_threads);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_CPU_THREADS"));
+			//ImGui::SeparatorText(L("BLACKLIST_HEADER"));
+			//if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
+			//	wstring sel = SelectFileDialog(); if (!sel.empty()) spCfg.blacklist.push_back(sel);
+			//}
+			//ImGui::SameLine();
+			//if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
+			//	wstring sel = SelectFolderDialog(); if (!sel.empty()) spCfg.blacklist.push_back(sel);
+			//}
+			//static int sel_bl_item = -1;
+			//if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 2 * ImGui::GetTextLineHeightWithSpacing()))) {
+			//	// 检查 blacklist 是否为空
+			//	if (spCfg.blacklist.empty()) {
+			//		ImGui::Text(L("No items in blacklist")); // 显示空列表提示
+			//	}
+			//	else {
+			//		// 遍历显示黑名单项
+			//		for (int n = 0; n < spCfg.blacklist.size(); n++) {
+			//			string label = wstring_to_utf8(spCfg.blacklist[n]);
+			//			if (ImGui::Selectable(label.c_str(), sel_bl_item == n)) {
+			//				sel_bl_item = n;
+			//			}
+			//		}
+			//	}
+			//	ImGui::EndListBox();
+			//}
 
 			ImGui::SeparatorText(L("COMMANDS_TO_RUN"));
 			static char cmd_buf[512] = "";
@@ -530,7 +563,7 @@ void ShowSettingsWindow() {
 				}
 			}
 			static int sel_cmd_item = -1;
-			ImGui::BeginListBox("##commands_list", ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing()));
+			ImGui::BeginListBox("##commands_list", ImVec2(-FLT_MIN, 3 * ImGui::GetTextLineHeightWithSpacing()));
 			for (int n = 0; n < spCfg.commands.size(); n++) {
 				if (ImGui::Selectable(wstring_to_utf8(spCfg.commands[n]).c_str(), sel_cmd_item == n)) sel_cmd_item = n;
 			}
@@ -540,15 +573,15 @@ void ShowSettingsWindow() {
 				sel_cmd_item = -1;
 			}
 
-			// --- NEW & IMPROVED: Automated Tasks UI ---
 			ImGui::SeparatorText(L("AUTOMATED_TASKS"));
 			if (ImGui::Button(L("ADD_BACKUP_TASK"))) spCfg.tasks.push_back(AutomatedTask());
 			ImGui::SameLine();
-			static int sel_task_item = -1; // To track selected task for removal
+			static int sel_task_item = -1; // 追踪被删除的item
 			if (ImGui::Button(L("BUTTON_REMOVE_TASK")) && sel_task_item != -1 && sel_task_item < spCfg.tasks.size()) {
 				spCfg.tasks.erase(spCfg.tasks.begin() + sel_task_item);
 				sel_task_item = -1;
 			}
+
 
 			for (int i = 0; i < spCfg.tasks.size(); ++i) {
 				ImGui::PushID(2000 + i);
@@ -566,7 +599,7 @@ void ShowSettingsWindow() {
 					for (auto const& [idx, val] : configs) {
 						if (ImGui::Selectable((string(L("CONFIG_N")) + to_string(idx)).c_str(), task.configIndex == idx)) {
 							task.configIndex = idx;
-							task.worldIndex = val.worlds.empty() ? -1 : 0; // Reset world index
+							task.worldIndex = val.worlds.empty() ? -1 : 0; // 重置世界idx
 						}
 					}
 					ImGui::EndCombo();
@@ -590,11 +623,11 @@ void ShowSettingsWindow() {
 
 				ImGui::Combo(L("TASK_BACKUP_TYPE"), &task.backupType, "Once\0Interval\0Scheduled\0");
 
-				if (task.backupType == 1) { // Interval
+				if (task.backupType == 1) { // 间隔
 					ImGui::InputInt(L("INTERVAL_MINUTES"), &task.intervalMinutes);
 					if (task.intervalMinutes < 1) task.intervalMinutes = 1;
 				}
-				else if (task.backupType == 2) { // Scheduled
+				else if (task.backupType == 2) { // 计划
 					ImGui::Text("At:"); ImGui::SameLine();
 					ImGui::SetNextItemWidth(50); ImGui::InputInt(L("SCHED_HOUR"), &task.schedHour);
 					ImGui::SameLine(); ImGui::Text(":"); ImGui::SameLine();
@@ -613,13 +646,17 @@ void ShowSettingsWindow() {
 				ImGui::PopID();
 			}
 		}
-	} else {
+	}
+	else {
 		if (!configs.count(currentConfigIndex)) {
 			// 如果配置被删除
 			if (configs.empty()) configs[1] = Config(); // 如果1被删，新建
 			currentConfigIndex = configs.begin()->first;
 		}
 		Config& cfg = configs[currentConfigIndex];
+		char buf[128];
+		strncpy_s(buf, cfg.name.c_str(), sizeof(buf));
+		if (ImGui::InputText(L("CONFIG_NAME"), buf, sizeof(buf))) cfg.name = buf;
 
 		if (ImGui::CollapsingHeader(L("GROUP_PATHS"))) {
 			char rootBufA[CONSTANT1];
@@ -770,7 +807,7 @@ void ShowSettingsWindow() {
 			if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
 				wstring sel = SelectFolderDialog(); if (!sel.empty()) cfg.blacklist.push_back(sel);
 			}
-			static int sel_bl_item = -1;  // 添加全局变量或成员变量声明
+			static int sel_bl_item = -1;
 
 			if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 5 * ImGui::GetTextLineHeightWithSpacing()))) {
 				// 检查 blacklist 是否为空
@@ -788,7 +825,7 @@ void ShowSettingsWindow() {
 				}
 				ImGui::EndListBox();
 			}
-			
+
 
 			if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item != -1) {
 				cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item); sel_bl_item = -1;
@@ -1448,8 +1485,9 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 		ofs.close();
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+		// 智能备份还未加入黑名单功能
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
-			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt" + exclusion_args;
+			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
 	}
 	else if (config.backupMode == 3) // 覆盖备份
 	{
@@ -1588,92 +1626,15 @@ void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, 
 	}
 }
 
-void ExecuteSpecialConfig(int configId, Console& console) {
-	specialTasksRunning = true;
-	specialTasksComplete = false;
-
-	thread([configId, &console]() {
-		SpecialConfig spCfg;
-		{
-			lock_guard<mutex> lock(specialConfigMutex);
-			if (!specialConfigs.count(configId)) {
-				specialTasksRunning = false; // Make sure to reset flag on error
-				return;
-			}
-			spCfg = specialConfigs[configId];
-		}
-
-		console.AddLog(L("SPECIAL_EXECUTING_CONFIG"), spCfg.name.c_str());
-
-		// 1. 执行自定义命令 (这部分逻辑不变)
-		for (const auto& cmd : spCfg.commands) {
-			console.AddLog(L("SPECIAL_RUNNING_COMMAND"), wstring_to_utf8(cmd).c_str());
-			// 注意：为了避免阻塞，可以考虑是否需要等待每个命令执行完毕
-			RunCommandInBackground(cmd, console, spCfg.useLowPriority);
-		}
-
-		// 2. 遍历新的 `tasks` 结构，而不是 `autoBackupTasks`
-		for (const auto& task : spCfg.tasks) {
-
-			// 在GUI的单次执行模式下，我们只处理“备份一次”类型的任务
-			if (task.backupType != 0) { // 0: Once, 1: Interval, 2: Scheduled
-				continue; // 跳过间隔和计划任务
-			}
-
-			// 使用新的 task 成员: task.configIndex 和 task.worldIndex
-			int configIdx = task.configIndex;
-			int worldIdx = task.worldIndex;
-
-			// 检查世界存在性 (这部分逻辑不变)
-			if (configs.count(configIdx) && worldIdx >= 0 && worldIdx < configs[configIdx].worlds.size()) {
-				console.AddLog(L("SPECIAL_AUTO_BACKING_UP"), wstring_to_utf8(configs[configIdx].worlds[worldIdx].first).c_str(), configIdx);
-
-				// 动态创建用于 DoBackup 的临时配置 (这部分逻辑不变)
-				Config tempTaskConfig;
-
-				// 从基础配置获取信息
-				const Config& baseConfig = configs[configIdx];
-				tempTaskConfig.saveRoot = baseConfig.saveRoot;
-				tempTaskConfig.backupPath = baseConfig.backupPath;
-				tempTaskConfig.zipPath = baseConfig.zipPath;
-				tempTaskConfig.zipFormat = baseConfig.zipFormat;
-				tempTaskConfig.backupMode = baseConfig.backupMode;
-				tempTaskConfig.folderNameType = baseConfig.folderNameType;
-
-
-				// 用特殊配置的参数覆盖
-				tempTaskConfig.hotBackup = spCfg.hotBackup;
-				tempTaskConfig.zipLevel = spCfg.zipLevel;
-				tempTaskConfig.keepCount = spCfg.keepCount;
-				tempTaskConfig.cpuThreads = spCfg.cpuThreads;
-				tempTaskConfig.useLowPriority = spCfg.useLowPriority;
-				tempTaskConfig.blacklist = spCfg.blacklist; // 传递黑名单
-
-				const pair<wstring, wstring>& worldData = baseConfig.worlds[worldIdx];
-
-				DoBackup(tempTaskConfig, worldData, console);
-			}
-		}
-
-		console.AddLog(L("SPECIAL_TASKS_COMPLETED"));
-		specialTasksRunning = false;
-		specialTasksComplete = true;
-
-		if (spCfg.exitAfterExecution) {
-			this_thread::sleep_for(chrono::seconds(3));
-			PostQuitMessage(0);
-		}
-		}).detach();
-}
-
-void RunSpecialMode(int configId) {
+bool RunSpecialMode(int configId) {
 	SpecialConfig spCfg;
 	if (specialConfigs.count(configId)) {
 		spCfg = specialConfigs[configId];
 	}
 	else {
 		ConsoleLog(L("SPECIAL_CONFIG_NOT_FOUND"), configId);
-		return;
+		Sleep(1000);
+		return false;
 	}
 
 	// 隐藏控制台窗口（如果配置要求）
@@ -1698,7 +1659,7 @@ void RunSpecialMode(int configId) {
 	// --- 1. 执行一次性命令 ---
 	for (const auto& cmd : spCfg.commands) {
 		ConsoleLog(L("LOG_CMD_EXECUTING"), wstring_to_utf8(cmd).c_str());
-		system(wstring_to_utf8(cmd).c_str()); // 使用 system 简化实现
+		system(utf8_to_gbk(wstring_to_utf8(cmd)).c_str()); // 使用 system 简化实现
 	}
 
 	// --- 2. 处理并启动所有自动备份任务 ---
@@ -1722,12 +1683,12 @@ void RunSpecialMode(int configId) {
 		taskConfig.blacklist = spCfg.blacklist;
 
 		if (task.backupType == 0) { // 类型 0: 一次性备份
-			ConsoleLog(L("TASK_QUEUE_ONETIME_BACKUP"), wstring_to_utf8(worldData.first).c_str());
+			ConsoleLog(L("TASK_QUEUE_ONETIME_BACKUP"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
 			DoBackup(taskConfig, worldData, dummyConsole);
 		}
 		else { // 类型 1 (间隔) 和 2 (计划) 在后台线程运行
 			taskThreads.emplace_back([task, taskConfig, worldData, &shouldExit]() {
-				ConsoleLog(L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(worldData.first).c_str());
+				ConsoleLog(L("THREAD_STARTED_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
 
 				while (!shouldExit) {
 					// 计算下次运行时间
@@ -1766,7 +1727,7 @@ void RunSpecialMode(int configId) {
 						char time_buf[26];
 						ctime_s(time_buf, sizeof(time_buf), &next_run_t);
 						time_buf[strlen(time_buf) - 1] = '\0';
-						ConsoleLog(L("SCHEDULE_NEXT_BACKUP_AT"), wstring_to_utf8(worldData.first).c_str(), time_buf);
+						ConsoleLog(L("SCHEDULE_NEXT_BACKUP_AT"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()), time_buf);
 
 						// 等待直到目标时间，同时检查退出信号
 						while (time(nullptr) < next_run_t && !shouldExit) {
@@ -1796,6 +1757,7 @@ void RunSpecialMode(int configId) {
 			}
 			else if (c == 'm') {
 				shouldExit = true;
+				return false;
 				ConsoleLog(L("INFO_SWITCHING_TO_GUI_MODE"));
 				wchar_t selfPath[MAX_PATH];
 				GetModuleFileNameW(NULL, selfPath, MAX_PATH);
@@ -1819,12 +1781,25 @@ void RunSpecialMode(int configId) {
 	}
 
 	ConsoleLog(L("INFO_ALL_TASKS_SHUT_DOWN"));
+	return true;
 }
 
 // Main code
 int main(int argc, char** argv)
 {
-	int specialConfigId = -1;
+	//_setmode(_fileno(stdout), _O_U8TEXT);
+	//_setmode(_fileno(stdin), _O_U8TEXT);
+	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+
+	wstring g_7zTempPath, g_FontTempPath;
+	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
+	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
+	if (!ExtractFontToTempFile(g_FontTempPath)) {
+		printf("\a");
+		return 0;
+	}
+
+	/*int specialConfigId = -1;
 	for (int i = 1; i < argc; ++i) {
 		if (string(argv[i]) == "-specialcfg" && (i + 1 < argc)) {
 			try {
@@ -1835,53 +1810,43 @@ int main(int argc, char** argv)
 			}
 			break;
 		}
-	}
+	}*/
 
 	LoadConfigs("config.ini");
 
-	if (specialConfigId != -1)
+	if (specialConfigMode)
 	{
-		// --- SPECIAL CONSOLE MODE ---
-		// If the config specifies a hidden window, don't even allocate a console.
-		// Otherwise, create one for output and interaction.
 		bool hide = false;
-		if (specialConfigs.count(specialConfigId)) {
-			hide = specialConfigs[specialConfigId].hideWindow;
+		if (specialConfigs.count(currentConfigIndex)) {
+			hide = specialConfigs[currentConfigIndex].hideWindow;
 		}
 
-		if (!hide) {
-			AllocConsole(); // Create a console window
-			// Redirect standard I/O to the new console
-			FILE* pCout, * pCerr, * pCin;
-			freopen_s(&pCout, "CONOUT$", "w", stdout);
-			freopen_s(&pCerr, "CONOUT$", "w", stderr);
-			freopen_s(&pCin, "CONIN$", "r", stdin);
-		}
+		//if (!hide) {
+		//	//AllocConsole(); // Create a console window
+		//	// Redirect standard I/O to the new console
+		//	FILE* pCout, * pCerr, * pCin;
+		//	freopen_s(&pCout, "CONOUT$", "w", stdout);
+		//	freopen_s(&pCerr, "CONOUT$", "w", stderr);
+		//	freopen_s(&pCin, "CONIN$", "r", stdin);
+		//}
 
-		RunSpecialMode(specialConfigId); // Run the dedicated function for console mode
+		if (!RunSpecialMode(currentConfigIndex))
+			goto IGUI;
 
 		if (!hide) {
 			FreeConsole();
 		}
-		// Allow time for processes to finish or for user to read final messages
 		Sleep(3000);
-		return 0; // Exit after special mode finishes
+		return 0;
 	}
-
-
-
-
-	_setmode(_fileno(stdout), _O_U16TEXT);
-	_setmode(_fileno(stdin), _O_U16TEXT);
-	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-
+	IGUI:
 	static Console console;
 
 	// Create application window
 	//ImGui_ImplWin32_EnableDpiAwareness();
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.4", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.5", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
@@ -1961,19 +1926,12 @@ int main(int argc, char** argv)
 	//LoadConfigs("config.ini"); 
 	ApplyTheme(configs[currentConfigIndex].theme); // 把主题加载放在这里了
 
-	
-	if (specialConfigs.count(currentConfigIndex) && specialConfigs[currentConfigIndex].autoExecute) {
+
+	/*if (specialConfigs.count(currentConfigIndex) && specialConfigs[currentConfigIndex].autoExecute) {
 		specialConfigMode = true;
 		ExecuteSpecialConfig(currentConfigIndex, console);
-	}
+	}*/
 
-	wstring g_7zTempPath, g_FontTempPath;
-	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
-	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
-	if (!ExtractFontToTempFile(g_FontTempPath)) {
-		printf("\a");
-		return 0;
-	}
 
 	if (isFirstRun) {
 		LANGID lang_id = GetUserDefaultUILanguage();
@@ -2265,38 +2223,6 @@ int main(int argc, char** argv)
 			}
 
 			ImGui::End();
-		} else if (specialConfigMode) {
-			ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-			ImGui::Begin(L("Automated Task Runner"), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
-
-			if (specialTasksRunning) {
-				ImGui::Text("Executing automated tasks, please wait...");
-				ImGui::Text("See console window for detailed progress.");
-			}
-			else if (specialTasksComplete) {
-				ImGui::Text("All tasks have been completed.");
-				if (!specialConfigs[currentConfigIndex].exitAfterExecution) {
-					ImGui::Text("You can now close this window or switch configurations.");
-				}
-			}
-			else {
-				ImGui::Text("Preparing to run automated tasks...");
-			}
-
-			ImGui::Separator();
-
-			if (ImGui::Button(L("SWITCH_TO_MANUAL"), ImVec2(180, 0))) {
-				specialConfigMode = false;
-				// You might want to stop the running tasks here if necessary
-			}
-			ImGui::SameLine();
-			if (ImGui::Button(L("EXIT"), ImVec2(120, 0))) {
-				done = true;
-			}
-
-			ImGui::End();
-			console.Draw(L("CONSOLE_TITLE"), &showMainApp); // Keep console visible
-
 		}
 		else if (showMainApp) {
 			// 用于跟踪用户在列表中选择的世界
