@@ -194,7 +194,7 @@ static void LoadConfigs(const string& filename = "config.ini") {
 			wstring val = line.substr(pos + 1);
 
 			if (cur) { // Inside a [ConfigN] section
-				if (key == L"Name") cur->name = wstring_to_utf8(val);
+				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
 				else if (key == L"SavePath") {
 					cur->saveRoot = val;
 				}
@@ -308,6 +308,7 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
 		int idx = kv.first;
 		Config& c = kv.second;
 		out << L"[Config" << idx << L"]\n";
+		out << L"ConfigName=" << utf8_to_wstring(c.name) << L"\n";
 		out << L"SavePath=" << c.saveRoot << L"\n";
 		out << L"# One line for name, one line for description, terminated by '*'\n";
 		out << L"WorldData=\n";
@@ -1262,6 +1263,9 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console)
 		if (ec) {
 			// 虽然发生了错误（可能是某个文件被锁定了），但大部分文件可能已经复制成功
 			console.AddLog(L("LOG_BACKUP_HOT_INFO2"), ec.message().c_str());
+			string command = "xcopy " + worldPath.string() + " " + tempDir.string() + " /s /e /y /c";
+			console.AddLog(command.c_str());
+			system(command.c_str());
 		}
 		else {
 			console.AddLog(L("LOG_BACKUP_HOT_INFO3"), wstring_to_utf8(tempDir.wstring()).c_str());
@@ -1626,15 +1630,15 @@ void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, 
 	}
 }
 
-bool RunSpecialMode(int configId) {
+void RunSpecialMode(int configId) {
 	SpecialConfig spCfg;
 	if (specialConfigs.count(configId)) {
 		spCfg = specialConfigs[configId];
 	}
 	else {
 		ConsoleLog(L("SPECIAL_CONFIG_NOT_FOUND"), configId);
-		Sleep(1000);
-		return false;
+		Sleep(3000);
+		return;
 	}
 
 	// 隐藏控制台窗口（如果配置要求）
@@ -1680,7 +1684,7 @@ bool RunSpecialMode(int configId) {
 		taskConfig.keepCount = spCfg.keepCount;
 		taskConfig.cpuThreads = spCfg.cpuThreads;
 		taskConfig.useLowPriority = spCfg.useLowPriority;
-		taskConfig.blacklist = spCfg.blacklist;
+		//taskConfig.blacklist = spCfg.blacklist; 沿用普通配置的黑名单
 
 		if (task.backupType == 0) { // 类型 0: 一次性备份
 			ConsoleLog(L("TASK_QUEUE_ONETIME_BACKUP"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
@@ -1737,10 +1741,10 @@ bool RunSpecialMode(int configId) {
 
 					if (shouldExit) break;
 
-					ConsoleLog(L("BACKUP_PERFORMING_FOR_WORLD"), wstring_to_utf8(worldData.first).c_str());
+					ConsoleLog(L("BACKUP_PERFORMING_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()));
 					DoBackup(taskConfig, worldData, dummyConsole);
 				}
-				ConsoleLog(L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(worldData.first).c_str());
+				ConsoleLog(L("THREAD_STOPPED_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()));
 				});
 		}
 	}
@@ -1757,11 +1761,12 @@ bool RunSpecialMode(int configId) {
 			}
 			else if (c == 'm') {
 				shouldExit = true;
-				return false;
+				specialConfigs[configId].autoExecute = false;
+				SaveConfigs();
 				ConsoleLog(L("INFO_SWITCHING_TO_GUI_MODE"));
 				wchar_t selfPath[MAX_PATH];
-				GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-				ShellExecuteW(NULL, L"open", selfPath, NULL, NULL, SW_SHOWNORMAL);
+				GetModuleFileNameW(NULL, selfPath, MAX_PATH); // 获得程序路径
+				ShellExecuteW(NULL, L"open", selfPath, NULL, NULL, SW_SHOWNORMAL); // 开启
 			}
 		}
 
@@ -1781,11 +1786,11 @@ bool RunSpecialMode(int configId) {
 	}
 
 	ConsoleLog(L("INFO_ALL_TASKS_SHUT_DOWN"));
-	return true;
+	return ;
 }
 
 // Main code
-int main(int argc, char** argv)
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 	//_setmode(_fileno(stdout), _O_U8TEXT);
 	//_setmode(_fileno(stdin), _O_U8TEXT);
@@ -1821,17 +1826,16 @@ int main(int argc, char** argv)
 			hide = specialConfigs[currentConfigIndex].hideWindow;
 		}
 
-		//if (!hide) {
-		//	//AllocConsole(); // Create a console window
-		//	// Redirect standard I/O to the new console
-		//	FILE* pCout, * pCerr, * pCin;
-		//	freopen_s(&pCout, "CONOUT$", "w", stdout);
-		//	freopen_s(&pCerr, "CONOUT$", "w", stderr);
-		//	freopen_s(&pCin, "CONIN$", "r", stdin);
-		//}
+		if (!hide) {
+			AllocConsole(); // Create a console window
+			// Redirect standard I/O to the new console
+			FILE* pCout, * pCerr, * pCin;
+			freopen_s(&pCout, "CONOUT$", "w", stdout);
+			freopen_s(&pCerr, "CONOUT$", "w", stderr);
+			freopen_s(&pCin, "CONIN$", "r", stdin);
+		}
 
-		if (!RunSpecialMode(currentConfigIndex))
-			goto IGUI;
+		RunSpecialMode(currentConfigIndex);
 
 		if (!hide) {
 			FreeConsole();
@@ -1839,14 +1843,14 @@ int main(int argc, char** argv)
 		Sleep(3000);
 		return 0;
 	}
-	IGUI:
+
 	static Console console;
 
 	// Create application window
 	//ImGui_ImplWin32_EnableDpiAwareness();
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.5", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.6", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))

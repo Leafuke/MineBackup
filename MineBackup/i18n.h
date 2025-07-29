@@ -126,7 +126,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"LOG_ERROR_GET_EXIT_CODE", u8"[Error] 无法获取进程退出代码。" },
 		{"LOG_ERROR_SNAPSHOT", u8"[Error] 无法创建快照。" },
 		{"LOG_BACKUP_HOT_INFO", u8"[提示] 正在创建临时备份目录..." },
-		{"LOG_BACKUP_HOT_INFO2", u8"[Error] 热备份快照创建错误，可能有文件被锁定。错误信息：%s" },
+		{"LOG_BACKUP_HOT_INFO2", u8"[Error] 热备份快照创建错误，可能有文件被锁定。准备执行备用方案，请放心。\n错误信息：%s" },
 		{"LOG_BACKUP_HOT_INFO3", u8"[提示] 成功在 %s 处创建快照。" },
 		{"LOG_BACKUP_HOT_INFO4", u8"[Error] 创建快照失败：%s" },
 		{"LOG_BACKUP_SMART_INFO", u8"[提示] 发现 %zu 个文件发生改变。" },
@@ -221,7 +221,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "THREAD_STOPPED_FOR_WORLD", "[线程] 已停止，世界: %s" },
 		{ "INFO_TASKS_INITIATED", "[信息] 任务已启动。正在后台运行。" },
 		{ "INFO_QUIT_SIGNAL_RECEIVED", "[信息] 收到退出信号。正在关闭所有任务..." },
-		{ "INFO_SWITCHING_TO_GUI_MODE", "[信息] 正在切换到 GUI 模式..." },
+		{ "INFO_SWITCHING_TO_GUI_MODE", "[信息] 正在切换到 GUI 模式，这可能需要一点时间..." },
 		{ "INFO_ALL_TASKS_SHUT_DOWN", "[信息] 所有任务已关闭。正在退出。" }
 	}},
 	{ "en-US", {
@@ -442,7 +442,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "THREAD_STOPPED_FOR_WORLD", "[THREAD] Stopped for world: %s" },
 		{ "INFO_TASKS_INITIATED", "[INFO] Tasks initiated. Running in background." },
 		{ "INFO_QUIT_SIGNAL_RECEIVED", "[INFO] Quit signal received. Shutting down all tasks..." },
-		{ "INFO_SWITCHING_TO_GUI_MODE", "[INFO] Switching to GUI mode..." },
+		{ "INFO_SWITCHING_TO_GUI_MODE", "[INFO] Switching to GUI mode. Waiting..." },
 		{ "INFO_ALL_TASKS_SHUT_DOWN", "[INFO] All tasks have been shut down. Exiting." }
 		}},
 };
