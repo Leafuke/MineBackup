@@ -9,7 +9,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"BACKUP", u8"备份选中存档"},
 		{"RESTORE", u8"还原选中存档"},
 		{"EXIT", u8"退出"},
-		{"MAIN_WINDOW_TITLE", u8"我的世界存档备份器"},
+		{"MAIN_WINDOW_TITLE", u8"存档备份器"},
 		{"WIZARD_TITLE", u8"- MineBackup 首次启动设置向导 -"},
 		{"CONSOLE_TITLE", u8"MineBackup 监控台"},
 		{"ERROR_TITLE", u8"错误"},

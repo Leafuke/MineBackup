@@ -1246,44 +1246,6 @@ struct Console
 	}
 };
 
-// 创建快照，用于热备份
-wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console) {
-	try {
-		// 创建一个唯一的临时目录
-		filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
-
-		// 如果旧的临时目录存在，先清理掉
-		if (filesystem::exists(tempDir)) {
-			filesystem::remove_all(tempDir);
-		}
-		filesystem::create_directories(tempDir);
-		console.AddLog(L("LOG_BACKUP_HOT_INFO"));
-
-		// 递归复制，并尝试忽略单个文件错误
-		auto copyOptions = filesystem::copy_options::recursive | filesystem::copy_options::overwrite_existing;
-		error_code ec;
-		filesystem::copy(worldPath, tempDir, copyOptions, ec);
-
-		if (ec) {
-			// 虽然发生了错误（可能是某个文件被锁定了），但大部分文件可能已经复制成功
-			console.AddLog(L("LOG_BACKUP_HOT_INFO2"), ec.message().c_str());
-			string command = "xcopy " + worldPath.string() + " " + tempDir.string() + " /s /e /y /c";
-			console.AddLog(command.c_str());
-			system(command.c_str());
-		}
-		else {
-			console.AddLog(L("LOG_BACKUP_HOT_INFO3"), wstring_to_utf8(tempDir.wstring()).c_str());
-		}
-
-		return tempDir.wstring();
-
-	}
-	catch (const filesystem::filesystem_error& e) {
-		console.AddLog(L("LOG_BACKUP_HOT_INFO4"), e.what());
-		return L"";
-	}
-}
-
 // 限制备份文件数量，超出则自动删除最旧的
 void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = nullptr)
 {
@@ -1382,6 +1344,43 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 	return true;
+}
+
+// 创建快照，用于热备份
+wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console) {
+	try {
+		// 创建一个唯一的临时目录
+		filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
+
+		// 如果旧的临时目录存在，先清理掉
+		if (filesystem::exists(tempDir)) {
+			filesystem::remove_all(tempDir);
+		}
+		filesystem::create_directories(tempDir);
+		console.AddLog(L("LOG_BACKUP_HOT_INFO"));
+
+		// 递归复制，并尝试忽略单个文件错误
+		auto copyOptions = filesystem::copy_options::recursive | filesystem::copy_options::overwrite_existing;
+		error_code ec;
+		filesystem::copy(worldPath, tempDir, copyOptions, ec);
+
+		if (ec) {
+			// 虽然发生了错误（可能是某个文件被锁定了），但大部分文件可能已经复制成功
+			console.AddLog(L("LOG_BACKUP_HOT_INFO2"), ec.message().c_str());
+			wstring xcopyCmd = L"xcopy \"" + worldPath.wstring() + L"\" \"" + tempDir.wstring() + L"\" /s /e /y /c";
+			RunCommandInBackground(xcopyCmd, console, false);
+		}
+		else {
+			console.AddLog(L("LOG_BACKUP_HOT_INFO3"), wstring_to_utf8(tempDir.wstring()).c_str());
+		}
+
+		return tempDir.wstring();
+
+	}
+	catch (const filesystem::filesystem_error& e) {
+		console.AddLog(L("LOG_BACKUP_HOT_INFO4"), e.what());
+		return L"";
+	}
 }
 
 // 执行单个世界的备份操作。
@@ -2574,12 +2573,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			if (ImGui::Button(L("SETTINGS"))) showSettings = true;
 			if (ImGui::Button(L("EXIT"))) done = true;
 			if (ImGui::Button(L("OPEN_BACKUP_FOLDER"))) {
-				string openTemp = "start " + utf8_to_gbk(wstring_to_utf8(cfg.backupPath));
-				system(openTemp.c_str());
+				if (!cfg.backupPath.empty()) {
+					HINSTANCE result = ShellExecuteW(NULL, L"open", cfg.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
+					/*if ((INT_PTR)result <= 32) {
+						console.AddLog("[Error] %ls", cfg.backupPath.c_str());
+					}*/
+				}
 			}
 			if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"))) {
-				string openTemp = "start " + utf8_to_gbk(wstring_to_utf8(cfg.saveRoot));
-				system(openTemp.c_str());
+				if (!cfg.saveRoot.empty()) {
+					HINSTANCE result = ShellExecuteW(NULL, L"open", cfg.saveRoot.c_str(), NULL, NULL, SW_SHOWNORMAL);
+				}
 			}
 			ImGui::TextLinkOpenURL(L("CHECK_FOR_UPDATES"), "github.com/Leafuke/MineBackup/releases");
 			ShowSettingsWindow();
