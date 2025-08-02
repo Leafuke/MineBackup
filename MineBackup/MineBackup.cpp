@@ -15,6 +15,8 @@
 #include <atomic> // 用于线程安全的标志
 #include <mutex>  // 用于互斥锁
 #include <conio.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 #define CONSTANT1 256
 #define CONSTANT2 512
 using namespace std;
@@ -27,6 +29,12 @@ static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 static std::vector<ID3D11ShaderResourceView*> worldIconTextures;
 static std::vector<int> worldIconWidths, worldIconHeights;
+const string CURRENT_VERSION = "1.6.7";
+bool g_CheckForUpdates = true;
+static atomic<bool> g_UpdateCheckDone(false);
+static atomic<bool> g_NewVersionAvailable(false);
+static string g_LatestVersionStr;
+static string g_ReleaseURL;
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -127,6 +135,7 @@ wstring utf8_to_wstring(const string& str);
 string gbk_to_utf8(const string& gbk);
 string utf8_to_gbk(const string& utf8);
 
+void CheckForUpdatesThread();
 void SetAutoStart(const string& appName, const wstring& appPath, int configId, bool enable);
 bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 void SaveStateFile(const filesystem::path& metadataPath);
@@ -287,6 +296,9 @@ static void LoadConfigs(const string& filename = "config.ini") {
 				else if (key == L"Language") {
 					g_CurrentLang = wstring_to_utf8(val);
 				}
+				else if (key == L"CheckForUpdates") {
+					g_CheckForUpdates = (val != L"0");
+				}
 			}
 		}
 	}
@@ -304,7 +316,8 @@ static void SaveConfigs(const wstring& filename = L"config.ini") {
 	//out.imbue(locale(out.getloc(), new codecvt_utf8<wchar_t>));//将UTF8转为UTF，现在C++17也不对了……但是我们有define！
 	out << L"[General]\n";
 	out << L"CurrentConfig=" << currentConfigIndex << L"\n";
-	out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n\n";
+	out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
+	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n\n";
 
 	for (auto& kv : configs) {
 		int idx = kv.first;
@@ -494,6 +507,8 @@ void ShowSettingsWindow() {
 		}
 		ImGui::EndPopup();
 	}
+
+	if(!specialSetting) ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
 
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
 	ImGui::SeparatorText(L("CURRENT_CONFIG_DETAILS"));
@@ -1899,6 +1914,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	LoadConfigs("config.ini");
 	CheckForConfigConflicts();
+	if (g_CheckForUpdates) {
+		thread update_thread(CheckForUpdatesThread);
+		update_thread.detach();
+	}
 
 	if (specialConfigMode)
 	{
@@ -2688,7 +2707,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					HINSTANCE result = ShellExecuteW(NULL, L"open", cfg.saveRoot.c_str(), NULL, NULL, SW_SHOWNORMAL);
 				}
 			}
-			ImGui::TextLinkOpenURL(L("CHECK_FOR_UPDATES"), "github.com/Leafuke/MineBackup/releases");
+			if (g_NewVersionAvailable) {
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.80f, 0.65f, 1.0f));
+				char link_text[CONSTANT1];
+				snprintf(link_text, sizeof(link_text), L(L("UPDATE_AVAILABLE_LINK_TEXT")), g_LatestVersionStr.c_str());
+				ImGui::TextLinkOpenURL(link_text, g_ReleaseURL.c_str());
+				ImGui::TextLinkOpenURL(L("UPDATE_AVAILABLE_DOWNLOAD"), ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str());
+				ImGui::PopStyleColor();
+			}
+			else {
+				ImGui::TextLinkOpenURL(L("CHECK_FOR_UPDATES"), "https://github.com/Leafuke/MineBackup/releases");
+			}
+
 			ShowSettingsWindow();
 			console.Draw(L("CONSOLE_TITLE"), &showMainApp);
 			ImGui::EndChild();
@@ -2875,4 +2905,86 @@ bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_sr
 	stbi_image_free(image_data);
 
 	return true;
+}
+
+void CheckForUpdatesThread() {
+	DWORD dwSize = 0;
+	DWORD dwDownloaded = 0;
+	LPSTR pszOutBuffer;
+	string responseBody;
+	BOOL bResults = FALSE;
+	HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
+
+	hSession = WinHttpOpen(L"MineBackup Update Checker/1.0",
+		WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+		WINHTTP_NO_PROXY_NAME,
+		WINHTTP_NO_PROXY_BYPASS, 0);
+	if (!hSession) goto cleanup;
+
+	hConnect = WinHttpConnect(hSession, L"api.github.com",
+		INTERNET_DEFAULT_HTTPS_PORT, 0);
+	if (!hConnect) goto cleanup;
+
+	hRequest = WinHttpOpenRequest(hConnect, L"GET",
+		L"/repos/Leafuke/MineBackup/releases/latest",
+		NULL, WINHTTP_NO_REFERER,
+		WINHTTP_DEFAULT_ACCEPT_TYPES,
+		WINHTTP_FLAG_SECURE);
+	if (!hRequest) goto cleanup;
+
+	WinHttpSendRequest(hRequest,
+		L"User-Agent: MineBackup-Update-Checker\r\n",
+		-1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+
+	bResults = WinHttpReceiveResponse(hRequest, NULL);
+	if (!bResults) goto cleanup;
+
+	do {
+		dwSize = 0;
+		if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
+		if (dwSize == 0) break;
+
+		pszOutBuffer = new char[dwSize + 1];
+		ZeroMemory(pszOutBuffer, dwSize + 1);
+
+		if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded))
+			responseBody.append(pszOutBuffer, dwDownloaded);
+
+		delete[] pszOutBuffer;
+
+	} while (dwSize > 0);
+
+	try {
+		string tagNameKey = "\"tag_name\":\"";
+		size_t start = responseBody.find(tagNameKey);
+		if (start != string::npos) {
+			start += tagNameKey.length();
+			size_t end = responseBody.find("\"", start);
+			string latestVersion = responseBody.substr(start, end - start);
+
+			// 对比版本号
+			if (latestVersion > "v" + CURRENT_VERSION) {
+				g_LatestVersionStr = latestVersion;
+				g_NewVersionAvailable = true;
+
+				// 找release地址
+				string urlKey = "\"html_url\":\"";
+				start = responseBody.find(urlKey);
+				if (start != string::npos) {
+					start += urlKey.length();
+					end = responseBody.find("\"", start);
+					g_ReleaseURL = responseBody.substr(start, end - start);
+				}
+			}
+		}
+	}
+	catch (...) {
+		// 暂时不处理
+	}
+
+cleanup:
+	if (hRequest) WinHttpCloseHandle(hRequest);
+	if (hConnect) WinHttpCloseHandle(hConnect);
+	if (hSession) WinHttpCloseHandle(hSession);
+	g_UpdateCheckDone = true;
 }
