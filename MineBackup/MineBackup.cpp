@@ -34,9 +34,7 @@ bool g_CheckForUpdates = true;
 static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
-static string g_ReleaseURL;
 static string g_ReleaseNotes;
-static string g_AssetDownloadURL;
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -1978,14 +1976,14 @@ void ShowHistoryWindow() {
 			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
 				for (const auto& entry : pair.second) {
 					ImVec2 p = ImGui::GetCursorScreenPos();
-					drawList->AddLine(ImVec2(p.x + node_radius, p.y - 10), ImVec2(p.x + node_radius, p.y + ImGui::GetTextLineHeight() + 10), line_color, 1.5f);
-					drawList->AddCircleFilled(ImVec2(p.x + node_radius, p.y + ImGui::GetTextLineHeight() * 0.5f), node_radius, ImGui::GetColorU32(ImGuiCol_Button));
+					drawList->AddLine(ImVec2(p.x + node_radius, p.y - 1), ImVec2(p.x + node_radius, p.y + ImGui::GetTextLineHeight() + 27), line_color, 1.5f);
+					drawList->AddCircleFilled(ImVec2(p.x + node_radius + 0.42f, p.y + ImGui::GetTextLineHeight() * 0.6f), node_radius, ImGui::GetColorU32(ImGuiCol_Button));
 
 					ImGui::Dummy(ImVec2(node_radius * 3, 0)); // 留出绘制空间
 					ImGui::SameLine();
 
 					ImGui::BeginGroup();
-					ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "[%s]", wstring_to_utf8(entry.backupType).c_str());
+					ImGui::TextColored(ImVec4(0.839f, 0.616f, 0.490f, 1.0f), "[%s]", wstring_to_utf8(entry.backupType).c_str());
 					ImGui::SameLine();
 					if (!entry.comment.empty()) {
 						ImGui::TextWrapped("%s", wstring_to_utf8(entry.comment).c_str());
@@ -2850,7 +2848,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::EndChild();
 				ImGui::Separator();
 				if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(120, 0))) {
-					ImGui::TextLinkOpenURL(L("UPDATE_AVAILABLE_DOWNLOAD"), ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str());
 					ShellExecuteA(NULL, "open", ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
 					open_update_popup = false;
 					ImGui::CloseCurrentPopup();
@@ -3096,7 +3093,6 @@ void CheckForUpdatesThread() {
 		if (!latestVersion.empty() && latestVersion > CURRENT_VERSION) {
 			g_LatestVersionStr = "v" + latestVersion;
 			g_NewVersionAvailable = true;
-			g_ReleaseURL = find_json_value(responseBody, "html_url");
 			g_ReleaseNotes = find_json_value(responseBody, "body");
 			for (int i = 0; i < g_ReleaseNotes.size() - 1; ++i)
 			{
