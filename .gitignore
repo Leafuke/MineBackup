@@ -366,3 +366,4 @@ FodyWeavers.xsd
 *.txt
 *.otf
 *.exe
+/MineBackup/history.dat
