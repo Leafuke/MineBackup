@@ -29,12 +29,14 @@ static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 static std::vector<ID3D11ShaderResourceView*> worldIconTextures;
 static std::vector<int> worldIconWidths, worldIconHeights;
-const string CURRENT_VERSION = "1.6.7";
+const string CURRENT_VERSION = "1.6.8";
 bool g_CheckForUpdates = true;
 static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseURL;
+static string g_ReleaseNotes;
+static string g_AssetDownloadURL;
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -92,7 +94,7 @@ struct SpecialConfig {
 	bool exitAfterExecution = false;
 	string name;
 	int zipLevel = 5;
-	int keepCount = 10;
+	int keepCount = 0;
 	int cpuThreads = 0;
 	bool useLowPriority = true;
 	bool hotBackup = false;
@@ -100,6 +102,16 @@ struct SpecialConfig {
 	bool runOnStartup = false;
 	bool hideWindow = false; 
 };
+
+struct HistoryEntry {
+	wstring timestamp_str;
+	wstring worldName;
+	wstring backupFile;
+	wstring backupType;
+	wstring comment;
+};
+map<int, vector<HistoryEntry>> g_history;
+static bool showHistoryWindow = false;
 
 map<int, SpecialConfig> specialConfigs;
 static bool specialConfigMode = false; // 用来开启简单UI
@@ -135,6 +147,12 @@ wstring utf8_to_wstring(const string& str);
 string gbk_to_utf8(const string& gbk);
 string utf8_to_gbk(const string& utf8);
 
+void SaveHistory();
+void LoadHistory();
+void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment);
+
+string find_json_value(const string& json, const string& key);
+wstring SanitizeFileName(const wstring& input);
 void CheckForUpdatesThread();
 void SetAutoStart(const string& appName, const wstring& appPath, int configId, bool enable);
 bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
@@ -443,7 +461,7 @@ void ShowSettingsWindow() {
 		Config& new_cfg = configs[currentConfigIndex];
 		new_cfg.zipFormat = L"7z";
 		new_cfg.zipLevel = 5;
-		new_cfg.keepCount = 10;
+		new_cfg.keepCount = 0;
 		new_cfg.backupMode = 1;
 		new_cfg.hotBackup = false;
 		new_cfg.backupBefore = false;
@@ -1413,7 +1431,8 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console)
 //   - config: 当前使用的配置。
 //   - world:  要备份的世界（名称+描述）。
 //   - console: 监控台对象的引用，用于输出日志信息。
-void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console) {
+   //- commend: 用户注释
+void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console, const wstring& comment = L"") {
 	console.AddLog(L("LOG_BACKUP_START_HEADER"));
 	console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(world.first).c_str());
 
@@ -1432,6 +1451,10 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	wstring archivePath;
 	wstring archiveNameBase = world.second.empty() ? world.first : world.second;
 
+	if (!comment.empty()) {
+		archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
+	}
+
 	// 建立黑名单
 	wstringstream exclusion_ss;
 	for (const auto& item : config.blacklist) {
@@ -1446,6 +1469,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	wchar_t timeBuf[80];
 	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
 	archivePath = destinationFolder + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+
+	wstring baseArchivePath = destinationFolder + L"\\" + archiveNameBase + L"." + config.zipFormat;
 
 	// 创建备份目标文件夹（如果不存在）
 	try {
@@ -1487,28 +1512,43 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	// 无论什么备份模式，都要获得状态，便于成功后更新状态
 	vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
 
-	if (config.skipIfUnchanged) {
-		if (filesToBackup.empty()) {
-			console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-			if (config.hotBackup && !sourcePath.empty()) {
-				console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
-				error_code ec;
-				filesystem::remove_all(sourcePath, ec);
-				if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
-			}
-			return;
+	if (config.skipIfUnchanged && filesToBackup.empty()) {
+		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+		if (config.hotBackup && !sourcePath.empty()) {
+			console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
+			error_code ec;
+			filesystem::remove_all(sourcePath, ec);
+			if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
 		}
+		return;
 	}
+
+	wstring backupTypeStr; // 用于历史记录
 
 	if (config.backupMode == 1 || forceFullBackup) // 普通备份
 	{
+		backupTypeStr = L"Full";
 		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"" + exclusion_args;
 	}
 	else if (config.backupMode == 2) // 智能备份
 	{
-
+		backupTypeStr = L"Smart";
+		if (!config.blacklist.empty()) {
+			filesToBackup.erase(
+				remove_if(filesToBackup.begin(), filesToBackup.end(),
+					[&](const filesystem::path& p) {
+						for (const auto& blacklistedItemW : config.blacklist) {
+								if (p.wstring().length() == blacklistedItemW.length() || p.wstring()[blacklistedItemW.length()] == L'\\') {
+									return true;
+								}
+						}
+						return false;
+					}),
+				filesToBackup.end()
+			);
+		}
 		if (filesToBackup.empty()) {
 			console.AddLog(L("LOG_NO_CHANGE_FOUND"));
 			if (config.hotBackup) // 清理快照
@@ -1527,8 +1567,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		for (const auto& file : filesToBackup) {
 			ofs << file.wstring().substr(originalSourcePath.size() + 1) << endl; // 输出相对路径，以及，必须utf8！
 		}
-
 		ofs.close();
+
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 		// 智能备份还未加入黑名单功能
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
@@ -1536,6 +1576,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	}
 	else if (config.backupMode == 3) // 覆盖备份
 	{
+		backupTypeStr = L"Overwrite";
 		console.AddLog(L("LOG_OVERWRITE"));
 		filesystem::path latestBackupPath;
 		auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
@@ -1553,6 +1594,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		if (found) {
 			console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
 			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel) + exclusion_args;
+			archivePath = latestBackupPath.wstring(); // 记录被更新的文件
 		}
 		else {
 			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
@@ -1568,8 +1610,10 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		console.AddLog(L("LOG_BACKUP_END_HEADER"));
 		LimitBackupFiles(destinationFolder, config.keepCount, &console);
 		SaveStateFile(metadataFolder);
+		// 历史记录
+		AddHistoryEntry(currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
 	}
-	filesystem::remove_all("7z.txt");
+	filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
 	if (config.hotBackup && sourcePath != (config.saveRoot + L"\\" + world.first)) {
 		console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
 		error_code ec;
@@ -1897,6 +1941,69 @@ void CheckForConfigConflicts() {
 		
 }
 
+void ShowHistoryWindow() {
+	ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow)) {
+		ImGui::End();
+		return;
+	}
+
+	if (configs.find(currentConfigIndex) == configs.end()) {
+		ImGui::Text(L("ERROR_NO_CONFIG_SELECTED"));
+		ImGui::End();
+		return;
+	}
+
+	Config& cfg = configs[currentConfigIndex];
+	ImGui::Text(L("HISTORY_FOR_CONFIG"), cfg.name.c_str());
+	ImGui::Separator();
+
+	if (g_history.find(currentConfigIndex) == g_history.end() || g_history[currentConfigIndex].empty()) {
+		ImGui::Text(L("HISTORY_EMPTY"));
+	}
+	else {
+		ImGui::BeginChild("HistoryScroll", ImVec2(0, 0), true);
+
+		// 按世界名称对历史记录进行分组
+		map<wstring, vector<HistoryEntry>> worldHistory;
+		for (const auto& entry : g_history[currentConfigIndex]) {
+			worldHistory[entry.worldName].push_back(entry);
+		}
+
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const float node_radius = 5.0f;
+		const ImU32 line_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+
+		for (const auto& pair : worldHistory) {
+			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
+				for (const auto& entry : pair.second) {
+					ImVec2 p = ImGui::GetCursorScreenPos();
+					drawList->AddLine(ImVec2(p.x + node_radius, p.y - 10), ImVec2(p.x + node_radius, p.y + ImGui::GetTextLineHeight() + 10), line_color, 1.5f);
+					drawList->AddCircleFilled(ImVec2(p.x + node_radius, p.y + ImGui::GetTextLineHeight() * 0.5f), node_radius, ImGui::GetColorU32(ImGuiCol_Button));
+
+					ImGui::Dummy(ImVec2(node_radius * 3, 0)); // 留出绘制空间
+					ImGui::SameLine();
+
+					ImGui::BeginGroup();
+					ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "[%s]", wstring_to_utf8(entry.backupType).c_str());
+					ImGui::SameLine();
+					if (!entry.comment.empty()) {
+						ImGui::TextWrapped("%s", wstring_to_utf8(entry.comment).c_str());
+					}
+					else {
+						ImGui::TextDisabled(L("HISTORY_NO_COMMENT"));
+					}
+					ImGui::TextDisabled("%s | %s", wstring_to_utf8(entry.timestamp_str).c_str(), wstring_to_utf8(entry.backupFile).c_str());
+					ImGui::EndGroup();
+				}
+				ImGui::TreePop();
+			}
+		}
+		ImGui::EndChild();
+	}
+	ImGui::End();
+}
+
 // Main code
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
@@ -1914,6 +2021,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	LoadConfigs("config.ini");
 	CheckForConfigConflicts();
+	LoadHistory();
 	if (g_CheckForUpdates) {
 		thread update_thread(CheckForUpdatesThread);
 		update_thread.detach();
@@ -1948,9 +2056,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// Create application window
 	//ImGui_ImplWin32_EnableDpiAwareness();
-	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
+	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"MineBackup", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.7", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.6.8", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
@@ -2083,6 +2191,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	else {
 		console.AddLog(L("LOG_7Z_EXTRACT_FAIL"));
 	}
+
+	// 记录注释
+	static char backupComment[CONSTANT1] = "";
 
 	// Main loop
 	bool done = false;
@@ -2310,7 +2421,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						// 3. 设置合理的默认值
 						initialConfig.zipFormat = L"7z";
 						initialConfig.zipLevel = 5;
-						initialConfig.keepCount = 10;
+						initialConfig.keepCount = 0;
 						initialConfig.backupMode = 1;
 						initialConfig.hotBackup = false;
 						initialConfig.backupBefore = false;
@@ -2515,8 +2626,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			float buttonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3.0f;
 			if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(buttonWidth, 30))) {
 				// 创建一个后台线程来执行备份，防止UI卡死
-				thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console));
+				thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), utf8_to_wstring(backupComment));
 				backup_thread.detach(); // 分离线程，让它在后台独立运行
+				strcpy_s(backupComment, "");
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(buttonWidth, 30))) {
@@ -2544,7 +2656,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						return filesystem::last_write_time(a) > filesystem::last_write_time(b);
 						});
 					if (cfg.backupBefore) {
-						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console));
+						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
 						backup_thread.detach(); // 分离线程，让它在后台独立运行
 					}
 					DoRestore(cfg, cfg.worlds[selectedWorldIndex].first, files.front().path().filename().wstring(), ref(console));
@@ -2557,6 +2669,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
 				}
 			}
+
+			ImGui::InputTextWithHint("##backup_comment", L("HINT_BACKUP_COMMENT"), backupComment, IM_ARRAYSIZE(backupComment), ImGuiInputTextFlags_EnterReturnsTrue);
 
 			if (no_world_selected) {
 				ImGui::EndDisabled();
@@ -2647,7 +2761,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						// 合理的
 						if (extension == L".zip" || extension == L".7z") {
 							if (cfg.backupBefore) {
-								thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console));
+								thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
 								backup_thread.detach();
 							}
 							// 使用重载的 DoRestore 函数
@@ -2670,7 +2784,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
 					// 创建后台线程执行还原
 					if (cfg.backupBefore) {
-						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console));
+						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
 						backup_thread.detach(); // 分离线程，让它在后台独立运行
 					}
 					thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console));
@@ -2694,6 +2808,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			ImGui::BeginChild(L("RIGHT_PANE"));
 			if (ImGui::Button(L("SETTINGS"))) showSettings = true;
 			if (ImGui::Button(L("EXIT"))) done = true;
+			if (ImGui::Button(L("HISTORY_BUTTON"))) showHistoryWindow = true;
 			if (ImGui::Button(L("OPEN_BACKUP_FOLDER"))) {
 				if (!cfg.backupPath.empty()) {
 					HINSTANCE result = ShellExecuteW(NULL, L"open", cfg.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -2707,19 +2822,49 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					HINSTANCE result = ShellExecuteW(NULL, L"open", cfg.saveRoot.c_str(), NULL, NULL, SW_SHOWNORMAL);
 				}
 			}
+			static bool open_update_popup = false;
 			if (g_NewVersionAvailable) {
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.80f, 0.65f, 1.0f));
-				char link_text[CONSTANT1];
-				snprintf(link_text, sizeof(link_text), L(L("UPDATE_AVAILABLE_LINK_TEXT")), g_LatestVersionStr.c_str());
-				ImGui::TextLinkOpenURL(link_text, g_ReleaseURL.c_str());
-				ImGui::TextLinkOpenURL(L("UPDATE_AVAILABLE_DOWNLOAD"), ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str());
-				ImGui::PopStyleColor();
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.902f, 0.6f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.9f, 0.5f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+				if (ImGui::Button(L("UPDATE_AVAILABLE_BUTTON"))) {
+					open_update_popup = true;
+					ImGui::OpenPopup(L("UPDATE_POPUP_TITLE"));
+				}
+				ImGui::PopStyleColor(3);
 			}
 			else {
-				ImGui::TextLinkOpenURL(L("CHECK_FOR_UPDATES"), "https://github.com/Leafuke/MineBackup/releases");
+				if (ImGui::Button(L("CHECK_FOR_UPDATES"))) {
+					ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup/releases", NULL, NULL, SW_SHOWNORMAL);
+					thread update_thread(CheckForUpdatesThread);
+					update_thread.detach();
+				}
+			}
+
+			if (ImGui::BeginPopupModal(L("UPDATE_POPUP_TITLE"), &open_update_popup, ImGuiWindowFlags_AlwaysAutoResize)) {
+				ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
+				ImGui::Separator();
+				ImGui::TextWrapped(L("UPDATE_POPUP_NOTES"));
+				ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 150), true);
+				ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
+				ImGui::EndChild();
+				ImGui::Separator();
+				if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(120, 0))) {
+					ImGui::TextLinkOpenURL(L("UPDATE_AVAILABLE_DOWNLOAD"), ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str());
+					ShellExecuteA(NULL, "open", ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
+					open_update_popup = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					open_update_popup = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
 			}
 
 			ShowSettingsWindow();
+			if (showHistoryWindow) ShowHistoryWindow();
 			console.Draw(L("CONSOLE_TITLE"), &showMainApp);
 			ImGui::EndChild();
 			ImGui::End();
@@ -2915,26 +3060,16 @@ void CheckForUpdatesThread() {
 	BOOL bResults = FALSE;
 	HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
 
-	hSession = WinHttpOpen(L"MineBackup Update Checker/1.0",
-		WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-		WINHTTP_NO_PROXY_NAME,
-		WINHTTP_NO_PROXY_BYPASS, 0);
+	hSession = WinHttpOpen(L"MineBackup Update Checker/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
 	if (!hSession) goto cleanup;
 
-	hConnect = WinHttpConnect(hSession, L"api.github.com",
-		INTERNET_DEFAULT_HTTPS_PORT, 0);
+	hConnect = WinHttpConnect(hSession, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
 	if (!hConnect) goto cleanup;
 
-	hRequest = WinHttpOpenRequest(hConnect, L"GET",
-		L"/repos/Leafuke/MineBackup/releases/latest",
-		NULL, WINHTTP_NO_REFERER,
-		WINHTTP_DEFAULT_ACCEPT_TYPES,
-		WINHTTP_FLAG_SECURE);
+	hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/repos/Leafuke/MineBackup/releases/latest", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
 	if (!hRequest) goto cleanup;
 
-	WinHttpSendRequest(hRequest,
-		L"User-Agent: MineBackup-Update-Checker\r\n",
-		-1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 
 	bResults = WinHttpReceiveResponse(hRequest, NULL);
 	if (!bResults) goto cleanup;
@@ -2943,43 +3078,60 @@ void CheckForUpdatesThread() {
 		dwSize = 0;
 		if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
 		if (dwSize == 0) break;
-
 		pszOutBuffer = new char[dwSize + 1];
 		ZeroMemory(pszOutBuffer, dwSize + 1);
-
 		if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded))
 			responseBody.append(pszOutBuffer, dwDownloaded);
-
 		delete[] pszOutBuffer;
-
 	} while (dwSize > 0);
 
 	try {
-		string tagNameKey = "\"tag_name\":\"";
-		size_t start = responseBody.find(tagNameKey);
-		if (start != string::npos) {
-			start += tagNameKey.length();
-			size_t end = responseBody.find("\"", start);
-			string latestVersion = responseBody.substr(start, end - start);
+		string latestVersion = find_json_value(responseBody, "tag_name");
+		// 移除版本号前的 'v'
+		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
+			latestVersion = latestVersion.substr(1);
+		}
 
-			// 对比版本号
-			if (latestVersion > "v" + CURRENT_VERSION) {
-				g_LatestVersionStr = latestVersion;
-				g_NewVersionAvailable = true;
-
-				// 找release地址
-				string urlKey = "\"html_url\":\"";
-				start = responseBody.find(urlKey);
-				if (start != string::npos) {
-					start += urlKey.length();
-					end = responseBody.find("\"", start);
-					g_ReleaseURL = responseBody.substr(start, end - start);
-				}
+		// 简单版本比较 (例如 "1.7.0" > "1.6.7")
+		if (!latestVersion.empty() && latestVersion > CURRENT_VERSION) {
+			g_LatestVersionStr = "v" + latestVersion;
+			g_NewVersionAvailable = true;
+			g_ReleaseURL = find_json_value(responseBody, "html_url");
+			g_ReleaseNotes = find_json_value(responseBody, "body");
+			for (int i = 0; i < g_ReleaseNotes.size() - 1; ++i)
+			{
+				if (g_ReleaseNotes[i] == '#')
+					g_ReleaseNotes[i] = ' ';
+				else if (g_ReleaseNotes[i] == '\\' && g_ReleaseNotes[i + 1] == 'n')
+					g_ReleaseNotes[i] = '\n', g_ReleaseNotes[i + 1] = ' ';
+				else if (g_ReleaseNotes[i] == '\\')
+					g_ReleaseNotes[i] = ' ', g_ReleaseNotes[i + 1] = ' ';
 			}
+			// 查找 .exe 下载链接  -- 直接手动拼接就行
+			//string assets_key = "\"assets\": [";
+			//size_t assets_start = responseBody.find(assets_key);
+			//if (assets_start != string::npos) {
+			//	size_t search_pos = assets_start + assets_key.length();
+			//	while (search_pos < responseBody.length()) {
+			//		size_t asset_obj_start = responseBody.find("{", search_pos);
+			//		if (asset_obj_start == string::npos) break;
+			//		size_t asset_obj_end = responseBody.find("}", asset_obj_start);
+			//		if (asset_obj_end == string::npos) break;
+
+			//		string asset_json = responseBody.substr(asset_obj_start, asset_obj_end - asset_obj_start);
+			//		string asset_name = find_json_value(asset_json, "name");
+
+			//		if (asset_name.size() > 4 && asset_name.substr(asset_name.size() - 4) == ".exe") {
+			//			g_AssetDownloadURL = find_json_value(asset_json, "browser_download_url");
+			//			break; // 找到即退出
+			//		}
+			//		search_pos = asset_obj_end;
+			//	}
+			//}
 		}
 	}
 	catch (...) {
-		// 暂时不处理
+		// 解析失败，静默处理
 	}
 
 cleanup:

@@ -175,3 +175,43 @@ void SetAutoStart(const string& appName, const wstring& appPath, int configId, b
 		RegCloseKey(hKey);
 	}
 }
+
+wstring SanitizeFileName(const wstring& input) {
+	wstring output = input;
+	const wstring invalid_chars = L"\\/:*?\"<>|";
+	for (wchar_t& c : output) {
+		if (invalid_chars.find(c) != wstring::npos) {
+			c = L'_'; // 将非法字符替换为下划线
+		}
+	}
+	return output;
+}
+
+// 一个简单的、不依赖库的JSON值查找器
+string find_json_value(const string& json, const string& key) {
+	string search_key = "\"" + key + "\":\"";
+	size_t start_pos = json.find(search_key);
+	if (start_pos == string::npos) {
+		// 尝试查找非字符串值 (如 "key": true)
+		search_key = "\"" + key + "\":";
+		start_pos = json.find(search_key);
+		if (start_pos == string::npos) return "";
+
+		start_pos += search_key.length();
+		while (start_pos < json.length() && isspace(json[start_pos])) start_pos++; // 跳过空格
+
+		size_t end_pos = start_pos;
+		while (end_pos < json.length() && json[end_pos] != ',' && json[end_pos] != '}') end_pos++;
+
+		string val = json.substr(start_pos, end_pos - start_pos);
+		// 去掉末尾的空格
+		val.erase(val.find_last_not_of(" \n\r\t") + 1);
+		return val;
+	}
+
+	start_pos += search_key.length();
+	size_t end_pos = json.find("\"", start_pos);
+	if (end_pos == string::npos) return "";
+
+	return json.substr(start_pos, end_pos - start_pos);
+}
