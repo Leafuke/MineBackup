@@ -537,6 +537,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//_setmode(_fileno(stdout), _O_U8TEXT);
 	//_setmode(_fileno(stdin), _O_U8TEXT);
 	//CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	ImGui_ImplWin32_EnableDpiAwareness();
 
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
@@ -678,6 +679,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	ID3D11ShaderResourceView* g_pBgTexture = nullptr;
 	int g_bgWidth = 0, g_bgHeight = 0;
 	wstring g_loadedBgPath = L"";
+
+	// 设置字体和全局缩放
+	float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
+	io.FontGlobalScale = dpi_scale;
 
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists("config.ini");
