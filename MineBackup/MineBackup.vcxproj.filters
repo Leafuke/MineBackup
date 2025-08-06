@@ -19,11 +19,11 @@
     <Filter Include="ImGui">
       <UniqueIdentifier>{b634a282-a8b2-4715-be51-29d7d10434ac}</UniqueIdentifier>
     </Filter>
+    <Filter Include="KnotLink">
+      <UniqueIdentifier>{f0e0f8f8-cd58-4b7f-b95a-55fee11b0d33}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="MineBackup.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="file_operator.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -61,6 +61,12 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="history.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="KnotLink\main.cpp">
+      <Filter>KnotLink</Filter>
+    </ClCompile>
+    <ClCompile Include="MineBackup.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
@@ -103,6 +109,15 @@
     </ClInclude>
     <ClInclude Include="imgui\imconfig.h">
       <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="KnotLink\SignalSender.hpp">
+      <Filter>KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="KnotLink\TcpClient.hpp">
+      <Filter>KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="KnotLink\OpenSocketResponser.hpp">
+      <Filter>KnotLink</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
