@@ -557,11 +557,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	if (g_enableKnotLink) {
 		// 初始化信号发送器
-		g_signalSender = new SignalSender("0x00000020", "0x00000002");
+		g_signalSender = new SignalSender("0x00000020", "0x00000020");
 
 		// 初始化命令响应器，并将 ProcessCommand 设为回调
 		try {
-			g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000001");
+			g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
 			g_commandResponser->setQuestionHandler(
 				[](const std::string& q) {
 					// 将收到的问题交给命令处理器
