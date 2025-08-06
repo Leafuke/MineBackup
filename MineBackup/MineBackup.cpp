@@ -62,6 +62,7 @@ struct Config {
 	int cpuThreads = 0; // 0 for auto/default
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
+	int maxSmartBackupsPerFull = 5;
 	vector<wstring> blacklist;
 };
 struct AutomatedTask {
@@ -119,6 +120,7 @@ bool specialSetting = false;
 bool g_CheckForUpdates = true;
 static bool showHistoryWindow = false;
 static bool specialConfigMode = false; // 用来开启简单UI
+static bool g_enableKnotLink = true;
 int currentConfigIndex = 1;
 map<int, Config> configs;
 map<int, vector<HistoryEntry>> g_history;
@@ -192,7 +194,13 @@ struct Console
 		Commands.push_back("HELP");
 		Commands.push_back("HISTORY");
 		Commands.push_back("CLEAR");
-		Commands.push_back("CLASSIFY");
+		Commands.push_back("BACKUP");
+		Commands.push_back("BACKUP_MODS");
+		Commands.push_back("RESTORE");
+		Commands.push_back("SET_CONFIG");
+		Commands.push_back("GET_CONFIG");
+		Commands.push_back("LIST_WORLDS");
+		Commands.push_back("LIST_CONFIGS");
 		AutoScroll = true;                  //自动滚动好呀
 		ScrollToBottom = false;             //不用滚动条，但可以鼠标滚
 	}
@@ -407,8 +415,7 @@ struct Console
 			}
 			else
 			{
-				// Multiple matches. Complete as much as we can..
-				// So inputting "C"+Tab will complete to "CL" then display "CLEAR" and "CLASSIFY" as matches.
+				// 按Tab自动筛选
 				int match_len = (int)(word_end - word_start);
 				for (;;)
 				{
@@ -474,8 +481,9 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 string ProcessCommand(const std::string& commandStr, Console* console);
 wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console);
 void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console, const wstring& comment = L"");
-void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console);
-void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console);
+void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod);
+void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod); 
+void DoModsBackup(const Config config, const wstring& comment);
 void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, Console* console);
 void RunSpecialMode(int configId);
 void CheckForConfigConflicts();
@@ -530,26 +538,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//_setmode(_fileno(stdin), _O_U8TEXT);
 	//CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
-	// 初始化信号发送器
-	g_signalSender = new SignalSender("0x00000001", "0x00000021");
-
-	// 初始化命令响应器，并将 ProcessCommand 设为回调
-	try {
-		g_commandResponser = new OpenSocketResponser("0x00100000", "0x00000020");
-		g_commandResponser->setQuestionHandler(
-			[](const std::string& q) {
-				// 将收到的问题交给命令处理器
-				console.AddLog(L("[KnotLink] Received: %s"), q.c_str());
-				std::string response = ProcessCommand(q, &console);
-				console.AddLog(L("[KnotLink] Responded: %s"), response.c_str());
-				return response;
-			}
-		);
-	}
-	catch (const std::exception& e) {
-		console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
-	}
-
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
 	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
@@ -564,6 +552,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	if (g_CheckForUpdates) {
 		thread update_thread(CheckForUpdatesThread);
 		update_thread.detach();
+	}
+
+	if (g_enableKnotLink) {
+		// 初始化信号发送器
+		g_signalSender = new SignalSender("0x00000001", "0x00000021");
+
+		// 初始化命令响应器，并将 ProcessCommand 设为回调
+		try {
+			g_commandResponser = new OpenSocketResponser("0x00100000", "0x00000020");
+			g_commandResponser->setQuestionHandler(
+				[](const std::string& q) {
+					// 将收到的问题交给命令处理器
+					console.AddLog("[KnotLink] Received: %s", q.c_str());
+					std::string response = ProcessCommand(q, &console);
+					console.AddLog("[KnotLink] Responded: %s", response.c_str());
+					return response;
+				}
+			);
+		}
+		catch (const std::exception& e) {
+			console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
+		}
 	}
 
 	if (specialConfigMode)
@@ -1198,7 +1208,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
 						backup_thread.detach(); // 分离线程，让它在后台独立运行
 					}
-					DoRestore(cfg, cfg.worlds[selectedWorldIndex].first, files.front().path().filename().wstring(), ref(console));
+					DoRestore(cfg, cfg.worlds[selectedWorldIndex].first, files.front().path().filename().wstring(), ref(console), 0);
 				}
 			}
 			ImGui::SameLine();
@@ -1210,6 +1220,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			}
 
 			ImGui::InputTextWithHint("##backup_comment", L("HINT_BACKUP_COMMENT"), backupComment, IM_ARRAYSIZE(backupComment), ImGuiInputTextFlags_EnterReturnsTrue);
+			ImGui::SameLine();
+
+			// 模组备份
+			if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(buttonWidth - 10, 30))) {
+				if (selectedWorldIndex != -1) {
+					ImGui::OpenPopup(L("CONFIRM_BACKUP_MODS_TITLE"));
+				}
+			}
+
+			if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_MODS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+				static char mods_comment[256] = "";
+				ImGui::TextUnformatted(L("CONFIRM_BACKUP_MODS_MSG"));
+				ImGui::InputText(L("HINT_BACKUP_COMMENT"), mods_comment, IM_ARRAYSIZE(mods_comment));
+				ImGui::Separator();
+
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+					if (configs.count(currentConfigIndex)) {
+						thread backup_thread(DoModsBackup, configs[currentConfigIndex], utf8_to_wstring(mods_comment));
+						backup_thread.detach();
+						strcpy_s(mods_comment, "");
+					}
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					strcpy_s(mods_comment, "");
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
 
 			if (no_world_selected) {
 				ImGui::EndDisabled();
@@ -1292,6 +1332,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 				ImGui::Separator();
 
+				static int restore_method = 0; // 0 for Clean, 1 for Overwrite
+				ImGui::SeparatorText(L("RESTORE_METHOD"));
+				ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
+				ImGui::SameLine();
+				ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
+				ImGui::Separator();
+
 				if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"))) {
 					wstring selectedFile = SelectFileDialog();
 					if (!selectedFile.empty()) {
@@ -1304,7 +1353,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 								backup_thread.detach();
 							}
 							// 使用重载的 DoRestore 函数
-							thread restore_thread(DoRestore2, cfg, cfg.worlds[selectedWorldIndex].first, filePath, ref(console));
+							thread restore_thread(DoRestore2, cfg, cfg.worlds[selectedWorldIndex].first, filePath, ref(console), restore_method);
 							restore_thread.detach();
 							openRestorePopup = false;
 							ImGui::CloseCurrentPopup();
@@ -1326,7 +1375,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
 						backup_thread.detach(); // 分离线程，让它在后台独立运行
 					}
-					thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console));
+					thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console), restore_method);
 					restore_thread.detach();
 					openRestorePopup = false; // 关闭弹窗
 					ImGui::CloseCurrentPopup();
@@ -1401,7 +1450,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::EndPopup();
 			}
 
-			ShowSettingsWindow();
+			if (showSettings) ShowSettingsWindow();
 			if (showHistoryWindow) ShowHistoryWindow();
 			console.Draw(L("CONSOLE_TITLE"), &showMainApp);
 			ImGui::EndChild();
@@ -1774,6 +1823,7 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
+				else if (key == L"MaxSmartBackups") cur->maxSmartBackupsPerFull = stoi(val);
 				else if (key == L"BlacklistItem") cur->blacklist.push_back(val); // ADDED
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
@@ -1834,13 +1884,16 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"CheckForUpdates") {
 					g_CheckForUpdates = (val != L"0");
 				}
+				else if (key == L"EnableKnotLink") { 
+					g_enableKnotLink = (val != L"0");
+				}
 			}
 		}
 	}
 }
 
 static void SaveConfigs(const wstring& filename) {
-	lock_guard<std::mutex> lock(g_configsMutex);
+	//lock_guard<std::mutex> lock(g_configsMutex);
 	wofstream out(filename, ios::binary);
 	if (!out.is_open()) {
 		MessageBoxW(nullptr, utf8_to_wstring(L("ERROR_CONFIG_WRITE_FAIL")).c_str(), utf8_to_wstring(L("ERROR_TITLE")).c_str(), MB_OK | MB_ICONERROR);
@@ -1853,6 +1906,7 @@ static void SaveConfigs(const wstring& filename) {
 	out << L"CurrentConfig=" << currentConfigIndex << L"\n";
 	out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
 	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n\n";
+	out << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n\n";
 
 	for (auto& kv : configs) {
 		int idx = kv.first;
@@ -1884,6 +1938,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"BackgroundImage=" << c.backgroundImagePath << L"\n";
 		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
+		out << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		for (const auto& item : c.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
@@ -1919,7 +1974,6 @@ static void SaveConfigs(const wstring& filename) {
 }
 
 void ShowSettingsWindow() {
-	if (!showSettings) return;
 	ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 	ImGui::SeparatorText(L("CONFIG_MANAGEMENT"));
 
@@ -2043,7 +2097,12 @@ void ShowSettingsWindow() {
 		ImGui::EndPopup();
 	}
 
-	if (!specialSetting) ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
+	if (!specialSetting) {
+		ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
+		ImGui::SameLine();
+		ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
+	}
 
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
 	ImGui::SeparatorText(L("CURRENT_CONFIG_DETAILS"));
@@ -2313,6 +2372,7 @@ void ShowSettingsWindow() {
 			}
 		}
 
+		// 备份行为
 		if (ImGui::CollapsingHeader(L("GROUP_BACKUP_BEHAVIOR"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			static int format_choice = (cfg.zipFormat == L"zip") ? 1 : 0;
 			ImGui::Text(L("COMPRESSION_FORMAT")); ImGui::SameLine();
@@ -2362,6 +2422,8 @@ void ShowSettingsWindow() {
 			}
 			ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
 			ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
+			ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
 			ImGui::SeparatorText(L("BLACKLIST_HEADER"));
 			if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
 				wstring sel = SelectFileDialog(); if (!sel.empty()) cfg.blacklist.push_back(sel);
@@ -2372,7 +2434,7 @@ void ShowSettingsWindow() {
 			}
 			static int sel_bl_item = -1;
 
-			if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 4 * ImGui::GetTextLineHeightWithSpacing()))) {
+			if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 2 * ImGui::GetTextLineHeightWithSpacing()))) {
 				// 检查 blacklist 是否为空
 				if (cfg.blacklist.empty()) {
 					ImGui::Text(L("No items in blacklist")); // 显示空列表提示
@@ -2687,6 +2749,46 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	if (forceFullBackup)
 		console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
 
+	// 限制备份链长度
+	bool forceFullBackupDueToLimit = false;
+	if (config.backupMode == 2 && config.maxSmartBackupsPerFull > 0 && !forceFullBackup) {
+		vector<filesystem::path> worldBackups;
+		try {
+			for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+				if (entry.is_regular_file()) {
+					worldBackups.push_back(entry.path());
+				}
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
+		}
+
+		if (!worldBackups.empty()) {
+			sort(worldBackups.begin(), worldBackups.end(), [](const auto& a, const auto& b) {
+				return filesystem::last_write_time(a) < filesystem::last_write_time(b);
+				});
+
+			int smartCount = 0;
+			bool fullFound = false;
+			for (auto it = worldBackups.rbegin(); it != worldBackups.rend(); ++it) {
+				wstring filename = it->filename().wstring();
+				if (filename.find(L"[Full]") != wstring::npos) {
+					fullFound = true;
+					break;
+				}
+				if (filename.find(L"[Smart]") != wstring::npos) {
+					smartCount++;
+				}
+			}
+
+			if (fullFound && smartCount >= config.maxSmartBackupsPerFull) {
+				forceFullBackupDueToLimit = true;
+				console.AddLog(L("LOG_FORCE_FULL_BACKUP_LIMIT_REACHED"), config.maxSmartBackupsPerFull);
+			}
+		}
+	}
+
 	// 无论什么备份模式，都要获得状态，便于成功后更新状态
 	vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
 
@@ -2806,7 +2908,58 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
 	}
 }
-void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console) {
+void DoModsBackup(const Config config, const wstring& comment) {
+	console.AddLog(L("LOG_BACKUP_MODS_START"));
+
+	filesystem::path saveRoot(config.saveRoot);
+	if (saveRoot.filename() != L"saves") {
+		console.AddLog("[Warning] saveRoot does not point to a 'saves' folder. Guessing mods folder location.");
+	}
+	filesystem::path modsPath = saveRoot.parent_path() / "mods";
+
+	if (!filesystem::exists(modsPath) || !filesystem::is_directory(modsPath)) {
+		console.AddLog(L("LOG_ERROR_MODS_NOT_FOUND"), wstring_to_utf8(modsPath.wstring()).c_str());
+		console.AddLog(L("LOG_BACKUP_MODS_END"));
+		return;
+	}
+
+	filesystem::path destinationFolder = filesystem::path(config.backupPath) / L"_MODS_";
+	wstring archiveNameBase = L"Mods";
+
+	if (!comment.empty()) {
+		archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
+	}
+
+	// Timestamp
+	time_t now = time(0);
+	tm ltm;
+	localtime_s(&ltm, &now);
+	wchar_t timeBuf[80];
+	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+	wstring archivePath = destinationFolder.wstring() + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+
+	try {
+		filesystem::create_directories(destinationFolder);
+		console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder.wstring()).c_str());
+	}
+	catch (const filesystem::filesystem_error& e) {
+		console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
+		console.AddLog(L("LOG_BACKUP_MODS_END"));
+		return;
+	}
+
+	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + modsPath.wstring() + L"\\*\"";
+
+	if (RunCommandInBackground(command, console, config.useLowPriority)) {
+		LimitBackupFiles(destinationFolder.wstring(), config.keepCount, &console);
+		// 用特殊名字添加到历史
+		AddHistoryEntry(currentConfigIndex, L"__MODS__", filesystem::path(archivePath).filename().wstring(), L"Mods", comment);
+	}
+
+	console.AddLog(L("LOG_BACKUP_MODS_END"));
+}
+void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(fullBackupPath.wstring()).c_str());
@@ -2819,6 +2972,18 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
 
+	if (restoreMethod == 0) { // Clean Restore
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		try {
+			if (filesystem::exists(destinationFolder)) {
+				filesystem::remove_all(destinationFolder);
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog("[ERROR] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
+		}
+	}
+
 	// For a manually selected file, we treat it as a single restore operation.
 	// Smart Restore logic does not apply as we don't know the history.
 	wstring command = L"\"" + config.zipPath + L"\" x \"" + fullBackupPath.wstring() + L"\" -o\"" + destinationFolder + L"\" -y";
@@ -2826,8 +2991,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
-
-void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console) {
+void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
@@ -2842,6 +3006,18 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	// 准备路径
 	wstring sourceDir = config.backupPath + L"\\" + worldName;
 	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
+
+	if (restoreMethod == 0) { // Clean Restore
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		try {
+			if (filesystem::exists(destinationFolder)) {
+				filesystem::remove_all(destinationFolder);
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog("[ERROR] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
+		}
+	}
 
 	// 收集所有相关的备份文件
 	vector<filesystem::path> backupsToApply;
@@ -3128,11 +3304,16 @@ void CheckForConfigConflicts() {
 
 }
 void ShowHistoryWindow() {
+	static bool history_restore = false;
+
 	ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow)) {
 		ImGui::End();
 		return;
 	}
+
+	// 使用常量指针来确保数据不会被意外修改
+	static const HistoryEntry* selected_entry_for_restore = nullptr;
 
 	if (configs.find(currentConfigIndex) == configs.end()) {
 		ImGui::Text(L("ERROR_NO_CONFIG_SELECTED"));
@@ -3150,43 +3331,95 @@ void ShowHistoryWindow() {
 	else {
 		ImGui::BeginChild("HistoryScroll", ImVec2(0, 0), true);
 
-		// 按世界名称对历史记录进行分组
-		map<wstring, vector<HistoryEntry>> worldHistory;
-		for (const auto& entry : g_history[currentConfigIndex]) {
-			worldHistory[entry.worldName].push_back(entry);
+		map<wstring, vector<const HistoryEntry*>> worldHistory;
+		if (g_history.count(currentConfigIndex)) {
+			const vector<HistoryEntry>& history_vec = g_history.at(currentConfigIndex);
+			for (const auto& entry : history_vec) {
+				worldHistory[entry.worldName].push_back(&entry);
+			}
 		}
 
-		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		const float node_radius = 5.0f;
-		const ImU32 line_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-
 		for (const auto& pair : worldHistory) {
+			// The TreeNode already pushes the world name to the ID stack, ensuring uniqueness for the content inside.
 			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
-				for (const auto& entry : pair.second) {
-					ImVec2 p = ImGui::GetCursorScreenPos();
-					drawList->AddLine(ImVec2(p.x + node_radius, p.y - 1), ImVec2(p.x + node_radius, p.y + ImGui::GetTextLineHeight() + 27), line_color, 1.5f);
-					drawList->AddCircleFilled(ImVec2(p.x + node_radius + 0.42f, p.y + ImGui::GetTextLineHeight() * 0.6f), node_radius, ImGui::GetColorU32(ImGuiCol_Button));
 
-					ImGui::Dummy(ImVec2(node_radius * 3, 0)); // 留出绘制空间
-					ImGui::SameLine();
+				for (const HistoryEntry* entry : pair.second) {
+					// Use the stable pointer address as a unique and stable ID for this widget.
+					ImGui::PushID(entry);
+
+					ImVec2 start_cursor_pos = ImGui::GetCursorPos(); // Record start position for the invisible button.
 
 					ImGui::BeginGroup();
-					ImGui::TextColored(ImVec4(0.839f, 0.616f, 0.490f, 1.0f), "[%s]", wstring_to_utf8(entry.backupType).c_str());
+					ImDrawList* drawList = ImGui::GetWindowDrawList();
+					const float node_radius = 5.0f;
+					const float row_height = ImGui::GetTextLineHeightWithSpacing() * 2.2f;
+					ImVec2 p = ImGui::GetCursorScreenPos();
+					drawList->AddLine(ImVec2(p.x + node_radius, p.y - 1), ImVec2(p.x + node_radius, p.y + row_height), ImGui::GetColorU32(ImGuiCol_TextDisabled), 1.5f);
+					drawList->AddCircleFilled(ImVec2(p.x + node_radius, p.y + row_height * 0.5f), node_radius, ImGui::GetColorU32(ImGuiCol_Button));
+					ImGui::Dummy(ImVec2(node_radius * 3.0f, 0)); // Spacer
+					ImGui::EndGroup();
+
 					ImGui::SameLine();
-					if (!entry.comment.empty()) {
-						ImGui::TextWrapped("%s", wstring_to_utf8(entry.comment).c_str());
+
+					// Text Content
+					ImGui::BeginGroup();
+					ImGui::TextColored(ImVec4(0.839f, 0.616f, 0.490f, 1.0f), "[%s]", wstring_to_utf8(entry->backupType).c_str());
+					ImGui::SameLine();
+					if (!entry->comment.empty()) {
+						ImGui::TextWrapped("%s", wstring_to_utf8(entry->comment).c_str());
 					}
 					else {
 						ImGui::TextDisabled(L("HISTORY_NO_COMMENT"));
 					}
-					ImGui::TextDisabled("%s | %s", wstring_to_utf8(entry.timestamp_str).c_str(), wstring_to_utf8(entry.backupFile).c_str());
+					ImGui::TextDisabled("%s | %s", wstring_to_utf8(entry->timestamp_str).c_str(), wstring_to_utf8(entry->backupFile).c_str());
 					ImGui::EndGroup();
+
+					// 在自定义绘制的控件上方创建一个整行不可见的按钮
+					ImVec2 end_cursor_pos = ImGui::GetCursorPos();
+					ImGui::SetCursorPos(start_cursor_pos); // Reset cursor to the start of the row
+					if (ImGui::InvisibleButton("##history_item", ImVec2(ImGui::GetContentRegionAvail().x, row_height))) {
+						selected_entry_for_restore = entry;
+						history_restore = true;
+						//ImGui::OpenPopup(L("CONFIRM_RESTORE_HISTORY_TITLE")); 这里不能直接弄，很奇怪
+					}
+
+					// 悬浮效果
+					if (ImGui::IsItemHovered()) {
+						ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_FrameBgHovered, 0.5f), 4.0f);
+					}
+
+					ImGui::SetCursorPos(end_cursor_pos); // Restore cursor position after the button.
+					ImGui::PopID();
 				}
 				ImGui::TreePop();
 			}
 		}
 		ImGui::EndChild();
 	}
+	if(history_restore)
+		ImGui::OpenPopup(L("CONFIRM_RESTORE_HISTORY_TITLE"));
+	if (ImGui::BeginPopupModal(L("CONFIRM_RESTORE_HISTORY_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		
+		if (selected_entry_for_restore) {
+			ImGui::Text(L("CONFIRM_RESTORE_HISTORY_MSG"), wstring_to_utf8(selected_entry_for_restore->backupFile).c_str(), wstring_to_utf8(selected_entry_for_restore->worldName).c_str());
+			ImGui::Separator();
+
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+				thread restore_thread(DoRestore, cfg, selected_entry_for_restore->worldName, selected_entry_for_restore->backupFile, ref(console), 0);
+				restore_thread.detach();
+				ImGui::CloseCurrentPopup();
+				selected_entry_for_restore = nullptr;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+				ImGui::CloseCurrentPopup();
+				selected_entry_for_restore = nullptr;
+			}
+		}
+		history_restore = false;
+		ImGui::EndPopup();
+	}
+
 	ImGui::End();
 }
 
@@ -3194,6 +3427,11 @@ string ProcessCommand(const std::string& commandStr, Console* console) {
 	std::stringstream ss(commandStr);
 	std::string command;
 	ss >> command;
+
+	auto error_response = [&](const std::string& msg) {
+		console->AddLog(L("KNOTLINK_COMMAND_ERROR"), command.c_str(), msg.c_str());
+		return "ERROR:" + msg;
+		};
 
 	// 使用 lock_guard 确保在函数作用域内访问 configs 是线程安全的
 	std::lock_guard<std::mutex> lock(g_configsMutex);
@@ -3207,15 +3445,23 @@ string ProcessCommand(const std::string& commandStr, Console* console) {
 		return result;
 	}
 	else if (command == "LIST_WORLDS") {
-		int config_idx;
-		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
-			return "ERROR:Invalid or missing config_index.";
+		int config_idx, world_idx;
+		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end())
+			return error_response("Invalid or missing config_index.");
+		if (!(ss >> world_idx) || world_idx >= configs[config_idx].worlds.size() || world_idx < 0)
+			return error_response("Invalid or missing world_index.");
+
+		const auto& cfg = configs[config_idx];
+		wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[world_idx].first;
+		string result = "OK:";
+		if (filesystem::exists(backupDir)) {
+			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+				if (entry.is_regular_file()) {
+					result += wstring_to_utf8(entry.path().filename().wstring()) + ";";
+				}
+			}
 		}
-		std::string result = "OK:";
-		for (size_t i = 0; i < configs[config_idx].worlds.size(); ++i) {
-			result += std::to_string(i) + "," + wstring_to_utf8(configs[config_idx].worlds[i].first) + ";";
-		}
-		if (!result.empty()) result.pop_back();
+		if (result.back() == ';') result.pop_back();
 		return result;
 	}
 	else if (command == "GET_CONFIG") {
@@ -3263,7 +3509,47 @@ string ProcessCommand(const std::string& commandStr, Console* console) {
 
 		return "OK:Backup started for world '" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first) + "'";
 	}
-	// ... 可以添加 RESTORE_LATEST 等其他命令的实现 ...
+	else if (command == "RESTORE") {
+		int config_idx, world_idx;
+		string backup_file;
+		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end())
+			return error_response("Invalid or missing config_index.");
+		if (!(ss >> world_idx) || world_idx >= configs[config_idx].worlds.size() || world_idx < 0)
+			return error_response("Invalid or missing world_index.");
+		if (!(ss >> backup_file))
+			return error_response("Missing backup_file argument.");
+
+		// In a background thread to avoid blocking
+		std::thread([=]() {
+			std::lock_guard<std::mutex> thread_lock(g_configsMutex);
+			if (configs.count(config_idx)) {
+				// Default to clean restore (method 0) for remote commands for safety
+				DoRestore(configs[config_idx], configs[config_idx].worlds[world_idx].first, utf8_to_wstring(backup_file), *console, 0);
+			}
+			}).detach();
+
+		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+		return "OK:Restore started for world '" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first) + "'";
+	}
+	else if (command == "BACKUP_MODS") {
+		int config_idx;
+		std::string comment_part;
+		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
+			return error_response("Invalid or missing config_index.");
+		}
+		std::getline(ss, comment_part); // Get rest of the line as comment
+		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
+
+		std::thread([=]() {
+			std::lock_guard<std::mutex> thread_lock(g_configsMutex);
+			if (configs.count(config_idx)) {
+				DoModsBackup(configs[config_idx], utf8_to_wstring(comment_part));
+			}
+			}).detach();
+
+		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+		return "OK:Mods backup started.";
+	}
 
 	return "ERROR:Unknown command '" + command + "'.";
 }
