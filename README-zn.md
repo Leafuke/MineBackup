@@ -30,6 +30,18 @@
 
 本代码编写的语言标准是C++17，你可以使用Visual Studio、VScode等进行编译。需要链接 imgui 库。
 
+## 🔗KnotLink 互联通用信息
+
+- `BACKUP`: BACKUP <config_idx> <world_idx> [comment]
+- `RESTORE`: RESTORE <config_idx>
+- `GET_CONFIG`: GET_CONFIG <config_idx>
+- `LIST_WORLDS`: LIST_WORLDS <config_idx>
+- `LIST_CONFIGS`: LIST_CONFIGS
+- `GET_CONFIG`: GET_CONFIG <config_idx>
+- `SET_CONFIG`: SET_CONFIG <config_idx> <key> <value> <br />
+ key = backup_mode / hot_backup<br />
+ value = 1/2/3     /  0/1
+
 ## 🔗项目延伸
 
 [MineBackup for Netease](https://github.com/Leafuke/MineBackup-for-NetEase)
@@ -41,3 +53,5 @@
 > 为 MineBackup 提供 7z.exe ，无需用户安装
 [imgui](https://github.com/ocornut/imgui) 
 > 为 MineBackup 提供图形库，简便易用！
+KnotLink
+> Who helps MineBackup to "communicate" with other programes
