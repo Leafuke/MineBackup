@@ -36,8 +36,8 @@ The language standard for which this code is C++17. Link imgui library.
 ## 🔗KnotLink
 
  `APPID` : `0x00000020`
- `socket ID` : `0x00000001`
- `signal ID` : `0x00000002`
+ `socket ID` : `0x00000010`
+ `signal ID` : `0x00000020`
 - `BACKUP`: BACKUP <config_idx> <world_idx> [comment]
 - `RESTORE`: RESTORE <config_idx>
 - `GET_CONFIG`: GET_CONFIG <config_idx>
