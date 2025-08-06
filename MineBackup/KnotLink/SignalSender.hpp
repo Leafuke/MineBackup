@@ -7,6 +7,7 @@
 class SignalSender {
 public:
 	SignalSender();
+	~SignalSender();
 	SignalSender(std::string APPID, std::string SignalID);
 	void setConfig(std::string APPID, std::string SignalID);
 	void emitt(std::string data);
@@ -26,6 +27,7 @@ SignalSender::SignalSender() {
 SignalSender::SignalSender(std::string APPID, std::string SignalID) : appID(APPID), signalID(SignalID) {
 	init();
 }
+
 
 void SignalSender::init() {
 	KLsender = new TcpClient();
@@ -47,6 +49,14 @@ void SignalSender::emitt(std::string APPID, std::string SignalID, std::string da
 	// Create s_data by combining s_key and data
 	std::string s_data = s_key + data;
 	KLsender->sendData(s_data);
+}
+
+SignalSender::~SignalSender() {
+	if (KLsender) {
+		KLsender->stopHeartbeat();
+		delete KLsender;
+		KLsender = nullptr;
+	}
 }
 
 #endif // SIGNALSENDER_HPP

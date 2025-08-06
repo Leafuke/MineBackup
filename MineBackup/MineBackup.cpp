@@ -557,11 +557,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	if (g_enableKnotLink) {
 		// 初始化信号发送器
-		g_signalSender = new SignalSender("0x00000001", "0x00000021");
+		g_signalSender = new SignalSender("0x00000020", "0x00000002");
 
 		// 初始化命令响应器，并将 ProcessCommand 设为回调
 		try {
-			g_commandResponser = new OpenSocketResponser("0x00100000", "0x00000020");
+			g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000001");
 			g_commandResponser->setQuestionHandler(
 				[](const std::string& q) {
 					// 将收到的问题交给命令处理器
@@ -575,6 +575,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		catch (const std::exception& e) {
 			console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
 		}
+		
 	}
 
 	if (specialConfigMode)
@@ -1507,8 +1508,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	if (g_pBgTexture) {
 		g_pBgTexture->Release();
 	}
-	delete g_signalSender;
-	delete g_commandResponser;
+	
 	return 0;
 }
 

@@ -23,8 +23,9 @@ public:
 	
 	~TcpClient() {
 		stopHeartbeat();
-		if (tcpSocket != INVALID_SOCKET) {
-			closesocket(tcpSocket);
+		if (readThread.joinable()&&tcpSocket != INVALID_SOCKET) {
+			closesocket(tcpSocket); // 打断 recv()
+			readThread.join();
 		}
 		WSACleanup();
 	}
@@ -47,7 +48,7 @@ public:
 			return false;
 		}
 		
-		std::thread readThread(&TcpClient::readData, this);
+		readThread = std::thread(&TcpClient::readData, this);
 		readThread.detach();
 		
 		startHeartbeat();
@@ -86,6 +87,7 @@ public:
 private:
 	SOCKET tcpSocket;
 	std::thread heartBeatThread;
+	std::thread readThread;
 	std::string heartbeatMessage = "heartbeat";
 	std::string heartbeatResponse = "heartbeat_response";
 	std::function<void(const std::string&)> onDataReceivedCallback;
