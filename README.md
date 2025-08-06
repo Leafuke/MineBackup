@@ -14,7 +14,7 @@ Well, you can actually use it to backup any folders in your computer :P
 - **Backup**: Securely backup your game saves with just a click.
 - **Restore**: Quickly restore your game saves to a previous state from either a `.7z` file or directly from your computer.
 - **High-Compression**: Use built-in 7-Zip to compress your archive and save storage space on your computer.
-- **Intelligent**: You can save space by backing up only the changes. 
+- **Intelligent**: You can choose Git-Like mode to backup and restore your archive.
 - **Backup Path**: Set a custom path for your backups according to your storage preferences.
 - **Multilanguage**: We have supported two languages by now, but they can be more with your help!
 
@@ -33,6 +33,18 @@ Help documentation is being written.✒️
 
 The language standard for which this code is C++17. Link imgui library.
 
+## 🔗KnotLink
+
+- `BACKUP`: BACKUP <config_idx> <world_idx> [comment]
+- `RESTORE`: RESTORE <config_idx>
+- `GET_CONFIG`: GET_CONFIG <config_idx>
+- `LIST_WORLDS`: LIST_WORLDS <config_idx>
+- `LIST_CONFIGS`: LIST_CONFIGS
+- `GET_CONFIG`: GET_CONFIG <config_idx>
+- `SET_CONFIG`: SET_CONFIG <config_idx> <key> <value> <br />
+ key = backup_mode / hot_backup<br />
+ value = 1/2/3     /  0/1
+
 ## 📄Project References
 
 [7-Zip](https://github.com/ip7z/7zip) (7-zip.org)
@@ -43,3 +55,6 @@ The language standard for which this code is C++17. Link imgui library.
 
 [stb](https://github.com/nothings/stb) 
 > Who helps MineBackup to load image
+
+KnotLink
+> Who helps MineBackup to "communicate" with other programes
