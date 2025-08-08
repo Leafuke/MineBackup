@@ -146,3 +146,21 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
     extractedPath = finalPath;
     return true;
 }
+
+bool IsFileLocked(const wstring& path) {
+    if (!filesystem::exists(path)) {
+        return false;
+    }
+    HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    //HANDLE hFile = CreateFile(filePath.c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_SHARE_READ, NULL)
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return true;
+        if (GetLastError() == ERROR_SHARING_VIOLATION || GetLastError() == ERROR_LOCK_VIOLATION) {
+            return true;
+        }
+    }
+    if (hFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(hFile);
+    }
+    return false;
+}

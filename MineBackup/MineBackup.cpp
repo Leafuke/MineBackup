@@ -21,6 +21,7 @@
 #pragma comment(lib, "winhttp.lib")
 #define CONSTANT1 256
 #define CONSTANT2 512
+#define MINEBACKUP_HOTKEY_ID 1
 using namespace std;
 // Data
 static ID3D11Device* g_pd3dDevice = nullptr;
@@ -29,13 +30,13 @@ static IDXGISwapChain* g_pSwapChain = nullptr;
 static bool                     g_SwapChainOccluded = false;
 static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
-static std::vector<ID3D11ShaderResourceView*> worldIconTextures;
-static std::vector<int> worldIconWidths, worldIconHeights;
+static vector<ID3D11ShaderResourceView*> worldIconTextures;
+static vector<int> worldIconWidths, worldIconHeights;
 static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.0";
+const string CURRENT_VERSION = "1.7.1";
 
 
 // 结构体们
@@ -63,6 +64,7 @@ struct Config {
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
 	int maxSmartBackupsPerFull = 5;
+	bool backupOnGameExit = false;
 	vector<wstring> blacklist;
 };
 struct AutomatedTask {
@@ -86,6 +88,7 @@ struct SpecialConfig {
 	vector<wstring> blacklist;
 	bool runOnStartup = false;
 	bool hideWindow = false;
+	bool backupOnGameExit = false;
 };
 struct HistoryEntry {
 	wstring timestamp_str;
@@ -107,7 +110,7 @@ static mutex g_configsMutex;			// 用于保护全局配置的互斥锁
 static mutex consoleMutex;				// 控制台模式的锁
 static mutex g_task_mutex;		// 专门用于保护 g_active_auto_backups
 static mutex specialConfigMutex;
-
+static mutex g_activeWorldsMutex;
 // 设置项变量（全局）
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 wstring Fontss;
@@ -128,6 +131,9 @@ map<int, SpecialConfig> specialConfigs;
 static atomic<bool> specialTasksRunning = false;
 static atomic<bool> specialTasksComplete = false;
 static map<int, AutoBackupTask> g_active_auto_backups; // key: worldIndex, value: task
+static thread g_exitWatcherThread;
+static atomic<bool> g_stopExitWatcher(false);
+static map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -145,7 +151,7 @@ void SaveHistory();
 void LoadHistory();
 void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment);
 
-void BroadcastEvent(const std::string& eventPayload); // KnotLink 广播
+void BroadcastEvent(const string& eventPayload); // KnotLink 广播
 const char* L(const char* key);
 inline void ApplyTheme(int& theme);
 string find_json_value(const string& json, const string& key);
@@ -156,7 +162,10 @@ bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_sr
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool ExtractFontToTempFile(wstring& extractedPath);
 bool Extract7zToTempFile(wstring& extractedPath);
+void TriggerHotkeyBackup();
+void ExitWatcherThreadFunction();
 
+bool IsFileLocked(const wstring& path);
 wstring SelectFileDialog(HWND hwndOwner = NULL);
 wstring SelectFolderDialog(HWND hwndOwner = NULL);
 vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath);
@@ -478,7 +487,7 @@ struct Console
 void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = nullptr);
 bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 
-string ProcessCommand(const std::string& commandStr, Console* console);
+string ProcessCommand(const string& commandStr, Console* console);
 wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console);
 void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console, const wstring& comment = L"");
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod);
@@ -554,6 +563,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		thread update_thread(CheckForUpdatesThread);
 		update_thread.detach();
 	}
+	g_stopExitWatcher = false;
+	g_exitWatcherThread = thread(ExitWatcherThreadFunction);
+	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
+
 
 	if (g_enableKnotLink) {
 		// 初始化信号发送器
@@ -563,16 +576,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		try {
 			g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
 			g_commandResponser->setQuestionHandler(
-				[](const std::string& q) {
+				[](const string& q) {
 					// 将收到的问题交给命令处理器
 					console.AddLog("[KnotLink] Received: %s", q.c_str());
-					std::string response = ProcessCommand(q, &console);
+					string response = ProcessCommand(q, &console);
 					console.AddLog("[KnotLink] Responded: %s", response.c_str());
 					return response;
 				}
 			);
 		}
-		catch (const std::exception& e) {
+		catch (const exception& e) {
 			console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
 		}
 		
@@ -611,8 +624,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//ImGui_ImplWin32_EnableDpiAwareness();
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"MineBackup", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.0", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
-
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.1", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 800, nullptr, nullptr, wc.hInstance, nullptr);
+	
+	// 注册热键，Alt + Ctrl + S
+	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
+	
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
 	{
@@ -1477,6 +1493,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	// 清理
+	BroadcastEvent("event=app_shutdown");
 	lock_guard<mutex> lock(g_task_mutex);
 	for (auto& pair : g_active_auto_backups) {
 		pair.second.stop_flag = true; // 通知线程停止
@@ -1500,15 +1517,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	CleanupDeviceD3D();
 	::DestroyWindow(hwnd);
 	::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-	// 清除临时的7zip
-	if (!g_7zTempPath.empty()) {
-		DeleteFileW(g_7zTempPath.c_str());
-	}
+	
 	// 清理纹理
 	if (g_pBgTexture) {
 		g_pBgTexture->Release();
 	}
-	
+	g_stopExitWatcher = true;
+	if (g_exitWatcherThread.joinable()) {
+		g_exitWatcherThread.join();
+	}
+	// 撤销热键
+	::UnregisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID);
+
 	return 0;
 }
 
@@ -1583,6 +1603,11 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	switch (msg)
 	{
+	case WM_HOTKEY:
+		if (wParam == MINEBACKUP_HOTKEY_ID) {
+			TriggerHotkeyBackup();
+		}
+		break;
 	case WM_SIZE:
 		if (wParam == SIZE_MINIMIZED)
 			return 0;
@@ -1735,7 +1760,7 @@ cleanup:
 }
 
 // 广播
-void BroadcastEvent(const std::string& eventPayload) {
+void BroadcastEvent(const string& eventPayload) {
 	if (g_signalSender) {
 		g_signalSender->emitt(eventPayload);
 	}
@@ -1829,7 +1854,8 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
 				else if (key == L"MaxSmartBackups") cur->maxSmartBackupsPerFull = stoi(val);
-				else if (key == L"BlacklistItem") cur->blacklist.push_back(val); // ADDED
+				else if (key == L"BackupOnExit") cur->backupOnGameExit = (val != L"0");
+				else if (key == L"BlacklistItem") cur->blacklist.push_back(val);
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
@@ -1877,6 +1903,7 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"CpuThreads") spCur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") spCur->useLowPriority = (val != L"0");
 				else if (key == L"HotBackup") spCur->hotBackup = (val != L"0");
+				else if (key == L"BackupOnExit") spCur->backupOnGameExit = (val != L"0");
 				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
 			}
 			else if (section == L"General") { // Inside [General] section
@@ -1898,7 +1925,7 @@ static void LoadConfigs(const string& filename) {
 }
 
 static void SaveConfigs(const wstring& filename) {
-	//lock_guard<std::mutex> lock(g_configsMutex);
+	//lock_guard<mutex> lock(g_configsMutex);
 	wofstream out(filename, ios::binary);
 	if (!out.is_open()) {
 		MessageBoxW(nullptr, utf8_to_wstring(L("ERROR_CONFIG_WRITE_FAIL")).c_str(), utf8_to_wstring(L("ERROR_TITLE")).c_str(), MB_OK | MB_ICONERROR);
@@ -1944,6 +1971,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"BackgroundImage=" << c.backgroundImagePath << L"\n";
 		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		out << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
+		out << L"BackupOnExit=" << (c.backupOnGameExit ? 1 : 0) << L"\n";
 		for (const auto& item : c.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
@@ -1971,6 +1999,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"CpuThreads=" << sc.cpuThreads << L"\n";
 		out << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
 		out << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n";
+		out << L"BackupOnExit=" << (sc.backupOnGameExit ? 1 : 0) << L"\n";
 		for (const auto& item : sc.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
@@ -2137,10 +2166,13 @@ void ShowSettingsWindow() {
 			ImGui::Checkbox(L("IS_HOT_BACKUP"), &spCfg.hotBackup);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
 			ImGui::SameLine();
+			ImGui::Checkbox(L("BACKUP_ON_EXIT"), &spCfg.backupOnGameExit);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_EXIT"));
+			ImGui::SameLine();
 			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_LOW_PRIORITY"));
 
-			int max_threads = std::thread::hardware_concurrency();
+			int max_threads = thread::hardware_concurrency();
 			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &spCfg.cpuThreads, 0, max_threads);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_CPU_THREADS"));
 			//ImGui::SeparatorText(L("BLACKLIST_HEADER"));
@@ -2260,10 +2292,10 @@ void ShowSettingsWindow() {
 					ImGui::SetNextItemWidth(50); ImGui::InputInt(L("SCHED_DAY"), &task.schedDay);
 					ImGui::SameLine(); ImGui::TextDisabled("(0=Every)");
 
-					task.schedHour = std::clamp(task.schedHour, 0, 23);
-					task.schedMinute = std::clamp(task.schedMinute, 0, 59);
-					task.schedMonth = std::clamp(task.schedMonth, 0, 12);
-					task.schedDay = std::clamp(task.schedDay, 0, 31);
+					task.schedHour = clamp(task.schedHour, 0, 23);
+					task.schedMinute = clamp(task.schedMinute, 0, 59);
+					task.schedMonth = clamp(task.schedMonth, 0, 12);
+					task.schedDay = clamp(task.schedDay, 0, 31);
 				}
 				ImGui::PopID();
 			}
@@ -2407,6 +2439,8 @@ void ShowSettingsWindow() {
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
 			}
+			ImGui::Checkbox(L("BACKUP_ON_EXIT"), &cfg.backupOnGameExit);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_EXIT"));
 			ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
 			ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
 			// 低优先级
@@ -2420,7 +2454,7 @@ void ShowSettingsWindow() {
 				ImGui::SetTooltip(L("TIP_SKIP_IF_UNCHANGED"));
 			}
 			// CPU 线程
-			int max_threads = std::thread::hardware_concurrency();
+			int max_threads = thread::hardware_concurrency();
 			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &cfg.cpuThreads, 0, max_threads);
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(L("TIP_CPU_THREADS"));
@@ -3428,34 +3462,39 @@ void ShowHistoryWindow() {
 	ImGui::End();
 }
 
-string ProcessCommand(const std::string& commandStr, Console* console) {
-	std::stringstream ss(commandStr);
-	std::string command;
+string ProcessCommand(const string& commandStr, Console* console) {
+	stringstream ss(commandStr);
+	string command;
 	ss >> command;
 
-	auto error_response = [&](const std::string& msg) {
+	auto error_response = [&](const string& msg) {
+		BroadcastEvent(L("KNOTLINK_COMMAND_ERROR") + msg);
 		console->AddLog(L("KNOTLINK_COMMAND_ERROR"), command.c_str(), msg.c_str());
 		return "ERROR:" + msg;
 		};
 
 	// 使用 lock_guard 确保在函数作用域内访问 configs 是线程安全的
-	std::lock_guard<std::mutex> lock(g_configsMutex);
+	lock_guard<mutex> lock(g_configsMutex);
 
 	if (command == "LIST_CONFIGS") {
-		std::string result = "OK:";
+		string result = "OK:";
 		for (const auto& pair : configs) {
-			result += std::to_string(pair.first) + "," + pair.second.name + ";";
+			result += to_string(pair.first) + "," + pair.second.name + ";";
 		}
 		if (!result.empty()) result.pop_back(); // 移除最后的';'
+		BroadcastEvent("event=list_configs;data=" + result);
 		return result;
 	}
 	else if (command == "LIST_WORLDS") {
 		int config_idx, world_idx;
-		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end())
-			return error_response("Invalid or missing config_index.");
-		if (!(ss >> world_idx) || world_idx >= configs[config_idx].worlds.size() || world_idx < 0)
-			return error_response("Invalid or missing world_index.");
-
+		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
+			BroadcastEvent(L("BROADCAST_CONFIG_INDEX_ERROR"));
+			return error_response(L("BROADCAST_CONFIG_INDEX_ERROR"));
+		}
+		if (!(ss >> world_idx) || world_idx >= configs[config_idx].worlds.size() || world_idx < 0) {
+			BroadcastEvent(L("BROADCAST_WORLD_INDEX_ERROR"));
+			return error_response(L("BROADCAST_WORLD_INDEX_ERROR"));
+		}
 		const auto& cfg = configs[config_idx];
 		wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[world_idx].first;
 		string result = "OK:";
@@ -3467,66 +3506,81 @@ string ProcessCommand(const std::string& commandStr, Console* console) {
 			}
 		}
 		if (result.back() == ';') result.pop_back();
+		BroadcastEvent("event=list_worlds;config=" + to_string(config_idx) + ";world=" + to_string(world_idx) + ";data=" + result);
 		return result;
 	}
 	else if (command == "GET_CONFIG") {
 		int config_idx;
 		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
-			return "ERROR:Invalid or missing config_index.";
+			BroadcastEvent(L("BROADCAST_CONFIG_INDEX_ERROR"));
+			return L("BROADCAST_CONFIG_INDEX_ERROR");
 		}
 		const auto& cfg = configs[config_idx];
-		return "OK:name=" + cfg.name + ";backup_mode=" + std::to_string(cfg.backupMode) +
-			";hot_backup=" + (cfg.hotBackup ? "true" : "false") + ";keep_count=" + std::to_string(cfg.keepCount);
+		BroadcastEvent("event=get_config;config=" + to_string(config_idx) + ";name=" + cfg.name +
+			";backup_mode=" + to_string(cfg.backupMode) + ";hot_backup=" + (cfg.hotBackup ? "true" : "false") +
+			";keep_count=" + to_string(cfg.keepCount));
+		return "OK:name=" + cfg.name + ";backup_mode=" + to_string(cfg.backupMode) +
+			";hot_backup=" + (cfg.hotBackup ? "true" : "false") + ";keep_count=" + to_string(cfg.keepCount);
 	}
 	else if (command == "SET_CONFIG") {
 		int config_idx;
-		std::string key, value;
+		string key, value;
+
 		if (!(ss >> config_idx >> key >> value) || configs.find(config_idx) == configs.end()) {
-			return "ERROR:Invalid arguments. Usage: SET_CONFIG <config_idx> <key> <value>";
+			BroadcastEvent("ERROR:Invalid arguments. Usage: SET_CONFIG <config_idx> <key> <value>");
+			return "ERROR:Invalid arguments.Usage : SET_CONFIG <config_idx> <key> <value>";
 		}
 		auto& cfg = configs[config_idx];
-		std::string response_msg = "OK:Set " + key + " to " + value;
+		string response_msg = "OK:Set " + key + " to " + value;
 
-		if (key == "backup_mode") cfg.backupMode = std::stoi(value);
+		if (key == "backup_mode") cfg.backupMode = stoi(value);
 		else if (key == "hot_backup") cfg.hotBackup = (value == "true");
 		else return "ERROR:Unknown key '" + key + "'.";
 
 		SaveConfigs(); // 保存更改
-		BroadcastEvent("event=config_changed;config=" + std::to_string(config_idx) + ";key=" + key + ";value=" + value);
+		BroadcastEvent("event=config_changed;config=" + to_string(config_idx) + ";key=" + key + ";value=" + value);
+		BroadcastEvent(response_msg);
 		return response_msg;
 	}
 	else if (command == "BACKUP") {
 		int config_idx, world_idx;
-		std::string comment_part;
+		string comment_part;
 		if (!(ss >> config_idx >> world_idx) || configs.find(config_idx) == configs.end() || world_idx >= configs[config_idx].worlds.size()) {
+			BroadcastEvent("ERROR:Invalid arguments. Usage: BACKUP <config_idx> <world_idx> [comment]");
 			return "ERROR:Invalid arguments. Usage: BACKUP <config_idx> <world_idx> [comment]";
 		}
-		std::getline(ss, comment_part); // 获取剩余部分作为注释
+		getline(ss, comment_part); // 获取剩余部分作为注释
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1); // 去除前导空格
 
 		// 在后台线程中执行备份，避免阻塞命令处理器
-		std::thread([=]() {
+		thread([=]() {
 			// 在新线程中再次加锁，因为 configs 可能在主线程中被修改
-			std::lock_guard<std::mutex> thread_lock(g_configsMutex);
+			lock_guard<mutex> thread_lock(g_configsMutex);
 			if (configs.count(config_idx)) // 确保配置仍然存在
 				DoBackup(configs[config_idx], configs[config_idx].worlds[world_idx], *console, utf8_to_wstring(comment_part));
 			}).detach();
-
+		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first));
 		return "OK:Backup started for world '" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first) + "'";
 	}
 	else if (command == "RESTORE") {
 		int config_idx, world_idx;
 		string backup_file;
-		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end())
-			return error_response("Invalid or missing config_index.");
-		if (!(ss >> world_idx) || world_idx >= configs[config_idx].worlds.size() || world_idx < 0)
-			return error_response("Invalid or missing world_index.");
-		if (!(ss >> backup_file))
-			return error_response("Missing backup_file argument.");
+		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
+			BroadcastEvent(L("BROADCAST_CONFIG_INDEX_ERROR"));
+			return error_response(L("BROADCAST_CONFIG_INDEX_ERROR"));
+		}
+		if (!(ss >> world_idx) || world_idx >= configs[config_idx].worlds.size() || world_idx < 0) {
+			BroadcastEvent(L("BROADCAST_WORLD_INDEX_ERROR"));
+			return error_response(L("BROADCAST_WORLD_INDEX_ERROR"));
+		}
+		if (!(ss >> backup_file)) {
+			BroadcastEvent(L("BROADCAST_MISSING_BACKUP_FILE"));
+			return error_response(L("BROADCAST_MISSING_BACKUP_FILE"));
+		}
 
 		// In a background thread to avoid blocking
-		std::thread([=]() {
-			std::lock_guard<std::mutex> thread_lock(g_configsMutex);
+		thread([=]() {
+			lock_guard<mutex> thread_lock(g_configsMutex);
 			if (configs.count(config_idx)) {
 				// Default to clean restore (method 0) for remote commands for safety
 				DoRestore(configs[config_idx], configs[config_idx].worlds[world_idx].first, utf8_to_wstring(backup_file), *console, 0);
@@ -3534,24 +3588,26 @@ string ProcessCommand(const std::string& commandStr, Console* console) {
 			}).detach();
 
 		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+		BroadcastEvent("event=restore_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first));
 		return "OK:Restore started for world '" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first) + "'";
 	}
 	else if (command == "BACKUP_MODS") {
 		int config_idx;
-		std::string comment_part;
+		string comment_part;
 		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
-			return error_response("Invalid or missing config_index.");
+			BroadcastEvent(L("BROADCAST_CONFIG_INDEX_ERROR"));
+			return error_response(L("BROADCAST_CONFIG_INDEX_ERROR"));
 		}
-		std::getline(ss, comment_part); // Get rest of the line as comment
+		getline(ss, comment_part); // Get rest of the line as comment
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
 
-		std::thread([=]() {
-			std::lock_guard<std::mutex> thread_lock(g_configsMutex);
+		thread([=]() {
+			lock_guard<mutex> thread_lock(g_configsMutex);
 			if (configs.count(config_idx)) {
 				DoModsBackup(configs[config_idx], utf8_to_wstring(comment_part));
 			}
 			}).detach();
-
+		BroadcastEvent("event=mods_backup_started;config=" + to_string(config_idx));
 		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
 		return "OK:Mods backup started.";
 	}
@@ -3566,4 +3622,153 @@ void ConsoleLog(const char* format, ...) {
 	vprintf(format, args);
 	printf("\n");
 	va_end(args);
+}
+
+void TriggerHotkeyBackup() {
+	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
+	lock_guard<mutex> lock(g_configsMutex);
+
+	for (const auto& config_pair : configs) {
+		int config_idx = config_pair.first;
+		const Config& cfg = config_pair.second;
+
+		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
+			const auto& world = cfg.worlds[world_idx];
+			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
+			if(!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
+				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
+				if (!filesystem::exists(temp))
+					continue;
+				for (const auto& entry : filesystem::directory_iterator(temp)) {
+					if (IsFileLocked(entry.path())) {
+						levelDatPath = entry.path();
+						break;
+					}
+				}
+			}
+
+			if (IsFileLocked(levelDatPath)) {
+				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
+
+				string payload = "event=pre_hot_backup;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first);
+				BroadcastEvent(payload);
+				console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
+
+
+				Config hotkeyConfig = cfg;
+				hotkeyConfig.hotBackup = true;
+
+				thread backup_thread(DoBackup, hotkeyConfig, world, ref(console), L"Hotkey");
+				backup_thread.detach();
+				return;
+			}
+		}
+	}
+
+	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
+}
+
+void ExitWatcherThreadFunction() {
+	console.AddLog(L("LOG_EXIT_WATCHER_START"));
+
+	while (!g_stopExitWatcher) {
+		map<pair<int, int>, wstring> currently_locked_worlds;
+
+		{
+			lock_guard<mutex> lock(g_configsMutex);
+			
+			for (const auto& config_pair : configs) {
+				const Config& cfg = config_pair.second;
+				if (!cfg.backupOnGameExit) continue;
+				for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
+					wstring levelDatPath = cfg.saveRoot + L"\\" + cfg.worlds[world_idx].first + L"\\session.lock";
+					if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
+						wstring temp = cfg.saveRoot + L"\\" + cfg.worlds[world_idx].first + L"\\db";
+						if (!filesystem::exists(temp))
+							continue;
+						for (const auto& entry : filesystem::directory_iterator(temp)) {
+							if (IsFileLocked(entry.path())) {
+								levelDatPath = entry.path();
+								break;
+							}
+						}
+					}
+					if (IsFileLocked(levelDatPath)) {
+						currently_locked_worlds[{config_pair.first, world_idx}] = cfg.worlds[world_idx].first;
+					}
+				}
+			}
+			
+			for (const auto& sp_config_pair : specialConfigs) {
+				const SpecialConfig& sp_cfg = sp_config_pair.second;
+				if (!sp_cfg.backupOnGameExit) continue;
+				for (const auto& task : sp_cfg.tasks) {
+					if (configs.count(task.configIndex) && task.worldIndex < configs[task.configIndex].worlds.size()) {
+						const Config& base_cfg = configs[task.configIndex];
+						const auto& world = base_cfg.worlds[task.worldIndex];
+						wstring levelDatPath = base_cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
+						if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
+							wstring temp = base_cfg.saveRoot + L"\\" + world.first + L"\\db";
+							if (!filesystem::exists(temp))
+								continue;
+							for (const auto& entry : filesystem::directory_iterator(temp)) {
+								if (IsFileLocked(entry.path())) {
+									levelDatPath = entry.path();
+									break;
+								}
+							}
+						}
+						if (IsFileLocked(levelDatPath)) {
+							currently_locked_worlds[{task.configIndex, task.worldIndex}] = world.first;
+						}
+					}
+				}
+			}
+		}
+
+		{
+			lock_guard<mutex> lock(g_activeWorldsMutex);
+
+			// 检查新启动的世界
+			for (const auto& locked_pair : currently_locked_worlds) {
+				if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
+					console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
+					string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
+					BroadcastEvent(payload);
+				}
+			}
+
+			// 检查已关闭的世界
+			vector<pair<int, int>> worlds_to_backup;
+			for (const auto& active_pair : g_activeWorlds) {
+				if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
+					console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
+					string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
+					BroadcastEvent(payload);
+					worlds_to_backup.push_back(active_pair.first);
+				}
+			}
+
+			// 更新当前活动的世界列表
+			g_activeWorlds = currently_locked_worlds;
+
+			// 对于刚关闭的世界，启动备份
+			if (!worlds_to_backup.empty()) {
+				lock_guard<mutex> config_lock(g_configsMutex);
+				for (const auto& backup_target : worlds_to_backup) {
+					int config_idx = backup_target.first;
+					int world_idx = backup_target.second;
+					if (configs.count(config_idx) && world_idx < configs[config_idx].worlds.size()) {
+						Config backupConfig = configs[config_idx];
+						backupConfig.hotBackup = true; // 必须热备份
+						thread backup_thread(DoBackup, backupConfig, backupConfig.worlds[world_idx], ref(console), L"OnExit");
+						backup_thread.detach();
+					}
+				}
+			}
+		}
+
+		this_thread::sleep_for(chrono::seconds(10));
+	}
+	console.AddLog(L("LOG_EXIT_WATCHER_STOP"));
 }
