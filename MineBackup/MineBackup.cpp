@@ -1039,10 +1039,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			ImGui::Begin(L("MAIN_WINDOW_TITLE"));
 
 			// --- 左侧面板：世界列表和操作 ---
-			ImGui::BeginChild("LeftPane", ImVec2(ImGui::GetContentRegionAvail().x * 0.875f, 0), true);
+			//ImGui::BeginChild("LeftPane", ImVec2(ImGui::GetContentRegionAvail().x * 0.875f, 0), true);
+			ImGui::BeginChild("LeftPane", ImVec2(ImGui::GetContentRegionAvail().x - 92, 0), true);
 
 			ImGui::SeparatorText(L("WORLD_LIST"));
-
+			
 			// 新的自定义卡片
 			ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // 预留底部按钮空间
 
