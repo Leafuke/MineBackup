@@ -137,11 +137,6 @@ cd MineBackup
 
 ## 📸 Screenshots
 
-> 📌 Recommended:
->
-> * Main dashboard view (wide window)
-> * Hotkey backup log example
-> * Settings panel with *DetectOnExit* toggle
 
 ---
 
