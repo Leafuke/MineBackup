@@ -1146,8 +1146,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				worldIconHeights.resize(worldCount, 0);
 			}
 
-			ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
+			ImGui::SetNextWindowSize(ImVec2(740, 720), ImGuiCond_FirstUseEver);
 			ImGui::Begin(L("MAIN_WINDOW_TITLE"), &showMainApp, ImGuiWindowFlags_MenuBar);
+
+			float totalW = ImGui::GetContentRegionAvail().x;
+			float leftW = totalW * 0.30f;
+			float midW = totalW * 0.25f;
+			float rightW = totalW * 0.44f;
 
 			// --- 顶部菜单栏 ---
 			if (ImGui::BeginMenuBar()) {
@@ -1221,7 +1226,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				left_pane_width = ImGui::GetContentRegionAvail().x; // 如果未选择任何项，左侧面板占满
 			}
 			
-			ImGui::BeginChild("LeftPane", ImVec2(left_pane_width, 0), true);
+			ImGui::BeginChild("LeftPane", ImVec2(leftW, 0), true);
 
 			ImGui::SeparatorText(L("WORLD_LIST"));
 			
@@ -1374,7 +1379,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			
 			if (selectedWorldIndex != -1) {
 				ImGui::SameLine();
-				ImGui::BeginChild("RightPane", ImVec2(0, 0), true);
+				ImGui::BeginChild("MidPane", ImVec2(midW, 0), true);
 				{
 					ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
 					ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
@@ -1627,7 +1632,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			}
 			else {
 				ImGui::SameLine();
-				ImGui::BeginChild("RightPane", ImVec2(0, 0), true);
+				ImGui::BeginChild("MidPane", ImVec2(midW, 0), true);
 				ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
 				ImVec2 window_size = ImGui::GetWindowSize();
 				ImVec2 text_size = ImGui::CalcTextSize(L("PROMPT_SELECT_WORLD_TO_VIEW"));
@@ -1636,7 +1641,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::EndChild();
 			}
 			
-			
+			ImGui::SameLine();
+			ImGui::BeginChild("RightColumn", ImVec2(rightW, 0), true);
+			console.DrawEmbedded();
+			ImGui::EndChild();
+			//ImGui::End();
 			
 			//ImGui::BeginChild(L("RIGHT_PANE"));
 			//if (ImGui::Button(L("SETTINGS"))) showSettings = true;
@@ -1697,7 +1706,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 			if (showSettings) ShowSettingsWindow();
 			if (showHistoryWindow) ShowHistoryWindow();
-			console.Draw(L("CONSOLE_TITLE"), &showMainApp);
+			//console.Draw(L("CONSOLE_TITLE"), &showMainApp);
 			//ImGui::EndChild();
 			ImGui::End();
 		}
