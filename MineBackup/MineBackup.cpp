@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.2";
+const string CURRENT_VERSION = "1.7.3";
 
 
 // 结构体们
@@ -134,6 +134,7 @@ static map<int, AutoBackupTask> g_active_auto_backups; // key: worldIndex, value
 static thread g_exitWatcherThread;
 static atomic<bool> g_stopExitWatcher(false);
 static map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
+static wstring g_worldToFocusInHistory = L"";
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -208,6 +209,7 @@ struct Console
 		Commands.push_back("RESTORE");
 		Commands.push_back("SET_CONFIG");
 		Commands.push_back("GET_CONFIG");
+		Commands.push_back("LIST_BACKUPS");
 		Commands.push_back("LIST_WORLDS");
 		Commands.push_back("LIST_CONFIGS");
 		AutoScroll = true;                  //自动滚动好呀
@@ -717,7 +719,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.2", WS_OVERLAPPEDWINDOW, 100, 100, 10000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.3", WS_OVERLAPPEDWINDOW, 100, 100, 10000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -1153,9 +1155,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			float leftW = totalW * 0.32f;
 			float midW = totalW * 0.25f;
 			float rightW = totalW * 0.42f;
-
+			static bool showAboutWindow = false;
 			// --- 顶部菜单栏 ---
 			if (ImGui::BeginMenuBar()) {
+				
 				if (ImGui::BeginMenu(L("MENU_FILE"))) {
 					if (ImGui::MenuItem(L("SETTINGS"), "CTRL+S")) { showSettings = true; }
 					if (ImGui::MenuItem(L("EXIT"))) { done = true; }
@@ -1172,11 +1175,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup", NULL, NULL, SW_SHOWNORMAL);
 					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
-						
+						showAboutWindow = true;
+						ImGui::OpenPopup(L("MENU_ABOUT"));
 					}
 					ImGui::EndMenu();
 				}
-
+				
 				// 在菜单栏右侧显示更新按钮
 				if (g_NewVersionAvailable) {
 					ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(L("UPDATE_AVAILABLE_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2 - 40);
@@ -1210,11 +1214,46 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ImGui::EndPopup();
 					}
 				}
-
-				
 				ImGui::EndMenuBar();
 			}
+			if (showAboutWindow)
+				ImGui::OpenPopup(L("MENU_ABOUT"));
+			//ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			if (ImGui::BeginPopupModal(L("MENU_ABOUT"), &showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
+			{
+				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
+				ImGui::Separator();
+				ImGui::TextWrapped("%s", L("ABOUT_DESCRIPTION"));
+				ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
+				ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+				std::string github_button_text = L("ABOUT_VISIT_GITHUB");
+				if (ImGui::Button(github_button_text.c_str()))
+				{
+					ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup", NULL, NULL, SW_SHOWNORMAL);
+				}
+				ImGui::SameLine();
+				std::string bilibili_button_text = L("ABOUT_VISIT_BILIBILI");
+				if (ImGui::Button(bilibili_button_text.c_str()))
+				{
+					ShellExecuteA(NULL, "open", "https://space.bilibili.com/545429962", NULL, NULL, SW_SHOWNORMAL);
+				}
+
+				ImGui::Dummy(ImVec2(0.0f, 10.0f));
+				ImGui::SeparatorText(L("ABOUT_LICENSE_HEADER"));
+				ImGui::Text("%s", L("ABOUT_LICENSE_TYPE"));
+				ImGui::Text("%s", L("ABOUT_LICENSE_COPYRIGHT"));
+				ImGui::Text("%s", L("ABOUT_LICENSE_TEXT"));
+
+				ImGui::Dummy(ImVec2(0.0f, 10.0f));
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(250, 0))) // 给按钮一个固定宽度以获得更好的观感
+				{
+					showAboutWindow = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
 
 
 
@@ -1235,6 +1274,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			ImGui::BeginChild("WorldListChild", ImVec2(0, 0), true);
 
 			for (int i = 0; i < cfg.worlds.size(); ++i) {
+				if(cfg.worlds[i].second == L"#")
+					continue; // 跳过被标记为隐藏的世界
 				ImGui::PushID(i);
 				bool is_selected = (selectedWorldIndex == i);
 				wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
@@ -1457,6 +1498,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
 					}
 
+					if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 30))) {
+						g_worldToFocusInHistory = cfg.worlds[selectedWorldIndex].first; // 设置要聚焦的世界
+						showHistoryWindow = true; // 打开历史窗口
+					}
 
 					// 模组备份
 					if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(-1, 30))) {
@@ -3188,9 +3233,7 @@ void DoModsBackup(const Config config, const wstring& comment) {
 	console.AddLog(L("LOG_BACKUP_MODS_START"));
 
 	filesystem::path saveRoot(config.saveRoot);
-	if (saveRoot.filename() != L"saves") {
-		console.AddLog("[Warning] saveRoot does not point to a 'saves' folder. Guessing mods folder location.");
-	}
+	
 	filesystem::path modsPath = saveRoot.parent_path() / "mods";
 
 	if (!filesystem::exists(modsPath) || !filesystem::is_directory(modsPath)) {
@@ -3583,6 +3626,7 @@ void ShowHistoryWindow() {
 	static bool history_restore = false;
 
 	ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
+
 	if (!ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow)) {
 		ImGui::End();
 		return;
@@ -3616,6 +3660,14 @@ void ShowHistoryWindow() {
 		}
 
 		for (const auto& pair : worldHistory) {
+
+			if (!g_worldToFocusInHistory.empty() && pair.first == g_worldToFocusInHistory) {
+				ImGui::SetNextItemOpen(true);
+			}
+			else if (!g_worldToFocusInHistory.empty()) {
+				ImGui::SetNextItemOpen(false);
+			}
+
 			// The TreeNode already pushes the world name to the ID stack, ensuring uniqueness for the content inside.
 			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
 
@@ -3696,6 +3748,10 @@ void ShowHistoryWindow() {
 		ImGui::EndPopup();
 	}
 
+	if (!showHistoryWindow) {
+		g_worldToFocusInHistory = L"";
+	}
+
 	ImGui::End();
 }
 
@@ -3722,7 +3778,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		BroadcastEvent("event=list_configs;data=" + result);
 		return result;
 	}
-	else if (command == "LIST_WORLDS") {
+	else if (command == "LIST_BACKUPS") {
 		int config_idx, world_idx;
 		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
 			BroadcastEvent(L("BROADCAST_CONFIG_INDEX_ERROR"));
@@ -3743,7 +3799,23 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			}
 		}
 		if (result.back() == ';') result.pop_back();
-		BroadcastEvent("event=list_worlds;config=" + to_string(config_idx) + ";world=" + to_string(world_idx) + ";data=" + result);
+		BroadcastEvent("event=list_backups;config=" + to_string(config_idx) + ";world=" + to_string(world_idx) + ";data=" + result);
+		return result;
+	}
+	else if (command == "LIST_WORLDS") {
+		int config_idx;
+		if (!(ss >> config_idx) || configs.find(config_idx) == configs.end()) {
+			BroadcastEvent(L("BROADCAST_CONFIG_INDEX_ERROR"));
+			return error_response(L("BROADCAST_CONFIG_INDEX_ERROR"));
+		}
+		const auto& cfg = configs[config_idx];
+		string result = "OK:";
+		for (const auto& world : cfg.worlds) {
+			result += wstring_to_utf8(world.first) + ";";
+		}
+		if (!result.empty()) result.pop_back(); // 移除最后的';'
+
+		BroadcastEvent("event=list_worlds;config=" + to_string(config_idx) + ";data=" + result);
 		return result;
 	}
 	else if (command == "GET_CONFIG") {
@@ -3789,6 +3861,9 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		getline(ss, comment_part); // 获取剩余部分作为注释
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1); // 去除前导空格
 
+		// 先广播消息，通知模组先保存世界
+		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first));
+		
 		// 在后台线程中执行备份，避免阻塞命令处理器
 		thread([=]() {
 			// 在新线程中再次加锁，因为 configs 可能在主线程中被修改
@@ -3796,7 +3871,6 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			if (configs.count(config_idx)) // 确保配置仍然存在
 				DoBackup(configs[config_idx], configs[config_idx].worlds[world_idx], *console, utf8_to_wstring(comment_part));
 			}).detach();
-		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first));
 		return "OK:Backup started for world '" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first) + "'";
 	}
 	else if (command == "RESTORE") {
