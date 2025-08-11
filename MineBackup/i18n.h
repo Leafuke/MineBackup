@@ -82,7 +82,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"WORLD_LIST", u8"存档列表"},
 		{"TABLE_WORLD_NAME", u8"世界名称"},
 		{"TABLE_WORLD_DESC", u8"描述/别名"},
-		{"PROMPT_SELECT_WORLD", u8"请先在上方列表中选择一个存档"},
+		{"PROMPT_SELECT_WORLD", u8"请先在列表中选择一个存档"},
 		{"AUTOBACKUP_SETTINGS", u8"自动备份设置"},
 		{"AUTOBACKUP_RUNNING", u8"世界 '%s' 的自动备份正在运行中。"},
 		{"AUTOBACKUP_SETUP_FOR", u8"为世界 '%s' 设置自动备份:"},
@@ -285,6 +285,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "WORLD_DETAILS_PANE_TITLE", u8"详情与操作" },
 		{"MENU_GITHUB", u8"访问 GitHub"},
 		{"MENU_ABOUT", u8"关于 MineBackup"},
+		{"EXIT_INFO", u8"彻底关闭 MineBackup"}
 	}},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -569,6 +570,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "WORLD_DETAILS_PANE_TITLE", "Details & Actions" },
 		{ "MENU_GITHUB","GitHub" },
 		{ "MENU_ABOUT", "About MineBackup" },
+		{ "EXIT_INFO", "Shutdown MineBackup" }
 }},
 };
 std::string g_CurrentLang; // Default language

@@ -386,87 +386,87 @@ struct Console
 		//       adapted to run *inside* an existing ImGui window/child.
 		//       It intentionally DOES NOT call ImGui::SetNextWindowSize/ImGui::Begin/ImGui::End.
 
+		ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
+
+		
 		ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT1"));
 		ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT2"));
 
-		if (ImGui::SmallButton(L("BUTTON_OPTIONS"))) ImGui::OpenPopup(L("BUTTON_OPTIONS"));
+		if (ImGui::SmallButton(L("BUTTON_CLEAR"))) { ClearLog(); }
+		ImGui::SameLine();
+		bool copy_to_clipboard = ImGui::SmallButton(L("BUTTON_COPY"));
+		ImGui::Separator();
+
+		if (ImGui::BeginPopup(L("BUTTON_OPTIONS")))
+		{
+			ImGui::Checkbox(L("CONSOLE_AUTO_SCROLL"), &AutoScroll);
+			ImGui::EndPopup();
+		}
+
+		ImGui::SetNextItemShortcut(ImGuiMod_Ctrl | ImGuiKey_O, ImGuiInputFlags_Tooltip);
+		if (ImGui::Button(L("BUTTON_OPTIONS")))
+			ImGui::OpenPopup(L("BUTTON_OPTIONS"));
 		ImGui::SameLine();
 		Filter.Draw(L("CONSOLE_FILTER_HINT"), 180);
 		ImGui::Separator();
 
 		// Reserve enough left-over height for 1 separator + 1 input text
 		const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-		if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), true, ImGuiWindowFlags_HorizontalScrollbar))
+		if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar))
 		{
-			// Display every line as a separate entry so we can change their color or add custom widgets.
-			// If you have thousands of entries you may want to use ImGuiListClipper.
+			
 			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1)); // Tighten spacing
-			for (int i = 0; i < Items.Size; i++)
+			if (copy_to_clipboard)
+				ImGui::LogToClipboard();
+			for (const char* item : Items)
 			{
-				const char* item = Items[i];
 				if (!Filter.PassFilter(item))
 					continue;
 
-				// Simple colorization by prefix
-				ImVec4 col = ImVec4(1, 1, 1, 1);
-				if (strstr(item, "[Error]")) col = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-				else if (strstr(item, "[Warning]")) col = ImVec4(1.0f, 0.8f, 0.3f, 1.0f);
-				else if (strstr(item, "[Info]")) col = ImVec4(0.6f, 0.9f, 0.6f, 1.0f);
-
-				ImGui::PushStyleColor(ImGuiCol_Text, col);
+				// Normally you would store more information in your item than just a string.
+				// (e.g. make Items[] an array of structure, store color/type etc.)
+				ImVec4 color;
+				bool has_color = false;
+				if (strstr(item, "[Error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
+				else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[Info] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+				else if (strncmp(item, u8"[提示] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+				if (has_color)
+					ImGui::PushStyleColor(ImGuiCol_Text, color);
 				ImGui::TextUnformatted(item);
-				ImGui::PopStyleColor();
+				if (has_color)
+					ImGui::PopStyleColor();
 			}
-			ImGui::PopStyleVar();
+			if (copy_to_clipboard)
+				ImGui::LogFinish();
 
-			if (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+			// Keep up at the bottom of the scroll region if we were already at the bottom at the beginning of the frame.
+			// Using a scrollbar or mouse-wheel will take away from the bottom edge.
+			if (ScrollToBottom || (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
 				ImGui::SetScrollHereY(1.0f);
+			ScrollToBottom = false;
 
-			ImGui::EndChild();
+			ImGui::PopStyleVar();
 		}
-
-		// Footer: input box + buttons
+		ImGui::EndChild();
 		ImGui::Separator();
-		bool reclaim_focus = false;
 
-		// Input area width: keep some spacing so buttons fit
-		ImGui::PushItemWidth(-100);
-		if (ImGui::InputText("##console_input", InputBuf, IM_ARRAYSIZE(InputBuf),
-			ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion | ImGuiInputTextFlags_CallbackHistory,
-			[](ImGuiInputTextCallbackData* data) -> int {
-				Console* console = (Console*)data->UserData;
-				return console->TextEditCallback(data);
-			}, (void*)this))
+		// Command-line
+		bool reclaim_focus = false;
+		ImGuiInputTextFlags input_text_flags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_EscapeClearsAll | ImGuiInputTextFlags_CallbackCompletion | ImGuiInputTextFlags_CallbackHistory;
+		if (ImGui::InputText(L("CONSOLE_INPUT_LABEL"), InputBuf, IM_ARRAYSIZE(InputBuf), input_text_flags, &TextEditCallbackStub, (void*)this))
 		{
-			// when Enter is pressed
 			char* s = InputBuf;
 			Strtrim(s);
 			if (s[0])
 				ExecCommand(s);
-			strcpy_s(s, strlen(s) + 1, "");
+			strcpy_s(s, strlen(s) + 1, "");//被要求从strcpy改成strcpy_s，这样中间要加个长度参数才不报错……
 			reclaim_focus = true;
 		}
-		ImGui::PopItemWidth();
-		ImGui::SameLine();
 
-		if (ImGui::Button("Send", ImVec2(80, 0)))
-		{
-			char* s = InputBuf;
-			Strtrim(s);
-			if (s[0]) ExecCommand(s);
-			strcpy_s(s, strlen(s) + 1, "");
-			reclaim_focus = true;
-		}
-		ImGui::SameLine();
-
-		if (ImGui::Button("Clear", ImVec2(80, 0))) ClearLog();
-		ImGui::SameLine();
-
-		if (ImGui::SmallButton("AutoScroll")) AutoScroll = !AutoScroll;
-
-		// Auto-focus on input text when needed
+		// Auto-focus on window apparition
+		ImGui::SetItemDefaultFocus();
 		if (reclaim_focus)
-			ImGui::SetKeyboardFocusHere(-1);
+			ImGui::SetKeyboardFocusHere(-1); // Auto focus previous widget
 	}
 
 	void  ExecCommand(const char* command_line);
@@ -1146,13 +1146,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				worldIconHeights.resize(worldCount, 0);
 			}
 
-			ImGui::SetNextWindowSize(ImVec2(740, 720), ImGuiCond_FirstUseEver);
+			ImGui::SetNextWindowSize(ImVec2(1300, 720), ImGuiCond_FirstUseEver);
 			ImGui::Begin(L("MAIN_WINDOW_TITLE"), &showMainApp, ImGuiWindowFlags_MenuBar);
 
 			float totalW = ImGui::GetContentRegionAvail().x;
-			float leftW = totalW * 0.30f;
+			float leftW = totalW * 0.32f;
 			float midW = totalW * 0.25f;
-			float rightW = totalW * 0.44f;
+			float rightW = totalW * 0.42f;
 
 			// --- 顶部菜单栏 ---
 			if (ImGui::BeginMenuBar()) {
@@ -1487,6 +1487,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ImGui::EndPopup();
 					}
 
+					// 一些功能按钮
+					if(ImGui::Button(L("EXIT_INFO"), ImVec2(-1, 30))) {
+						done = true;
+					}
+
+
 				}
 
 				// 自动备份弹窗
@@ -1625,9 +1631,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 					ImGui::EndPopup();
 				}
-
-
-
 				ImGui::EndChild();
 			}
 			else {
@@ -1635,9 +1638,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::BeginChild("MidPane", ImVec2(midW, 0), true);
 				ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
 				ImVec2 window_size = ImGui::GetWindowSize();
-				ImVec2 text_size = ImGui::CalcTextSize(L("PROMPT_SELECT_WORLD_TO_VIEW"));
+				ImVec2 text_size = ImGui::CalcTextSize(L("PROMPT_SELECT_WORLD"));
 				ImGui::SetCursorPos(ImVec2((window_size.x - text_size.x) * 0.5f, (window_size.y - text_size.y) * 0.5f));
-				ImGui::TextDisabled("%s", L("PROMPT_SELECT_WORLD_TO_VIEW"));
+				ImGui::TextDisabled("%s", L("PROMPT_SELECT_WORLD"));
 				ImGui::EndChild();
 			}
 			
