@@ -1,63 +1,144 @@
-[中文](README-zn.md) | **English** <!-- lang -->
+# MineBackup — The Ultimate Backup Companion for Your Minecraft Worlds 🗂️💾
 
-![MineBackup](MineBackup/MineBackup.png)
+[![中文说明](https://img.shields.io/badge/README-中文-blue)](README-zn.md)
+[![Latest Release](https://img.shields.io/github/v/release/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/releases)
+[![Issues](https://img.shields.io/github/issues/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/issues)
 
-# MineBackup - Minecraft Archive Backup Program
+![MineBackup Banner](MineBackup/MineBackup.png)
 
-MineBackup is a user-friendly application designed to help you easily back up, restore, and export your files. It works with almost any version of Minecraft!
+> **Back up with confidence · Restore in seconds · Compress intelligently**  
+> Keep your Minecraft worlds safe — and yes, you can back up any folder on your PC, too.
 
-Well, you can actually use it to backup any folders in your computer :P
+---
 
-## 📸Features
+## ✨ Why MineBackup?
+- 🎯 **Plug-and-Play** — A single executable. Download, double-click, done.
+- 🖥 **Clean, Fast GUI** — Powered by ImGui. Simple layout, snappy response (v1.5.0+).
+- 💾 **Secure Backups** — One click to safeguard your Minecraft saves.
+- 🔄 **Quick Restores** — Roll back to any previous state from a `.7z` file or local backup.
+- 📦 **High Compression** — Built-in 7-Zip core saves disk space.
+- 🧠 **Smart Mode** — Git-like incremental backups to save time and storage.
+- 📁 **Custom Paths** — Store backups wherever you want.
+- 🌏 **Multi-language** — Currently supports English and Chinese — more are welcome!
 
-- **User Friendly GUI**: Use ImGUI, simple but efficient. (v1.5.0+)
-- **Backup**: Securely backup your game saves with just a click.
-- **Restore**: Quickly restore your game saves to a previous state from either a `.7z` file or directly from your computer.
-- **High-Compression**: Use built-in 7-Zip to compress your archive and save storage space on your computer.
-- **Intelligent**: You can choose Git-Like mode to backup and restore your archive.
-- **Backup Path**: Set a custom path for your backups according to your storage preferences.
-- **Multilanguage**: We have supported two languages by now, but they can be more with your help!
+💡 **Pro tip:** It works on any folder, not just Minecraft worlds.
 
-## ⚙️Installation
+---
 
-1. **Download**: Navigate to the [latest release](https://github.com/Leafuke/MineBackup/releases) and download the single file for Windows.
-2. **Double click**: That's ALL. No need to install.
+## 🚀 Getting Started
 
-## 🗃️Support
+### 1️⃣ Download & Run
+1. Go to the [latest release](https://github.com/Leafuke/MineBackup/releases).
+2. Download the single Windows executable.
+3. Double-click to run — **no installation required**.
 
-For issues, feature requests, or contributions, please visit the [GitHub issues](https://github.com/Leafuke/MineBackup/issues). <br />
-You can help internationalize this project by translating the [i18n.h](MineBackup/i18n.h).<br />
-Help documentation is being written.✒️
+### 2️⃣ Basic Actions
+| Feature      | How to Use |
+|--------------|------------|
+| Back up a world | Select a world → click **Backup** |
+| Restore a world | Select a world → click **Restore** (from `.7z` or local directory) |
+| Change backup location | Open **Settings** → choose your path |
+| Switch language | Settings → Language |
 
-## 🛠️Compilation Guide
+### 3️⃣ Power Features
+- **Hotkey Backup** — Press **Alt+Ctrl+S** in-game to trigger a live backup.
+- **Exit Detection** — Enable *DetectOnExit* to back up automatically when Minecraft closes.
+- **KnotLink Integration** — Let MineBackup talk to mods or other tools to trigger “save before backup.”
 
-The language standard for which this code is C++17. Link imgui library.
+---
 
-## 🔗KnotLink
+## 🛠 Feature Highlights
 
- `APPID` : `0x00000020`
- `socket ID` : `0x00000010`
- `signal ID` : `0x00000020`
-- `BACKUP`: BACKUP <config_idx> <world_idx> [comment]
-- `RESTORE`: RESTORE <config_idx>
-- `GET_CONFIG`: GET_CONFIG <config_idx>
-- `LIST_WORLDS`: LIST_WORLDS <config_idx>
-- `LIST_CONFIGS`: LIST_CONFIGS
-- `GET_CONFIG`: GET_CONFIG <config_idx>
-- `SET_CONFIG`: SET_CONFIG <config_idx> <key> <value> <br />
- key = backup_mode / hot_backup<br />
- value = 1/2/3     /  0/1
+### 🔥 Hotkey Backups
+- Hit **Alt + Ctrl + S** while playing:  
+  Detects the currently active world → broadcasts a save request → runs a hot backup in the background.
 
-## 📄Project References
+### 🕒 Auto Exit Backups
+- With *DetectOnExit* enabled, MineBackup checks every 10 seconds for changes to `level.dat`.
+- When it sees the file go from “in use” to “released,” it automatically performs a hot backup.
 
-[7-Zip](https://github.com/ip7z/7zip) (7-zip.org)
-> Who provides 7z.exe for MineBackup
+### 📡 KnotLink Messaging
+MineBackup can send and receive simple text events to coordinate with other apps or mods:
+- **Sends:**  
+  `event=knotlink_save_request;config=0;world=MyWorld`
+- **Receives:**  
+  `knotlink_save_done` → proceed with backup.
+- **Supported Commands:**
+```
 
-[imgui](https://github.com/ocornut/imgui) 
-> Who provides useful functions and GUI for MineBackup v1.5.0+
+BACKUP \<config\_idx> \<world\_idx> \[comment]
+RESTORE \<config\_idx>
+LIST\_WORLDS \<config\_idx>
+LIST\_CONFIGS
+SET\_CONFIG \<config\_idx> <key> <value>
 
-[stb](https://github.com/nothings/stb) 
-> Who helps MineBackup to load image
+````
+*key*: `backup_mode` / `hot_backup`  
+*value*: `1/2/3` or `0/1`
 
-KnotLink
-> Who helps MineBackup to "communicate" with other programes
+> 🔍 See [Developer & Advanced User Guide](#-developer--advanced-user-guide) for full protocol details.
+
+---
+
+## ⚙️ Installation & Build
+
+**Requirements:**
+- Windows
+- C++17 compiler (Visual Studio recommended)
+- ImGui library linked
+- 7-Zip executable (already bundled)
+
+**Build:**
+```bash
+# Clone the repo
+git clone https://github.com/Leafuke/MineBackup.git
+cd MineBackup
+
+# Open in Visual Studio and build
+# Make sure the ImGui source is included
+````
+
+---
+
+## 🤝 Contributing & Support
+
+* **Report bugs / request features:** [GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
+* **Help translate:** Edit [`i18n.h`](MineBackup/i18n.h) and submit a pull request.
+* **Improve docs:** PRs welcome — examples, screenshots, and tips appreciated.
+
+---
+
+## 📚 Developer & Advanced User Guide
+
+### KnotLink Quick Reference
+
+| Command       | Description                              |
+| ------------- | ---------------------------------------- |
+| BACKUP        | Immediately back up a given config/world |
+| RESTORE       | Restore a given config                   |
+| LIST\_WORLDS  | List all worlds under a config           |
+| LIST\_CONFIGS | List all configs                         |
+| SET\_CONFIG   | Change a config parameter                |
+
+**APPID:** `0x00000020`
+**socket ID:** `0x00000010`
+**signal ID:** `0x00000020`
+
+---
+
+## 📄 Project References
+
+* [**7-Zip**](https://github.com/ip7z/7zip) — Compression core (7z.exe)
+* [**ImGui**](https://github.com/ocornut/imgui) — GUI framework
+* [**stb**](https://github.com/nothings/stb) — Image loading
+* **KnotLink** — Lightweight inter-process messaging
+
+---
+
+## 📸 Screenshots
+
+
+---
+
+**MineBackup** — Peace of mind for your Minecraft worlds.
+⭐ If you find it useful, please give it a star!
