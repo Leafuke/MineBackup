@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.3";
+const string CURRENT_VERSION = "1.7.4";
 
 
 // 结构体们
@@ -722,7 +722,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.3", WS_OVERLAPPEDWINDOW, 100, 100, 10000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.4", WS_OVERLAPPEDWINDOW, 100, 100, 10000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -1543,6 +1543,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::EndPopup();
+					}
+
+					if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
+						// 云同步逻辑
+						const Config& config = configs[currentConfigIndex];
+						if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
+							console.AddLog(L("CLOUD_SYNC_START"));
+							wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
+							// 另起一个线程来执行云同步，避免阻塞后续操作
+							std::thread([rclone_command, config]() {
+								RunCommandInBackground(rclone_command, console, config.useLowPriority);
+								console.AddLog(L("CLOUD_SYNC_FINISH"));
+							}).detach();
+						}
+						else {
+							console.AddLog(L("CLOUD_SYNC_INVALID"));
+						}
 					}
 
 					// 一些功能按钮
@@ -3228,13 +3245,13 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 		// 云同步逻辑
 		if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
-			console.AddLog("[Cloud Sync] Starting cloud synchronization...");
+			console.AddLog(L("CLOUD_SYNC_START"));
 			wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + world.first + L"\" --progress";
 			// 另起一个线程来执行云同步，避免阻塞后续操作
 			thread([rclone_command, &console, config]() {
 				RunCommandInBackground(rclone_command, console, config.useLowPriority);
-				console.AddLog("[Cloud Sync] Synchronization task finished.");
-				}).detach();
+				console.AddLog(L("CLOUD_SYNC_FINISH"));
+			}).detach();
 		}
 	}
 	else {

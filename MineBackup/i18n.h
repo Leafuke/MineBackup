@@ -286,7 +286,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{"MENU_GITHUB", u8"访问 GitHub"},
 		{"MENU_ABOUT", u8"关于 MineBackup"},
 		{"EXIT_INFO", u8"彻底关闭 MineBackup"},
-		{ "ABOUT_DESCRIPTION", u8"一个为 Minecraft 玩家设计的轻量、强大且开源的存档备份工具。" },
+		{ "ABOUT_DESCRIPTION", u8"一个为 Minecraft 玩家设计的轻量、强大且开源的存档备份工具。\n\n快捷键: Alt + Ctrl + S - 备份正在运行的世界" },
 		{ "ABOUT_AUTHOR", u8"作者: Leafuke" },
 		{ "ABOUT_VISIT_GITHUB", u8"访问 GitHub 仓库" },
 		{ "ABOUT_VISIT_BILIBILI", u8"访问 Bilibili 主页" },
@@ -301,7 +301,10 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "RCLONE_REMOTE_PATH_LABEL", u8"Rclone 远程路径" },
 		{ "TIP_RCLONE_PATH", u8"请指定 rclone.exe 文件的完整路径。" },
 		{ "TIP_RCLONE_REMOTE_PATH", u8"请输入 'rclone config' 中配置的远程名称和路径，例如: 'MyOneDrive:Backups'" },
-	}},
+		{ "CLOUD_SYNC_START", u8"[云同步] 开始同步..." },
+		{ "CLOUD_SYNC_BUTTOM", u8"上传备份文件夹至云" },
+		{ "CLOUD_SYNC_FINISH", u8"[云同步] 同步任务结束" }
+}},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
 		{"BACKUP", "Backup Selected"},
@@ -564,8 +567,8 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "LOG_ERROR_MODS_NOT_FOUND", "[Error] 'mods' folder not found at: %s" },
 		{ "LOG_BACKUP_MODS_START", "--- Starting Mods Backup ---" },
 		{ "LOG_BACKUP_MODS_END", "--- Mods Backup Finished ---" },
-		{ "BROADCAST_CONFIG_INDEX_ERROR", u8"ERROR: config_index 无效或缺失" },
-		{ "BROADCAST_WORLD_INDEX_ERROR", u8"ERROR: world_index 无效或缺失" },
+		{ "BROADCAST_CONFIG_INDEX_ERROR", u8"ERROR: config_index unavailable" },
+		{ "BROADCAST_WORLD_INDEX_ERROR", u8"ERROR: world_index unavailable" },
 		{ "BROADCAST_MISSING_BACKUP_FILE", u8"ERROR: Missing backup_file argument for RESTORE command" },
 		{ "BACKUP_ON_EXIT", "Backup on Exit" },
 		{ "TIP_BACKUP_ON_EXIT", "Automatically performs a hot backup after detecting the game has been closed." },
@@ -593,6 +596,9 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "RCLONE_REMOTE_PATH_LABEL", "Rclone Remote Path" },
 		{ "TIP_RCLONE_PATH", "Please specify the full path to your rclone.exe file." },
 		{ "TIP_RCLONE_REMOTE_PATH", "Enter the remote name and path from your 'rclone config', e.g., 'MyOneDrive:Backups'" },
+		{"CLOUD_SYNC_START", "[Cloud Sync] Starting cloud synchronization..."},
+		{ "CLOUD_SYNC_BUTTOM", "Upload Backup Folder to Cloud" },
+		{"CLOUD_SYNC_FINISH", "[Cloud Sync] Synchronization task finished."}
 }},
 };
 std::string g_CurrentLang; // Default language

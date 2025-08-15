@@ -2,7 +2,7 @@
 #ifndef _ImGui1
 #define _ImGui1
 #include "imgui/imgui.h"
-#include "imgui/imgui_internal.h"  // 包含内部
+//#include "imgui/imgui_internal.h"  // 包含内部
 #include "imgui/imgui_impl_dx11.h"
 #include "imgui/imgui_impl_win32.h"
 #include "stb_image.h"
