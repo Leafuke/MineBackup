@@ -798,11 +798,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
 	}
 
-	// 背景图片加载用
-	ID3D11ShaderResourceView* g_pBgTexture = nullptr;
-	int g_bgWidth = 0, g_bgHeight = 0;
-	wstring g_loadedBgPath = L"";
-
 	// 设置字体和全局缩放
 	float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
 	io.FontGlobalScale = dpi_scale;
@@ -908,42 +903,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
-
-		// 加载背景纹理
-		if (configs.count(currentConfigIndex)) {
-			Config& cfg = configs[currentConfigIndex];
-			if (cfg.backgroundImageEnabled && !cfg.backgroundImagePath.empty() && cfg.backgroundImagePath != g_loadedBgPath) {
-				if (g_pBgTexture) {
-					g_pBgTexture->Release();
-					g_pBgTexture = nullptr;
-				}
-				string path_utf8 = utf8_to_gbk(wstring_to_utf8(cfg.backgroundImagePath));
-				LoadTextureFromFile(path_utf8.c_str(), &g_pBgTexture, &g_bgWidth, &g_bgHeight);
-				g_loadedBgPath = cfg.backgroundImagePath;
-			}
-			else if (!cfg.backgroundImageEnabled && g_pBgTexture) {
-				g_pBgTexture->Release();
-				g_pBgTexture = nullptr;
-				g_loadedBgPath = L"";
-			}
-		}
-
-		// 渲染背景纹理
-		if (configs.count(currentConfigIndex) && configs[currentConfigIndex].backgroundImageEnabled && g_pBgTexture) {
-			ImGui::SetNextWindowPos(ImVec2(0, 0));
-			ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-			ImGui::Begin("##background", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
-			ImGui::GetWindowDrawList()->AddImage(
-				(ImTextureID)g_pBgTexture,
-				ImVec2(0, 0),
-				ImGui::GetIO().DisplaySize,
-				ImVec2(0, 0), ImVec2(1, 1),
-				IM_COL32(255, 255, 255, (int)(configs[currentConfigIndex].backgroundImageAlpha * 255))
-			);
-			ImGui::End();
-			ImGui::PopStyleVar();
-		}
 
 		if (showConfigWizard) {
 			// 首次启动向导使用的静态变量
@@ -1854,10 +1813,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	::DestroyWindow(hwnd);
 	::UnregisterClassW(wc.lpszClassName, wc.hInstance);
 	
-	// 清理纹理
-	if (g_pBgTexture) {
-		g_pBgTexture->Release();
-	}
 	g_stopExitWatcher = true;
 	if (g_exitWatcherThread.joinable()) {
 		g_exitWatcherThread.join();
@@ -2210,14 +2165,6 @@ static void LoadConfigs(const string& filename) {
 						clear_color = ImVec4(r, g, b, a);
 					}
 				}
-				else if (key == L"BackgroundImage") {
-					if (val.size() > 2) {
-						cur->backgroundImageEnabled = true;
-						cur->backgroundImagePath = val;
-					}
-					else
-						cur->backgroundImageEnabled = false;
-				}
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
 				if (key == L"Name") spCur->name = wstring_to_utf8(val);
@@ -2307,7 +2254,6 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"ThemeColor=" << c.themeColor << L"\n";
 		out << L"BackupNaming=" << c.folderNameType << L"\n";
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
-		out << L"BackgroundImage=" << c.backgroundImagePath << L"\n";
 		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		out << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		out << L"BackupOnExit=" << (c.backupOnGameExit ? 1 : 0) << L"\n";
@@ -2895,25 +2841,6 @@ void ShowSettingsWindow() {
 				cfg.zipFonts = utf8_to_wstring(Fonts);
 				Fontss = cfg.zipFonts;
 				//ReloadFonts();
-			}
-			ImGui::SeparatorText(L("BACKGROUND_IMAGE"));
-			Config& cfg = configs[currentConfigIndex];
-			ImGui::Checkbox(L("ENABLE_BACKGROUND_IMAGE"), &cfg.backgroundImageEnabled);
-
-			if (cfg.backgroundImageEnabled) {
-				ImGui::SliderFloat(L("BACKGROUND_IMAGE_OPACITY"), &cfg.backgroundImageAlpha, 0.0f, 1.0f);
-
-				char bgPathBuf[CONSTANT1];
-				strncpy_s(bgPathBuf, wstring_to_utf8(cfg.backgroundImagePath).c_str(), sizeof(bgPathBuf));
-
-				if (ImGui::Button(L("BUTTON_SELECT_IMAGE"))) {
-					wstring sel = SelectFileDialog();
-					if (!sel.empty()) {
-						cfg.backgroundImagePath = sel;
-					}
-				}
-				ImGui::SameLine();
-				ImGui::InputText(L("BACKGROUND_IMAGE_PATH"), bgPathBuf, CONSTANT1, ImGuiInputTextFlags_ReadOnly);
 			}
 		}
 	}
