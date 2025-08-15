@@ -66,6 +66,9 @@ struct Config {
 	int maxSmartBackupsPerFull = 5;
 	bool backupOnGameExit = false;
 	vector<wstring> blacklist;
+	bool cloudSyncEnabled = false;
+	wstring rclonePath;
+	wstring rcloneRemotePath;
 };
 struct AutomatedTask {
 	int configIndex = -1;
@@ -1214,10 +1217,61 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ImGui::EndPopup();
 					}
 				}
+
+				// 是否已经最小化
+				bool is_mini = IsIconic(hwnd);
+				if (!is_mini) {
+					::ShowWindow(hwnd, SW_HIDE);
+				}
+				
+
+				{
+					float buttonSize = ImGui::GetFrameHeight();
+					// 将按钮推到菜单栏的最右边
+					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonSize * 3);
+
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.4f));
+					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 0.5f));
+
+					
+					// Minimize Button
+					if (ImGui::Button("-", ImVec2(buttonSize, buttonSize))) {
+						::ShowWindow(hwnd, SW_MINIMIZE);
+					}
+					ImGui::SameLine(0, 0);
+
+					// Maximize/Restore Button
+					static bool is_maximized = false;
+					if (ImGui::Button("O", ImVec2(buttonSize, buttonSize))) {
+						if (is_maximized) {
+							ImGui::SetWindowSize(ImVec2(1300, 720));
+							is_maximized = false;
+						}
+						else {
+							ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+							ImGui::SetWindowSize(displaySize);
+							ImGui::SetWindowPos(ImVec2(0, 0));
+							is_maximized = true;
+						}
+					}
+					ImGui::SameLine(0, 0);
+
+					// Close Button
+					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.1f, 0.1f, 0.8f));
+					if (ImGui::Button("x", ImVec2(buttonSize, buttonSize))) {
+						done = true; // 结束程序
+					}
+					ImGui::PopStyleColor();
+					ImGui::PopStyleColor(3);
+				}
+
+
 				ImGui::EndMenuBar();
 			}
 			if (showAboutWindow)
 				ImGui::OpenPopup(L("MENU_ABOUT"));
+			
 			//ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			if (ImGui::BeginPopupModal(L("MENU_ABOUT"), &showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
 			{
@@ -1443,13 +1497,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 					// -- 主要操作按钮 --
 					float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 3.1f;
-					if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 30))) {
+					if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
 						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), utf8_to_wstring(backupComment));
 						backup_thread.detach();
 						strcpy_s(backupComment, "");
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(button_width, 30))) {
+					if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(button_width, 0))) {
 						if (cfg.manualRestore) { // 手动选择还原
 							openRestorePopup = true;
 							ImGui::OpenPopup(L("RESTORE_POPUP_TITLE"));
@@ -1481,10 +1535,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						}
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 30))) {
+					if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
 						ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
 					}
-					if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 30))) {
+					if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
 						wstring path = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
 						if (filesystem::exists(path)) {
 							ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -1493,7 +1547,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							ShellExecuteW(NULL, L"open", cfg.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
 						}
 					}
-					if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 30))) {
+					if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
 						wstring path = cfg.saveRoot + L"\\" + cfg.worlds[selectedWorldIndex].first;
 						ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
 					}
@@ -1504,7 +1558,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 
 					// 模组备份
-					if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(-1, 30))) {
+					if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(-1, 0))) {
 						if (selectedWorldIndex != -1) {
 							ImGui::OpenPopup(L("CONFIRM_BACKUP_MODS_TITLE"));
 						}
@@ -1533,7 +1587,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 
 					// 一些功能按钮
-					if(ImGui::Button(L("EXIT_INFO"), ImVec2(-1, 30))) {
+					if(ImGui::Button(L("EXIT_INFO"), ImVec2(-1, 0))) {
 						done = true;
 					}
 
@@ -2138,6 +2192,9 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"MaxSmartBackups") cur->maxSmartBackupsPerFull = stoi(val);
 				else if (key == L"BackupOnExit") cur->backupOnGameExit = (val != L"0");
 				else if (key == L"BlacklistItem") cur->blacklist.push_back(val);
+				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
+				else if (key == L"RclonePath") cur->rclonePath = val;
+				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
@@ -2254,6 +2311,9 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		out << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		out << L"BackupOnExit=" << (c.backupOnGameExit ? 1 : 0) << L"\n";
+		out << L"CloudSyncEnabled=" << (c.cloudSyncEnabled ? 1 : 0) << L"\n";
+		out << L"RclonePath=" << c.rclonePath << L"\n";
+		out << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
 		for (const auto& item : c.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
@@ -2778,6 +2838,29 @@ void ShowSettingsWindow() {
 			}
 		}
 
+		// 云同步设置
+		if (ImGui::CollapsingHeader(L("GROUP_CLOUD_SYNC")))
+		{
+			ImGui::Checkbox(L("ENABLE_CLOUD_SYNC"), &cfg.cloudSyncEnabled);
+
+			ImGui::BeginDisabled(!cfg.cloudSyncEnabled);
+
+			char rclonePathBuf[CONSTANT1];
+			strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
+			ImGui::InputText(L("RCLONE_PATH_LABEL"), rclonePathBuf, CONSTANT1);
+			cfg.rclonePath = utf8_to_wstring(rclonePathBuf);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_PATH"));
+
+			char remotePathBuf[CONSTANT1];
+			strncpy_s(remotePathBuf, wstring_to_utf8(cfg.rcloneRemotePath).c_str(), sizeof(remotePathBuf));
+			ImGui::InputText(L("RCLONE_REMOTE_PATH_LABEL"), remotePathBuf, CONSTANT1);
+			cfg.rcloneRemotePath = utf8_to_wstring(remotePathBuf);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_REMOTE_PATH"));
+
+			ImGui::EndDisabled();
+		}
+
+
 		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"))) {
 			if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
 				g_CurrentLang = lang_codes[lang_idx];
@@ -3215,6 +3298,17 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		AddHistoryEntry(currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
 		string payload = "event=backup_success;config=" + to_string(currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
 		BroadcastEvent(payload);
+
+		// 云同步逻辑
+		if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
+			console.AddLog("[Cloud Sync] Starting cloud synchronization...");
+			wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + world.first + L"\" --progress";
+			// 另起一个线程来执行云同步，避免阻塞后续操作
+			thread([rclone_command, &console, config]() {
+				RunCommandInBackground(rclone_command, console, config.useLowPriority);
+				console.AddLog("[Cloud Sync] Synchronization task finished.");
+				}).detach();
+		}
 	}
 	else {
 		BroadcastEvent("event=backup_failed;config=" + to_string(currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";error=command_failed");

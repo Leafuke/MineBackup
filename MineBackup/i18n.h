@@ -294,6 +294,13 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "ABOUT_LICENSE_TYPE", u8"MIT License" },
 		{ "ABOUT_LICENSE_COPYRIGHT", u8"Copyright (c) 2024 Leafuke" },
 		{ "ABOUT_LICENSE_TEXT", u8"本软件永久免费，如果您遇到收费，请立刻与我联系。" },
+		{ "GROUP_CLOUD_SYNC", u8"云同步设置" },
+		{ "ENABLE_CLOUD_SYNC", u8"启用备份后云同步" },
+		{ "RCLONE_PATH_LABEL", u8"rclone.exe 路径" },
+		{ "BUTTON_SELECT_RCLONE", u8"选择 rclone.exe" },
+		{ "RCLONE_REMOTE_PATH_LABEL", u8"Rclone 远程路径" },
+		{ "TIP_RCLONE_PATH", u8"请指定 rclone.exe 文件的完整路径。" },
+		{ "TIP_RCLONE_REMOTE_PATH", u8"请输入 'rclone config' 中配置的远程名称和路径，例如: 'MyOneDrive:Backups'" },
 	}},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -578,7 +585,14 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "WORLD_DETAILS_PANE_TITLE", "Details & Actions" },
 		{ "MENU_GITHUB","GitHub" },
 		{ "MENU_ABOUT", "About MineBackup" },
-		{ "EXIT_INFO", "Shutdown MineBackup" }
+		{ "EXIT_INFO", "Shutdown MineBackup" },
+		{ "GROUP_CLOUD_SYNC", "Cloud Sync Settings" },
+		{ "ENABLE_CLOUD_SYNC", "Enable cloud sync after backup" },
+		{ "RCLONE_PATH_LABEL", "rclone.exe Path" },
+		{ "BUTTON_SELECT_RCLONE", "Select rclone.exe" },
+		{ "RCLONE_REMOTE_PATH_LABEL", "Rclone Remote Path" },
+		{ "TIP_RCLONE_PATH", "Please specify the full path to your rclone.exe file." },
+		{ "TIP_RCLONE_REMOTE_PATH", "Enter the remote name and path from your 'rclone config', e.g., 'MyOneDrive:Backups'" },
 }},
 };
 std::string g_CurrentLang; // Default language
