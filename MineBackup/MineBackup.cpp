@@ -69,6 +69,7 @@ struct Config {
 	bool cloudSyncEnabled = false;
 	wstring rclonePath;
 	wstring rcloneRemotePath;
+	wstring snapshotPath;
 };
 struct AutomatedTask {
 	int configIndex = -1;
@@ -2167,6 +2168,7 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
 				else if (key == L"RclonePath") cur->rclonePath = val;
 				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
+				else if (key == L"SnapshotPath") cur->snapshotPath = val;
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
@@ -2277,6 +2279,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"CloudSyncEnabled=" << (c.cloudSyncEnabled ? 1 : 0) << L"\n";
 		out << L"RclonePath=" << c.rclonePath << L"\n";
 		out << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
+		out << L"SnapshotPath=" << c.snapshotPath << L"\n";
 		for (const auto& item : c.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
@@ -2671,6 +2674,20 @@ void ShowSettingsWindow() {
 			if (ImGui::InputText(L("7Z_PATH_LABEL"), zipBuf, CONSTANT1)) {
 				cfg.zipPath = utf8_to_wstring(zipBuf);
 			}
+
+			char snapshotPathBuf[CONSTANT1];
+			strncpy_s(snapshotPathBuf, wstring_to_utf8(cfg.snapshotPath).c_str(), sizeof(snapshotPathBuf));
+			if (ImGui::Button(L("BUTTON_SELECT_SNAPSHOT_DIR"))) {
+				wstring sel = SelectFolderDialog();
+				if (!sel.empty()) {
+					cfg.snapshotPath = sel;
+				}
+			}
+			ImGui::SameLine();
+			if (ImGui::InputText(L("SNAPSHOT_PATH"), snapshotPathBuf, CONSTANT1)) {
+				cfg.snapshotPath = utf8_to_wstring(snapshotPathBuf);
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SNAPSHOT_PATH"));
 		}
 
 		// Language selection
@@ -2981,8 +2998,13 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console) {
 	try {
 		// 创建一个唯一的临时目录
-		filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
-
+		filesystem::path tempDir;
+		if (!configs[currentConfigIndex].snapshotPath.empty() && filesystem::exists(configs[currentConfigIndex].snapshotPath)) {
+			tempDir = configs[currentConfigIndex].snapshotPath;
+		}
+		else {
+			tempDir = filesystem::temp_directory_path();
+		}
 		// 如果旧的临时目录存在，先清理掉
 		if (filesystem::exists(tempDir)) {
 			filesystem::remove_all(tempDir);

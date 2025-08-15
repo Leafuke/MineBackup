@@ -303,7 +303,10 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "TIP_RCLONE_REMOTE_PATH", u8"请输入 'rclone config' 中配置的远程名称和路径，例如: 'MyOneDrive:Backups'" },
 		{ "CLOUD_SYNC_START", u8"[云同步] 开始同步..." },
 		{ "CLOUD_SYNC_BUTTOM", u8"上传备份文件夹至云" },
-		{ "CLOUD_SYNC_FINISH", u8"[云同步] 同步任务结束" }
+		{ "CLOUD_SYNC_FINISH", u8"[云同步] 同步任务结束" },
+		{ "SNAPSHOT_PATH", u8"快照临时路径" },
+		{ "TIP_SNAPSHOT_PATH", u8"为“热备份”指定一个存放临时文件的文件夹。\n留空则默认使用系统临时目录 (通常在C盘)。" },
+		{ "BUTTON_SELECT_SNAPSHOT_DIR", u8"选择快照路径" },
 }},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -598,7 +601,10 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "TIP_RCLONE_REMOTE_PATH", "Enter the remote name and path from your 'rclone config', e.g., 'MyOneDrive:Backups'" },
 		{"CLOUD_SYNC_START", "[Cloud Sync] Starting cloud synchronization..."},
 		{ "CLOUD_SYNC_BUTTOM", "Upload Backup Folder to Cloud" },
-		{"CLOUD_SYNC_FINISH", "[Cloud Sync] Synchronization task finished."}
+		{"CLOUD_SYNC_FINISH", "[Cloud Sync] Synchronization task finished."},
+		{ "SNAPSHOT_PATH", "Snapshot Temp Path" },
+		{ "TIP_SNAPSHOT_PATH", "Specify a folder for temporary 'Hot Backup' files.\nLeave blank to use the system default temp directory (usually on C: drive).\nIf your worlds are large, setting this to another drive is recommended to avoid filling up C:." },
+		{ "BUTTON_SELECT_SNAPSHOT_DIR", "Select Snapshot Path" },
 }},
 };
 std::string g_CurrentLang; // Default language
