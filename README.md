@@ -13,7 +13,7 @@
 
 ## ✨ Why MineBackup?
 - 🎯 **Plug-and-Play** — A single executable. Download, double-click, done.
-- 🖥 **Clean, Fast GUI** — Powered by ImGui. Simple layout, snappy response (v1.5.0+).
+- 🖥 **Clean, Fast GUI** — Powered by ImGui. Simple layout, snappy response.
 - 💾 **Secure Backups** — One click to safeguard your Minecraft saves.
 - 🔄 **Quick Restores** — Roll back to any previous state from a `.7z` file or local backup.
 - 📦 **High Compression** — Built-in 7-Zip core saves disk space.
@@ -32,7 +32,7 @@
 2. Download the single Windows executable.
 3. Double-click to run — **no installation required**.
 
-### 2️⃣ Basic Actions
+### 2️⃣ Basic Actions - Basic
 | Feature      | How to Use |
 |--------------|------------|
 | Back up a world | Select a world → click **Backup** |
@@ -116,9 +116,9 @@ cd MineBackup
 | ------------- | ---------------------------------------- |
 | BACKUP        | Immediately back up a given config/world |
 | RESTORE       | Restore a given config                   |
-| LIST\_WORLDS  | List all worlds under a config           |
-| LIST\_CONFIGS | List all configs                         |
-| SET\_CONFIG   | Change a config parameter                |
+| LIST_WORLDS  | List all worlds under a config           |
+| LIST_CONFIGS | List all configs                         |
+
 
 **APPID:** `0x00000020`
 **socket ID:** `0x00000010`
@@ -131,7 +131,7 @@ cd MineBackup
 * [**7-Zip**](https://github.com/ip7z/7zip) — Compression core (7z.exe)
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI framework
 * [**stb**](https://github.com/nothings/stb) — Image loading
-* **KnotLink** — Lightweight inter-process messaging
+* [**KnotLink**](https://github.com/hxh230802/KnotLink) — Lightweight inter-process messaging
 
 ---
 
