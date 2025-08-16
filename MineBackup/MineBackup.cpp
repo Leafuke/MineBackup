@@ -2999,11 +2999,11 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console)
 	try {
 		// 创建一个唯一的临时目录
 		filesystem::path tempDir;
-		if (!configs[currentConfigIndex].snapshotPath.empty() && filesystem::exists(configs[currentConfigIndex].snapshotPath)) {
-			tempDir = configs[currentConfigIndex].snapshotPath;
+		if (configs[currentConfigIndex].snapshotPath.size() >= 2 && filesystem::exists(configs[currentConfigIndex].snapshotPath)) {
+			tempDir = configs[currentConfigIndex].snapshotPath + L"MineBackup_Snapshot" + worldPath.filename().wstring();
 		}
 		else {
-			tempDir = filesystem::temp_directory_path();
+			tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
 		}
 		// 如果旧的临时目录存在，先清理掉
 		if (filesystem::exists(tempDir)) {
