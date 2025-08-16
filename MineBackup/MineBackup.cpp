@@ -724,7 +724,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.5", WS_OVERLAPPEDWINDOW, 100, 100, 10000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.5", WS_OVERLAPPEDWINDOW, 0, 0, 10000, 10000, nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -1513,7 +1513,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
 					}
 
-					if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 30))) {
+					if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
 						g_worldToFocusInHistory = cfg.worlds[selectedWorldIndex].first; // 设置要聚焦的世界
 						showHistoryWindow = true; // 打开历史窗口
 					}
@@ -1578,6 +1578,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 								backup_thread.detach();
 								strcpy_s(others_comment, "");
 							}
+							SaveConfigs(); // 保存一下路径
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::SameLine();
@@ -2212,6 +2213,7 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"RclonePath") cur->rclonePath = val;
 				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
 				else if (key == L"SnapshotPath") cur->snapshotPath = val;
+				else if (key == L"OtherPath") cur->othersPath = val;
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
@@ -2323,6 +2325,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"RclonePath=" << c.rclonePath << L"\n";
 		out << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
 		out << L"SnapshotPath=" << c.snapshotPath << L"\n";
+		out << L"OtherPath=" << c.othersPath << L"\n";
 		for (const auto& item : c.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
