@@ -13,7 +13,7 @@
 
 ## ✨ 为什么选择 MineBackup？
 - 🎯 **即点即用** — 单文件可执行，下载后双击运行，无需安装。
-- 🖥 **简洁直观的 GUI** — 基于 ImGui，功能布局清晰、响应迅速（v1.5.0+）。
+- 🖥 **简洁直观的 GUI** — 基于 ImGui，功能布局清晰、响应迅速。
 - 💾 **安全备份** — 一键备份 Minecraft 存档，避免数据丢失。
 - 🔄 **快速还原** — 支持从 `.7z` 文件或本地目录恢复任意版本。
 - 📦 **高压缩率** — 内置 7-Zip 核心，节省存储空间。
@@ -63,11 +63,7 @@
 - **支持的指令**：
 ```
 
-BACKUP \<config\_idx> \<world\_idx> \[comment]
-RESTORE \<config\_idx>
-LIST\_WORLDS \<config\_idx>
-LIST\_CONFIGS
-SET\_CONFIG \<config\_idx> <key> <value>
+待补充，可见 [MineBackup-Mod](https://github.com/Leafuke/MineBackup-Mod)
 
 ````
 *key*: `backup_mode` / `hot_backup`  
@@ -113,9 +109,8 @@ cd MineBackup
 | ------------- | ----------- |
 | BACKUP        | 立即备份指定配置与世界 |
 | RESTORE       | 还原指定配置      |
-| LIST\_WORLDS  | 列出某配置下的所有世界 |
-| LIST\_CONFIGS | 列出所有配置      |
-| SET\_CONFIG   | 修改配置参数      |
+| LIST_WORLDS  | 列出某配置下的所有世界 |
+| LIST_CONFIGS | 列出所有配置      |
 
 **APPID**: `0x00000020`
 **socket ID**: `0x00000010`
@@ -128,7 +123,7 @@ cd MineBackup
 * [**7-Zip**](https://github.com/ip7z/7zip) — 压缩核心（7z.exe）
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI 框架
 * [**stb**](https://github.com/nothings/stb) — 图片加载
-* **KnotLink** — 程序间消息通信框架
+* [**KnotLink**](https://github.com/hxh230802/KnotLink) — 程序间消息通信框架
 
 ---
 
