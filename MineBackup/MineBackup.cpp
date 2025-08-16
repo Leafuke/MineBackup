@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.4";
+const string CURRENT_VERSION = "1.7.5";
 
 
 // 结构体们
@@ -64,12 +64,13 @@ struct Config {
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
 	int maxSmartBackupsPerFull = 5;
-	bool backupOnGameExit = false;
+	bool backupOnGameStart = false;
 	vector<wstring> blacklist;
 	bool cloudSyncEnabled = false;
 	wstring rclonePath;
 	wstring rcloneRemotePath;
 	wstring snapshotPath;
+	wstring othersPath;
 };
 struct AutomatedTask {
 	int configIndex = -1;
@@ -92,7 +93,7 @@ struct SpecialConfig {
 	vector<wstring> blacklist;
 	bool runOnStartup = false;
 	bool hideWindow = false;
-	bool backupOnGameExit = false;
+	bool backupOnGameStart = false;
 };
 struct HistoryEntry {
 	wstring timestamp_str;
@@ -588,7 +589,7 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console)
 void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console, const wstring& comment = L"");
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod);
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod); 
-void DoModsBackup(const Config config, const wstring& comment);
+void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment);
 void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, Console* console);
 void RunSpecialMode(int configId);
 void CheckForConfigConflicts();
@@ -723,7 +724,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.4", WS_OVERLAPPEDWINDOW, 100, 100, 10000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.5", WS_OVERLAPPEDWINDOW, 100, 100, 10000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -1130,7 +1131,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				if (ImGui::BeginMenu(L("MENU_TOOLS"))) {
 					if (ImGui::MenuItem(L("HISTORY_BUTTON"))) { showHistoryWindow = true; }
 					ImGui::Separator();
-					if (ImGui::MenuItem(L("BUTTON_BACKUP_MODS"))) { ImGui::OpenPopup(L("CONFIRM_BACKUP_MODS_TITLE")); }
+					if (ImGui::MenuItem(L("BUTTON_BACKUP_MODS"))) { ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE")); }
 					ImGui::EndMenu();
 				}
 				if (ImGui::BeginMenu(L("MENU_HELP"))) {
@@ -1520,19 +1521,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					// 模组备份
 					if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(-1, 0))) {
 						if (selectedWorldIndex != -1) {
-							ImGui::OpenPopup(L("CONFIRM_BACKUP_MODS_TITLE"));
+							ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE"));
 						}
 					}
 
-					if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_MODS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+					if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_OTHERS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 						static char mods_comment[256] = "";
-						ImGui::TextUnformatted(L("CONFIRM_BACKUP_MODS_MSG"));
+						ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
 						ImGui::InputText(L("HINT_BACKUP_COMMENT"), mods_comment, IM_ARRAYSIZE(mods_comment));
 						ImGui::Separator();
 
 						if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
 							if (configs.count(currentConfigIndex)) {
-								thread backup_thread(DoModsBackup, configs[currentConfigIndex], utf8_to_wstring(mods_comment));
+								filesystem::path tempPath = cfg.saveRoot;
+								filesystem::path modsPath = tempPath.parent_path() / "mods";
+								thread backup_thread(DoOthersBackup, configs[currentConfigIndex], modsPath, utf8_to_wstring(mods_comment));
 								backup_thread.detach();
 								strcpy_s(mods_comment, "");
 							}
@@ -1545,6 +1548,46 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						}
 						ImGui::EndPopup();
 					}
+
+					// 其他备份
+					float availWidth = ImGui::GetContentRegionAvail().x;
+					float btnWidth = ImGui::CalcTextSize(L("BUTTON_BACKUP_OTHERS")).x + ImGui::GetStyle().FramePadding.x * 2;
+					if (ImGui::Button(L("BUTTON_BACKUP_OTHERS"), ImVec2(btnWidth, 0))) {
+						if (selectedWorldIndex != -1) {
+							ImGui::OpenPopup("Others");
+						}
+					}
+					ImGui::SameLine();
+					ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97);
+					// 可以输入需要备份的其他内容的路径，比如 D:\Games\configs
+					static char buf[CONSTANT1] = "";
+					strcpy(buf, wstring_to_utf8(cfg.othersPath).c_str());
+					if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
+						cfg.othersPath = utf8_to_wstring(buf);
+					}
+
+					if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+						static char others_comment[CONSTANT1] = "";
+						ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
+						ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));
+						ImGui::Separator();
+
+						if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+							if (configs.count(currentConfigIndex)) {
+								thread backup_thread(DoOthersBackup, configs[currentConfigIndex], buf, utf8_to_wstring(others_comment));
+								backup_thread.detach();
+								strcpy_s(others_comment, "");
+							}
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::SameLine();
+						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							strcpy_s(others_comment, "");
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::EndPopup();
+					}
+
 
 					if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
 						// 云同步逻辑
@@ -2163,7 +2206,7 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
 				else if (key == L"MaxSmartBackups") cur->maxSmartBackupsPerFull = stoi(val);
-				else if (key == L"BackupOnExit") cur->backupOnGameExit = (val != L"0");
+				else if (key == L"BackupOnStart") cur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") cur->blacklist.push_back(val);
 				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
 				else if (key == L"RclonePath") cur->rclonePath = val;
@@ -2208,7 +2251,7 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"CpuThreads") spCur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") spCur->useLowPriority = (val != L"0");
 				else if (key == L"HotBackup") spCur->hotBackup = (val != L"0");
-				else if (key == L"BackupOnExit") spCur->backupOnGameExit = (val != L"0");
+				else if (key == L"BackupOnStart") spCur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
 			}
 			else if (section == L"General") { // Inside [General] section
@@ -2275,7 +2318,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		out << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
-		out << L"BackupOnExit=" << (c.backupOnGameExit ? 1 : 0) << L"\n";
+		out << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
 		out << L"CloudSyncEnabled=" << (c.cloudSyncEnabled ? 1 : 0) << L"\n";
 		out << L"RclonePath=" << c.rclonePath << L"\n";
 		out << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
@@ -2307,7 +2350,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"CpuThreads=" << sc.cpuThreads << L"\n";
 		out << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
 		out << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n";
-		out << L"BackupOnExit=" << (sc.backupOnGameExit ? 1 : 0) << L"\n";
+		out << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
 		for (const auto& item : sc.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
@@ -2474,8 +2517,8 @@ void ShowSettingsWindow() {
 			ImGui::Checkbox(L("IS_HOT_BACKUP"), &spCfg.hotBackup);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
 			ImGui::SameLine();
-			ImGui::Checkbox(L("BACKUP_ON_EXIT"), &spCfg.backupOnGameExit);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_EXIT"));
+			ImGui::Checkbox(L("BACKUP_ON_START"), &spCfg.backupOnGameStart);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_START"));
 			ImGui::SameLine();
 			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_LOW_PRIORITY"));
@@ -2761,8 +2804,8 @@ void ShowSettingsWindow() {
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
 			}
-			ImGui::Checkbox(L("BACKUP_ON_EXIT"), &cfg.backupOnGameExit);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_EXIT"));
+			ImGui::Checkbox(L("BACKUP_ON_START"), &cfg.backupOnGameStart);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_START"));
 			ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
 			ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
 			// 低优先级
@@ -3289,21 +3332,27 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
 	}
 }
-void DoModsBackup(const Config config, const wstring& comment) {
-	console.AddLog(L("LOG_BACKUP_MODS_START"));
+void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment) {
+	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
 
 	filesystem::path saveRoot(config.saveRoot);
 	
-	filesystem::path modsPath = saveRoot.parent_path() / "mods";
+	filesystem::path othersPath = backupWhat;
+	backupWhat = backupWhat.filename().wstring(); // 只保留最后的文件夹名
 
-	if (!filesystem::exists(modsPath) || !filesystem::is_directory(modsPath)) {
-		console.AddLog(L("LOG_ERROR_MODS_NOT_FOUND"), wstring_to_utf8(modsPath.wstring()).c_str());
-		console.AddLog(L("LOG_BACKUP_MODS_END"));
+	//filesystem::path modsPath = saveRoot.parent_path() / "mods";
+
+	if (!filesystem::exists(othersPath) || !filesystem::is_directory(othersPath)) {
+		console.AddLog(L("LOG_ERROR_OTHERS_NOT_FOUND"), wstring_to_utf8(othersPath.wstring()).c_str());
+		console.AddLog(L("LOG_BACKUP_OTHERS_END"));
 		return;
 	}
 
-	filesystem::path destinationFolder = filesystem::path(config.backupPath) / L"_MODS_";
-	wstring archiveNameBase = L"Mods";
+	filesystem::path destinationFolder;
+	wstring archiveNameBase;
+
+	destinationFolder = filesystem::path(config.backupPath) / backupWhat;
+	archiveNameBase = backupWhat;
 
 	if (!comment.empty()) {
 		archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
@@ -3323,20 +3372,20 @@ void DoModsBackup(const Config config, const wstring& comment) {
 	}
 	catch (const filesystem::filesystem_error& e) {
 		console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
-		console.AddLog(L("LOG_BACKUP_MODS_END"));
+		console.AddLog(L("LOG_BACKUP_OTHERS_END"));
 		return;
 	}
 
 	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + modsPath.wstring() + L"\\*\"";
+		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
 		LimitBackupFiles(destinationFolder.wstring(), config.keepCount, &console);
 		// 用特殊名字添加到历史
-		AddHistoryEntry(currentConfigIndex, L"__MODS__", filesystem::path(archivePath).filename().wstring(), L"Mods", comment);
+		AddHistoryEntry(currentConfigIndex, backupWhat, filesystem::path(archivePath).filename().wstring(), backupWhat, comment);
 	}
 
-	console.AddLog(L("LOG_BACKUP_MODS_END"));
+	console.AddLog(L("LOG_BACKUP_OTHERS_END"));
 }
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
@@ -3975,7 +4024,9 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		thread([=]() {
 			lock_guard<mutex> thread_lock(g_configsMutex);
 			if (configs.count(config_idx)) {
-				DoModsBackup(configs[config_idx], utf8_to_wstring(comment_part));
+				filesystem::path tempPath = configs[config_idx].saveRoot;
+				filesystem::path modsPath = tempPath.parent_path() / "mods";
+				DoOthersBackup(configs[config_idx], modsPath, utf8_to_wstring(comment_part));
 			}
 			}).detach();
 		BroadcastEvent("event=mods_backup_started;config=" + to_string(config_idx));
@@ -4051,7 +4102,7 @@ void ExitWatcherThreadFunction() {
 			
 			for (const auto& config_pair : configs) {
 				const Config& cfg = config_pair.second;
-				if (!cfg.backupOnGameExit) continue;
+				if (!cfg.backupOnGameStart) continue;
 				for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
 					wstring levelDatPath = cfg.saveRoot + L"\\" + cfg.worlds[world_idx].first + L"\\session.lock";
 					if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
@@ -4073,7 +4124,7 @@ void ExitWatcherThreadFunction() {
 			
 			for (const auto& sp_config_pair : specialConfigs) {
 				const SpecialConfig& sp_cfg = sp_config_pair.second;
-				if (!sp_cfg.backupOnGameExit) continue;
+				if (!sp_cfg.backupOnGameStart) continue;
 				for (const auto& task : sp_cfg.tasks) {
 					if (configs.count(task.configIndex) && task.worldIndex < configs[task.configIndex].worlds.size()) {
 						const Config& base_cfg = configs[task.configIndex];
@@ -4101,23 +4152,24 @@ void ExitWatcherThreadFunction() {
 		{
 			lock_guard<mutex> lock(g_activeWorldsMutex);
 
+			// 检查已关闭的世界
+			vector<pair<int, int>> worlds_to_backup;
+
 			// 检查新启动的世界
 			for (const auto& locked_pair : currently_locked_worlds) {
 				if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
 					console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
 					string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
 					BroadcastEvent(payload);
+					worlds_to_backup.push_back(locked_pair.first);
 				}
 			}
 
-			// 检查已关闭的世界
-			vector<pair<int, int>> worlds_to_backup;
 			for (const auto& active_pair : g_activeWorlds) {
 				if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
 					console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
 					string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
 					BroadcastEvent(payload);
-					worlds_to_backup.push_back(active_pair.first);
 				}
 			}
 
