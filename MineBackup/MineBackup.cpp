@@ -36,8 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.5";
-
+const string CURRENT_VERSION = "1.7.6";
 
 // 结构体们
 struct Config {
@@ -724,7 +723,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.5", WS_OVERLAPPEDWINDOW, 0, 0, 10000, 10000, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.6", WS_OVERLAPPEDWINDOW, 0, 0, 10000, 10000, nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -3046,7 +3045,7 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console)
 		// 创建一个唯一的临时目录
 		filesystem::path tempDir;
 		if (configs[currentConfigIndex].snapshotPath.size() >= 2 && filesystem::exists(configs[currentConfigIndex].snapshotPath)) {
-			tempDir = configs[currentConfigIndex].snapshotPath + L"MineBackup_Snapshot" + worldPath.filename().wstring();
+			tempDir = configs[currentConfigIndex].snapshotPath + L"\\MineBackup_Snapshot\\" + worldPath.filename().wstring();
 		}
 		else {
 			tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
@@ -3125,9 +3124,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	wchar_t timeBuf[80];
 	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
 	archivePath = destinationFolder + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-
-	wstring baseArchivePath = destinationFolder + L"\\" + archiveNameBase + L"." + config.zipFormat;
-
+	
 	// 创建备份目标文件夹（如果不存在）
 	try {
 		filesystem::create_directories(destinationFolder);
@@ -3145,7 +3142,6 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		if (!snapshotPath.empty()) {
 			sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
 			originalSourcePath = snapshotPath;
-
 		}
 		else {
 			console.AddLog(L("LOG_ERROR_SNAPSHOT"));
@@ -3156,7 +3152,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	bool forceFullBackup = true;
 	if (filesystem::exists(destinationFolder)) {
 		for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-			if (entry.is_regular_file()) {
+			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
 				forceFullBackup = false;
 				break;
 			}
@@ -3194,7 +3190,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 					break;
 				}
 				if (filename.find(L"[Smart]") != wstring::npos) {
-					smartCount++;
+					++smartCount;
 				}
 			}
 
@@ -3208,8 +3204,10 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	// 无论什么备份模式，都要获得状态，便于成功后更新状态
 	vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
 
+	// 如果开了检测无变化跳过
 	if (config.skipIfUnchanged && filesToBackup.empty()) {
 		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+		// 如果开了热备份，清理一下临时文件夹
 		if (config.hotBackup && !sourcePath.empty()) {
 			console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
 			error_code ec;
