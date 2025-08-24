@@ -119,6 +119,9 @@
     <ClInclude Include="KnotLink\OpenSocketResponser.hpp">
       <Filter>KnotLink</Filter>
     </ClInclude>
+    <ClInclude Include="json.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MineBackup.rc">

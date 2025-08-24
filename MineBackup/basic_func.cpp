@@ -1,3 +1,4 @@
+#include "json.hpp"
 #include <string>
 #include <map>
 #include <filesystem>
@@ -82,6 +83,9 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 	}
 }
 
+wstring utf8_to_wstring(const string& str);
+string wstring_to_utf8(const wstring& str);
+
 // 计算文件的哈希值（这是一个简单的实现，很不严格哒）
 size_t CalculateFileHash(const filesystem::path& filepath) {
 	ifstream file(filepath, ios::binary);
@@ -93,31 +97,84 @@ size_t CalculateFileHash(const filesystem::path& filepath) {
 }
 // 作为全局变量，方便二者修改
 map<wstring, size_t> currentState;
-// 获取已更改的文件列表，并更新状态文件
-wstring utf8_to_wstring(const string& str);
-vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath) {
+
+// 定义检查结果的枚举类型
+enum class BackupCheckResult {
+	NO_CHANGE,
+	CHANGES_DETECTED,
+	FORCE_FULL_BACKUP_METADATA_INVALID,
+	FORCE_FULL_BACKUP_BASE_MISSING
+};
+
+// 全局变量 currentState 不再需要，作用域移至函数内部
+
+// 位于 basic_func.cpp
+vector<filesystem::path> GetChangedFiles(
+	const filesystem::path& worldPath,
+	const filesystem::path& metadataPath,
+	const filesystem::path& backupPath, // 需要传入备份路径以供验证
+	BackupCheckResult& out_result,
+	map<wstring, size_t>& out_currentState // 将当前状态传出，供后续保存
+) {
+	out_result = BackupCheckResult::NO_CHANGE;
+	out_currentState.clear();
 	vector<filesystem::path> changedFiles;
 	map<wstring, size_t> lastState;
-	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
-	// 1. 读取上一次的状态
-	ifstream stateFileIn(stateFilePath);
-	if (stateFileIn.is_open()) {
-		string path; // txt里千万不能有空格！
-		size_t hash;
-		while (stateFileIn >> path >> hash) {
-			lastState[utf8_to_wstring(path)] = hash;
+	filesystem::path metadataFile = metadataPath / L"metadata.json";
+
+	// 1. 读取并验证元数据
+	if (!filesystem::exists(metadataFile)) {
+		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
+		// 元数据不存在，扫描所有文件并返回，以便进行首次完整备份
+		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
+			if (entry.is_regular_file()) {
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
+			}
 		}
-		stateFileIn.close();
+		return {}; // 返回空列表，因为所有文件状态都记录在 out_currentState 中了
 	}
 
-	// 2. 计算当前状态并与上次状态比较
+	nlohmann::json metadata;
+	wstring basedOnBackupFile;
+	try {
+		ifstream f(metadataFile);
+		metadata = nlohmann::json::parse(f);
+		basedOnBackupFile = utf8_to_wstring(metadata.at("basedOnBackupFile"));
+		for (auto& [key, val] : metadata.at("fileStates").items()) {
+			lastState[utf8_to_wstring(key)] = val.get<size_t>();
+		}
+	}
+	catch (const nlohmann::json::exception& e) {
+		// 元数据文件损坏或格式错误
+		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
+		// 同样需要扫描所有文件
+		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
+			if (entry.is_regular_file()) {
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
+			}
+		}
+		return {};
+	}
+
+	// 2. 核心验证：检查元数据依赖的基准备份文件是否存在
+	if (!filesystem::exists(backupPath / basedOnBackupFile)) {
+		out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
+		// 基准文件被用户删除，元数据失效，扫描所有文件以进行新的完整备份
+		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
+			if (entry.is_regular_file()) {
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
+			}
+		}
+		return {};
+	}
+
+	// 3. 计算当前状态并与上次状态比较
 	if (filesystem::exists(worldPath)) {
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
 				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
 				size_t currentHash = CalculateFileHash(entry.path());
-				currentState[relativePath.wstring()] = currentHash;
-
+				out_currentState[relativePath.wstring()] = currentHash;
 				// 如果文件是新的，或者哈希值不同，则判定为已更改
 				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
 					changedFiles.push_back(entry.path());
@@ -125,18 +182,78 @@ vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, cons
 			}
 		}
 	}
+
+	if (!changedFiles.empty()) {
+		out_result = BackupCheckResult::CHANGES_DETECTED;
+	}
+
 	return changedFiles;
 }
-// 新的函数，专门用于保存状态文件 从filesystem版本修改为wofstream试图解决中文问题
-void SaveStateFile(const filesystem::path& metadataPath) {
-	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
-	wofstream stateFileOut(stateFilePath, ios::trunc);
-	stateFileOut.imbue(locale(stateFileOut.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+
+void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const map<wstring, size_t>& currentState) {
+	filesystem::create_directories(metadataPath);
+	filesystem::path metadataFile = metadataPath / L"metadata.json";
+
+	nlohmann::json metadata;
+	metadata["version"] = 1;
+	metadata["lastBackupFile"] = wstring_to_utf8(newBackupFile);
+	metadata["basedOnBackupFile"] = wstring_to_utf8(basedOnBackupFile);
+
+	nlohmann::json fileStates = nlohmann::json::object();
 	for (const auto& pair : currentState) {
-		stateFileOut << pair.first << L" " << pair.second << endl;
+		fileStates[wstring_to_utf8(pair.first)] = pair.second;
 	}
-	stateFileOut.close();
+	metadata["fileStates"] = fileStates;
+
+	ofstream o(metadataFile, ios::trunc);
+	o << metadata.dump(2); // 两个空格缩进
 }
+
+
+// 获取已更改的文件列表，并更新状态文件
+//wstring utf8_to_wstring(const string& str);
+//vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath) {
+//	vector<filesystem::path> changedFiles;
+//	map<wstring, size_t> lastState;
+//	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
+//	// 1. 读取上一次的状态
+//	ifstream stateFileIn(stateFilePath);
+//	if (stateFileIn.is_open()) {
+//		string path; // txt里千万不能有空格！
+//		size_t hash;
+//		while (stateFileIn >> path >> hash) {
+//			lastState[utf8_to_wstring(path)] = hash;
+//		}
+//		stateFileIn.close();
+//	}
+//
+//	// 2. 计算当前状态并与上次状态比较
+//	if (filesystem::exists(worldPath)) {
+//		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
+//			if (entry.is_regular_file()) {
+//				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
+//				size_t currentHash = CalculateFileHash(entry.path());
+//				currentState[relativePath.wstring()] = currentHash;
+//
+//				// 如果文件是新的，或者哈希值不同，则判定为已更改
+//				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
+//					changedFiles.push_back(entry.path());
+//				}
+//			}
+//		}
+//	}
+//	return changedFiles;
+//}
+// 新的函数，专门用于保存状态文件 从filesystem版本修改为wofstream试图解决中文问题
+//void SaveStateFile(const filesystem::path& metadataPath) {
+//	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
+//	wofstream stateFileOut(stateFilePath, ios::trunc);
+//	stateFileOut.imbue(locale(stateFileOut.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+//	for (const auto& pair : currentState) {
+//		stateFileOut << pair.first << L" " << pair.second << endl;
+//	}
+//	stateFileOut.close();
+//}
 
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList) {
 	for (const pair<wstring, wstring>& worldLi : worldList) {
@@ -146,7 +263,6 @@ bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& 
 	return true;
 }
 
-wstring utf8_to_wstring(const string& str);
 // 开机自启功能终于来啦
 void SetAutoStart(const string& appName, const wstring& appPath, int configId, bool enable) {
 	HKEY hKey;

@@ -309,6 +309,17 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "SNAPSHOT_PATH", u8"快照临时路径" },
 		{ "TIP_SNAPSHOT_PATH", u8"为“热备份”指定一个存放临时文件的文件夹。\n留空则默认使用系统临时目录 (通常在C盘)。" },
 		{ "BUTTON_SELECT_SNAPSHOT_DIR", u8"选择快照路径" },
+		{ "ERROR_FILE_NO_FOUND", u8"文件未找到：%s" },
+		{ "DELETE_BACKUP_BUTTON", u8"删除" },
+		{ "CONFIRM_DELETE_BACKUP_TITLE", u8"确认删除备份" },
+		{ "CONFIRM_DELETE_BACKUP_MSG", u8"您确定要删除备份文件 '%s' 吗？\n如果这是[Full]备份，其后的[Smart]备份也会一并删除！\n此操作无法撤销！" },
+		{ "FILE_MISSING_LABEL", u8"[文件不存在]" },
+		{ "BACKUP_FILE_TOO_SMALL_WARNING", u8"[警告] 备份文件 '%s' 的大小异常（小于10KB），可能是一个不完整的备份。请检查！" },
+		{ "QUICK_CONFIG_SWITCHER", u8"配置快速切换" },
+		{ "CURRENT_CONFIG_INFO", u8"当前配置信息" },
+		{ "CONFIG_NAME_LABEL", u8"名称" },
+		{ "SAVES_PATH_LABEL", u8"存档路径" },
+		{ "BACKUP_PATH_LABEL", u8"备份路径" }
 }},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -609,6 +620,16 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "SNAPSHOT_PATH", "Snapshot Temp Path" },
 		{ "TIP_SNAPSHOT_PATH", "Specify a folder for temporary 'Hot Backup' files.\nLeave blank to use the system default temp directory (usually on C: drive).\nIf your worlds are large, setting this to another drive is recommended to avoid filling up C:." },
 		{ "BUTTON_SELECT_SNAPSHOT_DIR", "Select Snapshot Path" },
+		{ "DELETE_BACKUP_BUTTON", "Delete" },
+		{ "CONFIRM_DELETE_BACKUP_TITLE", "Confirm Backup Deletion" },
+		{ "CONFIRM_DELETE_BACKUP_MSG", "Are you sure you want to delete the backup file '%s'?\nIf this is a [Full] backup, all subsequent [Smart] backups will also be deleted!\nThis action is irreversible!" },
+		{ "FILE_MISSING_LABEL", "[FILE MISSING]" },
+		{ "BACKUP_FILE_TOO_SMALL_WARNING", "[Warning] The size of backup file '%s' is unusually small (< 10KB). It might be an incomplete backup. Please check!" },
+		{ "QUICK_CONFIG_SWITCHER", "Quick Config Switcher" },
+		{ "CURRENT_CONFIG_INFO", "Current Configuration Info" },
+		{ "CONFIG_NAME_LABEL", "Name" },
+		{ "SAVES_PATH_LABEL", "Saves Path" },
+		{ "BACKUP_PATH_LABEL", "Backup Path" }
 }},
 };
 std::string g_CurrentLang; // Default language

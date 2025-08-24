@@ -103,7 +103,7 @@ void LoadHistory() {
 }
 
 
-// 新增：添加一条历史记录条目
+// 添加一条历史记录条目
 void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment) {
 	time_t now = time(0);
 	tm ltm;
@@ -120,4 +120,18 @@ void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& b
 
 	g_history[configIndex].push_back(entry);
 	SaveHistory();
+}
+
+// 删除指定的历史记录条目（通过备份文件名匹配）
+void RemoveHistoryEntry(int configIndex, const wstring& backupFileToRemove) {
+	if (g_history.count(configIndex)) {
+		auto& history_vec = g_history[configIndex];
+		history_vec.erase(
+			remove_if(history_vec.begin(), history_vec.end(),
+				[&](const HistoryEntry& entry) {
+					return entry.backupFile == backupFileToRemove;
+				}),
+			history_vec.end()
+		);
+	}
 }

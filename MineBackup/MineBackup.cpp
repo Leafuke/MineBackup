@@ -139,6 +139,12 @@ static thread g_exitWatcherThread;
 static atomic<bool> g_stopExitWatcher(false);
 static map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 static wstring g_worldToFocusInHistory = L"";
+extern enum class BackupCheckResult {
+	NO_CHANGE,
+	CHANGES_DETECTED,
+	FORCE_FULL_BACKUP_METADATA_INVALID,
+	FORCE_FULL_BACKUP_BASE_MISSING
+};
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -155,6 +161,7 @@ string utf8_to_gbk(const string& utf8);
 void SaveHistory();
 void LoadHistory();
 void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment);
+void RemoveHistoryEntry(int configIndex, const wstring& backupFileToRemove);
 
 void BroadcastEvent(const string& eventPayload); // KnotLink 广播
 const char* L(const char* key);
@@ -173,13 +180,13 @@ void ExitWatcherThreadFunction();
 bool IsFileLocked(const wstring& path);
 wstring SelectFileDialog(HWND hwndOwner = NULL);
 wstring SelectFolderDialog(HWND hwndOwner = NULL);
-vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath);
+vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath, const filesystem::path& backupPath, BackupCheckResult& out_result, map<wstring, size_t>& out_currentState);
 size_t CalculateFileHash(const filesystem::path& filepath);
 string GetRegistryValue(const string& keyPath, const string& valueName);
 wstring GetLastOpenTime(const wstring& worldPath);
 wstring GetLastBackupTime(const wstring& backupDir);
 
-void SaveStateFile(const filesystem::path& metadataPath);
+void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const map<wstring, size_t>& currentState);
 static void LoadConfigs(const string& filename = "config.ini");
 static void SaveConfigs(const wstring& filename = L"config.ini");
 
@@ -589,6 +596,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod);
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod); 
 void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment);
+void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console);
 void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, Console* console);
 void RunSpecialMode(int configId);
 void CheckForConfigConflicts();
@@ -2852,6 +2860,10 @@ void ShowSettingsWindow() {
 						if (ImGui::Selectable(label.c_str(), sel_bl_item == n)) {
 							sel_bl_item = n;
 						}
+						if (ImGui::IsItemHovered()) {
+							// 如果鼠标悬停，则设置一个Tooltip显示完整内容
+							ImGui::SetTooltip("%s", label.c_str());
+						}
 					}
 				}
 				ImGui::EndListBox();
@@ -3201,11 +3213,21 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		}
 	}
 
-	// 无论什么备份模式，都要获得状态，便于成功后更新状态
-	vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder);
+	// 记录元数据，找出哪些文件有变化需要备份
+	BackupCheckResult checkResult;
+	map<wstring, size_t> currentState;
+	vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
+
+	// 根据检查结果进行日志记录
+	if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
+		console.AddLog("[Info] Metadata is invalid or missing. A full backup is required.");
+	}
+	else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING) {
+		console.AddLog("[Warning] The base backup file for previous smart backups was not found. A new full backup chain will be started.");
+	}
 
 	// 如果开了检测无变化跳过
-	if (config.skipIfUnchanged && filesToBackup.empty()) {
+	if (config.skipIfUnchanged && checkResult == BackupCheckResult::NO_CHANGE) {
 		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
 		// 如果开了热备份，清理一下临时文件夹
 		if (config.hotBackup && !sourcePath.empty()) {
@@ -3217,7 +3239,12 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		return;
 	}
 
+	forceFullBackup = (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID ||
+		checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING ||
+		forceFullBackupDueToLimit) || forceFullBackup;
+
 	wstring backupTypeStr; // 用于历史记录
+	wstring basedOnBackupFile; // 用于元数据记录智能备份基于的完整备份文件
 
 	if (config.backupMode == 1 || forceFullBackup) // 普通备份
 	{
@@ -3225,6 +3252,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"" + exclusion_args;
+		// 基于自身
+		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
 	}
 	else if (config.backupMode == 2) // 智能备份
 	{
@@ -3251,6 +3280,13 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		}
 
 		console.AddLog(L("LOG_BACKUP_SMART_INFO"), filesToBackup.size());
+
+		// 智能备份需要找到它所基于的文件
+		// 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
+		nlohmann::json oldMetadata;
+		ifstream f(destinationFolder + L"\\metadata.json");
+		oldMetadata = nlohmann::json::parse(f);
+		basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
 
 		// 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
 		filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot";
@@ -3302,8 +3338,25 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	if (RunCommandInBackground(command, console, config.useLowPriority, originalSourcePath)) // 工作目录不能丢！
 	{
 		console.AddLog(L("LOG_BACKUP_END_HEADER"));
+
+		// 备份文件大小检查
+		try {
+			if (filesystem::exists(archivePath)) {
+				uintmax_t fileSize = filesystem::file_size(archivePath);
+				// 阈值设置为 10 KB
+				if (fileSize < 10240) {
+					console.AddLog(L("BACKUP_FILE_TOO_SMALL_WARNING"), wstring_to_utf8(filesystem::path(archivePath).filename().wstring()).c_str());
+					// 广播一个警告
+					BroadcastEvent("event=backup_warning;type=file_too_small;");
+				}
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog("[Error] Could not check backup file size: %s", e.what());
+		}
+
 		LimitBackupFiles(destinationFolder, config.keepCount, &console);
-		SaveStateFile(metadataFolder);
+		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
 		AddHistoryEntry(currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
 		string payload = "event=backup_success;config=" + to_string(currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
@@ -3420,6 +3473,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
+// restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
@@ -3429,6 +3483,12 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	if (!filesystem::exists(config.zipPath)) {
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
+		return;
+	}
+
+	// 检查备份文件是否存在
+	if (backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) {
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return;
 	}
 
@@ -3458,28 +3518,40 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		filesystem::path baseFullBackup;
 		auto baseFullTime = filesystem::file_time_type{};
 
-		for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
-				if (entry.last_write_time() < filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
-					baseFullTime = entry.last_write_time();
-					baseFullBackup = entry.path();
+		// 如果是正向还原，先找到它所基于的完整备份
+		if (restoreMethod == 1 || restoreMethod == 0) {
+			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
+				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
+					if (entry.last_write_time() < filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
+						baseFullTime = entry.last_write_time();
+						baseFullBackup = entry.path();
+					}
+				}
+			}
+
+			if (baseFullBackup.empty()) {
+				console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
+				return;
+			}
+
+			console.AddLog(L("LOG_BACKUP_SMART_FOUND"), wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
+			backupsToApply.push_back(baseFullBackup);
+			// 收集从基础备份到目标备份之间的所有增量备份
+			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
+				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
+					if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= filesystem::last_write_time(targetBackupPath)) {
+						backupsToApply.push_back(entry.path());
+					}
 				}
 			}
 		}
-
-		if (baseFullBackup.empty()) {
-			console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
-			return;
-		}
-
-		console.AddLog(L("LOG_BACKUP_SMART_FOUND"), wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
-		backupsToApply.push_back(baseFullBackup);
-
-		// 收集从基础备份到目标备份之间的所有增量备份
-		for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
-				if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= filesystem::last_write_time(targetBackupPath)) {
-					backupsToApply.push_back(entry.path());
+		else if(restoreMethod == 2) {
+			// 反向还原，从最近的Smart备份开始，一直到目标备份
+			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
+				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
+					if (entry.last_write_time() > filesystem::last_write_time(targetBackupPath)) {
+						backupsToApply.push_back(entry.path());
+					}
 				}
 			}
 		}
@@ -3733,7 +3805,11 @@ void CheckForConfigConflicts() {
 
 }
 void ShowHistoryWindow() {
+
 	static bool history_restore = false;
+
+	static const HistoryEntry* entry_to_delete = nullptr;
+	static const HistoryEntry* selected_entry_for_restore = nullptr;
 
 	ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
 
@@ -3741,9 +3817,6 @@ void ShowHistoryWindow() {
 		ImGui::End();
 		return;
 	}
-
-	// 使用常量指针来确保数据不会被意外修改
-	static const HistoryEntry* selected_entry_for_restore = nullptr;
 
 	if (configs.find(currentConfigIndex) == configs.end()) {
 		ImGui::Text(L("ERROR_NO_CONFIG_SELECTED"));
@@ -3792,8 +3865,21 @@ void ShowHistoryWindow() {
 					const float node_radius = 5.0f;
 					const float row_height = ImGui::GetTextLineHeightWithSpacing() * 2.2f;
 					ImVec2 p = ImGui::GetCursorScreenPos();
+
+					// 根据备份类型和状态区分颜色
+					ImU32 nodeColor = ImGui::GetColorU32(ImGuiCol_Button); // 默认颜色
+					if (!filesystem::exists(filesystem::path(cfg.backupPath) / entry->worldName / entry->backupFile)) {
+						nodeColor = ImGui::GetColorU32(ImGuiCol_TextDisabled); // 文件不存在，灰色
+					}
+					else if (entry->backupType == L"Full") {
+						nodeColor = ImGui::GetColorU32(ImVec4(0.2f, 0.6f, 1.0f, 1.0f)); // Full备份，蓝色
+					}
+					else if (entry->backupType == L"Smart") {
+						nodeColor = ImGui::GetColorU32(ImVec4(0.2f, 1.0f, 0.6f, 1.0f)); // Smart备份，绿色
+					}
+
 					drawList->AddLine(ImVec2(p.x + node_radius, p.y - 1), ImVec2(p.x + node_radius, p.y + row_height), ImGui::GetColorU32(ImGuiCol_TextDisabled), 1.5f);
-					drawList->AddCircleFilled(ImVec2(p.x + node_radius, p.y + row_height * 0.5f), node_radius, ImGui::GetColorU32(ImGuiCol_Button));
+					drawList->AddCircleFilled(ImVec2(p.x + node_radius, p.y + row_height * 0.5f), node_radius, nodeColor);
 					ImGui::Dummy(ImVec2(node_radius * 3.0f, 0)); // Spacer
 					ImGui::EndGroup();
 
@@ -3811,6 +3897,13 @@ void ShowHistoryWindow() {
 					}
 					ImGui::TextDisabled("%s | %s", wstring_to_utf8(entry->timestamp_str).c_str(), wstring_to_utf8(entry->backupFile).c_str());
 					ImGui::EndGroup();
+
+					// 在右侧添加删除按钮
+					ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(L("DELETE_BACKUP_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2);
+					if (ImGui::SmallButton(L("DELETE_BACKUP_BUTTON"))) {
+						entry_to_delete = entry;
+						ImGui::OpenPopup(L("CONFIRM_DELETE_BACKUP_TITLE"));
+					}
 
 					// 在自定义绘制的控件上方创建一个整行不可见的按钮
 					ImVec2 end_cursor_pos = ImGui::GetCursorPos();
@@ -3831,6 +3924,25 @@ void ShowHistoryWindow() {
 				}
 				ImGui::TreePop();
 			}
+		}
+		if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_BACKUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+			if (entry_to_delete) {
+				ImGui::Text(L("CONFIRM_DELETE_BACKUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
+				ImGui::Separator();
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+					// 调用您之前添加的删除函数
+					thread delete_thread(DoDeleteBackup, cfg, *entry_to_delete, ref(console));
+					delete_thread.detach();
+					entry_to_delete = nullptr;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					entry_to_delete = nullptr;
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			ImGui::EndPopup();
 		}
 		ImGui::EndChild();
 	}
@@ -4196,4 +4308,65 @@ void ExitWatcherThreadFunction() {
 		this_thread::sleep_for(chrono::seconds(10));
 	}
 	console.AddLog(L("LOG_EXIT_WATCHER_STOP"));
+}
+
+void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console) {
+	console.AddLog("[Info] Preparing to delete backup: %s", wstring_to_utf8(entryToDelete.backupFile).c_str());
+
+	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
+	vector<filesystem::path> filesToDelete;
+	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
+
+	// 如果删除的是 [Full] 备份，必须联动删除其后的所有 [Smart] 备份
+	if (entryToDelete.backupType == L"Full") {
+		console.AddLog("[Warning] Deleting a [Full] backup. All dependent [Smart] backups in this chain will also be removed.");
+
+		// 获取此Full备份的写入时间
+		auto baseTime = filesystem::last_write_time(backupDir / entryToDelete.backupFile);
+
+		// 寻找此Full备份之后的下一个Full备份的时间点，作为删除范围的右边界
+		//auto nextFullTime = std::filesystem::file_time_type::max();这样写不行，它一定要括起来……
+		auto nextFullTime = (filesystem::file_time_type::max)();
+		vector<pair<filesystem::file_time_type, filesystem::path>> fullBackups;
+		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
+				fullBackups.push_back({ entry.last_write_time(), entry.path() });
+			}
+		}
+		sort(fullBackups.begin(), fullBackups.end()); // 按时间升序排序
+
+		for (const auto& fb : fullBackups) {
+			if (fb.first > baseTime) {
+				nextFullTime = fb.first;
+				break;
+			}
+		}
+
+		// 遍历并删除此时间区间内的所有 Smart 备份
+		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
+				auto writeTime = entry.last_write_time();
+				if (writeTime > baseTime && writeTime < nextFullTime) {
+					filesToDelete.push_back(entry.path());
+				}
+			}
+		}
+	}
+
+	// 执行删除操作
+	for (const auto& path : filesToDelete) {
+		try {
+			if (filesystem::exists(path)) {
+				filesystem::remove(path);
+				console.AddLog("  - Deleted file: %s", wstring_to_utf8(path.filename().wstring()).c_str());
+				// 从历史记录中移除对应条目
+				RemoveHistoryEntry(currentConfigIndex, path.filename().wstring());
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog("[Error] Failed to delete '%s': %s", wstring_to_utf8(path.filename().wstring()).c_str(), e.what());
+		}
+	}
+	SaveHistory(); // 保存历史记录的更改
+	console.AddLog("[Info] Deletion process finished.");
 }
