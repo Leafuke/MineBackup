@@ -1464,45 +1464,45 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					ImGui::InputTextWithHint("##backup_comment", L("HINT_BACKUP_COMMENT"), backupComment, IM_ARRAYSIZE(backupComment), ImGuiInputTextFlags_EnterReturnsTrue);
 
 					// -- 主要操作按钮 --
-					float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 3.1f;
+					float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
 					if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
 						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), utf8_to_wstring(backupComment));
 						backup_thread.detach();
 						strcpy_s(backupComment, "");
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(button_width, 0))) {
-						if (cfg.manualRestore) { // 手动选择还原
-							openRestorePopup = true;
-							ImGui::OpenPopup(L("RESTORE_POPUP_TITLE"));
-						}
-						else { // 自动还原最新备份
-							vector<filesystem::directory_entry> files;
+					//if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(button_width, 0))) {
+					//	if (cfg.manualRestore) { // 手动选择还原
+					//		openRestorePopup = true;
+					//		ImGui::OpenPopup(L("RESTORE_POPUP_TITLE"));
+					//	}
+					//	else { // 自动还原最新备份
+					//		vector<filesystem::directory_entry> files;
 
-							wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
-							// 收集所有常规文件
-							try {
-								for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-									if (entry.is_regular_file())
-										files.push_back(entry);
-								}
-							}
-							catch (const filesystem::filesystem_error& e) {
-								console.AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
-								continue;
-							}
-							// 按最后写入时间排序（最新的在前）
-							sort(files.begin(), files.end(), [](const filesystem::directory_entry& a, const filesystem::directory_entry& b) {
-								return filesystem::last_write_time(a) > filesystem::last_write_time(b);
-								});
-							if (cfg.backupBefore) {
-								thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
-								backup_thread.detach(); // 分离线程，让它在后台独立运行
-							}
-							DoRestore(cfg, cfg.worlds[selectedWorldIndex].first, files.front().path().filename().wstring(), ref(console), 0);
-						}
-					}
-					ImGui::SameLine();
+					//		wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
+					//		// 收集所有常规文件
+					//		try {
+					//			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+					//				if (entry.is_regular_file())
+					//					files.push_back(entry);
+					//			}
+					//		}
+					//		catch (const filesystem::filesystem_error& e) {
+					//			console.AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
+					//			continue;
+					//		}
+					//		// 按最后写入时间排序（最新的在前）
+					//		sort(files.begin(), files.end(), [](const filesystem::directory_entry& a, const filesystem::directory_entry& b) {
+					//			return filesystem::last_write_time(a) > filesystem::last_write_time(b);
+					//			});
+					//		if (cfg.backupBefore) {
+					//			thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
+					//			backup_thread.detach(); // 分离线程，让它在后台独立运行
+					//		}
+					//		DoRestore(cfg, cfg.worlds[selectedWorldIndex].first, files.front().path().filename().wstring(), ref(console), 0);
+					//	}
+					//}
+					//ImGui::SameLine();
 					if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
 						ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
 					}
@@ -1671,93 +1671,93 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				}
 
 				// --- 还原文件选择弹窗 ---
-				if (ImGui::BeginPopupModal(L("RESTORE_POPUP_TITLE"), &openRestorePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
-					ImGui::Text(L("RESTORE_PROMPT"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
-					wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
-					static int selectedBackupIndex = -1;
-					vector<wstring> backupFiles;
+				//if (ImGui::BeginPopupModal(L("RESTORE_POPUP_TITLE"), &openRestorePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+				//	ImGui::Text(L("RESTORE_PROMPT"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+				//	wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
+				//	static int selectedBackupIndex = -1;
+				//	vector<wstring> backupFiles;
 
-					// 遍历备份目录，找到所有文件
-					if (filesystem::exists(backupDir)) {
-						for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-							if (entry.is_regular_file()) {
-								backupFiles.push_back(entry.path().filename().wstring());
-							}
-						}
-					}
+				//	// 遍历备份目录，找到所有文件
+				//	if (filesystem::exists(backupDir)) {
+				//		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+				//			if (entry.is_regular_file()) {
+				//				backupFiles.push_back(entry.path().filename().wstring());
+				//			}
+				//		}
+				//	}
 
-					// 显示备份文件列表
-					if (ImGui::BeginListBox("##backupfiles", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing()))) {
-						for (int i = 0; i < backupFiles.size(); ++i) {
-							const bool is_selected = (selectedBackupIndex == i);
-							if (ImGui::Selectable(wstring_to_utf8(backupFiles[i]).c_str(), is_selected)) {
-								selectedBackupIndex = i;
-							}
-						}
-						ImGui::EndListBox();
-					}
+				//	// 显示备份文件列表
+				//	if (ImGui::BeginListBox("##backupfiles", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing()))) {
+				//		for (int i = 0; i < backupFiles.size(); ++i) {
+				//			const bool is_selected = (selectedBackupIndex == i);
+				//			if (ImGui::Selectable(wstring_to_utf8(backupFiles[i]).c_str(), is_selected)) {
+				//				selectedBackupIndex = i;
+				//			}
+				//		}
+				//		ImGui::EndListBox();
+				//	}
 
-					ImGui::Separator();
+				//	ImGui::Separator();
 
-					static int restore_method = 0; // 0 for Clean, 1 for Overwrite
-					ImGui::SeparatorText(L("RESTORE_METHOD"));
-					ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
-					ImGui::SameLine();
-					ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
-					ImGui::Separator();
+				//	static int restore_method = 0; // 0 for Clean, 1 for Overwrite
+				//	ImGui::SeparatorText(L("RESTORE_METHOD"));
+				//	ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
+				//	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
+				//	ImGui::SameLine();
+				//	ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
+				//	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
+				//	ImGui::Separator();
 
-					if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"))) {
-						wstring selectedFile = SelectFileDialog();
-						if (!selectedFile.empty()) {
-							filesystem::path filePath(selectedFile);
-							wstring extension = filePath.extension().wstring();
-							// 合理的
-							if (extension == L".zip" || extension == L".7z") {
-								if (cfg.backupBefore) {
-									thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
-									backup_thread.detach();
-								}
-								// 使用重载的 DoRestore 函数
-								thread restore_thread(DoRestore2, cfg, cfg.worlds[selectedWorldIndex].first, filePath, ref(console), restore_method);
-								restore_thread.detach();
-								openRestorePopup = false;
-								ImGui::CloseCurrentPopup();
-							}
-							else {
-								MessageBoxW(hwnd, L"Error", utf8_to_wstring(L("ERROR_INVALID_ARCHIVE_TITLE")).c_str(), MB_OK | MB_ICONERROR);
-							}
-						}
-					}
-					ImGui::SameLine();
+				//	if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"))) {
+				//		wstring selectedFile = SelectFileDialog();
+				//		if (!selectedFile.empty()) {
+				//			filesystem::path filePath(selectedFile);
+				//			wstring extension = filePath.extension().wstring();
+				//			// 合理的
+				//			if (extension == L".zip" || extension == L".7z") {
+				//				if (cfg.backupBefore) {
+				//					thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
+				//					backup_thread.detach();
+				//				}
+				//				// 使用重载的 DoRestore 函数
+				//				thread restore_thread(DoRestore2, cfg, cfg.worlds[selectedWorldIndex].first, filePath, ref(console), restore_method);
+				//				restore_thread.detach();
+				//				openRestorePopup = false;
+				//				ImGui::CloseCurrentPopup();
+				//			}
+				//			else {
+				//				MessageBoxW(hwnd, L"Error", utf8_to_wstring(L("ERROR_INVALID_ARCHIVE_TITLE")).c_str(), MB_OK | MB_ICONERROR);
+				//			}
+				//		}
+				//	}
+				//	ImGui::SameLine();
 
-					// 确认还原按钮
-					bool no_backup_selected = (selectedBackupIndex == -1);
-					if (no_backup_selected) ImGui::BeginDisabled();
+				//	// 确认还原按钮
+				//	bool no_backup_selected = (selectedBackupIndex == -1);
+				//	if (no_backup_selected) ImGui::BeginDisabled();
 
-					if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
-						// 创建后台线程执行还原
-						if (cfg.backupBefore) {
-							thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
-							backup_thread.detach(); // 分离线程，让它在后台独立运行
-						}
-						thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console), restore_method);
-						restore_thread.detach();
-						openRestorePopup = false; // 关闭弹窗
-						ImGui::CloseCurrentPopup();
-					}
-					if (no_backup_selected) ImGui::EndDisabled();
+				//	if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
+				//		// 创建后台线程执行还原
+				//		if (cfg.backupBefore) {
+				//			thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
+				//			backup_thread.detach(); // 分离线程，让它在后台独立运行
+				//		}
+				//		thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console), restore_method);
+				//		restore_thread.detach();
+				//		openRestorePopup = false; // 关闭弹窗
+				//		ImGui::CloseCurrentPopup();
+				//	}
+				//	if (no_backup_selected) ImGui::EndDisabled();
 
-					ImGui::SetItemDefaultFocus();
-					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-						openRestorePopup = false;
-						ImGui::CloseCurrentPopup();
-					}
+				//	ImGui::SetItemDefaultFocus();
+				//	ImGui::SameLine();
+				//	if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+				//		openRestorePopup = false;
+				//		ImGui::CloseCurrentPopup();
+				//	}
 
-					ImGui::EndPopup();
-				}
+				//	ImGui::EndPopup();
+				//}
 				ImGui::EndChild();
 			}
 			else {
@@ -3548,7 +3548,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		else if(restoreMethod == 2) {
 			// 反向还原，从最近的Smart备份开始，一直到目标备份
 			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
+				if (entry.is_regular_file()) { // 不需要区分Smart或Full，全部还原回去
 					if (entry.last_write_time() > filesystem::last_write_time(targetBackupPath)) {
 						backupsToApply.push_back(entry.path());
 					}
@@ -3562,10 +3562,20 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 
 	// 格式: "C:\7z.exe" x "源压缩包路径" -o"目标文件夹路径" -y
 	// 'x' 表示带路径解压, '-o' 指定输出目录, '-y' 表示对所有提示回答“是”（例如覆盖文件）
-	// 按时间顺序排序所有需要应用的备份
-	sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
-		return filesystem::last_write_time(a) < filesystem::last_write_time(b);
-		});
+	
+	if (restoreMethod == 1) {
+		// 按时间顺序排序所有需要应用的备份
+		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
+			});
+	}
+	else if (restoreMethod == 2)
+	{
+		// 按时间逆序排序所有需要应用的备份
+		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+			return filesystem::last_write_time(a) > filesystem::last_write_time(b);
+			});
+	}
 
 	// 依次执行还原
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
@@ -3575,7 +3585,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		RunCommandInBackground(command, console, config.useLowPriority);
 	}
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
-	//BroadcastEvent("event=restore_success;config=" + to_string(currentConfigIndex) ...);
+	BroadcastEvent("event=restore_success;config=" + to_string(currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile));
 	return;
 }
 
@@ -3809,7 +3819,7 @@ void ShowHistoryWindow() {
 	static bool history_restore = false;
 
 	static const HistoryEntry* entry_to_delete = nullptr;
-	static const HistoryEntry* selected_entry_for_restore = nullptr;
+	static const HistoryEntry* entry_for_action = nullptr;
 
 	ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
 
@@ -3898,19 +3908,12 @@ void ShowHistoryWindow() {
 					ImGui::TextDisabled("%s | %s", wstring_to_utf8(entry->timestamp_str).c_str(), wstring_to_utf8(entry->backupFile).c_str());
 					ImGui::EndGroup();
 
-					// 在右侧添加删除按钮
-					ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(L("DELETE_BACKUP_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2);
-					if (ImGui::SmallButton(L("DELETE_BACKUP_BUTTON"))) {
-						entry_to_delete = entry;
-						ImGui::OpenPopup(L("CONFIRM_DELETE_BACKUP_TITLE"));
-					}
-
 					// 在自定义绘制的控件上方创建一个整行不可见的按钮
 					ImVec2 end_cursor_pos = ImGui::GetCursorPos();
 					ImGui::SetCursorPos(start_cursor_pos); // Reset cursor to the start of the row
 					if (ImGui::InvisibleButton("##history_item", ImVec2(ImGui::GetContentRegionAvail().x, row_height))) {
-						selected_entry_for_restore = entry;
 						history_restore = true;
+						entry_for_action = entry;
 						//ImGui::OpenPopup(L("CONFIRM_RESTORE_HISTORY_TITLE")); 这里不能直接弄，很奇怪
 					}
 
@@ -3925,48 +3928,93 @@ void ShowHistoryWindow() {
 				ImGui::TreePop();
 			}
 		}
-		if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_BACKUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-			if (entry_to_delete) {
-				ImGui::Text(L("CONFIRM_DELETE_BACKUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
-				ImGui::Separator();
-				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-					// 调用您之前添加的删除函数
-					thread delete_thread(DoDeleteBackup, cfg, *entry_to_delete, ref(console));
-					delete_thread.detach();
-					entry_to_delete = nullptr;
-					ImGui::CloseCurrentPopup();
-				}
-				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-					entry_to_delete = nullptr;
-					ImGui::CloseCurrentPopup();
-				}
-			}
-			ImGui::EndPopup();
-		}
 		ImGui::EndChild();
 	}
 	if(history_restore)
 		ImGui::OpenPopup(L("CONFIRM_RESTORE_HISTORY_TITLE"));
 	if (ImGui::BeginPopupModal(L("CONFIRM_RESTORE_HISTORY_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-		
-		if (selected_entry_for_restore) {
-			ImGui::Text(L("CONFIRM_RESTORE_HISTORY_MSG"), wstring_to_utf8(selected_entry_for_restore->backupFile).c_str(), wstring_to_utf8(selected_entry_for_restore->worldName).c_str());
+		history_restore = false;
+		if (entry_for_action) {
+			ImGui::SeparatorText(L("SELECTED_BACKUP_DETAILS"));
+			ImGui::Text("%s: %s", L("FILENAME_LABEL"), wstring_to_utf8(entry_for_action->backupFile).c_str());
+			ImGui::Text("%s: %s", L("TIMESTAMP_LABEL"), wstring_to_utf8(entry_for_action->timestamp_str).c_str());
+			ImGui::Text("%s: %s", L("TYPE_LABEL"), wstring_to_utf8(entry_for_action->backupType).c_str());
+			ImGui::Text("%s: %s", L("COMMENT_LABEL"), entry_for_action->comment.empty() ? L("HISTORY_NO_COMMENT") : wstring_to_utf8(entry_for_action->comment).c_str());
 			ImGui::Separator();
 
-			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-				thread restore_thread(DoRestore, cfg, selected_entry_for_restore->worldName, selected_entry_for_restore->backupFile, ref(console), 0);
-				restore_thread.detach();
+			if (ImGui::Button(L("RESTORE_ACTION_BUTTON"), ImVec2(150, 0))) {
+				ImGui::OpenPopup(L("CHOOSE_RESTORE_METHOD_TITLE"));
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(L("DELETE_ACTION_BUTTON"), ImVec2(150, 0))) {
+				entry_to_delete = entry_for_action;
+				ImGui::OpenPopup(L("CONFIRM_DELETE_BACKUP_TITLE"));
+			}
+
+			ImGui::Dummy(ImVec2(0, 10.0f));
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(300 + ImGui::GetStyle().ItemSpacing.x, 0))) {
 				ImGui::CloseCurrentPopup();
-				selected_entry_for_restore = nullptr;
+				entry_for_action = nullptr;
+			}
+		}
+
+		if (ImGui::BeginPopupModal(L("CHOOSE_RESTORE_METHOD_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+			static int restore_method = 0;
+			ImGui::SeparatorText(L("RESTORE_METHOD"));
+			ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
+			ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
+			ImGui::RadioButton(L("RESTORE_METHOD_REVERSE"), &restore_method, 2);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_REVERSE"));
+			ImGui::Separator();
+
+			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"), ImVec2(-1, 0))) {
+				wstring selectedFile = SelectFileDialog();
+				if (!selectedFile.empty()) {
+					thread restore_thread(DoRestore2, cfg, entry_for_action->worldName, selectedFile, ref(console), restore_method);
+					restore_thread.detach();
+					ImGui::CloseCurrentPopup(); // Close method choice
+					entry_for_action = nullptr; // Reset selection
+				}
+			}
+
+			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
+				if (cfg.backupBefore) {
+					DoBackup(cfg, { entry_for_action->worldName, L"" }, ref(console), L"Auto");
+				}
+				thread restore_thread(DoRestore, cfg, entry_for_action->worldName, entry_for_action->backupFile, ref(console), restore_method);
+				restore_thread.detach();
+				ImGui::CloseCurrentPopup(); // Close method choice
+				entry_for_action = nullptr; // Reset selection
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
 				ImGui::CloseCurrentPopup();
-				selected_entry_for_restore = nullptr;
 			}
+			ImGui::EndPopup();
 		}
-		history_restore = false;
+
+		if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_BACKUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+			if (entry_to_delete) {
+				ImGui::Text(L("CONFIRM_DELETE_BACKUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
+				ImGui::Separator();
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+					thread delete_thread(DoDeleteBackup, cfg, *entry_to_delete, ref(console));
+					delete_thread.detach();
+					ImGui::CloseCurrentPopup();
+					entry_to_delete = nullptr;
+					entry_for_action = nullptr;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					ImGui::CloseCurrentPopup();
+					entry_to_delete = nullptr;
+				}
+			}
+			ImGui::EndPopup();
+		}
+
 		ImGui::EndPopup();
 	}
 
