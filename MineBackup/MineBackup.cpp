@@ -124,7 +124,7 @@ int compressLevel = 5;
 bool showSettings = false;
 bool isSilence = false;
 bool specialSetting = false;
-bool g_CheckForUpdates = true;
+bool g_CheckForUpdates = true, g_RunOnStartup = false;
 static bool showHistoryWindow = false;
 static bool specialConfigMode = false; // 用来开启简单UI
 static bool g_enableKnotLink = true;
@@ -169,7 +169,7 @@ inline void ApplyTheme(int& theme);
 string find_json_value(const string& json, const string& key);
 wstring SanitizeFileName(const wstring& input);
 void CheckForUpdatesThread();
-void SetAutoStart(const string& appName, const wstring& appPath, int configId, bool enable);
+void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable);
 bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool ExtractFontToTempFile(wstring& extractedPath);
@@ -647,6 +647,11 @@ void  Console::ExecCommand(const char* command_line)
 // Main code
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
+	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
+	wchar_t exePath[MAX_PATH];
+	GetModuleFileNameW(NULL, exePath, MAX_PATH);
+	SetCurrentDirectoryW(filesystem::path(exePath).parent_path().c_str());
+
 	//_setmode(_fileno(stdout), _O_U8TEXT);
 	//_setmode(_fileno(stdin), _O_U8TEXT);
 	//CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -731,7 +736,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.6", WS_OVERLAPPEDWINDOW, 0, 0, 10000, 10000, nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.6", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -1131,10 +1136,34 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			if (ImGui::BeginMenuBar()) {
 				
 				if (ImGui::BeginMenu(L("MENU_FILE"))) {
-					if (ImGui::MenuItem(L("SETTINGS"), "CTRL+S")) { showSettings = true; }
-					if (ImGui::MenuItem(L("EXIT"))) { done = true; }
+					if (ImGui::MenuItem(L("EXIT"))) {
+						done = true;
+						SaveConfigs();
+					}
 					ImGui::EndMenu();
 				}
+
+				if (ImGui::BeginMenu(L("SETTINGS"))) {
+
+					if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup)) {
+						wchar_t selfPath[MAX_PATH];
+						GetModuleFileNameW(NULL, selfPath, MAX_PATH);
+						SetAutoStart("MineBackup_AutoTask_" + to_string(currentConfigIndex), selfPath, false, currentConfigIndex, g_RunOnStartup);
+					}
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
+
+
+					ImGui::Separator();
+					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
+					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
+					ImGui::Separator();
+					if (ImGui::MenuItem(L("DETAILED_SETTINGS_BUTTON"))) {
+						showSettings = true;
+					}
+					ImGui::EndMenu();
+				}
+
 				if (ImGui::BeginMenu(L("MENU_TOOLS"))) {
 					if (ImGui::MenuItem(L("HISTORY_BUTTON"))) { showHistoryWindow = true; }
 					ImGui::Separator();
@@ -1154,7 +1183,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				
 				// 在菜单栏右侧显示更新按钮
 				if (g_NewVersionAvailable) {
-					ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(L("UPDATE_AVAILABLE_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2 - 40);
+					ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(L("UPDATE_AVAILABLE_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2 - 100);
 					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.902f, 0.6f, 1.0f));
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.9f, 0.5f, 1.0f));
 					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
@@ -1229,6 +1258,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.1f, 0.1f, 0.8f));
 					if (ImGui::Button("x", ImVec2(buttonSize, buttonSize))) {
 						done = true; // 结束程序
+						SaveConfigs();
 					}
 					ImGui::PopStyleColor();
 					ImGui::PopStyleColor(3);
@@ -1471,40 +1501,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						strcpy_s(backupComment, "");
 					}
 					ImGui::SameLine();
-					//if (ImGui::Button(L("BUTTON_RESTORE_SELECTED"), ImVec2(button_width, 0))) {
-					//	if (cfg.manualRestore) { // 手动选择还原
-					//		openRestorePopup = true;
-					//		ImGui::OpenPopup(L("RESTORE_POPUP_TITLE"));
-					//	}
-					//	else { // 自动还原最新备份
-					//		vector<filesystem::directory_entry> files;
-
-					//		wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
-					//		// 收集所有常规文件
-					//		try {
-					//			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-					//				if (entry.is_regular_file())
-					//					files.push_back(entry);
-					//			}
-					//		}
-					//		catch (const filesystem::filesystem_error& e) {
-					//			console.AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
-					//			continue;
-					//		}
-					//		// 按最后写入时间排序（最新的在前）
-					//		sort(files.begin(), files.end(), [](const filesystem::directory_entry& a, const filesystem::directory_entry& b) {
-					//			return filesystem::last_write_time(a) > filesystem::last_write_time(b);
-					//			});
-					//		if (cfg.backupBefore) {
-					//			thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
-					//			backup_thread.detach(); // 分离线程，让它在后台独立运行
-					//		}
-					//		DoRestore(cfg, cfg.worlds[selectedWorldIndex].first, files.front().path().filename().wstring(), ref(console), 0);
-					//	}
-					//}
-					//ImGui::SameLine();
 					if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
 						ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
+					}
+
+					if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
+						g_worldToFocusInHistory = cfg.worlds[selectedWorldIndex].first; // 设置要聚焦的世界
+						showHistoryWindow = true; // 打开历史窗口
 					}
 					if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
 						wstring path = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
@@ -1518,11 +1521,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
 						wstring path = cfg.saveRoot + L"\\" + cfg.worlds[selectedWorldIndex].first;
 						ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
-					}
-
-					if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
-						g_worldToFocusInHistory = cfg.worlds[selectedWorldIndex].first; // 设置要聚焦的世界
-						showHistoryWindow = true; // 打开历史窗口
 					}
 
 					// 模组备份
@@ -1617,6 +1615,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					// 一些功能按钮
 					if(ImGui::Button(L("EXIT_INFO"), ImVec2(-1, 0))) {
 						done = true;
+						SaveConfigs();
 					}
 
 
@@ -1669,95 +1668,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 					ImGui::EndPopup();
 				}
-
-				// --- 还原文件选择弹窗 ---
-				//if (ImGui::BeginPopupModal(L("RESTORE_POPUP_TITLE"), &openRestorePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
-				//	ImGui::Text(L("RESTORE_PROMPT"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
-				//	wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
-				//	static int selectedBackupIndex = -1;
-				//	vector<wstring> backupFiles;
-
-				//	// 遍历备份目录，找到所有文件
-				//	if (filesystem::exists(backupDir)) {
-				//		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-				//			if (entry.is_regular_file()) {
-				//				backupFiles.push_back(entry.path().filename().wstring());
-				//			}
-				//		}
-				//	}
-
-				//	// 显示备份文件列表
-				//	if (ImGui::BeginListBox("##backupfiles", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing()))) {
-				//		for (int i = 0; i < backupFiles.size(); ++i) {
-				//			const bool is_selected = (selectedBackupIndex == i);
-				//			if (ImGui::Selectable(wstring_to_utf8(backupFiles[i]).c_str(), is_selected)) {
-				//				selectedBackupIndex = i;
-				//			}
-				//		}
-				//		ImGui::EndListBox();
-				//	}
-
-				//	ImGui::Separator();
-
-				//	static int restore_method = 0; // 0 for Clean, 1 for Overwrite
-				//	ImGui::SeparatorText(L("RESTORE_METHOD"));
-				//	ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
-				//	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
-				//	ImGui::SameLine();
-				//	ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
-				//	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
-				//	ImGui::Separator();
-
-				//	if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"))) {
-				//		wstring selectedFile = SelectFileDialog();
-				//		if (!selectedFile.empty()) {
-				//			filesystem::path filePath(selectedFile);
-				//			wstring extension = filePath.extension().wstring();
-				//			// 合理的
-				//			if (extension == L".zip" || extension == L".7z") {
-				//				if (cfg.backupBefore) {
-				//					thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
-				//					backup_thread.detach();
-				//				}
-				//				// 使用重载的 DoRestore 函数
-				//				thread restore_thread(DoRestore2, cfg, cfg.worlds[selectedWorldIndex].first, filePath, ref(console), restore_method);
-				//				restore_thread.detach();
-				//				openRestorePopup = false;
-				//				ImGui::CloseCurrentPopup();
-				//			}
-				//			else {
-				//				MessageBoxW(hwnd, L"Error", utf8_to_wstring(L("ERROR_INVALID_ARCHIVE_TITLE")).c_str(), MB_OK | MB_ICONERROR);
-				//			}
-				//		}
-				//	}
-				//	ImGui::SameLine();
-
-				//	// 确认还原按钮
-				//	bool no_backup_selected = (selectedBackupIndex == -1);
-				//	if (no_backup_selected) ImGui::BeginDisabled();
-
-				//	if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
-				//		// 创建后台线程执行还原
-				//		if (cfg.backupBefore) {
-				//			thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), L"Auto");
-				//			backup_thread.detach(); // 分离线程，让它在后台独立运行
-				//		}
-				//		thread restore_thread(DoRestore, cfg, cfg.worlds[selectedWorldIndex].first, backupFiles[selectedBackupIndex], ref(console), restore_method);
-				//		restore_thread.detach();
-				//		openRestorePopup = false; // 关闭弹窗
-				//		ImGui::CloseCurrentPopup();
-				//	}
-				//	if (no_backup_selected) ImGui::EndDisabled();
-
-				//	ImGui::SetItemDefaultFocus();
-				//	ImGui::SameLine();
-				//	if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-				//		openRestorePopup = false;
-				//		ImGui::CloseCurrentPopup();
-				//	}
-
-				//	ImGui::EndPopup();
-				//}
 				ImGui::EndChild();
 			}
 			else {
@@ -2276,6 +2186,9 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"EnableKnotLink") { 
 					g_enableKnotLink = (val != L"0");
 				}
+				else if (key == L"RunOnStartup") {
+					g_RunOnStartup = (val != L"0");
+				}
 			}
 		}
 	}
@@ -2294,8 +2207,9 @@ static void SaveConfigs(const wstring& filename) {
 	out << L"[General]\n";
 	out << L"CurrentConfig=" << currentConfigIndex << L"\n";
 	out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
-	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n\n";
-	out << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n\n";
+	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
+	out << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
+	out << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n\n";
 
 	for (auto& kv : configs) {
 		int idx = kv.first;
@@ -2519,7 +2433,7 @@ void ShowSettingsWindow() {
 			if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
 				wchar_t selfPath[MAX_PATH];
 				GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-				SetAutoStart("MineBackup_AutoTask_" + to_string(currentConfigIndex), selfPath, currentConfigIndex, spCfg.runOnStartup);
+				SetAutoStart("MineBackup_AutoTask_" + to_string(currentConfigIndex), selfPath, true, currentConfigIndex, spCfg.runOnStartup);
 			}
 			ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
 

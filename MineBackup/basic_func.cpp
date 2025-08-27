@@ -264,7 +264,7 @@ bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& 
 }
 
 // 开机自启功能终于来啦
-void SetAutoStart(const string& appName, const wstring& appPath, int configId, bool enable) {
+void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable) {
 	HKEY hKey;
 	const wstring keyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
@@ -273,7 +273,12 @@ void SetAutoStart(const string& appName, const wstring& appPath, int configId, b
 
 	if (status == ERROR_SUCCESS) {
 		if (enable) {
-			wstring command = L"\"" + appPath + L"\" -specialcfg " + to_wstring(configId);
+			wstring command;
+			if (configType) // 特殊配置
+				command = L"\"" + appPath + L"\" -specialcfg " + to_wstring(configId);
+			else // 普通配置
+				command = L"\"" + appPath + L"\" -cfg " + to_wstring(configId);
+
 			// RegSetValueExW 需要6个参数: HKEY, LPCWSTR, DWORD, DWORD, const BYTE*, DWORD
 			RegSetValueExW(
 				hKey,
