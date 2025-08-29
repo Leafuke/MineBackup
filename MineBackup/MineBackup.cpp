@@ -54,11 +54,7 @@ struct Config {
 	bool manualRestore;
 	int theme = 1;
 	int folderNameType = 0;
-	wstring themeColor;
-	wstring backgroundImagePath;
 	string name;
-	bool backgroundImageEnabled = false;
-	float backgroundImageAlpha = 0.5f;
 	int cpuThreads = 0; // 0 for auto/default
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
@@ -408,6 +404,18 @@ struct Console
 		if (ImGui::SmallButton(L("BUTTON_CLEAR"))) { ClearLog(); }
 		ImGui::SameLine();
 		bool copy_to_clipboard = ImGui::SmallButton(L("BUTTON_COPY"));
+		ImGui::SameLine();
+		if (ImGui::SmallButton(L("BUTTON_EXPORT_LOG"))) {
+			std::ofstream out("console_log.txt", std::ios::out | std::ios::trunc);
+			if (!out.is_open()) return;
+			for (int i = 0; i < Items.Size; ++i)
+			{
+				out << Items[i] << std::endl;
+			}
+			out.close();
+			// 自动打开日志所在目录
+			ShellExecuteA(NULL, "open", ".", NULL, NULL, SW_SHOWDEFAULT);
+		}
 		ImGui::Separator();
 
 		if (ImGui::BeginPopup(L("BUTTON_OPTIONS")))
@@ -1319,6 +1327,127 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			
 			ImGui::BeginChild("LeftPane", ImVec2(leftW, 0), true);
 
+			ImGui::SeparatorText(L("QUICK_CONFIG_SWITCHER"));
+			ImGui::SetNextItemWidth(-1);
+			string current_config_label = "None";
+			if (specialSetting && specialConfigs.count(currentConfigIndex)) {
+				current_config_label = "[Sp." + to_string(currentConfigIndex) + "] " + specialConfigs[currentConfigIndex].name;
+			}
+			else if (!specialSetting && configs.count(currentConfigIndex)) {
+				current_config_label = "[No." + to_string(currentConfigIndex) + "] " + configs[currentConfigIndex].name;
+			}
+			//string(L("CONFIG_N")) + to_string(currentConfigIndex)
+			static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
+
+			if (ImGui::BeginCombo("##ConfigSwitcher", current_config_label.c_str())) {
+				// 普通配置
+				for (auto const& [idx, val] : configs) {
+					const bool is_selected = (currentConfigIndex == idx);
+					string label = "[No." + to_string(idx) + "] " + val.name;
+
+					if (ImGui::Selectable(label.c_str(), is_selected)) {
+						currentConfigIndex = idx;
+						specialSetting = false;
+					}
+					if (is_selected) {
+						ImGui::SetItemDefaultFocus();
+					}
+				}
+				ImGui::Separator();
+				if (ImGui::Selectable(L("BUTTON_ADD_CONFIG"))) {
+					showAddConfigPopup = true;
+				}
+				
+				if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
+					if ((!specialSetting && configs.size() > 1) || (specialSetting && !specialConfigs.empty())) { // 至少保留一个
+						showDeleteConfigPopup = true;
+					}
+				}
+
+				
+				ImGui::EndCombo();
+			}
+
+			// 删除配置弹窗
+			if (showDeleteConfigPopup)
+				ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
+			if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+				showDeleteConfigPopup = false;
+				if (specialSetting) {
+					ImGui::Text("[Sp.]");
+					ImGui::SameLine();
+					ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, specialConfigs[currentConfigIndex].name);
+				}
+				else {
+					ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, configs[currentConfigIndex].name);
+				}
+				ImGui::Separator();
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+					if (specialSetting) {
+						specialConfigs.erase(currentConfigIndex);
+						specialConfigMode = false;
+						currentConfigIndex = configs.empty() ? 0 : configs.begin()->first;
+					}
+					else {
+						configs.erase(currentConfigIndex);
+						currentConfigIndex = configs.begin()->first;
+					}
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
+			// 添加新配置弹窗
+			if (showAddConfigPopup)
+				ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+			if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
+			{
+				showAddConfigPopup = false;
+				static int config_type = 0; // 0 for Normal, 1 for Special
+				static char new_config_name[128] = "New Config";
+
+				ImGui::Text(L("CONFIG_TYPE_LABEL"));
+				ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
+				ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
+
+				ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
+				ImGui::Separator();
+
+				if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
+					if (strlen(new_config_name) > 0) {
+						if (config_type == 0) {
+							int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
+							Config new_cfg = configs[currentConfigIndex]; // Inherit
+							new_cfg.name = new_config_name;
+							new_cfg.saveRoot.clear();
+							new_cfg.backupPath.clear();
+							new_cfg.worlds.clear();
+							configs[new_index] = new_cfg;
+							currentConfigIndex = new_index;
+							specialSetting = false;
+						}
+						else { // Special
+							int new_index = specialConfigs.empty() ? 1 : specialConfigs.rbegin()->first + 1;
+							SpecialConfig new_sp_cfg;
+							new_sp_cfg.name = new_config_name;
+							specialConfigs[new_index] = new_sp_cfg;
+							currentConfigIndex = new_index;
+							specialSetting = true;
+						}
+						showSettings = true; // Open detailed settings for the new config
+						ImGui::CloseCurrentPopup();
+					}
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
+
 			ImGui::SeparatorText(L("WORLD_LIST"));
 			
 			// 新的自定义卡片
@@ -1474,6 +1603,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::SameLine();
 				ImGui::BeginChild("MidPane", ImVec2(midW, 0), true);
 				{
+					ImGui::SeparatorText(L("CURRENT_CONFIG_INFO"));
+
+					ImGui::Text("%s: %s", L("SAVES_PATH_LABEL"), wstring_to_utf8(cfg.saveRoot).c_str());
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(cfg.saveRoot).c_str());
+					ImGui::Text("%s: %s", L("BACKUP_PATH_LABEL"), wstring_to_utf8(cfg.backupPath).c_str());
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(cfg.backupPath).c_str());
+
 					ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
 					ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
 					ImGui::Text("%s", wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
@@ -2139,13 +2275,6 @@ static void LoadConfigs(const string& filename) {
 					cur->zipFonts = val;
 					Fontss = val;
 				}
-				else if (key == L"ThemeColor") {
-					cur->themeColor = val;
-					float r, g, b, a;
-					if (swscanf_s(val.c_str(), L"%f %f %f %f", &r, &g, &b, &a) == 4) {
-						clear_color = ImVec4(r, g, b, a);
-					}
-				}
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
 				if (key == L"Name") spCur->name = wstring_to_utf8(val);
@@ -2236,7 +2365,6 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"Theme=" << c.theme << L"\n";
 		out << L"Font=" << c.zipFonts << L"\n";
-		out << L"ThemeColor=" << c.themeColor << L"\n";
 		out << L"BackupNaming=" << c.folderNameType << L"\n";
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
@@ -2303,6 +2431,7 @@ void ShowSettingsWindow() {
 		current_config_label = "[No." + to_string(currentConfigIndex) + "] " + configs[currentConfigIndex].name;
 	}
 	//string(L("CONFIG_N")) + to_string(currentConfigIndex)
+	static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
 	if (ImGui::BeginCombo(L("CURRENT_CONFIG"), current_config_label.c_str())) {
 		// 普通配置
 		for (auto const& [idx, val] : configs) {
@@ -2329,62 +2458,33 @@ void ShowSettingsWindow() {
 			}
 			if (is_selected) ImGui::SetItemDefaultFocus();
 		}
+
+		ImGui::Separator();
+		if (ImGui::Selectable(L("BUTTON_ADD_CONFIG"))) {
+			showAddConfigPopup = true;
+		}
+
+		if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
+			if ((!specialSetting && configs.size() > 1) || (specialSetting && !specialConfigs.empty())) { // 至少保留一个
+				showDeleteConfigPopup = true;
+			}
+		}
 		ImGui::EndCombo();
 	}
 
-	if (ImGui::Button(L("BUTTON_ADD_CONFIG"))) {
-		int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
-		configs[new_index] = Config(); // Create default config
-		currentConfigIndex = new_index; // Switch to the new one
-		specialConfigMode = false;
-
-		Config& new_cfg = configs[currentConfigIndex];
-		new_cfg.zipFormat = L"7z";
-		new_cfg.zipLevel = 5;
-		new_cfg.keepCount = 0;
-		new_cfg.backupMode = 1;
-		new_cfg.hotBackup = false;
-		new_cfg.backupBefore = false;
-		new_cfg.manualRestore = true;
-		new_cfg.cpuThreads = 0;
-		new_cfg.useLowPriority = false;
-		isSilence = false;
-		if (g_CurrentLang == "zh-CN") {
-			if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-				new_cfg.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttc";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-				new_cfg.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttf";
-		}
-		else
-			new_cfg.zipFonts = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-		new_cfg.themeColor = L"0.45 0.55 0.60 1.00";
+	// 删除配置弹窗
+	if (showDeleteConfigPopup) {
+		ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
 	}
-	ImGui::SameLine();
-
-	if (ImGui::Button(L("ADD_SPECIAL_CONFIG"))) {
-		int new_index = specialConfigs.empty() ? 1 : (specialConfigs.rbegin()->first + 1);
-		specialConfigs[new_index] = SpecialConfig();
-		//specialConfigs[new_index].name = "New Auto Task";
-		currentConfigIndex = new_index;
-		specialSetting = true;
-		//specialConfigMode = true; 不能直接进入特殊模式，这样都没法设置了
-	}
-
-	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_DELETE_CONFIG"))) {
-		if ((!specialSetting && configs.size() > 1) || (specialSetting && !specialConfigs.empty())) { // 至少保留一个
-			ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
-		}
-	}
-
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		showDeleteConfigPopup = false;
 		if (specialSetting) {
 			ImGui::Text("[Sp.]");
 			ImGui::SameLine();
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex);
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, specialConfigs[currentConfigIndex].name);
 		}
 		else {
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex);
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, configs[currentConfigIndex].name);
 		}
 		ImGui::Separator();
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
@@ -2405,13 +2505,56 @@ void ShowSettingsWindow() {
 		}
 		ImGui::EndPopup();
 	}
-
-	if (!specialSetting) {
-		ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
-		ImGui::SameLine();
-		ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
+	// 添加新配置弹窗
+	if (showAddConfigPopup) {
+		ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
 	}
+	if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		showAddConfigPopup = false;
+		static int config_type = 0; // 0 for Normal, 1 for Special
+		static char new_config_name[128] = "New Config";
+
+		ImGui::Text(L("CONFIG_TYPE_LABEL"));
+		ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
+		ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
+
+		ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
+		ImGui::Separator();
+
+		if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
+			if (strlen(new_config_name) > 0) {
+				if (config_type == 0) {
+					int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
+					Config new_cfg = configs[currentConfigIndex]; // Inherit
+					new_cfg.name = new_config_name;
+					new_cfg.saveRoot.clear();
+					new_cfg.backupPath.clear();
+					new_cfg.worlds.clear();
+					configs[new_index] = new_cfg;
+					currentConfigIndex = new_index;
+					specialSetting = false;
+				}
+				else { // Special
+					int new_index = specialConfigs.empty() ? 1 : specialConfigs.rbegin()->first + 1;
+					SpecialConfig new_sp_cfg;
+					new_sp_cfg.name = new_config_name;
+					specialConfigs[new_index] = new_sp_cfg;
+					currentConfigIndex = new_index;
+					specialSetting = true;
+				}
+				showSettings = true; // Open detailed settings for the new config
+				ImGui::CloseCurrentPopup();
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+
+	
 
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
 	ImGui::SeparatorText(L("CURRENT_CONFIG_DETAILS"));
@@ -2428,28 +2571,41 @@ void ShowSettingsWindow() {
 			strncpy_s(buf, spCfg.name.c_str(), sizeof(buf));
 			if (ImGui::InputText(L("CONFIG_NAME"), buf, sizeof(buf))) spCfg.name = buf;
 
-			ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
-			ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
-			if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
-				wchar_t selfPath[MAX_PATH];
-				GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-				SetAutoStart("MineBackup_AutoTask_" + to_string(currentConfigIndex), selfPath, true, currentConfigIndex, spCfg.runOnStartup);
+			if (ImGui::BeginTable("sp_cfg_layout", 2, ImGuiTableFlags_BordersInnerV)) {
+				ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthStretch);
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+
+				ImGui::SeparatorText(L("GROUP_STARTUP_BEHAVIOR"));
+				ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
+				ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
+				if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
+					wchar_t selfPath[MAX_PATH];
+					GetModuleFileNameW(NULL, selfPath, MAX_PATH);
+					SetAutoStart("MineBackup_AutoTask_" + to_string(currentConfigIndex), selfPath, true, currentConfigIndex, spCfg.runOnStartup);
+				}
+				ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
+
+				ImGui::TableSetColumnIndex(1);
+
+				ImGui::SeparatorText(L("GROUP_BACKUP_OVERRIDES"));
+				ImGui::Checkbox(L("IS_HOT_BACKUP"), &spCfg.hotBackup);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
+				ImGui::Checkbox(L("BACKUP_ON_START"), &spCfg.backupOnGameStart);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_START"));
+				ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_LOW_PRIORITY"));
+
+				int max_threads = thread::hardware_concurrency();
+				ImGui::SliderInt(L("CPU_THREAD_COUNT"), &spCfg.cpuThreads, 0, max_threads);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_CPU_THREADS"));
+
+				ImGui::EndTable();
 			}
-			ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
 
-			ImGui::SeparatorText(L("GROUP_BACKUP_BEHAVIOR"));
-			ImGui::Checkbox(L("IS_HOT_BACKUP"), &spCfg.hotBackup);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
-			ImGui::SameLine();
-			ImGui::Checkbox(L("BACKUP_ON_START"), &spCfg.backupOnGameStart);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_START"));
-			ImGui::SameLine();
-			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_LOW_PRIORITY"));
 
-			int max_threads = thread::hardware_concurrency();
-			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &spCfg.cpuThreads, 0, max_threads);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_CPU_THREADS"));
 			//ImGui::SeparatorText(L("BLACKLIST_HEADER"));
 			//if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
 			//	wstring sel = SelectFileDialog(); if (!sel.empty()) spCfg.blacklist.push_back(sel);
@@ -2852,11 +3008,6 @@ void ShowSettingsWindow() {
 
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
 	if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(120, 0))) {
-		if (!specialConfigMode) {
-			wchar_t colorBuf[64];
-			swprintf(colorBuf, 64, L"%.2f %.2f %.2f %.2f", clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-			configs[currentConfigIndex].themeColor = colorBuf;
-		}
 		SaveConfigs();
 		showSettings = false;
 	}

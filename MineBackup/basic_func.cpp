@@ -264,6 +264,7 @@ bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& 
 }
 
 // 开机自启功能终于来啦
+// configType: 1 特殊配置
 void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable) {
 	HKEY hKey;
 	const wstring keyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
