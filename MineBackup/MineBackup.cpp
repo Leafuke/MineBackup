@@ -2472,6 +2472,19 @@ void ShowSettingsWindow() {
 		ImGui::EndCombo();
 	}
 
+	// 语言选择
+	static int lang_idx = 0;
+	for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
+		if (g_CurrentLang == lang_codes[i]) {
+			lang_idx = i;
+			break;
+		}
+	}
+	if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
+		g_CurrentLang = lang_codes[lang_idx];
+		//ReloadFonts(); // Reload fonts for the new language
+	}
+
 	// 删除配置弹窗
 	if (showDeleteConfigPopup) {
 		ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
@@ -2813,14 +2826,7 @@ void ShowSettingsWindow() {
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SNAPSHOT_PATH"));
 		}
 
-		// Language selection
-		int lang_idx = 0;
-		for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
-			if (g_CurrentLang == lang_codes[i]) {
-				lang_idx = i;
-				break;
-			}
-		}
+		
 
 		if (ImGui::CollapsingHeader(L("GROUP_WORLD_MANAGEMENT"))) {
 			// Auto-scan worlds
@@ -2969,22 +2975,12 @@ void ShowSettingsWindow() {
 
 
 		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"))) {
-			if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
-				g_CurrentLang = lang_codes[lang_idx];
-				//ReloadFonts(); // Reload fonts for the new language
-			}
 			ImGui::Separator();
 			ImGui::Text(L("THEME_SETTINGS"));
 			int theme_choice = (int)cfg.theme;
 			if (ImGui::RadioButton(L("THEME_DARK"), &theme_choice, 0)) { cfg.theme = 0; ApplyTheme(cfg.theme); } ImGui::SameLine();
 			if (ImGui::RadioButton(L("THEME_LIGHT"), &theme_choice, 1)) { cfg.theme = 1; ApplyTheme(cfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_CLASSIC"), &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); }
-
-			static float window_alpha = ImGui::GetStyle().Alpha;
-			if (ImGui::SliderFloat(L("WINDOW_OPACITY"), &window_alpha, 0.2f, 1.0f, "%.2f")) {
-				ImGui::GetStyle().Alpha = window_alpha;
-			}
-			ImGui::ColorEdit3(L("BG_COLOR"), (float*)&clear_color);
+			if (ImGui::RadioButton(L("THEME_CLASSIC"), &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); } 
 
 			ImGui::Text(L("FONT_SETTINGS"));
 			char Fonts[CONSTANT1];
@@ -3552,7 +3548,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	}
 
 	// 检查备份文件是否存在
-	if (backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) {
+	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(config.backupPath + L"\\" + backupFile)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return;
 	}
@@ -3560,6 +3556,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	// 准备路径
 	wstring sourceDir = config.backupPath + L"\\" + worldName;
 	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
+
 
 	if (restoreMethod == 0) { // Clean Restore
 		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
@@ -4040,7 +4037,7 @@ void ShowHistoryWindow() {
 					thread restore_thread(DoRestore2, cfg, entry_for_action->worldName, selectedFile, ref(console), restore_method);
 					restore_thread.detach();
 					ImGui::CloseCurrentPopup(); // Close method choice
-					entry_for_action = nullptr; // Reset selection
+					//entry_for_action = nullptr; // Reset selection
 				}
 			}
 
@@ -4051,7 +4048,7 @@ void ShowHistoryWindow() {
 				thread restore_thread(DoRestore, cfg, entry_for_action->worldName, entry_for_action->backupFile, ref(console), restore_method);
 				restore_thread.detach();
 				ImGui::CloseCurrentPopup(); // Close method choice
-				entry_for_action = nullptr; // Reset selection
+				//entry_for_action = nullptr; // Reset selection
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
@@ -4065,11 +4062,11 @@ void ShowHistoryWindow() {
 				ImGui::Text(L("CONFIRM_DELETE_BACKUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
 				ImGui::Separator();
 				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+					ImGui::CloseCurrentPopup();
 					thread delete_thread(DoDeleteBackup, cfg, *entry_to_delete, ref(console));
 					delete_thread.detach();
-					ImGui::CloseCurrentPopup();
 					entry_to_delete = nullptr;
-					entry_for_action = nullptr;
+					//entry_for_action = nullptr; 这行加上就会卡界面，很神奇
 				}
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
@@ -4424,46 +4421,15 @@ void ExitWatcherThreadFunction() {
 }
 
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console) {
-	console.AddLog("[Info] Preparing to delete backup: %s", wstring_to_utf8(entryToDelete.backupFile).c_str());
+	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
 	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
 	vector<filesystem::path> filesToDelete;
 	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
 
-	// 如果删除的是 [Full] 备份，必须联动删除其后的所有 [Smart] 备份
-	if (entryToDelete.backupType == L"Full") {
-		console.AddLog("[Warning] Deleting a [Full] backup. All dependent [Smart] backups in this chain will also be removed.");
-
-		// 获取此Full备份的写入时间
-		auto baseTime = filesystem::last_write_time(backupDir / entryToDelete.backupFile);
-
-		// 寻找此Full备份之后的下一个Full备份的时间点，作为删除范围的右边界
-		//auto nextFullTime = std::filesystem::file_time_type::max();这样写不行，它一定要括起来……
-		auto nextFullTime = (filesystem::file_time_type::max)();
-		vector<pair<filesystem::file_time_type, filesystem::path>> fullBackups;
-		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
-				fullBackups.push_back({ entry.last_write_time(), entry.path() });
-			}
-		}
-		sort(fullBackups.begin(), fullBackups.end()); // 按时间升序排序
-
-		for (const auto& fb : fullBackups) {
-			if (fb.first > baseTime) {
-				nextFullTime = fb.first;
-				break;
-			}
-		}
-
-		// 遍历并删除此时间区间内的所有 Smart 备份
-		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
-				auto writeTime = entry.last_write_time();
-				if (writeTime > baseTime && writeTime < nextFullTime) {
-					filesToDelete.push_back(entry.path());
-				}
-			}
-		}
+	if (!filesystem::exists(backupDir / entryToDelete.backupFile)) {
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+		return;
 	}
 
 	// 执行删除操作
@@ -4471,15 +4437,14 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Con
 		try {
 			if (filesystem::exists(path)) {
 				filesystem::remove(path);
-				console.AddLog("  - Deleted file: %s", wstring_to_utf8(path.filename().wstring()).c_str());
+				console.AddLog("  - %s √", wstring_to_utf8(path.filename().wstring()).c_str());
 				// 从历史记录中移除对应条目
 				RemoveHistoryEntry(currentConfigIndex, path.filename().wstring());
 			}
 		}
 		catch (const filesystem::filesystem_error& e) {
-			console.AddLog("[Error] Failed to delete '%s': %s", wstring_to_utf8(path.filename().wstring()).c_str(), e.what());
+			console.AddLog(L("LOG_ERROR_DELETE_BACKUP"), wstring_to_utf8(path.filename().wstring()).c_str(), e.what());
 		}
 	}
 	SaveHistory(); // 保存历史记录的更改
-	console.AddLog("[Info] Deletion process finished.");
 }
