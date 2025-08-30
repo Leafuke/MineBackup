@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.6";
+const string CURRENT_VERSION = "1.7.5";
 
 // 结构体们
 struct Config {
