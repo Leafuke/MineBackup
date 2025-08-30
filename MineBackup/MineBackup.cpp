@@ -101,6 +101,13 @@ struct AutoBackupTask {
 	thread worker;
 	atomic<bool> stop_flag{ false }; // 原子布尔值，用于安全地通知线程停止
 };
+struct DisplayWorld { // 一个新的结构体，让 UI 不再直接读取 configs[currentConfigIndex].worlds，而使用 DisplayWorld
+	std::wstring name;      // 世界名（文件夹名）
+	std::wstring desc;      // 描述
+	int baseConfigIndex = -1; // 来源配置 id
+	int baseWorldIndex = -1;  // 来源配置中世界索引
+	Config effectiveConfig;   // 合并后的配置（拷贝）
+};
 
 // KnotLink 实例指针
 SignalSender* g_signalSender = nullptr;
@@ -125,12 +132,13 @@ static bool showHistoryWindow = false;
 static bool specialConfigMode = false; // 用来开启简单UI
 static bool g_enableKnotLink = true;
 int currentConfigIndex = 1;
+static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 map<int, Config> configs;
 map<int, vector<HistoryEntry>> g_history;
 map<int, SpecialConfig> specialConfigs;
 static atomic<bool> specialTasksRunning = false;
 static atomic<bool> specialTasksComplete = false;
-static map<int, AutoBackupTask> g_active_auto_backups; // key: worldIndex, value: task
+static map<pair<int, int>, AutoBackupTask> g_active_auto_backups; // Key: {configIdx, worldIdx}
 static thread g_exitWatcherThread;
 static atomic<bool> g_stopExitWatcher(false);
 static map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
@@ -188,6 +196,9 @@ static void SaveConfigs(const wstring& filename = L"config.ini");
 
 void ShowSettingsWindow();
 void ShowHistoryWindow();
+static vector<DisplayWorld> BuildDisplayWorldsForSelection();
+static int CreateNewNormalConfig(const std::string& name_hint = "New Config");
+static int CreateNewSpecialConfig(const std::string& name_hint = "New Special");
 
 struct Console
 {
@@ -605,7 +616,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod); 
 void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment);
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console);
-void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, Console* console);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console);
 void RunSpecialMode(int configId);
 void CheckForConfigConflicts();
 void ConsoleLog(const char* format, ...);
@@ -1110,16 +1121,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			static bool openRestorePopup = false;     // 控制还原弹窗的打开
 			static char backupComment[CONSTANT1] = "";// 备份注释输入框的内容
 			// 获取当前配置
-			if (configs.find(currentConfigIndex) == configs.end()) {
-				if (!configs.empty()) currentConfigIndex = configs.begin()->first;
-				else configs[1] = Config(); // 新建
+			if (configs.find(currentConfigIndex) == configs.end()) { // 找不到，说明应该对应的是特殊配置
+				specialSetting = true;
 			}
-			Config& cfg = configs[currentConfigIndex];
+
+			//Config& cfg = configs[currentConfigIndex];
 
 
 			// --- 动态调整世界图标纹理和尺寸向量的大小 ---
-			int worldCount = (int)cfg.worlds.size();
-			if (worldIconTextures.size() != worldCount) {
+			std::vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
+			int worldCount = (int)displayWorlds.size();
+			if ((int)worldIconTextures.size() != worldCount) {
 				// 在调整大小前，释放旧的、不再需要的纹理资源
 				for (auto& tex : worldIconTextures) {
 					if (tex) {
@@ -1354,6 +1366,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 				}
 				ImGui::Separator();
+				// 特殊配置
+				for (auto const& [idx, val] : specialConfigs) {
+					const bool is_selected = (currentConfigIndex == (idx));
+					string label = "[Sp." + to_string((idx)) + "] " + val.name;
+					if (ImGui::Selectable(label.c_str(), is_selected)) {
+						currentConfigIndex = (idx);
+						specialSetting = true;
+						//specialConfigMode = true;
+					}
+					if (is_selected) ImGui::SetItemDefaultFocus();
+				}
+				ImGui::Separator();
 				if (ImGui::Selectable(L("BUTTON_ADD_CONFIG"))) {
 					showAddConfigPopup = true;
 				}
@@ -1419,21 +1443,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
 					if (strlen(new_config_name) > 0) {
 						if (config_type == 0) {
-							int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
-							Config new_cfg = configs[currentConfigIndex]; // Inherit
-							new_cfg.name = new_config_name;
-							new_cfg.saveRoot.clear();
-							new_cfg.backupPath.clear();
-							new_cfg.worlds.clear();
-							configs[new_index] = new_cfg;
+							//int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
+							// 原本是 configs.rbegin()->first + 1，这样不太好，现在统一成nextConfigId
+							int new_index = CreateNewNormalConfig(new_config_name);
+							// 继承当前配置（如果有），但保留路径为空
+							if (configs.count(currentConfigIndex)) {
+								configs[new_index] = configs[currentConfigIndex];
+								configs[new_index].name = new_config_name;
+								configs[new_index].saveRoot.clear();
+								configs[new_index].backupPath.clear();
+								configs[new_index].worlds.clear();
+							}
 							currentConfigIndex = new_index;
 							specialSetting = false;
 						}
 						else { // Special
-							int new_index = specialConfigs.empty() ? 1 : specialConfigs.rbegin()->first + 1;
-							SpecialConfig new_sp_cfg;
-							new_sp_cfg.name = new_config_name;
-							specialConfigs[new_index] = new_sp_cfg;
+							int new_index = CreateNewSpecialConfig(new_config_name);
 							currentConfigIndex = new_index;
 							specialSetting = true;
 						}
@@ -1454,12 +1479,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			//ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // 预留底部按钮空间
 			ImGui::BeginChild("WorldListChild", ImVec2(0, 0), true);
 
-			for (int i = 0; i < cfg.worlds.size(); ++i) {
-				if(cfg.worlds[i].second == L"#")
-					continue; // 跳过被标记为隐藏的世界
+			// selectedWorldIndex 的语义现在改变了——它现在是 displayWorlds 的索引（而不是 cfg.worlds 的索引）
+
+
+			for (int i = 0; i < worldCount; ++i) {
+				const auto& dw = displayWorlds[i];
 				ImGui::PushID(i);
 				bool is_selected = (selectedWorldIndex == i);
-				wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
+
+				// worldFolder / backupFolder 基于 effectiveConfig
+				std::wstring worldFolder = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
+				std::wstring backupFolder = dw.effectiveConfig.backupPath + L"\\" + dw.name;
 
 				// --- 左侧图标区 ---
 				ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -1512,11 +1542,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::SameLine();
 				// --- 状态逻辑 (为图标做准备) ---
 				lock_guard<mutex> lock(g_task_mutex); // 访问 g_active_auto_backups 需要加锁
-				bool is_task_running = g_active_auto_backups.count(i);
-
+                bool is_task_running = g_active_auto_backups.count(make_pair(displayWorlds[i].baseConfigIndex, i)) > 0;
 				// 如果最后打开时间比最后备份时间新，则认为需要备份
 				//wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
-				wstring backupFolder = cfg.backupPath + L"\\" + cfg.worlds[i].first;
 				bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
 
 				// 整个区域作为一个可选项
@@ -1545,8 +1573,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::BeginGroup(); // 将所有内容组合在一起
 
 				// --- 第一行：世界名和描述 (自动换行) ---
-				string name_utf8 = wstring_to_utf8(cfg.worlds[i].first);
-				string desc_utf8 = wstring_to_utf8(cfg.worlds[i].second);
+				string name_utf8 = wstring_to_utf8(dw.name);
+				string desc_utf8 = wstring_to_utf8(dw.desc);
 				ImGui::TextWrapped("%s", name_utf8.c_str());
 
 				//// --- 第二行：时间和状态 ---
@@ -1599,26 +1627,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 			ImGui::EndChild();
 			
-			if (selectedWorldIndex != -1) {
+			if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
 				ImGui::SameLine();
 				ImGui::BeginChild("MidPane", ImVec2(midW, 0), true);
 				{
 					ImGui::SeparatorText(L("CURRENT_CONFIG_INFO"));
 
-					ImGui::Text("%s: %s", L("SAVES_PATH_LABEL"), wstring_to_utf8(cfg.saveRoot).c_str());
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(cfg.saveRoot).c_str());
-					ImGui::Text("%s: %s", L("BACKUP_PATH_LABEL"), wstring_to_utf8(cfg.backupPath).c_str());
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(cfg.backupPath).c_str());
+					ImGui::Text("%s: %s", L("SAVES_PATH_LABEL"), wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot).c_str());
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot).c_str());
+					ImGui::Text("%s: %s", L("BACKUP_PATH_LABEL"), wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath).c_str());
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath).c_str());
 
 					ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
 					ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
-					ImGui::Text("%s", wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+					ImGui::Text("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].name).c_str());
 					ImGui::PopTextWrapPos();
 					ImGui::Separator();
 
 					// -- 详细信息 --
-					wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[selectedWorldIndex].first;
-					wstring backupFolder = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
+					wstring worldFolder = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
+					wstring backupFolder = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
 					ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(GetLastOpenTime(worldFolder)).c_str());
 					ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(GetLastBackupTime(backupFolder)).c_str());
 
@@ -1632,7 +1660,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					// -- 主要操作按钮 --
 					float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
 					if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
-						thread backup_thread(DoBackup, cfg, cfg.worlds[selectedWorldIndex], ref(console), utf8_to_wstring(backupComment));
+						thread backup_thread(DoBackup, displayWorlds[selectedWorldIndex].effectiveConfig, make_pair(displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc), ref(console), utf8_to_wstring(backupComment));
 						backup_thread.detach();
 						strcpy_s(backupComment, "");
 					}
@@ -1642,24 +1670,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 
 					if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
-						g_worldToFocusInHistory = cfg.worlds[selectedWorldIndex].first; // 设置要聚焦的世界
+						g_worldToFocusInHistory = displayWorlds[selectedWorldIndex].name; // 设置要聚焦的世界
 						showHistoryWindow = true; // 打开历史窗口
 					}
 					if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
-						cfg.worlds[selectedWorldIndex].second = L"#";
+						displayWorlds[selectedWorldIndex].desc = L"#";
+						configs[displayWorlds[selectedWorldIndex].baseConfigIndex].worlds[displayWorlds[selectedWorldIndex].baseWorldIndex].second = displayWorlds[selectedWorldIndex].desc;
 						selectedWorldIndex = -1;
 					}
 					if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
-						wstring path = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
+						wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
 						if (filesystem::exists(path)) {
 							ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
 						}
 						else {
-							ShellExecuteW(NULL, L"open", cfg.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
+							ShellExecuteW(NULL, L"open", displayWorlds[selectedWorldIndex].effectiveConfig.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
 						}
 					}
 					if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
-						wstring path = cfg.saveRoot + L"\\" + cfg.worlds[selectedWorldIndex].first;
+						wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
 						ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
 					}
 
@@ -1678,7 +1707,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 						if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
 							if (configs.count(currentConfigIndex)) {
-								filesystem::path tempPath = cfg.saveRoot;
+								filesystem::path tempPath = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot;
 								filesystem::path modsPath = tempPath.parent_path() / "mods";
 								if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
 									modsPath = tempPath / "mods";
@@ -1709,9 +1738,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97);
 					// 可以输入需要备份的其他内容的路径，比如 D:\Games\configs
 					static char buf[CONSTANT1] = "";
-					strcpy(buf, wstring_to_utf8(cfg.othersPath).c_str());
+					strcpy(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
 					if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
-						cfg.othersPath = utf8_to_wstring(buf);
+						displayWorlds[selectedWorldIndex].effectiveConfig.othersPath = utf8_to_wstring(buf);
+						configs[displayWorlds[selectedWorldIndex].baseConfigIndex].othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
 					}
 
 					if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1740,10 +1770,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 					if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
 						// 云同步逻辑
-						const Config& config = configs[currentConfigIndex];
+						const Config& config = configs[displayWorlds[selectedWorldIndex].baseConfigIndex];
 						if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
 							console.AddLog(L("CLOUD_SYNC_START"));
-							wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
+							wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
 							// 另起一个线程来执行云同步，避免阻塞后续操作
 							std::thread([rclone_command, config]() {
 								RunCommandInBackground(rclone_command, console, config.useLowPriority);
@@ -1767,46 +1797,52 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				// 自动备份弹窗
 				if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 					bool is_task_running = false;
+					pair<int, int> taskKey = { -1,-1 };
 					{
-						// 检查任务是否正在运行时，也需要加锁
 						lock_guard<mutex> lock(g_task_mutex);
-						is_task_running = g_active_auto_backups.count(selectedWorldIndex);
+						if (selectedWorldIndex >= 0) {
+							// 如果使用 displayWorlds：
+							auto displayWorlds = BuildDisplayWorldsForSelection();
+							if (selectedWorldIndex < (int)displayWorlds.size()) {
+								taskKey = { displayWorlds[selectedWorldIndex].baseConfigIndex, displayWorlds[selectedWorldIndex].baseWorldIndex };
+								is_task_running = (g_active_auto_backups.count(taskKey) > 0);
+							}
+						}
 					}
 
 					if (is_task_running) {
-						ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+						ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(displayWorlds[selectedWorldIndex].name).c_str());
 						ImGui::Separator();
 						if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(-1, 0))) {
 							lock_guard<mutex> lock(g_task_mutex);
 							// 1. 设置停止标志
-							g_active_auto_backups.at(selectedWorldIndex).stop_flag = true;
 							// 2. 等待线程结束
-							if (g_active_auto_backups.at(selectedWorldIndex).worker.joinable()) {
-								g_active_auto_backups.at(selectedWorldIndex).worker.join();
-							}
 							// 3. 从管理器中移除
-							g_active_auto_backups.erase(selectedWorldIndex);
+							if (g_active_auto_backups.count(taskKey)) {
+								g_active_auto_backups.at(taskKey).stop_flag = true;
+								if (g_active_auto_backups.at(taskKey).worker.joinable())
+									g_active_auto_backups.at(taskKey).worker.join();
+								g_active_auto_backups.erase(taskKey);
+							}
 							ImGui::CloseCurrentPopup();
 						}
 					}
 					else {
-						ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+						ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(displayWorlds[selectedWorldIndex].name).c_str());
 						ImGui::Separator();
-						static int interval = 15; // 默认15分钟
+						static int interval = 15;
 						ImGui::InputInt(L("INTERVAL_MINUTES"), &interval);
-						if (interval < 1) interval = 1; // 最小间隔1分钟
-
+						if (interval < 1) interval = 1;
 						if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
+							// 注册并启动线程
 							lock_guard<mutex> lock(g_task_mutex);
-							auto& task = g_active_auto_backups[selectedWorldIndex];
-							task.stop_flag = false;
-							// 启动后台线程，注意 console 是通过指针传递的
-							task.worker = thread(AutoBackupThreadFunction, selectedWorldIndex, currentConfigIndex, interval, &console);
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
+							if (taskKey.first >= 0) {
+								AutoBackupTask& task = g_active_auto_backups[taskKey];
+								task.stop_flag = false;
+								// 注意 worker 的构造：直接赋值一个 thread
+								task.worker = std::thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console);
+								ImGui::CloseCurrentPopup();
+							}
 						}
 					}
 					ImGui::EndPopup();
@@ -2255,6 +2291,13 @@ static void LoadConfigs(const string& filename) {
 				if (key == L"CurrentConfig") {
 					currentConfigIndex = stoi(val);
 				}
+				else if (key == L"NextConfigId") {
+					nextConfigId = stoi(val);
+					int maxId = 0;
+					for (auto& kv : configs) if (kv.first > maxId) maxId = kv.first;
+					for (auto& kv : specialConfigs) if (kv.first > maxId) maxId = kv.first;
+					if (nextConfigId <= maxId) nextConfigId = maxId + 1;
+				}
 				else if (key == L"Language") {
 					g_CurrentLang = wstring_to_utf8(val);
 				}
@@ -2284,6 +2327,7 @@ static void SaveConfigs(const wstring& filename) {
 	//out.imbue(locale(out.getloc(), new codecvt_utf8<wchar_t>));//将UTF8转为UTF，现在C++17也不对了……但是我们有define！
 	out << L"[General]\n";
 	out << L"CurrentConfig=" << currentConfigIndex << L"\n";
+	out << L"NextConfigId=" << nextConfigId << L"\n";
 	out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
 	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
 	out << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
@@ -2365,12 +2409,9 @@ void ShowSettingsWindow() {
 
 	// 加锁，避免远程命令冲突
 	lock_guard<mutex> lock(g_configsMutex);
-
-	if (configs.empty()) {
-		configs[1] = Config();
-		currentConfigIndex = 1;
+	if (configs.find(currentConfigIndex) == configs.end()) { // 找不到，说明应该对应的是特殊配置
+		specialSetting = true;
 	}
-	Config& cfg = configs[currentConfigIndex];
 
 	string current_config_label = "None";
 	if (specialSetting && specialConfigs.count(currentConfigIndex)) {
@@ -2487,21 +2528,20 @@ void ShowSettingsWindow() {
 		if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
 			if (strlen(new_config_name) > 0) {
 				if (config_type == 0) {
-					int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
-					Config new_cfg = configs[currentConfigIndex]; // Inherit
-					new_cfg.name = new_config_name;
-					new_cfg.saveRoot.clear();
-					new_cfg.backupPath.clear();
-					new_cfg.worlds.clear();
-					configs[new_index] = new_cfg;
+					int new_index = CreateNewNormalConfig(new_config_name);
+					// 继承当前配置（如果有），但保留路径为空
+					if (configs.count(currentConfigIndex)) {
+						configs[new_index] = configs[currentConfigIndex];
+						configs[new_index].name = new_config_name;
+						configs[new_index].saveRoot.clear();
+						configs[new_index].backupPath.clear();
+						configs[new_index].worlds.clear();
+					}
 					currentConfigIndex = new_index;
 					specialSetting = false;
 				}
 				else { // Special
-					int new_index = specialConfigs.empty() ? 1 : specialConfigs.rbegin()->first + 1;
-					SpecialConfig new_sp_cfg;
-					new_sp_cfg.name = new_config_name;
-					specialConfigs[new_index] = new_sp_cfg;
+					int new_index = CreateNewSpecialConfig(new_config_name);
 					currentConfigIndex = new_index;
 					specialSetting = true;
 				}
@@ -3600,23 +3640,40 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	return;
 }
 
-void AutoBackupThreadFunction(int worldIdx, int configIdx, int intervalMinutes, Console* console) {
+// 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console) {
+	auto key = std::make_pair(configIdx, worldIdx);
 	console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
 	while (true) {
 		// 等待指定的时间，但每秒检查一次是否需要停止
 		for (int i = 0; i < intervalMinutes * 60; ++i) {
-			// 安全地检查停止标志
-			if (g_active_auto_backups.at(worldIdx).stop_flag) {
-				console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
-				return; // 结束线程
+			{
+				lock_guard<mutex> lock(g_task_mutex);
+				if (g_active_auto_backups.count(key) && g_active_auto_backups.at(key).stop_flag) {
+					console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
+					return;
+				}
 			}
 			this_thread::sleep_for(chrono::seconds(1));
 		}
 
 		// 时间到了，开始备份
 		console->AddLog(L("LOG_AUTOBACKUP_ROUTINE"), worldIdx);
-		// 直接调用已经存在的 DoBackup 函数
-		DoBackup(configs[configIdx], configs[configIdx].worlds[worldIdx], *console);
+		{
+			lock_guard<mutex> lock(g_configsMutex);
+			if (configs.count(configIdx) && worldIdx >= 0 && worldIdx < configs[configIdx].worlds.size()) {
+				DoBackup(configs[configIdx], configs[configIdx].worlds[worldIdx], *console);
+			}
+			else {
+				console->AddLog(L("ERROR_INVALID_WORLD_IN_TASK"), configIdx, worldIdx);
+				// 任务无效，退出或移除
+				lock_guard<mutex> lock2(g_task_mutex);
+				if (g_active_auto_backups.count(key)) {
+					g_active_auto_backups.erase(key);
+				}
+				return;
+			}
+		}
 	}
 }
 
@@ -3774,6 +3831,18 @@ void RunSpecialMode(int configId) {
 			t.join();
 		}
 	}
+
+	// 停止所有启动的任务
+	{
+		lock_guard<mutex> lock(g_task_mutex);
+		for (auto& kv : g_active_auto_backups) {
+			kv.second.stop_flag = true;
+		}
+	}
+	for (auto& kv : g_active_auto_backups) {
+		if (kv.second.worker.joinable()) kv.second.worker.join();
+	}
+	g_active_auto_backups.clear();
 
 	ConsoleLog(L("INFO_ALL_TASKS_SHUT_DOWN"));
 	return;
@@ -4396,4 +4465,75 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Con
 		}
 	}
 	SaveHistory(); // 保存历史记录的更改
+}
+
+// 构建当前选择（普通 / 特殊）下用于显示的世界列表
+static std::vector<DisplayWorld> BuildDisplayWorldsForSelection() {
+	std::vector<DisplayWorld> out;
+	// 普通配置视图
+	if (!specialSetting) {
+		if (!configs.count(currentConfigIndex)) return out;
+		const Config& src = configs[currentConfigIndex];
+		for (int i = 0; i < (int)src.worlds.size(); ++i) {
+			if (src.worlds[i].second == L"#") continue; // 隐藏标记
+			DisplayWorld dw;
+			dw.name = src.worlds[i].first;
+			dw.desc = src.worlds[i].second;
+			dw.baseConfigIndex = currentConfigIndex;
+			dw.baseWorldIndex = i;
+			dw.effectiveConfig = src; // 默认使用基础配置
+			out.push_back(dw);
+		}
+		return out;
+	}
+
+	// 特殊配置视图：把 SpecialConfig.tasks 映射为 DisplayWorld 列表
+	if (!specialConfigs.count(currentConfigIndex)) return out;
+	const SpecialConfig& sp = specialConfigs[currentConfigIndex];
+	for (const auto& task : sp.tasks) {
+		if (!configs.count(task.configIndex)) continue;
+		const Config& baseCfg = configs[task.configIndex];
+		if (task.worldIndex < 0 || task.worldIndex >= (int)baseCfg.worlds.size()) continue;
+
+		DisplayWorld dw;
+		dw.name = baseCfg.worlds[task.worldIndex].first;
+		dw.desc = baseCfg.worlds[task.worldIndex].second;
+		dw.baseConfigIndex = task.configIndex;
+		dw.baseWorldIndex = task.worldIndex;
+
+		// 合并配置：以 baseCfg 为主，特殊配置覆盖常用字段
+		dw.effectiveConfig = baseCfg;
+		// 覆盖：仅覆盖那些合理的字段（按你的 SpecialConfig 语义）
+		dw.effectiveConfig.zipLevel = sp.zipLevel;
+		if (sp.keepCount > 0) dw.effectiveConfig.keepCount = sp.keepCount;
+		if (sp.cpuThreads > 0) dw.effectiveConfig.cpuThreads = sp.cpuThreads;
+		dw.effectiveConfig.useLowPriority = sp.useLowPriority;
+		dw.effectiveConfig.hotBackup = sp.hotBackup;
+		dw.effectiveConfig.blacklist = sp.blacklist;
+
+		out.push_back(dw);
+	}
+
+	return out;
+}
+
+static int CreateNewNormalConfig(const std::string& name_hint) {
+	int newId = nextConfigId++;
+	Config new_cfg;
+	new_cfg.name = name_hint;
+	// 默认空的路径/世界
+	new_cfg.saveRoot.clear();
+	new_cfg.backupPath.clear();
+	new_cfg.worlds.clear();
+	// 其他默认值可在此设置
+	configs[newId] = new_cfg;
+	return newId;
+}
+
+static int CreateNewSpecialConfig(const std::string& name_hint) {
+	int newId = nextConfigId++;
+	SpecialConfig sp;
+	sp.name = name_hint;
+	specialConfigs[newId] = sp;
+	return newId;
 }
