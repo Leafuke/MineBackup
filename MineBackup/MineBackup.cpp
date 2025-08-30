@@ -1645,6 +1645,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						g_worldToFocusInHistory = cfg.worlds[selectedWorldIndex].first; // 设置要聚焦的世界
 						showHistoryWindow = true; // 打开历史窗口
 					}
+					if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
+						cfg.worlds[selectedWorldIndex].second = L"#";
+						selectedWorldIndex = -1;
+					}
 					if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
 						wstring path = cfg.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first;
 						if (filesystem::exists(path)) {
@@ -1676,6 +1680,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							if (configs.count(currentConfigIndex)) {
 								filesystem::path tempPath = cfg.saveRoot;
 								filesystem::path modsPath = tempPath.parent_path() / "mods";
+								if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
+									modsPath = tempPath / "mods";
+								}
 								thread backup_thread(DoOthersBackup, configs[currentConfigIndex], modsPath, utf8_to_wstring(mods_comment));
 								backup_thread.detach();
 								strcpy_s(mods_comment, "");
@@ -1734,9 +1741,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
 						// 云同步逻辑
 						const Config& config = configs[currentConfigIndex];
-						if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
+						if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
 							console.AddLog(L("CLOUD_SYNC_START"));
-							wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
+							wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + cfg.worlds[selectedWorldIndex].first + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
 							// 另起一个线程来执行云同步，避免阻塞后续操作
 							std::thread([rclone_command, config]() {
 								RunCommandInBackground(rclone_command, console, config.useLowPriority);
@@ -1821,64 +1828,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			ImGui::BeginChild("RightColumn", ImVec2(rightW, 0), true);
 			console.DrawEmbedded();
 			ImGui::EndChild();
-			//ImGui::End();
-			
-			//ImGui::BeginChild(L("RIGHT_PANE"));
-			//if (ImGui::Button(L("SETTINGS"))) showSettings = true;
-			//if (ImGui::Button(L("EXIT"))) done = true;
-			//if (ImGui::Button(L("HISTORY_BUTTON"))) showHistoryWindow = true;
-			//if (ImGui::Button(L("OPEN_BACKUP_FOLDER"))) {
-			//	if (!cfg.backupPath.empty()) {
-			//		HINSTANCE result = ShellExecuteW(NULL, L"open", cfg.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
-			//		/*if ((INT_PTR)result <= 32) {
-			//			console.AddLog("[Error] %ls", cfg.backupPath.c_str());
-			//		}*/
-			//	}
-			//}
-			//if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"))) {
-			//	if (!cfg.saveRoot.empty()) {
-			//		HINSTANCE result = ShellExecuteW(NULL, L"open", cfg.saveRoot.c_str(), NULL, NULL, SW_SHOWNORMAL);
-			//	}
-			//}
-			//static bool open_update_popup = false;
-			//if (g_NewVersionAvailable) {
-			//	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.902f, 0.6f, 1.0f));
-			//	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.9f, 0.5f, 1.0f));
-			//	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-			//	if (ImGui::Button(L("UPDATE_AVAILABLE_BUTTON"))) {
-			//		open_update_popup = true;
-			//		ImGui::OpenPopup(L("UPDATE_POPUP_TITLE"));
-			//	}
-			//	ImGui::PopStyleColor(3);
-			//}
-			//else {
-			//	if (ImGui::Button(L("CHECK_FOR_UPDATES"))) {
-			//		ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup/releases", NULL, NULL, SW_SHOWNORMAL);
-			//		thread update_thread(CheckForUpdatesThread);
-			//		update_thread.detach();
-			//	}
-			//}
-
-			//if (ImGui::BeginPopupModal(L("UPDATE_POPUP_TITLE"), &open_update_popup, ImGuiWindowFlags_AlwaysAutoResize)) {
-			//	ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
-			//	ImGui::Separator();
-			//	ImGui::TextWrapped(L("UPDATE_POPUP_NOTES"));
-			//	ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 150), true);
-			//	ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
-			//	ImGui::EndChild();
-			//	ImGui::Separator();
-			//	if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(120, 0))) {
-			//		ShellExecuteA(NULL, "open", ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
-			//		open_update_popup = false;
-			//		ImGui::CloseCurrentPopup();
-			//	}
-			//	ImGui::SameLine();
-			//	if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-			//		open_update_popup = false;
-			//		ImGui::CloseCurrentPopup();
-			//	}
-			//	ImGui::EndPopup();
-			//}
 
 			if (showSettings) ShowSettingsWindow();
 			if (showHistoryWindow) ShowHistoryWindow();

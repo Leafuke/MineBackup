@@ -297,6 +297,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "CLOUD_SYNC_START", u8"[云同步] 开始同步..." },
 		{ "CLOUD_SYNC_BUTTOM", u8"上传备份文件夹至云" },
 		{ "CLOUD_SYNC_FINISH", u8"[云同步] 同步任务结束" },
+		{"CLOUD_SYNC_INVALID", u8"[云同步] 路径错误"},
 		{ "SNAPSHOT_PATH", u8"快照临时路径" },
 		{ "TIP_SNAPSHOT_PATH", u8"为“热备份”指定一个存放临时文件的文件夹。\n留空则默认使用系统临时目录 (通常在C盘)。" },
 		{ "BUTTON_SELECT_SNAPSHOT_DIR", u8"选择快照路径" },
@@ -338,6 +339,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		{ "GROUP_STARTUP_BEHAVIOR", u8"启动行为" },
 		{ "GROUP_BACKUP_OVERRIDES", u8"备份参数覆盖" },
 		{"BUTTON_EXPORT_LOG", u8"导出日志"},
+		{"BUTTON_HIDE_WORLD", u8"隐藏选中存档"},
 }},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -668,6 +670,7 @@ std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
 		//{ "TIP_RESTORE_METHOD_REVERSE", "Warning: This is an advanced feature!\nIt finds all [Smart] backups 'newer' than the selected one and applies them to the current world.\nThis does NOT restore to the selected state, but rather 'fast-forwards' its changes. Use with caution!" },
 		{"BUTTON_EXPORT_LOG", "Export Log"},
 		{ "ERROR_FILE_NO_FOUND", u8"[Error] File No Found：%s" },
+		{"BUTTON_HIDE_WORLD", "Hide This Folder"},
 
 }},
 };
