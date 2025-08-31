@@ -172,11 +172,17 @@ vector<filesystem::path> GetChangedFiles(
 	if (filesystem::exists(worldPath)) {
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
-				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
+				//filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
+				filesystem::path fileName = entry.path().filename();
 				size_t currentHash = CalculateFileHash(entry.path());
-				out_currentState[relativePath.wstring()] = currentHash;
+				out_currentState[fileName.wstring()] = currentHash;
+
+				//// 将filename和hash都输出一下，用来检查问题，输出到debug.txt文件
+				/*ofstream debugFile("debug.txt", ios::app);
+				debugFile << wstring_to_utf8(fileName.wstring()) << " " << currentHash << endl;*/
+
 				// 如果文件是新的，或者哈希值不同，则判定为已更改
-				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
+				if (lastState.find(fileName.wstring()) == lastState.end() || lastState[fileName.wstring()] != currentHash) {
 					changedFiles.push_back(entry.path());
 				}
 			}

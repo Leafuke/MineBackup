@@ -1671,8 +1671,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						showHistoryWindow = true; // 打开历史窗口
 					}
 					if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
-						displayWorlds[selectedWorldIndex].desc = L"#";
-						configs[displayWorlds[selectedWorldIndex].baseConfigIndex].worlds[displayWorlds[selectedWorldIndex].baseWorldIndex].second = displayWorlds[selectedWorldIndex].desc;
+						//displayWorlds[selectedWorldIndex].desc = L"#";
+						/*console.AddLog("CONFIGINDEX:::::%d", displayWorlds[selectedWorldIndex].baseConfigIndex);
+						console.AddLog("WORLDINDEX:::::%d", displayWorlds[selectedWorldIndex].baseWorldIndex);*/
+						// 这个按钮有概率导致莫名其妙的崩溃，原因不明
+						configs[displayWorlds[selectedWorldIndex].baseConfigIndex].worlds[displayWorlds[selectedWorldIndex].baseWorldIndex].second = L"#";
 						selectedWorldIndex = -1;
 					}
 					if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
@@ -2291,6 +2294,7 @@ static void LoadConfigs(const string& filename) {
 						specialConfigMode = true;
 				}
 				else if (key == L"ExitAfter") spCur->exitAfterExecution = (val != L"0");
+				else if (key == L"Theme") spCur->theme = stoi(val);
 				else if (key == L"HideWindow") spCur->hideWindow = (val != L"0");
 				else if (key == L"RunOnStartup") spCur->runOnStartup = (val != L"0");
 				else if (key == L"Command") spCur->commands.push_back(val);
@@ -2418,6 +2422,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
 		out << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n";
 		out << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
+		out << L"Theme=" << sc.theme << L"\n";
 		for (const auto& item : sc.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}
@@ -3194,12 +3199,6 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
 	}
 
-	// 建立黑名单
-	wstringstream exclusion_ss;
-	for (const auto& item : config.blacklist) {
-		exclusion_ss << L" -x!\"" << item << L"\"";
-	}
-	wstring exclusion_args = exclusion_ss.str();
 
 	// 生成带时间戳的文件名
 	time_t now = time(0);
@@ -3232,6 +3231,19 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 			return;
 		}
 	}
+
+	// 建立黑名单，如果是热备份，那么黑名单前面部分要替换成快照路径
+	wstringstream exclusion_ss;
+	for (const auto& item : config.blacklist) {
+		if (config.hotBackup && !sourcePath.empty() && item.find(originalSourcePath) == 0) {
+			filesystem::path itemPath(item);
+			exclusion_ss << L" -x!\"" << sourcePath + L"\\" + itemPath.filename().wstring() << L"\"";
+		}
+		else {
+			exclusion_ss << L" -x!\"" << item << L"\"";
+		}
+	}
+	wstring exclusion_args = exclusion_ss.str();
 
 	bool forceFullBackup = true;
 	if (filesystem::exists(destinationFolder)) {
@@ -3331,18 +3343,46 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	{
 		backupTypeStr = L"Smart";
 		if (!config.blacklist.empty()) {
-			filesToBackup.erase(
-				remove_if(filesToBackup.begin(), filesToBackup.end(),
-					[&](const filesystem::path& p) {
-						for (const auto& blacklistedItemW : config.blacklist) {
-							if (p.wstring().length() == blacklistedItemW.length() || p.wstring()[blacklistedItemW.length()] == L'\\') {
-								return true;
+			if (config.hotBackup) { // 如果是热备份，不能直接用config.blacklist
+				vector<wstring> newBlacklist;
+				//ofstream debugFile("debug.txt", ios::app);
+				//debugFile << "yes" << endl;
+				for (const auto& item : config.blacklist) {
+					filesystem::path itemPath(item);
+					newBlacklist.push_back(sourcePath + L"\\" + itemPath.filename().wstring());
+					//debugFile << wstring_to_utf8(sourcePath + L"\\" + itemPath.filename().wstring()) << endl;
+					if (filesystem::path(sourcePath).filename() == itemPath.filename())
+						newBlacklist.push_back(sourcePath);
+				}
+				filesToBackup.erase(
+					remove_if(filesToBackup.begin(), filesToBackup.end(),
+						[&](const filesystem::path& p) {
+							for (const auto& blacklistedItemW : newBlacklist) {
+								// 这里的判断逻辑还是有点问题，可能会误伤，可能会漏掉，因为还有文件夹作为黑名单，那么文件夹里面的全都要
+								//debugFile <<  wstring_to_utf8(blacklistedItemW) << "   222   " << wstring_to_utf8(p) << endl;
+								if (p.wstring().find(blacklistedItemW) != wstring::npos) {
+									return true;
+								}
 							}
-						}
-						return false;
-					}),
-				filesToBackup.end()
-			);
+							return false;
+						}),
+					filesToBackup.end()
+				);
+			}
+			else {
+				filesToBackup.erase(
+					remove_if(filesToBackup.begin(), filesToBackup.end(),
+						[&](const filesystem::path& p) {
+							for (const auto& blacklistedItemW : config.blacklist) {
+								if (p.wstring().find(blacklistedItemW) != wstring::npos) {
+									return true;
+								}
+							}
+							return false;
+						}),
+					filesToBackup.end()
+				);
+			}
 		}
 		if (filesToBackup.empty()) {
 			console.AddLog(L("LOG_NO_CHANGE_FOUND"));
@@ -3356,7 +3396,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		// 智能备份需要找到它所基于的文件
 		// 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
 		nlohmann::json oldMetadata;
-		ifstream f(destinationFolder + L"\\metadata.json");
+		ifstream f(metadataFolder + L"\\metadata.json");
 		oldMetadata = nlohmann::json::parse(f);
 		basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
 
@@ -3372,7 +3412,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		ofs.close();
 
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-		// 智能备份还未加入黑名单功能
+
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
 			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
 	}
