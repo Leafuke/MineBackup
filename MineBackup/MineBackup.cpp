@@ -83,6 +83,7 @@ struct SpecialConfig {
 	int zipLevel = 5;
 	int keepCount = 0;
 	int cpuThreads = 0;
+	int theme = 1;
 	bool useLowPriority = true;
 	bool hotBackup = false;
 	vector<wstring> blacklist;
@@ -195,7 +196,7 @@ static void LoadConfigs(const string& filename = "config.ini");
 static void SaveConfigs(const wstring& filename = L"config.ini");
 
 void ShowSettingsWindow();
-void ShowHistoryWindow();
+void ShowHistoryWindow(int& tempCurrentConfigIndex);
 static vector<DisplayWorld> BuildDisplayWorldsForSelection();
 static int CreateNewNormalConfig(const std::string& name_hint = "New Config");
 static int CreateNewSpecialConfig(const std::string& name_hint = "New Special");
@@ -841,13 +842,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	static bool showMainApp = !isFirstRun;
 	ImGui::StyleColorsLight();//默认亮色
 	//LoadConfigs("config.ini"); 
-	ApplyTheme(configs[currentConfigIndex].theme); // 把主题加载放在这里了
-
-
-	/*if (specialConfigs.count(currentConfigIndex) && specialConfigs[currentConfigIndex].autoExecute) {
-		specialConfigMode = true;
-		ExecuteSpecialConfig(currentConfigIndex, console);
-	}*/
+	if (configs.count(currentConfigIndex))
+		ApplyTheme(configs[currentConfigIndex].theme); // 把主题加载放在这里了
+	else
+		ApplyTheme(specialConfigs[currentConfigIndex].theme);
 
 
 	if (isFirstRun) {
@@ -1118,10 +1116,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		}
 		else if (showMainApp) {
 			static int selectedWorldIndex = -1;       // 跟踪用户在列表中选择的世界
-			static bool openRestorePopup = false;     // 控制还原弹窗的打开
 			static char backupComment[CONSTANT1] = "";// 备份注释输入框的内容
 			// 获取当前配置
-			if (configs.find(currentConfigIndex) == configs.end()) { // 找不到，说明应该对应的是特殊配置
+			if (!configs.count(currentConfigIndex)) { // 找不到，说明应该对应的是特殊配置
 				specialSetting = true;
 			}
 
@@ -1866,7 +1863,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			ImGui::EndChild();
 
 			if (showSettings) ShowSettingsWindow();
-			if (showHistoryWindow) ShowHistoryWindow();
+			if (showHistoryWindow) {
+				if (specialSetting) {
+					if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size())
+						ShowHistoryWindow(displayWorlds[selectedWorldIndex].baseConfigIndex);
+					else if (!specialConfigs[currentConfigIndex].tasks.empty())
+						ShowHistoryWindow(specialConfigs[currentConfigIndex].tasks[0].configIndex);
+				}
+				else {
+					ShowHistoryWindow(currentConfigIndex);
+				}
+			}
 			//console.Draw(L("CONSOLE_TITLE"), &showMainApp);
 			//ImGui::EndChild();
 			ImGui::End();
@@ -2259,6 +2266,21 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"Font") {
 					cur->zipFonts = val;
 					Fontss = val;
+					if (val.empty() || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
+						LANGID lang_id = GetUserDefaultUILanguage();
+
+						if (lang_id == 2052 || lang_id == 1028) {
+							g_CurrentLang = "zh-CN";
+							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
+								Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
+							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
+								Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
+						}
+						else {
+							g_CurrentLang = "en-US"; //英文
+							Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
+						}
+					}
 				}
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
@@ -3894,9 +3916,10 @@ void CheckForConfigConflicts() {
 	}
 
 }
-void ShowHistoryWindow() {
+void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 	static bool history_restore = false;
+	static bool isSpecialConfig = false;
 
 	static const HistoryEntry* entry_to_delete = nullptr;
 	static const HistoryEntry* entry_for_action = nullptr;
@@ -3908,25 +3931,31 @@ void ShowHistoryWindow() {
 		return;
 	}
 
-	if (configs.find(currentConfigIndex) == configs.end()) {
+
+
+	// 找不到，应该是特殊配置且是特殊配置，且特殊配置里有选择任务了
+	if (!configs.count(tempCurrentConfigIndex) && specialConfigs.count(tempCurrentConfigIndex) && !specialConfigs[tempCurrentConfigIndex].tasks.empty()) {
+		isSpecialConfig = true;
+	}
+	else if(!configs.count(tempCurrentConfigIndex)) {
 		ImGui::Text(L("ERROR_NO_CONFIG_SELECTED"));
 		ImGui::End();
 		return;
 	}
 
-	Config& cfg = configs[currentConfigIndex];
+	Config& cfg = configs[tempCurrentConfigIndex];
 	ImGui::Text(L("HISTORY_FOR_CONFIG"), cfg.name.c_str());
 	ImGui::Separator();
 
-	if (g_history.find(currentConfigIndex) == g_history.end() || g_history[currentConfigIndex].empty()) {
+	if (g_history.find(tempCurrentConfigIndex) == g_history.end() || g_history[tempCurrentConfigIndex].empty()) {
 		ImGui::Text(L("HISTORY_EMPTY"));
 	}
 	else {
 		ImGui::BeginChild("HistoryScroll", ImVec2(0, 0), true);
 
 		map<wstring, vector<const HistoryEntry*>> worldHistory;
-		if (g_history.count(currentConfigIndex)) {
-			const vector<HistoryEntry>& history_vec = g_history.at(currentConfigIndex);
+		if (g_history.count(tempCurrentConfigIndex)) {
+			const vector<HistoryEntry>& history_vec = g_history.at(tempCurrentConfigIndex);
 			for (const auto& entry : history_vec) {
 				worldHistory[entry.worldName].push_back(&entry);
 			}
@@ -4445,18 +4474,17 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Con
 	vector<filesystem::path> filesToDelete;
 	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
 
-	if (!filesystem::exists(backupDir / entryToDelete.backupFile)) {
-		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
-		return;
-	}
-
 	// 执行删除操作
 	for (const auto& path : filesToDelete) {
 		try {
 			if (filesystem::exists(path)) {
 				filesystem::remove(path);
-				console.AddLog("  - %s √", wstring_to_utf8(path.filename().wstring()).c_str());
+				console.AddLog("  - %s OK", wstring_to_utf8(path.filename().wstring()).c_str());
 				// 从历史记录中移除对应条目
+				RemoveHistoryEntry(currentConfigIndex, path.filename().wstring());
+			}
+			else {
+				console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 				RemoveHistoryEntry(currentConfigIndex, path.filename().wstring());
 			}
 		}

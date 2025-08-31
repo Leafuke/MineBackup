@@ -3,7 +3,7 @@
 #define _i18n
 #include <map>
 #include <string>
-std::map<std::string, std::map<std::string, std::string>> g_LangTable = {
+std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable = {
 	{ "zh-CN", {
 		{"SETTINGS", u8"设置"},
 		{"BACKUP", u8"备份选中存档"},
