@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.5";
+const string CURRENT_VERSION = "1.7.6";
 
 // 结构体们
 struct Config {
@@ -124,7 +124,7 @@ ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 wstring Fontss;
 vector<wstring> savePaths = { L"" };
 wchar_t backupPath[CONSTANT1] = L"", zipPath[CONSTANT1] = L"";
-int compressLevel = 5;
+bool done = false;
 bool showSettings = false;
 bool isSilence = false;
 bool specialSetting = false;
@@ -132,7 +132,7 @@ bool g_CheckForUpdates = true, g_RunOnStartup = false;
 static bool showHistoryWindow = false;
 static bool specialConfigMode = false; // 用来开启简单UI
 static bool g_enableKnotLink = true;
-int currentConfigIndex = 1;
+int currentConfigIndex = 1, realConfigIndex = -1; // 如果realConfigIndex不为-1，说明是特殊配置
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 map<int, Config> configs;
 map<int, vector<HistoryEntry>> g_history;
@@ -899,7 +899,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	static char backupComment[CONSTANT1] = "";
 
 	// Main loop
-	bool done = false;
 	while (!done)
 	{
 		// Poll and handle messages (inputs, window resize, etc.)
@@ -1104,12 +1103,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						else
 							initialConfig.zipFonts = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 
+						specialConfigs.clear();
+
 						// 4. 保存到文件并切换到主应用界面
 						SaveConfigs();
 						showConfigWizard = false;
 						showMainApp = true;
 					}
 				}
+				ImGui::Text(L("WIZARD_WARNING_TIPS"));
 			}
 
 			ImGui::End();
@@ -2441,10 +2443,10 @@ void ShowSettingsWindow() {
 	}
 
 	string current_config_label = "None";
-	if (specialSetting && specialConfigs.count(currentConfigIndex)) {
+	if (specialConfigs.count(currentConfigIndex)) {
 		current_config_label = "[Sp." + to_string(currentConfigIndex) + "] " + specialConfigs[currentConfigIndex].name;
 	}
-	else if (!specialSetting && configs.count(currentConfigIndex)) {
+	else if (configs.count(currentConfigIndex)) {
 		current_config_label = "[No." + to_string(currentConfigIndex) + "] " + configs[currentConfigIndex].name;
 	}
 	//string(L("CONFIG_N")) + to_string(currentConfigIndex)
@@ -2609,6 +2611,7 @@ void ShowSettingsWindow() {
 
 				ImGui::SeparatorText(L("GROUP_STARTUP_BEHAVIOR"));
 				ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_EXECUTE_ON_STARTUP"));
 				ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
 				if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
 					wchar_t selfPath[MAX_PATH];
@@ -2638,6 +2641,14 @@ void ShowSettingsWindow() {
 			if (ImGui::RadioButton(L("THEME_LIGHT"), &spCfg.theme, 1)) { ApplyTheme(spCfg.theme); } ImGui::SameLine();
 			if (ImGui::RadioButton(L("THEME_CLASSIC"), &spCfg.theme, 2)) { ApplyTheme(spCfg.theme); }
 
+			if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
+				done = true;
+				specialConfigs[currentConfigIndex].autoExecute = true;
+				SaveConfigs();
+				wchar_t selfPath[MAX_PATH];
+				GetModuleFileNameW(NULL, selfPath, MAX_PATH); // 获得程序路径
+				ShellExecuteW(NULL, L"open", selfPath, NULL, NULL, SW_SHOWNORMAL); // 开启
+			}
 
 			//ImGui::SeparatorText(L("BLACKLIST_HEADER"));
 			//if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
@@ -2943,6 +2954,10 @@ void ShowSettingsWindow() {
 				wstring sel = SelectFolderDialog(); if (!sel.empty()) cfg.blacklist.push_back(sel);
 			}
 			static int sel_bl_item = -1;
+			ImGui::SameLine();
+			if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item != -1) {
+				cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item); sel_bl_item = -1;
+			}
 
 			if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 2 * ImGui::GetTextLineHeightWithSpacing()))) {
 				// 检查 blacklist 是否为空
@@ -2963,11 +2978,6 @@ void ShowSettingsWindow() {
 					}
 				}
 				ImGui::EndListBox();
-			}
-
-
-			if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item != -1) {
-				cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item); sel_bl_item = -1;
 			}
 		}
 
@@ -3307,10 +3317,10 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 	// 根据检查结果进行日志记录
 	if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
-		console.AddLog("[Info] Metadata is invalid or missing. A full backup is required.");
+		console.AddLog(L("LOG_METADATA_INVALID"));
 	}
 	else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING) {
-		console.AddLog("[Warning] The base backup file for previous smart backups was not found. A new full backup chain will be started.");
+		console.AddLog(L("LOG_BASE_BACKUP_NOT_FOUND"));
 	}
 
 	// 如果开了检测无变化跳过
@@ -3473,7 +3483,12 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		LimitBackupFiles(destinationFolder, config.keepCount, &console);
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
-		AddHistoryEntry(currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+		if (realConfigIndex != -1)
+			AddHistoryEntry(realConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+		else
+			AddHistoryEntry(currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+		realConfigIndex = -1; // 重置
+		// 广播一个成功事件
 		string payload = "event=backup_success;config=" + to_string(currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
 		BroadcastEvent(payload);
 
@@ -3800,7 +3815,9 @@ void RunSpecialMode(int configId) {
 
 		if (task.backupType == 0) { // 类型 0: 一次性备份
 			ConsoleLog(L("TASK_QUEUE_ONETIME_BACKUP"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
-			DoBackup(taskConfig, worldData, dummyConsole);
+			realConfigIndex = task.configIndex;
+			DoBackup(taskConfig, worldData, dummyConsole, L"SpecialMode");
+			//AddHistoryEntry(task.configIndex, worldData.first, L"", L"One-time", L"SpecialMode");
 		}
 		else { // 类型 1 (间隔) 和 2 (计划) 在后台线程运行
 			taskThreads.emplace_back([task, taskConfig, worldData, &shouldExit]() {
@@ -3854,7 +3871,8 @@ void RunSpecialMode(int configId) {
 					if (shouldExit) break;
 
 					ConsoleLog(L("BACKUP_PERFORMING_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()));
-					DoBackup(taskConfig, worldData, dummyConsole);
+					realConfigIndex = task.configIndex;
+					DoBackup(taskConfig, worldData, dummyConsole, L"SpecialMode");
 				}
 				ConsoleLog(L("THREAD_STOPPED_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()));
 				});
