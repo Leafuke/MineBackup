@@ -1654,7 +1654,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					// -- 注释输入框 --if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
 					//cfg.worlds[i].second = utf8_to_wstring(desc);
 					//ImGui::InputTextMultiline(L("COMMENT_HINT"), backupComment, IM_ARRAYSIZE(backupComment), ImVec2(-1, ImGui::GetTextLineHeight() * 3));
-					char buffer[CONSTANT2] = "";
+					char buffer[CONSTANT1] = "";
 					wstring desc = displayWorlds[selectedWorldIndex].desc;
 					strncpy_s(buffer, wstring_to_utf8(desc).c_str(), sizeof(buffer));
 					ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
@@ -1807,41 +1807,99 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 				}
 
+
+			//	// 自动备份弹窗
+			//	if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+			//		bool is_task_running = false;
+			//		{
+			//			// 检查任务是否正在运行时，也需要加锁
+			//			lock_guard<mutex> lock(g_task_mutex);
+			//			is_task_running = g_active_auto_backups.count(selectedWorldIndex);
+			//		}
+
+			//		if (is_task_running) {
+			//			ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+			//			ImGui::Separator();
+			//			if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(-1, 0))) {
+			//				lock_guard<mutex> lock(g_task_mutex);
+			//				// 1. 设置停止标志
+			//				g_active_auto_backups.at(selectedWorldIndex).stop_flag = true;
+			//				// 2. 等待线程结束
+			//				if (g_active_auto_backups.at(selectedWorldIndex).worker.joinable()) {
+			//					g_active_auto_backups.at(selectedWorldIndex).worker.join();
+			//				}
+			//				// 3. 从管理器中移除
+			//				g_active_auto_backups.erase(selectedWorldIndex);
+			//				ImGui::CloseCurrentPopup();
+			//			}
+			//		}
+			//		else {
+			//			ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
+			//			ImGui::Separator();
+			//			static int interval = 15; // 默认15分钟
+			//			ImGui::InputInt(L("INTERVAL_MINUTES"), &interval);
+			//			if (interval < 1) interval = 1; // 最小间隔1分钟
+
+			//			if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
+			//				lock_guard<mutex> lock(g_task_mutex);
+			//				auto& task = g_active_auto_backups[selectedWorldIndex];
+			//				task.stop_flag = false;
+			//				// 启动后台线程，注意 console 是通过指针传递的
+			//				task.worker = thread(AutoBackupThreadFunction, selectedWorldIndex, currentConfigIndex, interval, &console);
+			//				ImGui::CloseCurrentPopup();
+			//			}
+			//			ImGui::SameLine();
+			//			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+			//				ImGui::CloseCurrentPopup();
+			//			}
+			//		}
+			//		ImGui::EndPopup();
+			//	}
+			//	ImGui::EndChild();
+			//}
+
 				// 自动备份弹窗
 				if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 					bool is_task_running = false;
 					pair<int, int> taskKey = { -1,-1 };
+					vector<DisplayWorld> localDisplayWorlds; // 供显示使用
 					{
 						lock_guard<mutex> lock(g_task_mutex);
 						if (selectedWorldIndex >= 0) {
 							// 如果使用 displayWorlds：
-							auto displayWorlds = BuildDisplayWorldsForSelection();
-							if (selectedWorldIndex < (int)displayWorlds.size()) {
-								taskKey = { displayWorlds[selectedWorldIndex].baseConfigIndex, displayWorlds[selectedWorldIndex].baseWorldIndex };
+							localDisplayWorlds = BuildDisplayWorldsForSelection();
+							if (selectedWorldIndex < (int)localDisplayWorlds.size()) {
+								taskKey = { localDisplayWorlds[selectedWorldIndex].baseConfigIndex, localDisplayWorlds[selectedWorldIndex].baseWorldIndex };
 								is_task_running = (g_active_auto_backups.count(taskKey) > 0);
 							}
 						}
 					}
 
 					if (is_task_running) {
-						ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(displayWorlds[selectedWorldIndex].name).c_str());
+						ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 						ImGui::Separator();
 						if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(-1, 0))) {
-							lock_guard<mutex> lock(g_task_mutex);
-							// 1. 设置停止标志
-							// 2. 等待线程结束
-							// 3. 从管理器中移除
-							if (g_active_auto_backups.count(taskKey)) {
-								g_active_auto_backups.at(taskKey).stop_flag = true;
-								if (g_active_auto_backups.at(taskKey).worker.joinable())
-									g_active_auto_backups.at(taskKey).worker.join();
-								g_active_auto_backups.erase(taskKey);
+							std::thread join_thread;
+							{
+								// 使用 unique_lock 以便在移动线程后释放锁再 join
+								std::unique_lock<std::mutex> lock(g_task_mutex);
+								auto it = g_active_auto_backups.find(taskKey);
+								if (it != g_active_auto_backups.end()) {
+									it->second.stop_flag = true;
+									if (it->second.worker.joinable()) {
+										join_thread = std::move(it->second.worker); // 提取线程对象
+									}
+									g_active_auto_backups.erase(it); // 从管理器移除（已把 worker 移出）
+								}
+								// unique_lock 在此作用域结束时释放锁
 							}
+							// 在不持有 g_task_mutex 时 join，避免死锁
+							if (join_thread.joinable()) join_thread.join();
 							ImGui::CloseCurrentPopup();
 						}
 					}
 					else {
-						ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(displayWorlds[selectedWorldIndex].name).c_str());
+						ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(BuildDisplayWorldsForSelection()[selectedWorldIndex].name).c_str());
 						ImGui::Separator();
 						static int interval = 15;
 						ImGui::InputInt(L("INTERVAL_MINUTES"), &interval);
@@ -2885,7 +2943,7 @@ void ShowSettingsWindow() {
 			ImGui::Text(L("WORLD_NAME_AND_DESC"));
 			for (size_t i = 0; i < cfg.worlds.size(); ++i) {
 				ImGui::PushID(int(i));
-				char name[CONSTANT1], desc[CONSTANT2];
+				char name[CONSTANT1], desc[CONSTANT1];
 				strncpy_s(name, wstring_to_utf8(cfg.worlds[i].first).c_str(), sizeof(name));
 				strncpy_s(desc, wstring_to_utf8(cfg.worlds[i].second).c_str(), sizeof(desc));
 
@@ -2895,7 +2953,7 @@ void ShowSettingsWindow() {
 					memset(desc, '\0', sizeof(desc));
 					cfg.worlds[i].second = L"";
 				}
-				if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
+				if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT1))
 					cfg.worlds[i].second = utf8_to_wstring(desc);
 
 				ImGui::PopID();
@@ -3627,16 +3685,15 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		return;
 	}
 
-	// 检查备份文件是否存在
-	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(config.backupPath + L"\\" + backupFile)) {
-		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
-		return;
-	}
-
 	// 准备路径
 	wstring sourceDir = config.backupPath + L"\\" + worldName;
 	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
 
+	// 检查备份文件是否存在
+	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir + L"\\" + backupFile)) {
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
+		return;
+	}
 
 	if (restoreMethod == 0) { // Clean Restore
 		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());

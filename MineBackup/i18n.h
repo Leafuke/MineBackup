@@ -131,7 +131,7 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{"LOG_BACKUP_HOT_INFO4", u8"[Error] 创建快照失败：%s" },
 		{"LOG_BACKUP_SMART_INFO", u8"[提示] 发现 %zu 个文件发生改变。" },
 		{ "LOG_BACKUP_SMART_NO_FOUND", u8"[Error] 无法还原: 没有合适的 [Full(完整)] 备份在选中的 [Smart(智能)] 备份之前。" },
-		{ "LOG_BACKUP_SMART_FOUND", "[提示] 找到基准完整备份: %s" },
+		{ "LOG_BACKUP_SMART_FOUND", u8"[提示] 找到基准完整备份: %s" },
 		{"LOG_BACKUP_START_HEADER", u8"---------- 开始备份 ----------"},
 		{"LOG_BACKUP_PREPARE", u8"准备备份世界: %s"},
 		{"LOG_ERROR_7Z_NOT_FOUND", u8"[Error] 找不到压缩程序: %s"},
@@ -344,8 +344,8 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{ "GROUP_BACKUP_OVERRIDES", u8"备份参数覆盖" },
 		{"BUTTON_EXPORT_LOG", u8"导出日志"},
 		{"BUTTON_HIDE_WORLD", u8"隐藏选中存档"},
-		{ "LOG_METADATA_INVALID", "[提示] 元数据无效或缺失。需要进行完整备份。" },
-		{ "LOG_BASE_BACKUP_NOT_FOUND", "[提示] 找不到先前智能备份的基础备份文件。将开始新的完整备份链。" }
+		{ "LOG_METADATA_INVALID", u8"[提示] 元数据无效或缺失。需要进行完整备份。" },
+		{ "LOG_BASE_BACKUP_NOT_FOUND", u8"[提示] 找不到先前智能备份的基础备份文件。将开始新的完整备份链。" }
 
 }},
 	{ "en-US", {
