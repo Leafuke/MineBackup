@@ -103,8 +103,8 @@ struct AutoBackupTask {
 	atomic<bool> stop_flag{ false }; // 原子布尔值，用于安全地通知线程停止
 };
 struct DisplayWorld { // 一个新的结构体，让 UI 不再直接读取 configs[currentConfigIndex].worlds，而使用 DisplayWorld
-	std::wstring name;      // 世界名（文件夹名）
-	std::wstring desc;      // 描述
+	wstring name;      // 世界名（文件夹名）
+	wstring desc;      // 描述
 	int baseConfigIndex = -1; // 来源配置 id
 	int baseWorldIndex = -1;  // 来源配置中世界索引
 	Config effectiveConfig;   // 合并后的配置（拷贝）
@@ -198,8 +198,8 @@ static void SaveConfigs(const wstring& filename = L"config.ini");
 void ShowSettingsWindow();
 void ShowHistoryWindow(int& tempCurrentConfigIndex);
 static vector<DisplayWorld> BuildDisplayWorldsForSelection();
-static int CreateNewNormalConfig(const std::string& name_hint = "New Config");
-static int CreateNewSpecialConfig(const std::string& name_hint = "New Special");
+static int CreateNewNormalConfig(const string& name_hint = "New Config");
+static int CreateNewSpecialConfig(const string& name_hint = "New Special");
 
 struct Console
 {
@@ -418,11 +418,11 @@ struct Console
 		bool copy_to_clipboard = ImGui::SmallButton(L("BUTTON_COPY"));
 		ImGui::SameLine();
 		if (ImGui::SmallButton(L("BUTTON_EXPORT_LOG"))) {
-			std::ofstream out("console_log.txt", std::ios::out | std::ios::trunc);
+			ofstream out("console_log.txt", ios::out | ios::trunc);
 			if (!out.is_open()) return;
 			for (int i = 0; i < Items.Size; ++i)
 			{
-				out << Items[i] << std::endl;
+				out << Items[i] << endl;
 			}
 			out.close();
 			// 自动打开日志所在目录
@@ -1126,7 +1126,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 
 			// --- 动态调整世界图标纹理和尺寸向量的大小 ---
-			std::vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
+			vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
 			int worldCount = (int)displayWorlds.size();
 			if ((int)worldIconTextures.size() != worldCount) {
 				// 在调整大小前，释放旧的、不再需要的纹理资源
@@ -1297,13 +1297,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-				std::string github_button_text = L("ABOUT_VISIT_GITHUB");
+				string github_button_text = L("ABOUT_VISIT_GITHUB");
 				if (ImGui::Button(github_button_text.c_str()))
 				{
 					ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup", NULL, NULL, SW_SHOWNORMAL);
 				}
 				ImGui::SameLine();
-				std::string bilibili_button_text = L("ABOUT_VISIT_BILIBILI");
+				string bilibili_button_text = L("ABOUT_VISIT_BILIBILI");
 				if (ImGui::Button(bilibili_button_text.c_str()))
 				{
 					ShellExecuteA(NULL, "open", "https://space.bilibili.com/545429962", NULL, NULL, SW_SHOWNORMAL);
@@ -1485,8 +1485,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				bool is_selected = (selectedWorldIndex == i);
 
 				// worldFolder / backupFolder 基于 effectiveConfig
-				std::wstring worldFolder = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
-				std::wstring backupFolder = dw.effectiveConfig.backupPath + L"\\" + dw.name;
+				wstring worldFolder = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
+				wstring backupFolder = dw.effectiveConfig.backupPath + L"\\" + dw.name;
 
 				// --- 左侧图标区 ---
 				ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -1775,7 +1775,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							console.AddLog(L("CLOUD_SYNC_START"));
 							wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
 							// 另起一个线程来执行云同步，避免阻塞后续操作
-							std::thread([rclone_command, config]() {
+							thread([rclone_command, config]() {
 								RunCommandInBackground(rclone_command, console, config.useLowPriority);
 								console.AddLog(L("CLOUD_SYNC_FINISH"));
 							}).detach();
@@ -1840,7 +1840,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 								AutoBackupTask& task = g_active_auto_backups[taskKey];
 								task.stop_flag = false;
 								// 注意 worker 的构造：直接赋值一个 thread
-								task.worker = std::thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console);
+								task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console);
 								ImGui::CloseCurrentPopup();
 							}
 						}
@@ -2634,6 +2634,10 @@ void ShowSettingsWindow() {
 				ImGui::EndTable();
 			}
 
+			if (ImGui::RadioButton(L("THEME_DARK"), &spCfg.theme, 0)) { ApplyTheme(spCfg.theme); } ImGui::SameLine();
+			if (ImGui::RadioButton(L("THEME_LIGHT"), &spCfg.theme, 1)) { ApplyTheme(spCfg.theme); } ImGui::SameLine();
+			if (ImGui::RadioButton(L("THEME_CLASSIC"), &spCfg.theme, 2)) { ApplyTheme(spCfg.theme); }
+
 
 			//ImGui::SeparatorText(L("BLACKLIST_HEADER"));
 			//if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
@@ -2993,10 +2997,9 @@ void ShowSettingsWindow() {
 		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"))) {
 			ImGui::Separator();
 			ImGui::Text(L("THEME_SETTINGS"));
-			int theme_choice = (int)cfg.theme;
-			if (ImGui::RadioButton(L("THEME_DARK"), &theme_choice, 0)) { cfg.theme = 0; ApplyTheme(cfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_LIGHT"), &theme_choice, 1)) { cfg.theme = 1; ApplyTheme(cfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_CLASSIC"), &theme_choice, 2)) { cfg.theme = 2; ApplyTheme(cfg.theme); } 
+			if (ImGui::RadioButton(L("THEME_DARK"), &cfg.theme, 0)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
+			if (ImGui::RadioButton(L("THEME_LIGHT"), &cfg.theme, 1)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
+			if (ImGui::RadioButton(L("THEME_CLASSIC"), &cfg.theme, 2)) { ApplyTheme(cfg.theme); }
 
 			ImGui::Text(L("FONT_SETTINGS"));
 			char Fonts[CONSTANT1];
@@ -3704,7 +3707,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 
 // 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
 void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console) {
-	auto key = std::make_pair(configIdx, worldIdx);
+	auto key = make_pair(configIdx, worldIdx);
 	console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
 	while (true) {
 		// 等待指定的时间，但每秒检查一次是否需要停止
@@ -4536,8 +4539,8 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Con
 }
 
 // 构建当前选择（普通 / 特殊）下用于显示的世界列表
-static std::vector<DisplayWorld> BuildDisplayWorldsForSelection() {
-	std::vector<DisplayWorld> out;
+static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
+	vector<DisplayWorld> out;
 	// 普通配置视图
 	if (!specialSetting) {
 		if (!configs.count(currentConfigIndex)) return out;
@@ -4585,7 +4588,7 @@ static std::vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 	return out;
 }
 
-static int CreateNewNormalConfig(const std::string& name_hint) {
+static int CreateNewNormalConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	Config new_cfg;
 	new_cfg.name = name_hint;
@@ -4598,7 +4601,7 @@ static int CreateNewNormalConfig(const std::string& name_hint) {
 	return newId;
 }
 
-static int CreateNewSpecialConfig(const std::string& name_hint) {
+static int CreateNewSpecialConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	SpecialConfig sp;
 	sp.name = name_hint;
