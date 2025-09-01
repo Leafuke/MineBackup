@@ -1651,8 +1651,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 					ImGui::Separator();
 
-					// -- ×¢ÊÍÊäÈë¿ò --
+					// -- ×¢ÊÍÊäÈë¿ò --if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
+					//cfg.worlds[i].second = utf8_to_wstring(desc);
 					//ImGui::InputTextMultiline(L("COMMENT_HINT"), backupComment, IM_ARRAYSIZE(backupComment), ImVec2(-1, ImGui::GetTextLineHeight() * 3));
+					char buffer[CONSTANT2] = "";
+					wstring desc = displayWorlds[selectedWorldIndex].desc;
+					strncpy_s(buffer, wstring_to_utf8(desc).c_str(), sizeof(buffer));
+					ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+					ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+					if (desc.find(L"\"") != wstring::npos || desc.find(L":") != wstring::npos || desc.find(L"\\") != wstring::npos || desc.find(L"/") != wstring::npos || desc.find(L">") != wstring::npos || desc.find(L"<") != wstring::npos || desc.find(L"|") != wstring::npos || desc.find(L"?") != wstring::npos || desc.find(L"*") != wstring::npos) {
+						memset(buffer, '\0', sizeof(buffer));
+						configs[displayWorlds[selectedWorldIndex].baseConfigIndex].worlds[displayWorlds[selectedWorldIndex].baseWorldIndex].second = L"";
+					}
+					configs[displayWorlds[selectedWorldIndex].baseConfigIndex].worlds[displayWorlds[selectedWorldIndex].baseWorldIndex].second = utf8_to_wstring(buffer);
 					ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
 					ImGui::InputTextWithHint("##backup_comment", L("HINT_BACKUP_COMMENT"), backupComment, IM_ARRAYSIZE(backupComment), ImGuiInputTextFlags_EnterReturnsTrue);
 
