@@ -132,6 +132,7 @@ cd MineBackup
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI framework
 * [**stb**](https://github.com/nothings/stb) — Image loading
 * [**KnotLink**](https://github.com/hxh230802/KnotLink) — Lightweight inter-process messaging
+* [**json**](https://github.com/nlohmann/json) — Metadata read & write
 
 ---
 
