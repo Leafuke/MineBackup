@@ -1807,57 +1807,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 				}
 
-
-			//	// 自动备份弹窗
-			//	if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-			//		bool is_task_running = false;
-			//		{
-			//			// 检查任务是否正在运行时，也需要加锁
-			//			lock_guard<mutex> lock(g_task_mutex);
-			//			is_task_running = g_active_auto_backups.count(selectedWorldIndex);
-			//		}
-
-			//		if (is_task_running) {
-			//			ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
-			//			ImGui::Separator();
-			//			if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(-1, 0))) {
-			//				lock_guard<mutex> lock(g_task_mutex);
-			//				// 1. 设置停止标志
-			//				g_active_auto_backups.at(selectedWorldIndex).stop_flag = true;
-			//				// 2. 等待线程结束
-			//				if (g_active_auto_backups.at(selectedWorldIndex).worker.joinable()) {
-			//					g_active_auto_backups.at(selectedWorldIndex).worker.join();
-			//				}
-			//				// 3. 从管理器中移除
-			//				g_active_auto_backups.erase(selectedWorldIndex);
-			//				ImGui::CloseCurrentPopup();
-			//			}
-			//		}
-			//		else {
-			//			ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(cfg.worlds[selectedWorldIndex].first).c_str());
-			//			ImGui::Separator();
-			//			static int interval = 15; // 默认15分钟
-			//			ImGui::InputInt(L("INTERVAL_MINUTES"), &interval);
-			//			if (interval < 1) interval = 1; // 最小间隔1分钟
-
-			//			if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
-			//				lock_guard<mutex> lock(g_task_mutex);
-			//				auto& task = g_active_auto_backups[selectedWorldIndex];
-			//				task.stop_flag = false;
-			//				// 启动后台线程，注意 console 是通过指针传递的
-			//				task.worker = thread(AutoBackupThreadFunction, selectedWorldIndex, currentConfigIndex, interval, &console);
-			//				ImGui::CloseCurrentPopup();
-			//			}
-			//			ImGui::SameLine();
-			//			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-			//				ImGui::CloseCurrentPopup();
-			//			}
-			//		}
-			//		ImGui::EndPopup();
-			//	}
-			//	ImGui::EndChild();
-			//}
-
 				// 自动备份弹窗
 				if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 					bool is_task_running = false;
@@ -1879,22 +1828,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 						ImGui::Separator();
 						if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(-1, 0))) {
-							std::thread join_thread;
-							{
-								// 使用 unique_lock 以便在移动线程后释放锁再 join
-								std::unique_lock<std::mutex> lock(g_task_mutex);
-								auto it = g_active_auto_backups.find(taskKey);
-								if (it != g_active_auto_backups.end()) {
-									it->second.stop_flag = true;
-									if (it->second.worker.joinable()) {
-										join_thread = std::move(it->second.worker); // 提取线程对象
-									}
-									g_active_auto_backups.erase(it); // 从管理器移除（已把 worker 移出）
-								}
-								// unique_lock 在此作用域结束时释放锁
+							if (g_active_auto_backups.count(taskKey)) {
+								// 1. 设置停止标志
+								g_active_auto_backups.at(taskKey).stop_flag = true;
+								// 2. 等待线程结束
+								if (g_active_auto_backups.at(taskKey).worker.joinable())
+									g_active_auto_backups.at(taskKey).worker.join();
+								// 3. 从管理器中移除
+								g_active_auto_backups.erase(taskKey);
 							}
-							// 在不持有 g_task_mutex 时 join，避免死锁
-							if (join_thread.joinable()) join_thread.join();
 							ImGui::CloseCurrentPopup();
 						}
 					}
@@ -3703,7 +3645,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			}
 		}
 		catch (const filesystem::filesystem_error& e) {
-			console.AddLog("[ERROR] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
+			console.AddLog("[Error] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
 		}
 	}
 
@@ -4123,7 +4065,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 						nodeColor = ImGui::GetColorU32(ImVec4(0.2f, 0.6f, 1.0f, 1.0f)); // Full备份，蓝色
 					}
 					else if (entry->backupType == L"Smart") {
-						nodeColor = ImGui::GetColorU32(ImVec4(0.2f, 1.0f, 0.6f, 1.0f)); // Smart备份，绿色
+						nodeColor = ImGui::GetColorU32(ImVec4(0.6f, 0.9f, 0.6f, 1.0f)); // Smart备份，绿色
 					}
 
 					drawList->AddLine(ImVec2(p.x + node_radius, p.y - 1), ImVec2(p.x + node_radius, p.y + row_height), ImGui::GetColorU32(ImGuiCol_TextDisabled), 1.5f);
