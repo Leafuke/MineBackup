@@ -3,6 +3,7 @@
 #define _i18n
 #include <map>
 #include <string>
+
 std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable = {
 	{ "zh-CN", {
 		{"SETTINGS", u8"设置"},
@@ -354,6 +355,8 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{ "BUTTON_ADD_REGEX_BLACKLIST", u8"添加正则表达式" },
 		{ "TIP_USE_REGEX", u8"使用 'regex:' 前缀来启用正则表达式匹配。\n例如: regex:.*\\.log$ 会排除所有 .log 文件" },
 		{ "LOG_WARNING_DELETE_SMART_BACKUP", u8"[警告] 删除了智能备份链上的文件 '%s'， 这可能会破坏备份完整性。" },
+		{"CONFIG_TYPE_NORMAL_DESC", u8"普通配置适合大多数用户，提供基本的备份功能和设置选项。它是特殊配置的“基础”。" },
+		{ "CONFIG_TYPE_SPECIAL_DESC", u8"特殊配置允许你设置自动化任务，这些任务可以在程序启动时自动运行，适合高级用户和需要定期备份的场景。它依赖普通配置，可以通过“添加自动任务”显示和自动化备份普通配置里的存档。" },
 }},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -700,6 +703,8 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{ "BUTTON_ADD_REGEX_BLACKLIST", "Add Regex" },
 		{ "TIP_USE_REGEX", "Prefix with 'regex:' to use a regular expression.\nE.g., regex:.*\\.log$ will exclude all .log files" },
 		{ "LOG_WARNING_DELETE_SMART_BACKUP", "[Warning] Deleted smart backup file '%s', this may affect backup integrity." },
+		{ "CONFIG_TYPE_NORMAL_DESC", "Normal configuration is suitable for most users, providing basic backup features and settings options. It is the 'foundation' of special configurations." },
+		{ "CONFIG_TYPE_SPECIAL_DESC", "Special configuration allows you to set up automation tasks that can run automatically when the program starts,\nsuitable for advanced users and scenarios that require regular backups.It relies on normal configuration and can display and automate backups of archives in normal configuration through 'Add Automation Task'." },
 }},
 };
 std::string g_CurrentLang; // Default language

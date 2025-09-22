@@ -1440,6 +1440,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
 				ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
 
+				if (config_type == 0) {
+					ImGui::TextWrapped(L("CONFIG_TYPE_NORMAL_DESC"));
+				}
+				else {
+					ImGui::TextWrapped(L("CONFIG_TYPE_SPECIAL_DESC"));
+				}
+
 				ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
 				ImGui::Separator();
 
@@ -3764,6 +3771,9 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			console.AddLog("[Error] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
 		}
 	}
+
+	// 等待一段时间，确保删除完成
+	this_thread::sleep_for(chrono::seconds(1));
 
 	// 收集所有相关的备份文件
 	vector<filesystem::path> backupsToApply;
