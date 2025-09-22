@@ -3193,8 +3193,9 @@ void LimitBackupFiles(const wstring& folderPath, int limit, Console* console)
 		try {
 			if (files[i].path().filename().wstring().find(L"[Smart]") == 0 || files[i + 1].path().filename().wstring().find(L"[Smart]") == 0) // 如果是智能备份，不能删除！如果是完整备份，不能是基底
 			{
-				to_delete += 1;
-				continue;
+				/*to_delete += 1;
+				continue;现在的做法是依然删除，但进行警告*/
+				if (console) console->AddLog(L("LOG_WARNING_DELETE_SMART_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 			}
 			fs::remove(files[i]);
 			if (console) console->AddLog(L("LOG_DELETE_OLD_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
