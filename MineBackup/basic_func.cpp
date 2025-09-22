@@ -173,17 +173,17 @@ vector<filesystem::path> GetChangedFiles(
 	if (filesystem::exists(worldPath)) {
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
-				//filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
-				filesystem::path fileName = entry.path().filename();
+				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
+				//filesystem::path fileName = entry.path().filename();
 				size_t currentHash = CalculateFileHash(entry.path());
-				out_currentState[fileName.wstring()] = currentHash;
+				out_currentState[relativePath.wstring()] = currentHash;
 
 				//// 将filename和hash都输出一下，用来检查问题，输出到debug.txt文件
 				/*ofstream debugFile("debug.txt", ios::app);
 				debugFile << wstring_to_utf8(fileName.wstring()) << " " << currentHash << endl;*/
 
 				// 如果文件是新的，或者哈希值不同，则判定为已更改
-				if (lastState.find(fileName.wstring()) == lastState.end() || lastState[fileName.wstring()] != currentHash) {
+				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
 					changedFiles.push_back(entry.path());
 				}
 			}
@@ -361,8 +361,8 @@ bool is_blacklisted(
 	const vector<wstring>& blacklist)
 {
 	// 将路径转换为小写以进行不区分大小写的字符串比较
-	/*wstring file_path_lower = file_to_check.wstring();
-	transform(file_path_lower.begin(), file_path_lower.end(), file_path_lower.begin(), ::towlower);*/
+	wstring file_path_lower = file_to_check.wstring();
+	transform(file_path_lower.begin(), file_path_lower.end(), file_path_lower.begin(), ::towlower);
 
 	// 获取相对于当前备份源的相对路径
 	error_code ec;
@@ -393,7 +393,7 @@ bool is_blacklisted(
 		else { // 普通字符串规则
 			// 规则可能是绝对路径或相对路径片段
 			// 1. 检查是否直接匹配完整路径
-			if (file_to_check.wstring().find(rule) != wstring::npos) {
+			if (file_path_lower.find(rule) != wstring::npos) {
 				return true;
 			}
 
@@ -412,7 +412,7 @@ bool is_blacklisted(
 						transform(remapped_rule_lower.begin(), remapped_rule_lower.end(), remapped_rule_lower.begin(), ::towlower);
 
 						// 检查文件是否位于重映射后的黑名单路径下
-						if (file_to_check.wstring().rfind(remapped_rule_lower, 0) == 0) {
+						if (file_path_lower.rfind(remapped_rule_lower, 0) == 0) {
 							return true;
 						}
 					}

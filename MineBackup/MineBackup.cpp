@@ -3361,6 +3361,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		wstring snapshotPath = CreateWorldSnapshot(sourcePath, console);
 		if (!snapshotPath.empty()) {
 			sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
+			this_thread::sleep_for(chrono::milliseconds(200));//在创建快照后加入短暂延时，给文件系统反应时间
 			//originalSourcePath = snapshotPath;
 		}
 		else {
@@ -3380,71 +3381,6 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	}
 	if (forceFullBackup)
 		console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
-
-	// --- 新的统一文件过滤逻辑 ---
-
-	vector<filesystem::path> candidate_files;
-	BackupCheckResult checkResult;
-	map<wstring, size_t> currentState;
-
-	// 根据备份模式确定候选文件列表
-	if (config.backupMode == 2 && !forceFullBackup) { // 智能备份模式
-		
-		// GetChangedFiles 返回的是已改变的文件列表
-		candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
-		// ... (处理 checkResult 的逻辑保持不变, 如 LOG_NO_CHANGE_FOUND 等)
-	}
-	else { // 普通备份或强制完整备份
-		// 候选列表是源路径下的所有文件
-		try {
-			for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
-				if (entry.is_regular_file()) {
-					candidate_files.push_back(entry.path());
-				}
-			}
-		}
-		catch (const filesystem::filesystem_error& e) {
-			console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-			if (config.hotBackup) { /* ... 清理快照 ... */ }
-			return;
-		}
-	}
-
-	// 过滤候选文件列表，应用黑名单
-	vector<filesystem::path> files_to_backup;
-	for (const auto& file : candidate_files) {
-		if (!is_blacklisted(file, sourcePath, originalSourcePath, config.blacklist)) {
-			files_to_backup.push_back(file);
-		}
-	}
-
-	// 如果过滤后没有文件需要备份，则提前结束
-	if (files_to_backup.empty()) {
-		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		if (config.hotBackup) { /* ... 清理快照 ... */ }
-		return;
-	}
-
-	// 将最终文件列表写入临时文件，供7z读取
-	filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
-	filesystem::create_directories(tempDir);
-	wstring filelist_path = (tempDir / (L"filelist_" + world.first + L".txt")).wstring();
-
-	wofstream ofs(filelist_path);
-	if (ofs.is_open()) {
-		// 使用UTF-8编码写入文件列表
-		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-		for (const auto& file : files_to_backup) {
-			// 写入相对于备份源的相对路径
-			ofs << filesystem::relative(file, sourcePath).wstring() << endl;
-		}
-		ofs.close();
-	}
-	else {
-		console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
-		if (config.hotBackup) { /* ... 清理快照 ... */ }
-		return;
-	}
 
 	// 限制备份链长度
 	bool forceFullBackupDueToLimit = false;
@@ -3486,31 +3422,101 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		}
 	}
 
+	// --- 新的统一文件过滤逻辑 ---
 
+	vector<filesystem::path> candidate_files;
+	BackupCheckResult checkResult;
+	map<wstring, size_t> currentState;
+	candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
 	// 根据检查结果进行日志记录
-	if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
+	if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
+		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+		return;
+	}
+	else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
 		console.AddLog(L("LOG_METADATA_INVALID"));
 	}
-	else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING) {
+	else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING && config.backupMode == 2) {
 		console.AddLog(L("LOG_BASE_BACKUP_NOT_FOUND"));
-	}
-
-	// 如果开了检测无变化跳过
-	if (config.skipIfUnchanged && checkResult == BackupCheckResult::NO_CHANGE) {
-		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		// 如果开了热备份，清理一下临时文件夹
-		if (config.hotBackup && !sourcePath.empty()) {
-			console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
-			error_code ec;
-			filesystem::remove_all(sourcePath, ec);
-			if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
-		}
-		return;
 	}
 
 	forceFullBackup = (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID ||
 		checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING ||
 		forceFullBackupDueToLimit) || forceFullBackup;
+
+	// 根据备份模式确定候选文件列表
+	if (config.backupMode == 2 && !forceFullBackup) { // 智能备份模式
+		
+		// GetChangedFiles 返回的是已改变的文件列表
+		candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
+		// ... (处理 checkResult 的逻辑保持不变, 如 LOG_NO_CHANGE_FOUND 等)
+	}
+	else { // 普通备份或强制完整备份
+		// 候选列表是源路径下的所有文件
+		try {
+			candidate_files.clear();
+			for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
+				if (entry.is_regular_file()) {
+					candidate_files.push_back(entry.path());
+				}
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
+			if (config.hotBackup) {
+				filesystem::remove_all(sourcePath); 
+			}
+			return;
+		}
+	}
+
+	// 过滤候选文件列表，应用黑名单
+	vector<filesystem::path> files_to_backup;
+	for (const auto& file : candidate_files) {
+		if (!is_blacklisted(file, sourcePath, originalSourcePath, config.blacklist)) {
+			files_to_backup.push_back(file);
+			//console.AddLog("%s", wstring_to_utf8(file.wstring()).c_str());
+		}
+	}
+
+	// 如果过滤后没有文件需要备份，则提前结束
+	if (files_to_backup.empty()) {
+		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+		if (config.hotBackup) {
+			filesystem::remove_all(sourcePath); 
+		}
+		return;
+	}
+
+	// 将最终文件列表写入临时文件，供7z读取
+	filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
+	filesystem::create_directories(tempDir);
+	wstring filelist_path = (tempDir / (L"_filelist.txt")).wstring();
+
+	wofstream ofs(filelist_path);
+	if (ofs.is_open()) {
+		// 使用UTF-8编码写入文件列表
+		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+		for (const auto& file : files_to_backup) {
+			// 写入相对于备份源的相对路径
+			ofs << filesystem::relative(file, sourcePath).wstring() << endl;
+		}
+		ofs.close();
+		{
+			HANDLE h = CreateFileW(filelist_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (h != INVALID_HANDLE_VALUE) {
+				FlushFileBuffers(h); // 强制把缓冲数据写盘
+				CloseHandle(h);
+			}
+		}
+	}
+	else {
+		console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
+		if (config.hotBackup) {
+			filesystem::remove_all(sourcePath);
+		}
+		return;
+	}
 
 	wstring backupTypeStr; // 用于历史记录
 	wstring basedOnBackupFile; // 用于元数据记录智能备份基于的完整备份文件
@@ -4068,7 +4074,7 @@ void RunSpecialMode(int configId) {
 		log_file << L("SPECIAL_MODE_LOG_START") << time_buf << endl;
 
 		for (const char* item : console.Items) {
-			log_file << item << endl;
+			log_file << gbk_to_utf8(item) << endl;
 		}
 		log_file << L("SPECIAL_MODE_LOG_END") << endl << endl;
 		log_file.close();
@@ -4182,9 +4188,10 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 			// The TreeNode already pushes the world name to the ID stack, ensuring uniqueness for the content inside.
 			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
-
-				for (const HistoryEntry* entry : pair.second) {
+				const auto& entries = pair.second;
+				for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
 					// Use the stable pointer address as a unique and stable ID for this widget.
+					const HistoryEntry* entry = *it;
 					ImGui::PushID(entry);
 
 					ImVec2 start_cursor_pos = ImGui::GetCursorPos(); // Record start position for the invisible button.
