@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <Windows.h>
+#include <regex>
 using namespace std;
 
 // 注册表查询
@@ -342,4 +343,83 @@ string find_json_value(const string& json, const string& key) {
 	if (end_pos == string::npos) return "";
 
 	return json.substr(start_pos, end_pos - start_pos);
+}
+
+/**
+ * @brief 检查文件路径是否符合黑名单规则（支持普通字符串和正则表达式）
+ * @param file_to_check 待检查的文件的完整路径
+ * @param backup_source_root 当前备份操作的根目录（可能是原始存档路径，也可能是热备份快照路径）
+ * @param original_world_root 原始的、在config中配置的存档根目录
+ * @param blacklist 黑名单规则列表
+ * @param console 用于日志输出的控制台对象
+ * @return 如果文件被命中黑名单，则返回 true
+ */
+bool is_blacklisted(
+	const filesystem::path& file_to_check,
+	const filesystem::path& backup_source_root,
+	const filesystem::path& original_world_root,
+	const vector<wstring>& blacklist)
+{
+	// 将路径转换为小写以进行不区分大小写的字符串比较
+	/*wstring file_path_lower = file_to_check.wstring();
+	transform(file_path_lower.begin(), file_path_lower.end(), file_path_lower.begin(), ::towlower);*/
+
+	// 获取相对于当前备份源的相对路径
+	error_code ec;
+	filesystem::path relative_path_obj = filesystem::relative(file_to_check, backup_source_root, ec);
+	wstring relative_path_lower = ec ? L"" : relative_path_obj.wstring();
+	transform(relative_path_lower.begin(), relative_path_lower.end(), relative_path_lower.begin(), ::towlower);
+
+
+	for (const auto& rule_orig : blacklist) {
+		wstring rule = rule_orig;
+		transform(rule.begin(), rule.end(), rule.begin(), ::towlower);
+
+		if (rule.rfind(L"regex:", 0) == 0) { // 正则表达式规则
+			try {
+				wstring pattern_str = rule_orig.substr(6); // 使用原始大小写的规则进行正则匹配
+				wregex pattern(pattern_str, regex_constants::icase | regex_constants::ECMAScript);
+
+				// 正则表达式同时匹配绝对路径和相对路径
+				if (regex_search(file_to_check.wstring(), pattern) ||
+					(!relative_path_obj.empty() && regex_search(relative_path_obj.wstring(), pattern))) {
+					return true;
+				}
+			}
+			catch (const regex_error& e) {
+				//console.AddLog("[Error] Invalid regex in blacklist: %s. Error: %s", wstring_to_utf8(rule_orig).c_str(), e.what());
+			}
+		}
+		else { // 普通字符串规则
+			// 规则可能是绝对路径或相对路径片段
+			// 1. 检查是否直接匹配完整路径
+			if (file_to_check.wstring().find(rule) != wstring::npos) {
+				return true;
+			}
+
+			// 2. 为了处理热备份，如果规则是绝对路径，我们需要将其动态映射到快照路径
+			filesystem::path rule_path(rule_orig);
+			if (rule_path.is_absolute()) {
+				// 检查规则路径是否在原始世界路径之下
+				auto res = mismatch(original_world_root.begin(), original_world_root.end(), rule_path.begin());
+				if (res.first == original_world_root.end()) {
+					// 是的，规则是原始世界的一个子路径。现在我们构建它在快照中的对应路径。
+					error_code rel_ec;
+					filesystem::path rule_relative_to_world = filesystem::relative(rule_path, original_world_root, rel_ec);
+					if (!rel_ec) {
+						filesystem::path remapped_rule_path = backup_source_root / rule_relative_to_world;
+						wstring remapped_rule_lower = remapped_rule_path.wstring();
+						transform(remapped_rule_lower.begin(), remapped_rule_lower.end(), remapped_rule_lower.begin(), ::towlower);
+
+						// 检查文件是否位于重映射后的黑名单路径下
+						if (file_to_check.wstring().rfind(remapped_rule_lower, 0) == 0) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return false;
 }

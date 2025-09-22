@@ -183,6 +183,7 @@ void TriggerHotkeyBackup();
 void GameSessionWatcherThread();
 
 bool IsFileLocked(const wstring& path);
+bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
 wstring SelectFileDialog(HWND hwndOwner = NULL);
 wstring SelectFolderDialog(HWND hwndOwner = NULL);
 vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath, const filesystem::path& backupPath, BackupCheckResult& out_result, map<wstring, size_t>& out_currentState);
@@ -3020,32 +3021,43 @@ void ShowSettingsWindow() {
 			ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
 			ImGui::SeparatorText(L("BLACKLIST_HEADER"));
-			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-				ImGui::SetTooltip("%s", L("TIP_USE_REGEX"));
 			if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
-				wstring sel = SelectFileDialog(); if (!sel.empty()) cfg.blacklist.push_back(sel);
+				wstring sel = SelectFileDialog();
+				if (!sel.empty()) cfg.blacklist.push_back(sel); // 或 spCfg.blacklist
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
-				wstring sel = SelectFolderDialog(); if (!sel.empty()) cfg.blacklist.push_back(sel);
+				wstring sel = SelectFolderDialog();
+				if (!sel.empty()) cfg.blacklist.push_back(sel);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_ADD_REGEX_BLACKLIST"))) {
-				ImGui::OpenPopup("Add Regex Pattern");
+				ImGui::OpenPopup("Add Regex Rule");
 			}
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+				ImGui::SetTooltip("%s", L("TIP_USE_REGEX"));
+
 			static int sel_bl_item = -1;
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item != -1) {
 				cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item); sel_bl_item = -1;
 			}
 
-			if (ImGui::BeginPopupModal("Add Regex Pattern", NULL, ImGuiWindowFlags_AlwaysAutoResize))
-			{
-				static char regex_buf[CONSTANT1] = "regex:";
-				ImGui::InputText("Pattern", regex_buf, IM_ARRAYSIZE(regex_buf));
-				if (ImGui::Button("Add Pattern", ImVec2(120, 0))) {
-					// This code needs to target the correct config object (cfg or spCfg)
-					cfg.blacklist.push_back(utf8_to_wstring(regex_buf));
+			// 添加正则表达式规则的弹窗
+			if (ImGui::BeginPopupModal("Add Regex Rule", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+				static char regex_buf[256] = "regex:";
+				ImGui::InputText("Regex Pattern", regex_buf, IM_ARRAYSIZE(regex_buf));
+				ImGui::Separator();
+				if (ImGui::Button("OK", ImVec2(120, 0))) {
+					if (strlen(regex_buf) > 6) { // 确保 "regex:" 后面有内容
+						// 根据当前是普通配置还是特殊配置，添加到对应的黑名单
+						if (specialSetting) {
+							specialConfigs[currentConfigIndex].blacklist.push_back(utf8_to_wstring(regex_buf));
+						}
+						else {
+							configs[currentConfigIndex].blacklist.push_back(utf8_to_wstring(regex_buf));
+						}
+					}
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::SameLine();
@@ -3349,26 +3361,13 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		wstring snapshotPath = CreateWorldSnapshot(sourcePath, console);
 		if (!snapshotPath.empty()) {
 			sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
-			originalSourcePath = snapshotPath;
+			//originalSourcePath = snapshotPath;
 		}
 		else {
 			console.AddLog(L("LOG_ERROR_SNAPSHOT"));
 			return;
 		}
 	}
-
-	// 建立黑名单，如果是热备份，那么黑名单前面部分要替换成快照路径
-	wstringstream exclusion_ss;
-	for (const auto& item : config.blacklist) {
-		if (config.hotBackup && !sourcePath.empty() && item.find(originalSourcePath) == 0) {
-			filesystem::path itemPath(item);
-			exclusion_ss << L" -x!\"" << sourcePath + L"\\" + itemPath.filename().wstring() << L"\"";
-		}
-		else {
-			exclusion_ss << L" -x!\"" << item << L"\"";
-		}
-	}
-	wstring exclusion_args = exclusion_ss.str();
 
 	bool forceFullBackup = true;
 	if (filesystem::exists(destinationFolder)) {
@@ -3381,6 +3380,71 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	}
 	if (forceFullBackup)
 		console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
+
+	// --- 新的统一文件过滤逻辑 ---
+
+	vector<filesystem::path> candidate_files;
+	BackupCheckResult checkResult;
+	map<wstring, size_t> currentState;
+
+	// 根据备份模式确定候选文件列表
+	if (config.backupMode == 2 && !forceFullBackup) { // 智能备份模式
+		
+		// GetChangedFiles 返回的是已改变的文件列表
+		candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
+		// ... (处理 checkResult 的逻辑保持不变, 如 LOG_NO_CHANGE_FOUND 等)
+	}
+	else { // 普通备份或强制完整备份
+		// 候选列表是源路径下的所有文件
+		try {
+			for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
+				if (entry.is_regular_file()) {
+					candidate_files.push_back(entry.path());
+				}
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
+			if (config.hotBackup) { /* ... 清理快照 ... */ }
+			return;
+		}
+	}
+
+	// 过滤候选文件列表，应用黑名单
+	vector<filesystem::path> files_to_backup;
+	for (const auto& file : candidate_files) {
+		if (!is_blacklisted(file, sourcePath, originalSourcePath, config.blacklist)) {
+			files_to_backup.push_back(file);
+		}
+	}
+
+	// 如果过滤后没有文件需要备份，则提前结束
+	if (files_to_backup.empty()) {
+		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+		if (config.hotBackup) { /* ... 清理快照 ... */ }
+		return;
+	}
+
+	// 将最终文件列表写入临时文件，供7z读取
+	filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
+	filesystem::create_directories(tempDir);
+	wstring filelist_path = (tempDir / (L"filelist_" + world.first + L".txt")).wstring();
+
+	wofstream ofs(filelist_path);
+	if (ofs.is_open()) {
+		// 使用UTF-8编码写入文件列表
+		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+		for (const auto& file : files_to_backup) {
+			// 写入相对于备份源的相对路径
+			ofs << filesystem::relative(file, sourcePath).wstring() << endl;
+		}
+		ofs.close();
+	}
+	else {
+		console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
+		if (config.hotBackup) { /* ... 清理快照 ... */ }
+		return;
+	}
 
 	// 限制备份链长度
 	bool forceFullBackupDueToLimit = false;
@@ -3422,10 +3486,6 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		}
 	}
 
-	// 记录元数据，找出哪些文件有变化需要备份
-	BackupCheckResult checkResult;
-	map<wstring, size_t> currentState;
-	vector<filesystem::path> filesToBackup = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
 
 	// 根据检查结果进行日志记录
 	if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
@@ -3460,63 +3520,22 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		backupTypeStr = L"Full";
 		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"" + exclusion_args;
+			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 		// 基于自身
 		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
 	}
 	else if (config.backupMode == 2) // 智能备份
 	{
 		backupTypeStr = L"Smart";
-		if (!config.blacklist.empty()) {
-			if (config.hotBackup) { // 如果是热备份，不能直接用config.blacklist
-				vector<wstring> newBlacklist;
-				//ofstream debugFile("debug.txt", ios::app);
-				//debugFile << "yes" << endl;
-				for (const auto& item : config.blacklist) {
-					filesystem::path itemPath(item);
-					newBlacklist.push_back(sourcePath + L"\\" + itemPath.filename().wstring());
-					//debugFile << wstring_to_utf8(sourcePath + L"\\" + itemPath.filename().wstring()) << endl;
-					if (filesystem::path(sourcePath).filename() == itemPath.filename())
-						newBlacklist.push_back(sourcePath);
-				}
-				filesToBackup.erase(
-					remove_if(filesToBackup.begin(), filesToBackup.end(),
-						[&](const filesystem::path& p) {
-							for (const auto& blacklistedItemW : newBlacklist) {
-								// 这里的判断逻辑还是有点问题，可能会误伤，可能会漏掉，因为还有文件夹作为黑名单，那么文件夹里面的全都要
-								//debugFile <<  wstring_to_utf8(blacklistedItemW) << "   222   " << wstring_to_utf8(p) << endl;
-								if (p.wstring().find(blacklistedItemW) != wstring::npos) {
-									return true;
-								}
-							}
-							return false;
-						}),
-					filesToBackup.end()
-				);
-			}
-			else {
-				filesToBackup.erase(
-					remove_if(filesToBackup.begin(), filesToBackup.end(),
-						[&](const filesystem::path& p) {
-							for (const auto& blacklistedItemW : config.blacklist) {
-								if (p.wstring().find(blacklistedItemW) != wstring::npos) {
-									return true;
-								}
-							}
-							return false;
-						}),
-					filesToBackup.end()
-				);
-			}
-		}
-		if (filesToBackup.empty()) {
+		
+		if (files_to_backup.empty()) {
 			console.AddLog(L("LOG_NO_CHANGE_FOUND"));
 			if (config.hotBackup) // 清理快照
 				filesystem::remove_all(sourcePath);
 			return; // 没有变化，直接返回
 		}
 
-		console.AddLog(L("LOG_BACKUP_SMART_INFO"), filesToBackup.size());
+		console.AddLog(L("LOG_BACKUP_SMART_INFO"), files_to_backup.size());
 
 		// 智能备份需要找到它所基于的文件
 		// 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
@@ -3526,22 +3545,12 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
 
 		// 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
-		filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot";
-		if (!filesystem::exists(tempDir))
-			filesystem::create_directories(tempDir);
-		wofstream ofs(tempDir.string() + "\\7z.txt");
-		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-		for (const auto& file : filesToBackup) {
-			ofs << file.wstring().substr(originalSourcePath.size() + 1) << endl; // 输出相对路径，以及，必须utf8！
-		}
-		ofs.close();
-
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx="
-			+ to_wstring(config.zipLevel) + L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\" @" + tempDir.wstring() + L"\\7z.txt";
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 	}
-	else if (config.backupMode == 3) // 覆盖备份
+	else if (config.backupMode == 3) // 覆盖备份 - v1.7.8 暂时移除覆盖模式的黑名单功能
 	{
 		backupTypeStr = L"Overwrite";
 		console.AddLog(L("LOG_OVERWRITE"));
@@ -3560,19 +3569,19 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		}
 		if (found) {
 			console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel) + exclusion_args;
+			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
 			archivePath = latestBackupPath.wstring(); // 记录被更新的文件
 		}
 		else {
 			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"" + exclusion_args;
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
 			// -spf 强制使用完整路径，-spf2 使用相对路径
 		}
 	}
 	// 在后台线程中执行命令
-	if (RunCommandInBackground(command, console, config.useLowPriority, originalSourcePath)) // 工作目录不能丢！
+	if (RunCommandInBackground(command, console, config.useLowPriority, sourcePath)) // 工作目录不能丢！
 	{
 		console.AddLog(L("LOG_BACKUP_END_HEADER"));
 
