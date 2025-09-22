@@ -350,7 +350,9 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{"BUTTON_HIDE_WORLD", u8"隐藏选中存档"},
 		{ "BUTTON_PIN_WORLD", u8"置顶选中存档" },
 		{ "LOG_METADATA_INVALID", u8"[提示] 元数据无效或缺失。需要进行完整备份。" },
-		{ "LOG_BASE_BACKUP_NOT_FOUND", u8"[提示] 找不到先前智能备份的基础备份文件。将开始新的完整备份链。" }
+		{ "LOG_BASE_BACKUP_NOT_FOUND", u8"[提示] 找不到先前智能备份的基础备份文件。将开始新的完整备份链。" },
+		{ "BUTTON_ADD_REGEX_BLACKLIST", u8"添加正则表达式" },
+		{ "TIP_USE_REGEX", u8"使用 'regex:' 前缀来启用正则表达式匹配。\n例如: regex:.*\\.log$ 会排除所有 .log 文件" },
 
 }},
 	{ "en-US", {
@@ -694,7 +696,8 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{ "TIP_EXECUTE_ON_STARTUP", "After opening, if the configuration is selected as special configuration, \nMineBackup will automatically switch to special mode and run automation tasks when opened" },
 		{ "BUTTON_SWITCH_TO_SP_MODE", "Switch to Special Mode now" },
 		{ "WIZARD_WARNING_TIPS", "Instructions for use: \n 1. If you want to backup while playing the game, be sure to turn on the hot backup function. \n 2. It is best not to manually delete backup files in folders. It is recommended to use the built-in deletion function. \n 3. Everything in MineBackup is based on the config.ini file. Please ensure that both are in the same location and that the program can be reset after deletion. \n 4. If you encounter a feature that you do not know how to use, don't hesitate to ask the author and netizens!" },
-
+		{ "BUTTON_ADD_REGEX_BLACKLIST", "Add Regex" },
+		{ "TIP_USE_REGEX", "Prefix with 'regex:' to use a regular expression.\nE.g., regex:.*\\.log$ will exclude all .log files" },
 }},
 };
 std::string g_CurrentLang; // Default language
