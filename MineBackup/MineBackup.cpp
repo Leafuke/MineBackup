@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.6";
+const string CURRENT_VERSION = "1.7.9";
 
 // 结构体们
 struct Config {
@@ -757,7 +757,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.7", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.9", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -887,10 +887,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	if (sevenZipExtracted) {
 		console.AddLog(L("LOG_7Z_EXTRACT_SUCCESS"));
-		// 如果释放成功，更新所有已加载配置的 zipPath
-		for (auto& [idx, cfg] : configs) {
-			cfg.zipPath = g_7zTempPath;
-		}
 	}
 	else {
 		console.AddLog(L("LOG_7Z_EXTRACT_FAIL"));
@@ -1197,6 +1193,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				if (ImGui::BeginMenu(L("MENU_HELP"))) {
 					if (ImGui::MenuItem(L("MENU_GITHUB"))) {
 						ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup", NULL, NULL, SW_SHOWNORMAL);
+					}
+					if (ImGui::MenuItem(L("MENU_ISSUE"))) {
+						ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup/issues", NULL, NULL, SW_SHOWNORMAL);
 					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
 						showAboutWindow = true;
@@ -3048,7 +3047,7 @@ void ShowSettingsWindow() {
 				static char regex_buf[256] = "regex:";
 				ImGui::InputText("Regex Pattern", regex_buf, IM_ARRAYSIZE(regex_buf));
 				ImGui::Separator();
-				if (ImGui::Button("OK", ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
 					if (strlen(regex_buf) > 6) { // 确保 "regex:" 后面有内容
 						// 根据当前是普通配置还是特殊配置，添加到对应的黑名单
 						if (specialSetting) {
@@ -3061,7 +3060,7 @@ void ShowSettingsWindow() {
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::SameLine();
-				if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::EndPopup();

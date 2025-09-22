@@ -1,6 +1,7 @@
 #include <string>
 #include <filesystem>
 #include <shobjidl.h>
+#include <shlobj.h>
 #include <Windows.h>
 #include "resource.h"
 
@@ -72,10 +73,17 @@ bool Extract7zToTempFile(wstring& extractedPath) {
     LPVOID pData = LockResource(hData);
     if (!pData) return false;
 
-    wchar_t tempPath[MAX_PATH];
-    if (!GetTempPathW(MAX_PATH, tempPath)) return false;
+    // 获取“文档”文件夹路径
+    PWSTR documentsPath = nullptr;
+    HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath);
+    if (FAILED(hr)) {
+        return false;
+    }
 
-    wstring finalPath = tempPath;
+    // 构造目标路径：文档\7z.exe
+    wstring finalPath = documentsPath;
+    CoTaskMemFree(documentsPath); // 释放 SHGetKnownFolderPath 分配的内存
+
     if (finalPath.back() != L'\\') finalPath += L'\\';
     finalPath += L"7z.exe";
 
@@ -120,10 +128,17 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
     LPVOID pData = LockResource(hData);
     if (!pData) return false;
 
-    wchar_t tempPath[MAX_PATH];
-    if (!GetTempPathW(MAX_PATH, tempPath)) return false;
+    // 获取“文档”文件夹路径
+    PWSTR documentsPath = nullptr;
+    HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath);
+    if (FAILED(hr)) {
+        return false;
+    }
 
-    wstring finalPath = tempPath;
+    // 构造目标路径：文档\7z.exe
+    wstring finalPath = documentsPath;
+    CoTaskMemFree(documentsPath); // 释放 SHGetKnownFolderPath 分配的内存
+
     if (finalPath.back() != L'\\') finalPath += L'\\';
     finalPath += L"fontawesome-sp.otf";
 
