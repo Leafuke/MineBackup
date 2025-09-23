@@ -1716,18 +1716,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						showHistoryWindow = true; // 打开历史窗口
 					}
 					if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
-						// 增加严格的检查来防止崩溃
+						// 先做最小范围的本地检查并拷贝要操作的 DisplayWorld（displayWorlds 是本地变量）
 						if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
-							const auto& dw = displayWorlds[selectedWorldIndex];
-							// 检查 Config 是否存在
-							if (configs.count(dw.baseConfigIndex)) {
-								Config& cfg = configs.at(dw.baseConfigIndex);
-								// 检查世界索引是否在范围内
-								if (dw.baseWorldIndex >= 0 && dw.baseWorldIndex < cfg.worlds.size()) {
-									cfg.worlds[dw.baseWorldIndex].second = L"#";
-									selectedWorldIndex = -1; // 操作成功后才重置索引
+							DisplayWorld dw_copy = displayWorlds[selectedWorldIndex]; // 做一个值拷贝，之后在锁内用索引去改 configs
+
+							bool did_change = false;
+
+							// 在修改全局 configs 前加锁，防止其它线程并发读/写导致崩溃
+							{
+								lock_guard<mutex> cfg_lock(g_configsMutex);
+
+								auto it = configs.find(dw_copy.baseConfigIndex);
+								if (it != configs.end()) {
+									Config& cfg = it->second;
+									if (dw_copy.baseWorldIndex >= 0 && dw_copy.baseWorldIndex < (int)cfg.worlds.size()) {
+										cfg.worlds[dw_copy.baseWorldIndex].second = L"#";
+										did_change = true;
+									}
 								}
-							}
+							} // 解锁 g_configsMutex 
 						}
 					}
 
