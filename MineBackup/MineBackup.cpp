@@ -1080,7 +1080,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						if (filesystem::exists(initialConfig.saveRoot)) {
 							for (auto& entry : filesystem::directory_iterator(initialConfig.saveRoot)) {
 								if (entry.is_directory()) {
-									initialConfig.worlds.push_back({ entry.path().filename().wstring(), L"" }); // 名称为文件夹名，描述为空
+									// 针对基岩版的特殊处理：把 levelname.txt 里的内容当做文件描述
+									
+									if (filesystem::exists(entry.path() / "levelname.txt")) {
+										ifstream levelNameFile(entry.path() / "levelname.txt");
+										string levelName = "";
+										getline(levelNameFile, levelName);
+										levelNameFile.close();
+										initialConfig.worlds.push_back({ entry.path().filename().wstring(), utf8_to_wstring(levelName) });
+									}
+									else {
+										initialConfig.worlds.push_back({ entry.path().filename().wstring(), L"" }); // 名称为文件夹名，描述为空
+									}
 								}
 							}
 						}
@@ -1517,6 +1528,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
 					if (filesystem::exists(iconPath)) {
 						LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+					}
+					else if (filesystem::exists(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")))) {
+						// 基岩版的 world_icon.jpeg
+						LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
 					}
 				}
 
