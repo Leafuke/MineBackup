@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.9";
+const string CURRENT_VERSION = "1.7.9-sp2";
 
 // 结构体们
 struct Config {
@@ -618,8 +618,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod); 
 void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment);
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console);
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console);
-void RunSpecialMode(int configId);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, atomic<bool>& stop_flag); void RunSpecialMode(int configId);
 void CheckForConfigConflicts();
 void ConsoleLog(Console* console, const char* format, ...);
 
@@ -757,7 +756,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.9", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.9-sp2", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -1940,8 +1939,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							if (taskKey.first >= 0) {
 								AutoBackupTask& task = g_active_auto_backups[taskKey];
 								task.stop_flag = false;
-								// 注意 worker 的构造：直接赋值一个 thread
-								task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console);
+
+								// 【修复】创建线程时，使用 std::ref 将 stop_flag 的引用传递进去
+								task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console, ref(task.stop_flag));
+
 								ImGui::CloseCurrentPopup();
 							}
 						}
@@ -2220,16 +2221,49 @@ void CheckForUpdatesThread() {
 			responseBody.append(pszOutBuffer, dwDownloaded);
 		delete[] pszOutBuffer;
 	} while (dwSize > 0);
-
+	
 	try {
 		string latestVersion = find_json_value(responseBody, "tag_name");
 		// 移除版本号前的 'v'
 		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
 			latestVersion = latestVersion.substr(1);
 		}
+		int pos1 = latestVersion.find('.');
+		int pos2 = latestVersion.find('.', pos1 + 1);
+		int pos3 = latestVersion.find('-');
+		int pos11 = CURRENT_VERSION.find('.');
+		int pos22 = CURRENT_VERSION.find('.', pos1 + 1);
+		int pos33 = CURRENT_VERSION.find('-');
+		bool isNew = false;
+		// 把所有数值都赋值
+		int curMajor = stoi(CURRENT_VERSION.substr(0, pos11)), curMinor1 = stoi(CURRENT_VERSION.substr(pos11 + 1, pos22)), newMajor = stoi(latestVersion.substr(0, pos1)), newMinor1 = stoi(latestVersion.substr(pos1 + 1, pos2));
+		int curMinor2 = pos33 == string::npos ? stoi(CURRENT_VERSION.substr(pos22 + 1)) : stoi(CURRENT_VERSION.substr(pos22 + 1, pos33)), newMinor2 = pos3 == string::npos ? stoi(latestVersion.substr(pos2 + 1)) : stoi(latestVersion.substr(pos2 + 1, pos3));
+		int curSp = pos33 == string::npos ? 0 : stoi(CURRENT_VERSION.substr(pos33 + 3)), newSp = pos3 == string::npos ? 0 : stoi(latestVersion.substr(pos3 + 3));
+		// 有这几种版本号 v1.7.9 v1.7.10 v1.7.9-sp1
+		// 这一段我写得非常非常不满意，但是……将就着吧
+		
+		
+		if (newMajor > curMajor) {
+			isNew = true;
+		}
+		else if (newMajor == curMajor) {
+			if (newMinor1 > curMinor1) {
+				isNew = true;
+			}
+			else if (newMinor1 == curMinor1) {
+				if (newMinor2 > curMinor2) {
+					isNew = true;
+				}
+				else if (newMinor2 == curMinor2) {
+					if (newSp > curSp) {
+						isNew = true;
+					}
+				}
+			}
+		}
 
 		// 简单版本比较 (例如 "1.7.0" > "1.6.7")
-		if (!latestVersion.empty() && latestVersion > CURRENT_VERSION) {
+		if (!latestVersion.empty() && isNew) {
 			g_LatestVersionStr = "v" + latestVersion;
 			g_NewVersionAvailable = true;
 			g_ReleaseNotes = find_json_value(responseBody, "body");
@@ -3876,20 +3910,25 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 }
 
 // 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console) {
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, atomic<bool>& stop_flag) {
 	auto key = make_pair(configIdx, worldIdx);
 	console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
+
 	while (true) {
 		// 等待指定的时间，但每秒检查一次是否需要停止
 		for (int i = 0; i < intervalMinutes * 60; ++i) {
-			{
-				lock_guard<mutex> lock(g_task_mutex);
-				if (g_active_auto_backups.count(key) && g_active_auto_backups.at(key).stop_flag) {
-					console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
-					return;
-				}
+			// 【修复】直接检查传入的原子引用，无需加锁！
+			if (stop_flag) { // 或者 stop_flag.load()
+				console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
+				return; // 线程安全地退出
 			}
 			this_thread::sleep_for(chrono::seconds(1));
+		}
+
+		// 如果在长时间的等待后，发现需要停止，则不执行备份直接退出
+		if (stop_flag) {
+			console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
+			return;
 		}
 
 		// 时间到了，开始备份
