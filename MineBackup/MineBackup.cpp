@@ -612,7 +612,7 @@ void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = n
 bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 
 string ProcessCommand(const string& commandStr, Console* console);
-wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console);
+wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& snapshotPath, Console& console);
 void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console, const wstring& comment = L"");
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod);
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod); 
@@ -3291,18 +3291,15 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 }
 
 // 创建快照，用于热备份
-wstring CreateWorldSnapshot(const filesystem::path& worldPath, Console& console) {
+wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& snapshotPath, Console& console) {
 	try {
 		// 创建一个唯一的临时目录
 		filesystem::path tempDir;
-		{
-			lock_guard<mutex> lock(g_configsMutex);
-			if (configs[currentConfigIndex].snapshotPath.size() >= 2 && filesystem::exists(configs[currentConfigIndex].snapshotPath)) {
-				tempDir = configs[currentConfigIndex].snapshotPath + L"\\MineBackup_Snapshot\\" + worldPath.filename().wstring();
-			}
-			else {
-				tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
-			}
+		if (snapshotPath.size() >= 2 && filesystem::exists(snapshotPath)) {
+			tempDir = snapshotPath + L"\\MineBackup_Snapshot\\" + worldPath.filename().wstring();
+		}
+		else {
+			tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
 		}
 		
 		// 如果旧的临时目录存在，先清理掉
@@ -3387,7 +3384,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 	// 如果打开了热备份
 	if (config.hotBackup) {
-		wstring snapshotPath = CreateWorldSnapshot(sourcePath, console);
+		wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
 		if (!snapshotPath.empty()) {
 			sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
 			this_thread::sleep_for(chrono::milliseconds(200));//在创建快照后加入短暂延时，给文件系统反应时间
@@ -4551,6 +4548,10 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		BroadcastEvent("event=mods_backup_started;config=" + to_string(config_idx));
 		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
 		return "OK:Mods backup started.";
+	}
+	else if (command == "BACKUP_CURRENT") { // 直接调用备份正在运行的世界的函数
+		TriggerHotkeyBackup();
+		return "OK:Backup Started";
 	}
 
 	return "ERROR:Unknown command '" + command + "'.";
