@@ -398,6 +398,7 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{ "HISTORY_DELETE_POPUP_TITLE", u8"确认删除备份" },
 		{ "HISTORY_DELETE_POPUP_MSG", u8"您确定要永久删除备份文件 '%s' 吗？\n此操作将同时从磁盘和历史记录中移除它，且无法撤销！" },
 		{ "HISTORY_EDIT_COMMENT_TIP", u8"点击编辑注释" },
+		{"NO_RUNNINGTIME", "缺少 VC++2015-2022 运行时库，请前往微软官网安装后重试！\nlearn.microsoft.com/zh-cn/cpp/windows/latest-supported-vc-redist?view=msvc-170"},
 }},
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
@@ -788,6 +789,7 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{ "HISTORY_DELETE_POPUP_TITLE", "Confirm Backup Deletion" },
 		{ "HISTORY_DELETE_POPUP_MSG", "Are you sure you want to permanently delete the backup file '%s'?\nThis will remove it from your disk and history. This action cannot be undone!" },
 		{ "HISTORY_EDIT_COMMENT_TIP", "Click to edit the comment for this backup" },
+		{ "NO_RUNNINGTIME", "VC++2015-2022 Runtime Missing. Please install and restart.\nlearn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170" },
 }},
 };
 std::string g_CurrentLang; // Default language

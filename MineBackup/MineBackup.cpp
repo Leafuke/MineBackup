@@ -698,29 +698,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	g_exitWatcherThread = thread(GameSessionWatcherThread);
 	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
 
-
 	if (g_enableKnotLink) {
-		// 初始化信号发送器
-		g_signalSender = new SignalSender("0x00000020", "0x00000020");
-
-		// 初始化命令响应器，并将 ProcessCommand 设为回调
-		try {
-			g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
-			g_commandResponser->setQuestionHandler(
-				[](const string& q) {
-					// 将收到的问题交给命令处理器
-					console.AddLog("[KnotLink] Received: %s", q.c_str());
-					string response = ProcessCommand(q, &console);
-					console.AddLog("[KnotLink] Responded: %s", response.c_str());
-					return response;
-				}
-			);
-		}
-		catch (const exception& e) {
-			console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
-		}
-		
+		// 初始化信号发送器 （异步进行避免卡顿）
+		thread linkLoaderThread([]() {
+			g_signalSender = new SignalSender("0x00000020", "0x00000020");
+			// 初始化命令响应器，并将 ProcessCommand 设为回调
+			try {
+				g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
+				g_commandResponser->setQuestionHandler(
+					[](const string& q) {
+						// 将收到的问题交给命令处理器
+						console.AddLog("[KnotLink] Received: %s", q.c_str());
+						string response = ProcessCommand(q, &console);
+						console.AddLog("[KnotLink] Responded: %s", response.c_str());
+						return response;
+					}
+				);
+			}
+			catch (const exception& e) {
+				console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
+			}
+		});
+		linkLoaderThread.detach();
 	}
+
 
 	if (specialConfigMode)
 	{
@@ -748,7 +749,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	
-
+	{ // 检查 VC++2015-2022 运行时
+		HKEY hKey;
+		const wchar_t* registryPath = L"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x86";
+		long result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, registryPath, 0, KEY_READ, &hKey);
+		if (result == ERROR_SUCCESS) {
+			MessageBox(NULL, utf8_to_wstring(gbk_to_utf8(L("NO_RUNNINGTIME"))).c_str(), L"ERROR", MB_ICONERROR);
+			return -1;  // 程序退出
+		}
+		else {
+			RegCloseKey(hKey);
+		}
+	}
 
 
 	// Create application window
