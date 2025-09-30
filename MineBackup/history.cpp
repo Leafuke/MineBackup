@@ -46,7 +46,7 @@ void SaveHistory() {
 	SetFileAttributesW(filename.c_str(), FILE_ATTRIBUTE_HIDDEN);
 }
 
-// 新增：从文件加载历史记录
+// 从文件加载历史记录
 void LoadHistory() {
 	const wstring filename = L"history.dat";
 	g_history.clear();
