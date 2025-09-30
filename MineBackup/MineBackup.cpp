@@ -4342,7 +4342,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextUnformatted(L("HISTORY_CONFIRM_CLEAN_MSG"));
 		ImGui::Separator();
-		if (ImGui::Button("OK", ImVec2(120, 0))) {
+		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
 			if (configs.count(tempCurrentConfigIndex) && g_history.count(tempCurrentConfigIndex)) {
 				auto& history_vec = g_history.at(tempCurrentConfigIndex);
 				history_vec.erase(
@@ -4381,6 +4381,15 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}
 
 		for (auto& pair : world_history_map) {
+
+			// 默认展开世界
+			if (!g_worldToFocusInHistory.empty() && pair.first == g_worldToFocusInHistory) {
+				ImGui::SetNextItemOpen(true);
+			}
+			else if (!g_worldToFocusInHistory.empty()) {
+				ImGui::SetNextItemOpen(false);
+			}
+
 			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
 				sort(pair.second.begin(), pair.second.end(), [](const HistoryEntry* a, const HistoryEntry* b) {
 					return a->timestamp_str > b->timestamp_str;
@@ -4476,87 +4485,52 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SeparatorText(L("HISTORY_GROUP_ACTIONS"));
 		if (!file_exists) ImGui::BeginDisabled();
 		if (ImGui::Button(L("HISTORY_BUTTON_RESTORE"))) {
-			ImGui::OpenPopup(L("CONFIRM_RESTORE_HISTORY_TITLE"));
+			ImGui::OpenPopup("##CONFIRM_RESTORE");
 		}
-		if (ImGui::BeginPopupModal(L("CONFIRM_RESTORE_HISTORY_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		if (ImGui::BeginPopupModal("##CONFIRM_RESTORE", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			//history_restore = false;
 			ImGui::SeparatorText(L("SELECTED_BACKUP_DETAILS"));
 			ImGui::Text("%s: %s", L("FILENAME_LABEL"), wstring_to_utf8(selected_entry->backupFile).c_str());
 			ImGui::Text("%s: %s", L("TIMESTAMP_LABEL"), wstring_to_utf8(selected_entry->timestamp_str).c_str());
 			ImGui::Text("%s: %s", L("TYPE_LABEL"), wstring_to_utf8(selected_entry->backupType).c_str());
 			ImGui::Text("%s: %s", L("COMMENT_LABEL"), selected_entry->comment.empty() ? L("HISTORY_NO_COMMENT") : wstring_to_utf8(selected_entry->comment).c_str());
+			
+			ImGui::SeparatorText(L("CHOOSE_RESTORE_METHOD_TITLE"));
+			static int restore_method = 0;
+			ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
+			ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
+			ImGui::RadioButton(L("RESTORE_METHOD_REVERSE"), &restore_method, 2);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_REVERSE"));
 			ImGui::Separator();
 
-			if (ImGui::Button(L("RESTORE_ACTION_BUTTON"), ImVec2(150, 0))) {
-				ImGui::OpenPopup(L("CHOOSE_RESTORE_METHOD_TITLE"));
+
+			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
+				if (cfg.backupBefore) {
+					DoBackup(cfg, { selected_entry->worldName, L"" }, ref(console), L"Auto");
+				}
+				thread restore_thread(DoRestore, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console), restore_method);
+				restore_thread.detach();
+				ImGui::CloseCurrentPopup(); // Close method choice
+				//entry_for_action = nullptr; // Reset selection
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("DELETE_ACTION_BUTTON"), ImVec2(150, 0))) {
-				entry_to_delete = selected_entry;
-				ImGui::OpenPopup(L("CONFIRM_DELETE_BACKUP_TITLE"));
-			}
 
-			ImGui::Dummy(ImVec2(0, 10.0f));
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(300 + ImGui::GetStyle().ItemSpacing.x, 0))) {
-				ImGui::CloseCurrentPopup();
-				//selected_entry = nullptr;
-			}
-
-			if (ImGui::BeginPopupModal(L("CHOOSE_RESTORE_METHOD_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-				static int restore_method = 0;
-				ImGui::SeparatorText(L("RESTORE_METHOD"));
-				ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
-				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
-				ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
-				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
-				ImGui::RadioButton(L("RESTORE_METHOD_REVERSE"), &restore_method, 2);
-				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_REVERSE"));
-				ImGui::Separator();
-
-				if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"), ImVec2(-1, 0))) {
-					wstring selectedFile = SelectFileDialog();
-					if (!selectedFile.empty()) {
-						thread restore_thread(DoRestore2, cfg, selected_entry->worldName, selectedFile, ref(console), restore_method);
-						restore_thread.detach();
-						ImGui::CloseCurrentPopup(); // Close method choice
-						//entry_for_action = nullptr; // Reset selection
-					}
-				}
-
-				if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
-					if (cfg.backupBefore) {
-						DoBackup(cfg, { selected_entry->worldName, L"" }, ref(console), L"Auto");
-					}
-					thread restore_thread(DoRestore, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console), restore_method);
+			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"), ImVec2(-1, 0))) {
+				wstring selectedFile = SelectFileDialog();
+				if (!selectedFile.empty()) {
+					thread restore_thread(DoRestore2, cfg, selected_entry->worldName, selectedFile, ref(console), restore_method);
 					restore_thread.detach();
 					ImGui::CloseCurrentPopup(); // Close method choice
 					//entry_for_action = nullptr; // Reset selection
 				}
-				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-					ImGui::CloseCurrentPopup();
-				}
-				ImGui::EndPopup();
 			}
 
-			if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_BACKUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-				if (entry_to_delete) {
-					ImGui::Text(L("CONFIRM_DELETE_BACKUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
-					ImGui::Separator();
-					if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-						ImGui::CloseCurrentPopup();
-						thread delete_thread(DoDeleteBackup, cfg, *entry_to_delete, ref(console));
-						delete_thread.detach();
-						entry_to_delete = nullptr;
-						//entry_for_action = nullptr; 这行加上就会卡界面，很神奇
-					}
-					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-						ImGui::CloseCurrentPopup();
-						entry_to_delete = nullptr;
-					}
-				}
-				ImGui::EndPopup();
+			ImGui::Dummy(ImVec2(-1, 0));
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(300 + ImGui::GetStyle().ItemSpacing.x, 0))) {
+				ImGui::CloseCurrentPopup();
+				//selected_entry = nullptr;
 			}
 
 			ImGui::EndPopup();
@@ -4583,12 +4557,12 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::PopStyleColor(2);
 
 
-		// --- 重命名弹窗 (包含完整实现) ---
+		// --- 重命名弹窗 ---
 		if (ImGui::BeginPopupModal(L("HISTORY_RENAME_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextUnformatted(L("HISTORY_RENAME_POPUP_MSG"));
 			ImGui::InputText("##renameedit", rename_buf, sizeof(rename_buf));
 			ImGui::Separator();
-			if (ImGui::Button("OK", ImVec2(120, 0))) {
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
 				filesystem::path old_path = backup_path;
 				filesystem::path new_path = old_path.parent_path() / utf8_to_wstring(rename_buf);
 				if (old_path != new_path && filesystem::exists(old_path)) {
@@ -4614,7 +4588,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextWrapped(L("HISTORY_DELETE_POPUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
 			ImGui::Separator();
-			if (ImGui::Button("OK", ImVec2(120, 0))) {
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
 				filesystem::path path_to_delete = filesystem::path(configs[tempCurrentConfigIndex].backupPath) / entry_to_delete->worldName / entry_to_delete->backupFile;
 				if (filesystem::exists(path_to_delete)) {
 					filesystem::remove(path_to_delete);
@@ -4638,7 +4612,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				is_comment_editing = false;
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("HISTORY_BUTTON_CANCEL_COMMENT"))) {
+			if (ImGui::Button(L("BUTTON_CANCEL"))) {
 				is_comment_editing = false;
 			}
 		}
