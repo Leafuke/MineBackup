@@ -620,7 +620,8 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment);
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, atomic<bool>& stop_flag); void RunSpecialMode(int configId);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, atomic<bool>& stop_flag);
+void RunSpecialMode(int configId);
 void CheckForConfigConflicts();
 void ConsoleLog(Console* console, const char* format, ...);
 
@@ -1330,17 +1331,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-				string github_button_text = L("ABOUT_VISIT_GITHUB");
-				if (ImGui::Button(github_button_text.c_str()))
+				if (ImGui::Button(L("ABOUT_VISIT_GITHUB")))
 				{
 					ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup", NULL, NULL, SW_SHOWNORMAL);
 				}
 				ImGui::SameLine();
-				string bilibili_button_text = L("ABOUT_VISIT_BILIBILI");
-				if (ImGui::Button(bilibili_button_text.c_str()))
+				if (ImGui::Button(L("ABOUT_VISIT_BILIBILI")))
 				{
 					ShellExecuteA(NULL, "open", "https://space.bilibili.com/545429962", NULL, NULL, SW_SHOWNORMAL);
 				}
+				if (ImGui::Button(L("ABOUT_VISIT_KNOTLINK")))
+				{
+					ShellExecuteA(NULL, "open", "https://github.com/hxh230802/KnotLink", NULL, NULL, SW_SHOWNORMAL);
+				}
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_KNOTLINK_TIP"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				ImGui::SeparatorText(L("ABOUT_LICENSE_HEADER"));
@@ -2156,12 +2160,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		g_exitWatcherThread.join();
 	}
 
+	//linkLoaderThread.join();
 	if (g_commandResponser) {
-		delete g_commandResponser;
+		//delete g_commandResponser;
 		g_commandResponser = nullptr;
 	}
 	if (g_signalSender) {
-		delete g_signalSender;
+		//delete g_signalSender;
 		g_signalSender = nullptr;
 	}
 
@@ -4086,9 +4091,9 @@ void RunSpecialMode(int configId) {
 	}
 
 	// 设置控制台标题和头部信息
-	system(("title MineBackup - Automated Task: " + spCfg.name).c_str());
+	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
 	ConsoleLog(&console, L("AUTOMATED_TASK_RUNNER_HEADER"));
-	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), spCfg.name.c_str());
+	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), utf8_to_gbk(spCfg.name.c_str()));
 	ConsoleLog(&console, "----------------------------------------------");
 	if (!spCfg.hideWindow) {
 		ConsoleLog(&console, L("CONSOLE_QUIT_PROMPT"));
@@ -4257,8 +4262,9 @@ void RunSpecialMode(int configId) {
 		time_t now = time(0);
 		char time_buf[100];
 		ctime_s(time_buf, sizeof(time_buf), &now);
+		log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
 		log_file << L("SPECIAL_MODE_LOG_START") << time_buf << endl;
-
+		
 		for (const char* item : console.Items) {
 			log_file << gbk_to_utf8(item) << endl;
 		}
