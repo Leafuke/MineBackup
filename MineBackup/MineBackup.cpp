@@ -1221,6 +1221,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					if (ImGui::MenuItem(L("MENU_ISSUE"))) {
 						ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup/issues", NULL, NULL, SW_SHOWNORMAL);
 					}
+					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
+						ShellExecuteA(NULL, "open", "https://docs.qq.com/doc/DUUp4UVZOYmZWcm5M", NULL, NULL, SW_SHOWNORMAL);
+					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
 						showAboutWindow = true;
 						ImGui::OpenPopup(L("MENU_ABOUT"));
@@ -3304,7 +3307,6 @@ void ShowSettingsWindow() {
 			}
 			if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
 				g_CurrentLang = lang_codes[lang_idx];
-				//ReloadFonts(); // Reload fonts for the new language
 			}
 			ImGui::Separator();
 			ImGui::Text(L("THEME_SETTINGS"));
@@ -3320,14 +3322,12 @@ void ShowSettingsWindow() {
 				if (!sel.empty()) {
 					cfg.zipFonts = sel;
 					Fontss = sel;
-					//ReloadFonts();
 				}
 			}
 			ImGui::SameLine();
 			if (ImGui::InputText("##zipFontsValue", Fonts, CONSTANT1)) {
 				cfg.zipFonts = utf8_to_wstring(Fonts);
 				Fontss = cfg.zipFonts;
-				//ReloadFonts();
 			}
 		}
 	}
@@ -3375,8 +3375,6 @@ void LimitBackupFiles(const wstring& folderPath, int limit, Console* console)
 		try {
 			if (files[i].path().filename().wstring().find(L"[Smart]") == 0 || files[i + 1].path().filename().wstring().find(L"[Smart]") == 0) // 如果是智能备份，不能删除！如果是完整备份，不能是基底
 			{
-				/*to_delete += 1;
-				continue;现在的做法是依然删除，但进行警告*/
 				if (console) console->AddLog(L("LOG_WARNING_DELETE_SMART_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 			}
 			fs::remove(files[i]);
@@ -3537,6 +3535,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 	// 如果打开了热备份
 	if (config.hotBackup) {
+		BroadcastEvent("event=pre_hot_backup;");
 		wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
 		if (!snapshotPath.empty()) {
 			sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
@@ -4606,7 +4605,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					filesystem::remove(path_to_delete);
 				}
 				RemoveHistoryEntry(tempCurrentConfigIndex, entry_to_delete->backupFile);
-				selected_entry = nullptr;
+				//selected_entry = nullptr; 会崩溃
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();
 			}
@@ -4819,9 +4818,100 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return "OK:Mods backup started.";
 	}
 	else if (command == "BACKUP_CURRENT") { // 直接调用备份正在运行的世界的函数
+		BroadcastEvent("event=pre_hot_backup");
 		TriggerHotkeyBackup();
 		return "OK:Backup Started";
 	}
+	else if (command == "AUTO_BACKUP") {
+		int config_idx, world_idx, interval_minutes;
+		// 解析并验证传入的参数
+		if (!(ss >> config_idx >> world_idx >> interval_minutes) || configs.find(config_idx) == configs.end() || world_idx < 0 || world_idx >= configs[config_idx].worlds.size()) {
+			std::string error_msg = "ERROR:Invalid arguments. Usage: AUTO_BACKUP <config_idx> <world_idx> <interval_minutes>";
+			BroadcastEvent(error_msg);
+			return error_msg;
+		}
+
+		// 验证间隔时间的有效性
+		if (interval_minutes < 1) {
+			std::string error_msg = "ERROR:Interval must be at least 1 minute.";
+			BroadcastEvent(error_msg);
+			return error_msg;
+		}
+
+		const auto& world_name = configs[config_idx].worlds[world_idx].first;
+		auto taskKey = std::make_pair(config_idx, world_idx);
+
+		// 检查是否已有任务正在运行，避免重复启动
+		if (g_active_auto_backups.count(taskKey)) {
+			string error_msg = "ERROR:An auto-backup task is already running for this world.";
+			BroadcastEvent(error_msg);
+			return error_msg;
+		}
+
+		// 创建并启动新的自动备份任务
+		console->AddLog("[KnotLink] Received command to start auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
+
+		// 从全局Map中获取或创建一个新的任务实例
+		AutoBackupTask& task = g_active_auto_backups[taskKey];
+		task.stop_flag = false; // 重置停止标记
+
+		// 创建新线程，并传入所有必要的参数。
+		// 使用 std::ref 将 stop_flag 的引用传递给线程，以便能远程控制其停止。
+		task.worker = thread(AutoBackupThreadFunction, config_idx, world_idx, interval_minutes, console, ref(task.stop_flag));
+		// 分离线程，使其在后台独立运行，这样指令可以立刻返回成功信息。
+		task.worker.detach();
+
+		// 构造成功信息并广播事件
+		std::string success_msg = "OK:Auto-backup started for world '" + wstring_to_utf8(world_name) + "' with an interval of " + std::to_string(interval_minutes) + " minutes.";
+		BroadcastEvent("event=auto_backup_started;config=" + std::to_string(config_idx) + ";world=" + wstring_to_utf8(configs[config_idx].worlds[world_idx].first) + ";interval=" + std::to_string(interval_minutes));
+		console->AddLog("[KnotLink] %s", success_msg.c_str());
+
+		return success_msg;
+		}
+
+	else if (command == "STOP_AUTO_BACKUP") {
+			int config_idx, world_idx;
+			// 解析并验证参数
+			if (!(ss >> config_idx >> world_idx) || configs.find(config_idx) == configs.end() || world_idx < 0 || world_idx >= configs[config_idx].worlds.size()) {
+				std::string error_msg = "ERROR:Invalid arguments. Usage: STOP_AUTO_BACKUP <config_idx> <world_idx>";
+				BroadcastEvent(error_msg);
+				return error_msg;
+			}
+
+			const auto& world_name = configs[config_idx].worlds[world_idx].first;
+			auto taskKey = std::make_pair(config_idx, world_idx);
+
+			// 使用互斥锁保护访问
+			std::lock_guard<std::mutex> lock(g_task_mutex);
+
+			// 查找指定的任务
+			auto it = g_active_auto_backups.find(taskKey);
+			if (it == g_active_auto_backups.end()) {
+				std::string error_msg = "ERROR:No active auto-backup task found for this world.";
+				BroadcastEvent(error_msg);
+				return error_msg;
+			}
+
+			// 发送停止信号并等待线程结束
+			console->AddLog("[KnotLink] Received command to stop auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
+
+			// a. 设置原子停止标记为true，通知线程应该退出了
+			it->second.stop_flag = true;
+
+			// b. 等待线程执行完毕。因为线程可能正在执行备份或处于休眠期，
+			//    所以这里不使用join()来阻塞，AutoBackupThreadFunction内部的循环会检测到stop_flag并自行退出。
+			//    在MineBackup主程序退出时，有统一的join逻辑确保所有线程都已结束。
+
+			// c. 从任务列表中移除该任务
+			g_active_auto_backups.erase(it);
+
+			// 构造成功信息并广播事件
+			std::string success_msg = "OK:Auto-backup task for world '" + wstring_to_utf8(world_name) + "' has been stopped.";
+			BroadcastEvent("event=auto_backup_stopped;config=" + std::to_string(config_idx) + ";world_idx=" + std::to_string(world_idx));
+			console->AddLog("[KnotLink] %s", success_msg.c_str());
+
+			return success_msg;
+			}
 
 	return "ERROR:Unknown command '" + command + "'.";
 }
@@ -4847,7 +4937,6 @@ void ConsoleLog(Console* console, const char* format, ...) {
 
 void TriggerHotkeyBackup() {
 	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
-	lock_guard<mutex> lock(g_configsMutex);
 
 	for (const auto& config_pair : configs) {
 		int config_idx = config_pair.first;
@@ -4871,9 +4960,6 @@ void TriggerHotkeyBackup() {
 			if (IsFileLocked(levelDatPath)) {
 				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
 
-				string payload = "event=pre_hot_backup;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first);
-				BroadcastEvent(payload);
-				BroadcastEvent("minebackup save");
 				console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
 
 
@@ -5061,7 +5147,6 @@ static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 
 		// 合并配置：以 baseCfg 为主，特殊配置覆盖常用字段
 		dw.effectiveConfig = baseCfg;
-		// 覆盖：仅覆盖那些合理的字段（按你的 SpecialConfig 语义）
 		dw.effectiveConfig.zipLevel = sp.zipLevel;
 		if (sp.keepCount > 0) dw.effectiveConfig.keepCount = sp.keepCount;
 		if (sp.cpuThreads > 0) dw.effectiveConfig.cpuThreads = sp.cpuThreads;
