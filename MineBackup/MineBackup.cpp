@@ -36,7 +36,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.7.10";
+const string CURRENT_VERSION = "1.8.0";
 
 // 结构体们
 struct Config {
@@ -46,12 +46,11 @@ struct Config {
 	wstring backupPath;
 	wstring zipPath;
 	wstring zipFormat = L"7z";
-	wstring zipFonts;
+	wstring fontPath;
 	int zipLevel;
 	int keepCount;
 	bool hotBackup;
 	bool backupBefore;
-	bool manualRestore;
 	int theme = 1;
 	int folderNameType = 0;
 	string name;
@@ -144,6 +143,7 @@ static thread g_exitWatcherThread;
 static atomic<bool> g_stopExitWatcher(false);
 static map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 static wstring g_worldToFocusInHistory = L"";
+vector<wstring> restoreWhitelist;
 extern enum class BackupCheckResult {
 	NO_CHANGE,
 	CHANGES_DETECTED,
@@ -616,7 +616,7 @@ string ProcessCommand(const string& commandStr, Console* console);
 wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& snapshotPath, Console& console);
 void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console, const wstring& comment = L"");
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod);
-void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod); 
+void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList = "");
 void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment);
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
@@ -771,7 +771,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.7.10", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.8.0", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
@@ -1117,17 +1117,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						initialConfig.backupMode = 1;
 						initialConfig.hotBackup = false;
 						initialConfig.backupBefore = false;
-						initialConfig.manualRestore = true;
 						initialConfig.skipIfUnchanged = true;
 						isSilence = false;
 						if (g_CurrentLang == "zh-CN") {
 							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-								initialConfig.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttc";
+								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttc";
 							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-								initialConfig.zipFonts = L"C:\\Windows\\Fonts\\msyh.ttf";
+								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttf";
 						}
 						else
-							initialConfig.zipFonts = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
+							initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 
 						specialConfigs.clear();
 
@@ -2040,7 +2039,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					if (is_task_running) {
 						ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 						ImGui::Separator();
-						if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(-1, 0))) {
+						if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(240, 0))) {
 							if (g_active_auto_backups.count(taskKey)) {
 								// 1. 设置停止标志
 								g_active_auto_backups.at(taskKey).stop_flag = true;
@@ -2050,6 +2049,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 								// 3. 从管理器中移除
 								g_active_auto_backups.erase(taskKey);
 							}
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::SameLine();
+						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
 							ImGui::CloseCurrentPopup();
 						}
 					}
@@ -2066,7 +2069,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 								AutoBackupTask& task = g_active_auto_backups[taskKey];
 								task.stop_flag = false;
 
-								// 【修复】创建线程时，使用 std::ref 将 stop_flag 的引用传递进去
 								task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console, ref(task.stop_flag));
 
 								ImGui::CloseCurrentPopup();
@@ -2471,6 +2473,7 @@ static void LoadConfigs(const string& filename) {
 	// cur作为一个指针，指向 configs 这个全局 map<int, Config> 中的元素 Config
 	Config* cur = nullptr;
 	SpecialConfig* spCur = nullptr;
+	bool restoreWhiteList = false;
 
 	while (getline(in, line1)) {
 		line = utf8_to_wstring(line1);
@@ -2525,7 +2528,6 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
 				else if (key == L"HotBackup") cur->hotBackup = (val != L"0");
-				else if (key == L"ManualRestore") cur->manualRestore = (val != L"0");
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
@@ -2545,7 +2547,7 @@ static void LoadConfigs(const string& filename) {
 					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
 				}
 				else if (key == L"Font") {
-					cur->zipFonts = val;
+					cur->fontPath = val;
 					Fontss = val;
 					if (val.empty() || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
 						LANGID lang_id = GetUserDefaultUILanguage();
@@ -2614,8 +2616,15 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"RunOnStartup") {
 					g_RunOnStartup = (val != L"0");
 				}
+				else if (key == L"RestoreWhitelistItem") {
+					restoreWhiteList = true;
+					restoreWhitelist.push_back(val);
+				}
 			}
 		}
+	}
+	if (!restoreWhiteList) {
+		restoreWhitelist.push_back(L"fake_player.gca.json");
 	}
 }
 
@@ -2635,7 +2644,10 @@ static void SaveConfigs(const wstring& filename) {
 	out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
 	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
 	out << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
-	out << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n\n";
+	out << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
+	for (const auto& item : restoreWhitelist) {
+		out << L"RestoreWhitelistItem=" << item << L"\n\n";
+	}
 
 	for (auto& kv : configs) {
 		int idx = kv.first;
@@ -2658,10 +2670,9 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"SmartBackup=" << c.backupMode << L"\n";
 		out << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
 		out << L"HotBackup=" << (c.hotBackup ? 1 : 0) << L"\n";
-		out << L"ManualRestore=" << (c.manualRestore ? 1 : 0) << L"\n";
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"Theme=" << c.theme << L"\n";
-		out << L"Font=" << c.zipFonts << L"\n";
+		out << L"Font=" << c.fontPath << L"\n";
 		out << L"BackupNaming=" << c.folderNameType << L"\n";
 		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
@@ -3180,14 +3191,13 @@ void ShowSettingsWindow() {
 			if (ImGui::RadioButton(L("NAME_BY_WORLD"), &folder_name_choice, 0)) { cfg.folderNameType = 0; } ImGui::SameLine();
 			if (ImGui::RadioButton(L("NAME_BY_DESC"), &folder_name_choice, 1)) { cfg.folderNameType = 1; }
 
-			ImGui::Checkbox(L("BACKUP_BEFORE_RESTORE"), &cfg.backupBefore); ImGui::SameLine();
 			ImGui::Checkbox(L("IS_HOT_BACKUP"), &cfg.hotBackup); ImGui::SameLine();
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(L("TIP_HOT_BACKUP"));
 			}
 			ImGui::Checkbox(L("BACKUP_ON_START"), &cfg.backupOnGameStart);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_START"));
-			ImGui::Checkbox(L("MANUAL_RESTORE_SELECT"), &cfg.manualRestore); ImGui::SameLine();
+			ImGui::SameLine();
 			ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
 			// 低优先级
 			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &cfg.useLowPriority);
@@ -3278,6 +3288,46 @@ void ShowSettingsWindow() {
 			}
 		}
 
+		// 还原行为
+		if (ImGui::CollapsingHeader(L("GROUP_RESTORE_BEHAVIOR"))) {
+			ImGui::Checkbox(L("BACKUP_BEFORE_RESTORE"), &cfg.backupBefore);
+
+			ImGui::SeparatorText(L("RESTORE_WHITELIST_HEADER"));
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_WHITELIST"));
+
+			// 添加新项的输入框
+			static char whitelist_add_buf[256] = "";
+			ImGui::InputTextWithHint("##whitelist_add", "file_or_folder_name", whitelist_add_buf, IM_ARRAYSIZE(whitelist_add_buf));
+			ImGui::SameLine();
+			if (ImGui::Button(L("BUTTON_ADD_WHITELIST")) && strlen(whitelist_add_buf) > 0) {
+				restoreWhitelist.push_back(utf8_to_wstring(whitelist_add_buf));
+				strcpy_s(whitelist_add_buf, "");
+			}
+
+			// 白名单列表
+			static int sel_wl_item = -1;
+			ImGui::SameLine();
+			if (ImGui::Button(L("BUTTON_REMOVE_WHITELIST")) && sel_wl_item != -1) {
+				restoreWhitelist.erase(restoreWhitelist.begin() + sel_wl_item);
+				sel_wl_item = -1;
+			}
+
+			if (ImGui::BeginListBox("##whitelist", ImVec2(ImGui::GetContentRegionAvail().x, 4 * ImGui::GetTextLineHeightWithSpacing()))) {
+				if (restoreWhitelist.empty()) {
+					ImGui::TextDisabled("Whitelist is empty.");
+				}
+				else {
+					for (int n = 0; n < restoreWhitelist.size(); n++) {
+						string label = wstring_to_utf8(restoreWhitelist[n]);
+						if (ImGui::Selectable(label.c_str(), sel_wl_item == n)) {
+							sel_wl_item = n;
+						}
+					}
+				}
+				ImGui::EndListBox();
+			}
+		}
+
 		// 云同步设置
 		if (ImGui::CollapsingHeader(L("GROUP_CLOUD_SYNC")))
 		{
@@ -3321,18 +3371,18 @@ void ShowSettingsWindow() {
 
 			ImGui::Text(L("FONT_SETTINGS"));
 			char Fonts[CONSTANT1];
-			strncpy_s(Fonts, wstring_to_utf8(cfg.zipFonts).c_str(), sizeof(Fonts));
+			strncpy_s(Fonts, wstring_to_utf8(cfg.fontPath).c_str(), sizeof(Fonts));
 			if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
 				wstring sel = SelectFileDialog();
 				if (!sel.empty()) {
-					cfg.zipFonts = sel;
+					cfg.fontPath = sel;
 					Fontss = sel;
 				}
 			}
 			ImGui::SameLine();
-			if (ImGui::InputText("##zipFontsValue", Fonts, CONSTANT1)) {
-				cfg.zipFonts = utf8_to_wstring(Fonts);
-				Fontss = cfg.zipFonts;
+			if (ImGui::InputText("##fontPathValue", Fonts, CONSTANT1)) {
+				cfg.fontPath = utf8_to_wstring(Fonts);
+				Fontss = cfg.fontPath;
 			}
 		}
 	}
@@ -3432,8 +3482,10 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 		}
 		else {
 			console.AddLog(L("LOG_ERROR_CMD_FAILED"), exit_code);
-			if (exit_code == 1)
+			if (exit_code == 1) // 警告
 				console.AddLog(L("LOG_ERROR_CMD_FAILED_HOTBACKUP_SUGGESTION"));
+			if (exit_code == 2) // 致命错误
+				console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
 		}
 	}
 	else {
@@ -3460,7 +3512,12 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& sn
 		
 		// 如果旧的临时目录存在，先清理掉
 		if (filesystem::exists(tempDir)) {
-			filesystem::remove_all(tempDir);
+			error_code ec_remove;
+			filesystem::remove_all(tempDir, ec_remove);
+			if (ec_remove) {
+				console.AddLog("[Error] Failed to clean up old snapshot directory: %s", ec_remove.message().c_str());
+				// 即使清理失败也尝试继续，后续的创建可能会失败并被捕获
+			}
 		}
 		filesystem::create_directories(tempDir);
 		console.AddLog(L("LOG_BACKUP_HOT_INFO"));
@@ -3479,6 +3536,8 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& sn
 		else {
 			console.AddLog(L("LOG_BACKUP_HOT_INFO3"), wstring_to_utf8(tempDir.wstring()).c_str());
 		}
+		// 增加短暂延时，确保文件系统操作（特别是 xcopy）完全完成
+		this_thread::sleep_for(chrono::milliseconds(500));
 
 		return tempDir.wstring();
 
@@ -3914,7 +3973,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
 // restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
-void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod) {
+void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
@@ -3929,6 +3988,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	// 准备路径
 	wstring sourceDir = config.backupPath + L"\\" + worldName;
 	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
+	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
 
 	// 检查备份文件是否存在
 	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir + L"\\" + backupFile)) {
@@ -3936,24 +3996,59 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		return;
 	}
 
-	if (restoreMethod == 0) { // Clean Restore
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
-		try {
-			if (filesystem::exists(destinationFolder)) {
-				filesystem::remove_all(destinationFolder);
-			}
-		}
-		catch (const filesystem::filesystem_error& e) {
-			console.AddLog("[Error] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
+	// 还原前检查世界是否正在运行
+	if (IsFileLocked(destinationFolder + L"\\session.lock")) {
+		int msgboxID = MessageBoxW(
+			NULL,
+			utf8_to_wstring(L("RESTORE_OVER_RUNNING_WORLD_MSG")).c_str(),
+			utf8_to_wstring(L("RESTORE_OVER_RUNNING_WORLD_TITLE")).c_str(),
+			MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2
+		);
+		if (msgboxID == IDNO) {
+			console.AddLog("[Info] Restore cancelled by user due to active game session.");
+			return;
 		}
 	}
 
-	// 等待一段时间，确保删除完成
-	this_thread::sleep_for(chrono::seconds(1));
+	if (restoreMethod == 0) {
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		bool deletion_ok = true;
+		if (filesystem::exists(destinationFolder)) {
+			try {
+				for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+					// 使用 is_blacklisted 函数判断是否在白名单中
+					if (is_blacklisted(entry.path(), destinationFolder, destinationFolder, restoreWhitelist)) {
+						console.AddLog(L("LOG_SKIPPING_WHITELISTED_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
+						continue;
+					}
+
+					console.AddLog(L("LOG_DELETING_EXISTING_WORLD_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
+					error_code ec;
+					if (entry.is_directory()) {
+						filesystem::remove_all(entry.path(), ec);
+					}
+					else {
+						filesystem::remove(entry.path(), ec);
+					}
+					if (ec) {
+						console.AddLog(L("LOG_DELETION_ERROR"), wstring_to_utf8(entry.path().filename().wstring()).c_str(), ec.message().c_str());
+						deletion_ok = false; // 标记删除失败
+					}
+				}
+			}
+			catch (const filesystem::filesystem_error& e) {
+				console.AddLog("[Error] An exception occurred during pre-restore cleanup: %s.", e.what());
+				deletion_ok = false;
+			}
+		}
+		if (!deletion_ok) {
+			console.AddLog(L("ERROR_CLEAN_RESTORE_FAILED"));
+			return; // 中止还原以保护数据
+		}
+	}
 
 	// 收集所有相关的备份文件
 	vector<filesystem::path> backupsToApply;
-	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
 
 	// 如果目标是完整备份，直接还原它
 	if (backupFile.find(L"[Smart]") != wstring::npos) { // 目标是增量备份
@@ -4006,25 +4101,41 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	// 格式: "C:\7z.exe" x "源压缩包路径" -o"目标文件夹路径" -y
 	// 'x' 表示带路径解压, '-o' 指定输出目录, '-y' 表示对所有提示回答“是”（例如覆盖文件）
 	
-	if (restoreMethod == 1) {
-		// 按时间顺序排序所有需要应用的备份
-		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
-			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
-			});
-	}
-	else if (restoreMethod == 2)
+	if (restoreMethod == 2)
 	{
 		// 按时间逆序排序所有需要应用的备份
 		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
 			return filesystem::last_write_time(a) > filesystem::last_write_time(b);
 			});
 	}
+	else {
+		// 按时间顺序排序所有需要应用的备份
+		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
+			});
+	}
+
+	wstring filesToExtractStr;
+	// 仅在自定义还原模式下构建文件列表
+	if (restoreMethod == 3 && !customRestoreList.empty()) {
+		console.AddLog(L("LOG_CUSTOM_RESTORE_START"));
+		stringstream ss(customRestoreList);
+		string item;
+		while (getline(ss, item, ',')) {
+			item.erase(0, item.find_first_not_of(" \t\n\r"));
+			item.erase(item.find_last_not_of(" \t\n\r") + 1);
+			if (!item.empty()) {
+				filesToExtractStr += L" \"" + utf8_to_wstring(item) + L"\"";
+			}
+		}
+	}
+
 
 	// 依次执行还原
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
-		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder + L"\" -y";
+		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder + L"\" -y" + filesToExtractStr;
 		RunCommandInBackground(command, console, config.useLowPriority);
 	}
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
@@ -4514,23 +4625,47 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			
 			ImGui::SeparatorText(L("CHOOSE_RESTORE_METHOD_TITLE"));
 			static int restore_method = 0;
+			static char customRestoreBuf[CONSTANT2] = "";
+
 			ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restore_method, 0);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CLEAN"));
+
 			ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restore_method, 1);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_OVERWRITE"));
+
 			ImGui::RadioButton(L("RESTORE_METHOD_REVERSE"), &restore_method, 2);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_REVERSE"));
-			ImGui::Separator();
 
+			ImGui::RadioButton(L("RESTORE_METHOD_CUSTOM"), &restore_method, 3);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CUSTOM"));
+
+			// 仅在选择自定义还原时显示输入框
+			if (restore_method == 3) {
+				ImGui::Indent();
+				ImGui::SetNextItemWidth(-1);
+				ImGui::InputTextWithHint("##custom_restore_input", L("CUSTOM_RESTORE_ITEMS_HINT"), customRestoreBuf, IM_ARRAYSIZE(customRestoreBuf));
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("%s", L("CUSTOM_RESTORE_HINT"));
+				}
+				ImGui::Unindent();
+			}
+			else {
+				// 确保在切换到其他模式时清空输入，避免混淆
+				if (strlen(customRestoreBuf) > 0) {
+					strcpy_s(customRestoreBuf, "");
+				}
+			}
+
+			ImGui::Separator();
 
 			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
 				if (cfg.backupBefore) {
 					DoBackup(cfg, { selected_entry->worldName, L"" }, ref(console), L"Auto");
 				}
-				thread restore_thread(DoRestore, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console), restore_method);
+				// 传递 customRestoreBuf, 只有在 mode 3 时它才可能有内容
+				thread restore_thread(DoRestore, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console), restore_method, customRestoreBuf);
 				restore_thread.detach();
-				ImGui::CloseCurrentPopup(); // Close method choice
-				//entry_for_action = nullptr; // Reset selection
+				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
 
