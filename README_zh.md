@@ -1,6 +1,6 @@
 # MineBackup — 存档时光机 🗂️💾
 
-[![中文说明](https://img.shields.io/badge/README-中文-blue)](README-zn.md)
+[![中文说明](https://img.shields.io/badge/README-中文-blue)](README_zh.md)
 [![Latest Release](https://img.shields.io/github/v/release/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/releases)
 [![Issues](https://img.shields.io/github/issues/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/issues)
 
