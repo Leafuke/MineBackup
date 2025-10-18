@@ -130,6 +130,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\7za.exe" />
+    <None Include="D:\Downloads\Programs\MineBackup\7za.exe" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="..\..\..\..\Pictures\图标\mine10.ico">
@@ -147,8 +148,21 @@
     <Image Include="..\..\..\..\Pictures\图标\mine50.ico">
       <Filter>资源文件</Filter>
     </Image>
+    <Image Include="D:\Pictures\图标\mine10.ico">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="D:\Pictures\图标\mine20.ico">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="D:\Pictures\图标\mine30.ico">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="D:\Pictures\图标\mine40.ico">
+      <Filter>资源文件</Filter>
+    </Image>
   </ItemGroup>
   <ItemGroup>
     <Font Include="..\fontawesome-sp.otf" />
+    <Font Include="D:\Downloads\Programs\MineBackup\fontawesome-sp.otf" />
   </ItemGroup>
 </Project>

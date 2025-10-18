@@ -8,6 +8,7 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 	{ "zh-CN", {
 		{"SETTINGS", u8"设置"},
 		{"EXIT", u8"退出"},
+		{"OPEN", u8"打开界面"},
 		{"MAIN_WINDOW_TITLE", u8"存档备份器"},
 		{"WIZARD_TITLE", u8"- MineBackup 首次启动设置向导 -"},
 		{"CONSOLE_TITLE", u8"MineBackup 监控台"},
@@ -85,7 +86,7 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{"AUTOBACKUP_RUNNING", u8"世界 '%s' 的自动备份正在运行中。"},
 		{"AUTOBACKUP_SETUP_FOR", u8"为世界 '%s' 设置自动备份:"},
 		{"INTERVAL_MINUTES", u8"间隔时间 (分钟)"},
-		{"CHECK_FOR_UPDATES", u8"更新内容"},
+		{"CHECK_FOR_UPDATES", u8"完整更新内容"},
 		{"WIZARD_WARNING_TIPS", u8"使用注意事项：\n 1. 若希望在游戏过程中一边备份，请务必打开热备份功能\n 2. 最好不要在文件夹中手动删除备份文件，推荐使用内置删除功能\n 3. MineBackup 的一切基于 config.ini 文件，请确保二者在同一位置，删除后可重置程序\n 4. 遇到不会使用的功能要积极询问作者和网友哦"},
 		{"WIZARD_WELCOME", u8"欢迎使用 MineBackup - 存档时光机 - 一个简单高效的存档管理工具"},
 		{"WIZARD_INTRO1", u8"本向导将帮助您设置您的第一套备份配置。"},
@@ -427,6 +428,7 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 	{ "en-US", {
 		{"SETTINGS", "Settings"},
 		{"EXIT", "Exit"},
+		{"OPEN", "Open Main Window"},
 		{"MAIN_WINDOW_TITLE", "Minecraft Backup Tool"},
 		{"WIZARD_TITLE", "- First-Time Setup Wizard -"},
 		{"CONSOLE_TITLE", "MineBackup Console"},
@@ -504,7 +506,7 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{"AUTOBACKUP_RUNNING", "Auto-backup for world '%s' is running."},
 		{"AUTOBACKUP_SETUP_FOR", "Set up auto-backup for world '%s':"},
 		{"INTERVAL_MINUTES", "Interval (minutes)"},
-		{"CHECK_FOR_UPDATES", "Updates"},
+		{"CHECK_FOR_UPDATES", "Full Change Log"},
 		{"WIZARD_WELCOME", "Welcome to the Minecraft Backup Tool!"},
 		{"WIZARD_INTRO1", "This wizard will help you set up your first backup configuration."},
 		{"WIZARD_INTRO2", "If you have multiple game launchers or save directories,"},

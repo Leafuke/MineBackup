@@ -16,6 +16,7 @@
 #include <thread>
 #include <atomic> // 用于线程安全的标志
 #include <mutex>  // 用于互斥锁
+#include <shellapi.h> // 托盘图标相关
 #include <conio.h>
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
@@ -37,7 +38,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.8.1";
+const string CURRENT_VERSION = "1.6.1";
 
 // 结构体们
 struct Config {
@@ -125,7 +126,7 @@ ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 wstring Fontss;
 vector<wstring> savePaths = { L"" };
 wchar_t backupPath[CONSTANT1] = L"", zipPath[CONSTANT1] = L"";
-bool done = false;
+bool done = false, showMainApp = false;
 bool showSettings = false;
 bool isSilence = false;
 bool isRespond = false;
@@ -153,6 +154,9 @@ extern enum class BackupCheckResult {
 	FORCE_FULL_BACKUP_METADATA_INVALID,
 	FORCE_FULL_BACKUP_BASE_MISSING
 };
+
+// 托盘
+NOTIFYICONDATA nid = { 0 };
 
 // 声明辅助函数
 bool CreateDeviceD3D(HWND hWnd);
@@ -839,7 +843,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//加载任务栏图标
 	HICON hIcon = (HICON)LoadImage(
 		GetModuleHandle(NULL),
-		MAKEINTRESOURCE(IDI_ICON1),
+		MAKEINTRESOURCE(IDI_ICON3),
 		IMAGE_ICON,
 		0, 0,
 		LR_DEFAULTSIZE
@@ -859,7 +863,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists("config.ini");
 	static bool showConfigWizard = isFirstRun;
-	static bool showMainApp = !isFirstRun;
+	showMainApp = !isFirstRun;
 	ImGui::StyleColorsLight();//默认亮色
 	//LoadConfigs("config.ini"); 
 	if (configs.count(currentConfigIndex))
@@ -868,14 +872,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		ApplyTheme(specialConfigs[currentConfigIndex].theme);
 
 	// 为程序添加一个托盘图标
-	NOTIFYICONDATA nid = {};
-	nid.cbSize = sizeof(NOTIFYICONDATA);
-	nid.hWnd = hwnd;
-	nid.uID = 1; // 图标ID
-	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-	//nid.uCallbackMessage = WM_TRAYICON; // 自定义的托盘图标消息
-	wcscpy_s(nid.szTip, L"MineBackup");
-	nid.hIcon = hIcon; // 使用之前加载的图标
+	nid.cbSize = sizeof(NOTIFYICONDATA);  // 结构体大小（兼容不同系统版本）
+	nid.hWnd = hwnd;                      // 接收托盘消息的窗口句柄
+	nid.uID = 1;                          // 托盘图标ID（唯一标识）
+	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;  // 启用图标、消息、提示
+	nid.uCallbackMessage = WM_USER + 1;   // 托盘事件的回调消息
+	wcscpy_s(nid.szTip, L"MineBackup");   // 鼠标悬停提示文本
+	nid.hIcon = hIcon;                    // 托盘图标
+
+	// 添加托盘图标到系统托盘
 	Shell_NotifyIcon(NIM_ADD, &nid);
 
 
@@ -1189,7 +1194,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			}
 
 			ImGui::SetNextWindowSize(ImVec2(1300, 720), ImGuiCond_FirstUseEver);
-			ImGui::Begin(L("MAIN_WINDOW_TITLE"), NULL, ImGuiWindowFlags_MenuBar);
+			ImGui::Begin(L("MAIN_WINDOW_TITLE"), &showMainApp, ImGuiWindowFlags_MenuBar);
 
 			float totalW = ImGui::GetContentRegionAvail().x;
 			float leftW = totalW * 0.32f;
@@ -1267,29 +1272,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
 						ImGui::Separator();
 						ImGui::TextWrapped(L("UPDATE_POPUP_NOTES"));
-						ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 150), true);
+						
+						ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 450), true);
 						ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
 						ImGui::EndChild();
 						ImGui::Separator();
-						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(120, 0))) {
+						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(180, 0))) {
 							ShellExecuteA(NULL, "open", ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::SameLine();
-						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(120, 0))) {
+						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(180, 0))) {
 							ShellExecuteA(NULL, "open", ("https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::SameLine();
-						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_3"), ImVec2(120, 0))) {
+						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_3"), ImVec2(180, 0))) {
 							ShellExecuteA(NULL, "open", "https://www.123865.com/s/Zsyijv-UTuGd?pwd=mine#", NULL, NULL, SW_SHOWNORMAL);
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
-						
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(-1, 0))) {
+						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(ImGui::GetContentRegionAvail().x/2, 0))) {
+							open_update_popup = false;
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::SameLine();
+						if (ImGui::Button(L("CHECK_FOR_UPDATES"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+							ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup/releases", NULL, NULL, SW_SHOWNORMAL);
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1310,7 +1321,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					
 					// Minimize Button
 					if (ImGui::Button("-", ImVec2(buttonSize, buttonSize))) {
-						::ShowWindow(hwnd, SW_FORCEMINIMIZE);
+						showMainApp = false;
 					}
 					ImGui::SameLine(0, 0);
 
@@ -2270,6 +2281,61 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	switch (msg)
 	{
+		// 处理托盘图标事件（左键/右键点击）
+	case WM_USER + 1: {
+		// lParam 表示具体事件（如左键点击、右键点击）
+		switch (lParam) {
+		case WM_LBUTTONUP: {
+			// 显示并激活主窗口（如果隐藏/最小化）
+			showMainApp = true;
+			break;
+		}
+		// 右键点击托盘图标：弹出上下文菜单
+		case WM_RBUTTONUP: {
+			// 创建菜单
+			HMENU hMenu = CreatePopupMenu();
+			AppendMenu(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
+			AppendMenu(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
+
+			// 获取鼠标位置（菜单显示在鼠标右键点击的位置）
+			POINT pt;
+			GetCursorPos(&pt);
+
+			// 显示菜单（TPM_BOTTOMALIGN：菜单底部对齐鼠标位置）
+			TrackPopupMenu(
+				hMenu,
+				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // 菜单样式
+				pt.x, pt.y,
+				0,
+				hWnd,
+				NULL
+			);
+
+			// 必须调用此函数，否则菜单可能无法正常关闭
+			SetForegroundWindow(hWnd);
+			// 销毁菜单（避免内存泄漏）
+			DestroyMenu(hMenu);
+			break;
+		}
+		}
+		break;
+	}
+					// 处理菜单命令（点击“打开界面”或“关闭”后触发）
+	case WM_COMMAND: {
+		switch (LOWORD(wParam)) {
+		case 1001:  // 点击“打开界面”
+			showMainApp = true;
+			SetForegroundWindow(hWnd);
+			break;
+		case 1002:  // 点击“关闭”
+			// 先移除托盘图标，再退出程序
+			done = true;
+			Shell_NotifyIcon(NIM_DELETE, &nid);
+			PostQuitMessage(0);
+			break;
+		}
+		break;
+	}
 	case WM_HOTKEY:
 		if (wParam == MINEBACKUP_HOTKEY_ID) {
 			TriggerHotkeyBackup();
@@ -2289,6 +2355,8 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			return 0;
 		break;
 	case WM_DESTROY:
+		Shell_NotifyIcon(NIM_DELETE, &nid);  // 清理托盘图标
+		done = true;
 		::PostQuitMessage(0);
 		return 0;
 	}
@@ -2375,7 +2443,9 @@ void CheckForUpdatesThread() {
 	} while (dwSize > 0);
 	
 	try {
-		string latestVersion = find_json_value(responseBody, "tag_name");
+		//string latestVersion = find_json_value(responseBody, "tag_name");
+		// 使用更可靠的 JSON 解析库
+		string latestVersion = nlohmann::json::parse(responseBody)["tag_name"].get<std::string>();
 		// 移除版本号前的 'v'
 		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
 			latestVersion = latestVersion.substr(1);
@@ -2418,7 +2488,7 @@ void CheckForUpdatesThread() {
 		if (!latestVersion.empty() && isNew) {
 			g_LatestVersionStr = "v" + latestVersion;
 			g_NewVersionAvailable = true;
-			g_ReleaseNotes = find_json_value(responseBody, "body");
+			g_ReleaseNotes = nlohmann::json::parse(responseBody)["body"].get<std::string>();;
 			for (int i = 0; i < g_ReleaseNotes.size() - 1; ++i)
 			{
 				if (g_ReleaseNotes[i] == '#')
