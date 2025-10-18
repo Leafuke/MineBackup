@@ -19,10 +19,11 @@
 #include <conio.h>
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
-#define CONSTANT1 256
-#define CONSTANT2 512
-#define MINEBACKUP_HOTKEY_ID 1
 using namespace std;
+constexpr int CONSTANT1 = 256;
+constexpr int CONSTANT2 = 512;
+constexpr int MINEBACKUP_HOTKEY_ID = 1;
+constexpr int MINERESTORE_HOTKEY_ID = 2;
 // Data
 static ID3D11Device* g_pd3dDevice = nullptr;
 static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
@@ -36,7 +37,7 @@ static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.8.0";
+const string CURRENT_VERSION = "1.8.1";
 
 // 结构体们
 struct Config {
@@ -47,6 +48,7 @@ struct Config {
 	wstring zipPath;
 	wstring zipFormat = L"7z";
 	wstring fontPath;
+	wstring zipMethod = L"LZMA2";
 	int zipLevel;
 	int keepCount;
 	bool hotBackup;
@@ -126,6 +128,7 @@ wchar_t backupPath[CONSTANT1] = L"", zipPath[CONSTANT1] = L"";
 bool done = false;
 bool showSettings = false;
 bool isSilence = false;
+bool isRespond = false;
 bool specialSetting = false;
 bool g_CheckForUpdates = true, g_RunOnStartup = false;
 static bool showHistoryWindow = false;
@@ -180,6 +183,7 @@ bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& 
 bool ExtractFontToTempFile(wstring& extractedPath);
 bool Extract7zToTempFile(wstring& extractedPath);
 void TriggerHotkeyBackup();
+void TriggerHotkeyRestore();
 void GameSessionWatcherThread();
 
 bool IsFileLocked(const wstring& path);
@@ -771,10 +775,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.8.0", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.8.1", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
 	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
+	::RegisterHotKey(hwnd, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
 	
 	// Initialize Direct3D
 	if (!CreateDeviceD3D(hwnd))
@@ -785,8 +790,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	// Show the window
+	//::ShowWindow(hwnd, SW_SHOW);
 	::ShowWindow(hwnd, SW_HIDE);
-	//::ShowWindow(hwnd, SW_HIDE);
 	::UpdateWindow(hwnd);
 	//::ShowWindow(hwnd2, SW_HIDE);
 	//::UpdateWindow(hwnd2);
@@ -862,6 +867,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	else
 		ApplyTheme(specialConfigs[currentConfigIndex].theme);
 
+	// 为程序添加一个托盘图标
+	NOTIFYICONDATA nid = {};
+	nid.cbSize = sizeof(NOTIFYICONDATA);
+	nid.hWnd = hwnd;
+	nid.uID = 1; // 图标ID
+	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+	//nid.uCallbackMessage = WM_TRAYICON; // 自定义的托盘图标消息
+	wcscpy_s(nid.szTip, L"MineBackup");
+	nid.hIcon = hIcon; // 使用之前加载的图标
+	Shell_NotifyIcon(NIM_ADD, &nid);
+
+
 
 	if (isFirstRun) {
 		LANGID lang_id = GetUserDefaultUILanguage();
@@ -912,6 +929,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// Main loop
 	while (!done)
 	{
+
+		Sleep(1); // 这个居然能显著减低CPU占用……
+
 		// Poll and handle messages (inputs, window resize, etc.)
 		// See the WndProc() function below for our to dispatch events to the Win32 backend.
 		MSG msg;
@@ -1169,7 +1189,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			}
 
 			ImGui::SetNextWindowSize(ImVec2(1300, 720), ImGuiCond_FirstUseEver);
-			ImGui::Begin(L("MAIN_WINDOW_TITLE"), &showMainApp, ImGuiWindowFlags_MenuBar);
+			ImGui::Begin(L("MAIN_WINDOW_TITLE"), NULL, ImGuiWindowFlags_MenuBar);
 
 			float totalW = ImGui::GetContentRegionAvail().x;
 			float leftW = totalW * 0.32f;
@@ -1196,7 +1216,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
 
-
+					
 					ImGui::Separator();
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
@@ -1257,18 +1277,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(120, 0))) {
+							ShellExecuteA(NULL, "open", ("https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
+							open_update_popup = false;
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::SameLine();
+						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_3"), ImVec2(120, 0))) {
+							ShellExecuteA(NULL, "open", "https://www.123865.com/s/Zsyijv-UTuGd?pwd=mine#", NULL, NULL, SW_SHOWNORMAL);
+							open_update_popup = false;
+							ImGui::CloseCurrentPopup();
+						}
+						
+						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(-1, 0))) {
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::EndPopup();
 					}
-				}
-
-				// 是否已经最小化
-				bool is_mini = IsIconic(hwnd);
-				if (!is_mini) {
-					::ShowWindow(hwnd, SW_HIDE);
 				}
 				
 
@@ -1284,7 +1310,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					
 					// Minimize Button
 					if (ImGui::Button("-", ImVec2(buttonSize, buttonSize))) {
-						::ShowWindow(hwnd, SW_MINIMIZE);
+						::ShowWindow(hwnd, SW_FORCEMINIMIZE);
 					}
 					ImGui::SameLine(0, 0);
 
@@ -1593,7 +1619,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 				// 整个区域作为一个可选项
 				// ImGuiSelectableFlags_AllowItemOverlap 允许我们在可选项上面绘制其他控件
-				if (ImGui::Selectable("##world_selectable", is_selected, ImGuiSelectableFlags_AllowItemOverlap, ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2.5f))) {
+				if (ImGui::Selectable("##world_selectable", is_selected, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2.5f))) {
 					selectedWorldIndex = i;
 				}
 
@@ -2010,12 +2036,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ImGui::EndPopup();
 					}
 
-					// 一些功能按钮
-					if(ImGui::Button(L("EXIT_INFO"), ImVec2(-1, 0))) {
-						done = true;
-						SaveConfigs();
-					}
-
 
 				}
 
@@ -2175,7 +2195,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// 撤销热键
 	::UnregisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID);
-
+	::UnregisterHotKey(hwnd, MINERESTORE_HOTKEY_ID);
 	return 0;
 }
 
@@ -2253,6 +2273,9 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_HOTKEY:
 		if (wParam == MINEBACKUP_HOTKEY_ID) {
 			TriggerHotkeyBackup();
+		}
+		else if (wParam == MINERESTORE_HOTKEY_ID) {
+			TriggerHotkeyRestore();
 		}
 		break;
 	case WM_SIZE:
@@ -2524,6 +2547,7 @@ static void LoadConfigs(const string& filename) {
 				else if (key == L"ZipProgram") cur->zipPath = val;
 				else if (key == L"ZipFormat") cur->zipFormat = val;
 				else if (key == L"ZipLevel") cur->zipLevel = stoi(val);
+				else if (key == L"ZipMethod") cur->zipMethod = val;
 				else if (key == L"KeepCount") cur->keepCount = stoi(val);
 				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
@@ -2664,6 +2688,7 @@ static void SaveConfigs(const wstring& filename) {
 		out << L"ZipProgram=" << c.zipPath << L"\n";
 		out << L"ZipFormat=" << c.zipFormat << L"\n";
 		out << L"ZipLevel=" << c.zipLevel << L"\n";
+		out << L"ZipMethod=" << c.zipMethod << L"\n";
 		out << L"CpuThreads=" << c.cpuThreads << L"\n";
 		out << L"UseLowPriority=" << (c.useLowPriority ? 1 : 0) << L"\n";
 		out << L"KeepCount=" << c.keepCount << L"\n";
@@ -5052,7 +5077,11 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			console->AddLog("[KnotLink] %s", success_msg.c_str());
 
 			return success_msg;
-			}
+	}
+	else if (command == "SHUT_DOWN_WORLD_SUCCESS") {
+		isRespond = true;
+		return "OK:Start Restore";
+	}
 
 	return "ERROR:Unknown command '" + command + "'.";
 }
@@ -5114,6 +5143,79 @@ void TriggerHotkeyBackup() {
 		}
 	}
 
+	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
+}
+
+void TriggerHotkeyRestore() {
+	isRespond = false;
+	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
+
+	for (const auto& config_pair : configs) {
+		int config_idx = config_pair.first;
+		const Config& cfg = config_pair.second;
+
+		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
+			const auto& world = cfg.worlds[world_idx];
+			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
+			if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
+				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
+				if (!filesystem::exists(temp))
+					continue;
+				for (const auto& entry : filesystem::directory_iterator(temp)) {
+					if (IsFileLocked(entry.path())) {
+						levelDatPath = entry.path();
+						break;
+					}
+				}
+			}
+
+			if (IsFileLocked(levelDatPath)) {
+				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
+				// KnotLink 通知
+				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
+				console.AddLog(L("KNOTLINK_PRE_RESTORE"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
+
+				// 等待模组保存
+				this_thread::sleep_for(chrono::seconds(5));
+				if (!isRespond) {
+					return ;
+				}
+
+				// 查找最新备份文件
+				wstring backupDir = cfg.backupPath + L"\\" + world.first;
+				filesystem::path latestBackup;
+				auto latest_time = filesystem::file_time_type{};
+				for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+					if (entry.is_regular_file()) {
+						auto fname = entry.path().filename().wstring();
+						if ((fname.find(L"[Full]") != wstring::npos || fname.find(L"[Smart]") != wstring::npos)
+							&& entry.last_write_time() > latest_time) {
+							latest_time = entry.last_write_time();
+							latestBackup = entry.path();
+						}
+					}
+				}
+
+				if (latestBackup.empty()) {
+					console.AddLog(L("LOG_NO_BACKUP_FOUND"));
+					return;
+				}
+
+				console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
+
+				// 还原（默认清理还原 restoreMethod=0）
+				thread restore_thread(DoRestore, cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
+				restore_thread.detach();
+
+				// KnotLink 通知还原完成
+				BroadcastEvent("event=hot_restore_completed;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
+				console.AddLog(L("KNOTLINK_HOT_RESTORE_COMPLETED"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
+				isRespond = false;
+				return;
+			}
+		}
+	}
+	isRespond = false;
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
 }
 
