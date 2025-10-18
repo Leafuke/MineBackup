@@ -167,6 +167,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\7za.exe" />
+    <None Include="D:\Downloads\Programs\MineBackup\7za.exe" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="..\..\..\..\Pictures\图标\mine10.ico" />
@@ -174,9 +175,14 @@
     <Image Include="..\..\..\..\Pictures\图标\mine30.ico" />
     <Image Include="..\..\..\..\Pictures\图标\mine40.ico" />
     <Image Include="..\..\..\..\Pictures\图标\mine50.ico" />
+    <Image Include="D:\Pictures\图标\mine10.ico" />
+    <Image Include="D:\Pictures\图标\mine20.ico" />
+    <Image Include="D:\Pictures\图标\mine30.ico" />
+    <Image Include="D:\Pictures\图标\mine40.ico" />
   </ItemGroup>
   <ItemGroup>
     <Font Include="..\fontawesome-sp.otf" />
+    <Font Include="D:\Downloads\Programs\MineBackup\fontawesome-sp.otf" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
