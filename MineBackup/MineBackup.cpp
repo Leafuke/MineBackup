@@ -26,6 +26,9 @@ constexpr int CONSTANT2 = 512;
 constexpr int MINEBACKUP_HOTKEY_ID = 1;
 constexpr int MINERESTORE_HOTKEY_ID = 2;
 
+GLFWwindow* wc = nullptr;
+static map<wstring, GLuint> g_worldIconTextures;
+static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
 static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
@@ -181,6 +184,7 @@ wstring SanitizeFileName(const wstring& input);
 void CheckForUpdatesThread();
 void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
+bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool ExtractFontToTempFile(wstring& extractedPath);
 bool Extract7zToTempFile(wstring& extractedPath);
@@ -208,6 +212,8 @@ static vector<DisplayWorld> BuildDisplayWorldsForSelection();
 static int CreateNewNormalConfig(const string& name_hint = "New Config");
 static int CreateNewSpecialConfig(const string& name_hint = "New Special");
 
+LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 struct Console
 {
 	char                  InputBuf[CONSTANT1];
@@ -218,7 +224,7 @@ struct Console
 	ImGuiTextFilter       Filter;
 	bool                  AutoScroll;
 	bool                  ScrollToBottom;
-	mutex            logMutex; //新增：用于保护日志内容的互斥锁 
+	mutex            logMutex; //用于保护日志内容的互斥锁 
 
 	Console()
 	{
@@ -321,36 +327,6 @@ struct Console
 		const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
 		if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar))
 		{
-			/*if (ImGui::BeginPopupContextWindow())
-			{
-				if (ImGui::Selectable("清空")) ClearLog();
-				ImGui::EndPopup();
-			}*/
-
-			// Display every line as a separate entry so we can change their color or add custom widgets.
-			// If you only want raw text you can use ImGui::TextUnformatted(log.begin(), log.end());
-			// NB- if you have thousands of entries this approach may be too inefficient and may require user-side clipping
-			// to only process visible items. The clipper will automatically measure the height of your first item and then
-			// "seek" to display only items in the visible area.
-			// To use the clipper we can replace your standard loop:
-			//      for (int i = 0; i < Items.Size; i++)
-			//   With:
-			//      ImGuiListClipper clipper;
-			//      clipper.Begin(Items.Size);
-			//      while (clipper.Step())
-			//         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
-			// - That your items are evenly spaced (same height)
-			// - That you have cheap random access to your elements (you can access them given their index,
-			//   without processing all the ones before)
-			// You cannot this code as-is if a filter is active because it breaks the 'cheap random-access' property.
-			// We would need random-access on the post-filtered list.
-			// A typical application wanting coarse clipping and filtering may want to pre-compute an array of indices
-			// or offsets of items that passed the filtering test, recomputing this array when user changes the filter,
-			// and appending newly elements as they are inserted. This is left as a task to the user until we can manage
-			// to improve this example code!
-			// If your items are of variable height:
-			// - Split them into same height items would be simpler and facilitate random-seeking into your list.
-			// - Consider using manual call to IsRectVisible() and skipping extraneous decoration from your items.
 			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1)); // Tighten spacing
 			if (copy_to_clipboard)
 				ImGui::LogToClipboard();
@@ -395,7 +371,7 @@ struct Console
 			Strtrim(s);
 			if (s[0])
 				ExecCommand(s);
-			strcpy_s(s, strlen(s) + 1, "");//被要求从strcpy改成strcpy_s，这样中间要加个长度参数才不报错……
+			strcpy_s(s, strlen(s) + 1, "");
 			reclaim_focus = true;
 		}
 
@@ -804,20 +780,64 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// Create window with graphics context
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
-	GLFWwindow* wc = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "MineBackup", nullptr, nullptr);
+	wc = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "MineBackup", nullptr, nullptr);
 	if (wc == nullptr)
 		return 1;
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
-	// 创建隐藏窗口
-	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
+	int width, height, channels;
+	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
+	// unsigned char* pixels = stbi_load("path/to/icon.png", &width, &height, 0, 4); 
+	HRSRC hRes = FindResource(hInstance, MAKEINTRESOURCE(IDI_ICON3), RT_GROUP_ICON);
+	HGLOBAL hMem = LoadResource(hInstance, hRes);
+	void* pMem = LockResource(hMem);
+	int nId = LookupIconIdFromDirectoryEx((PBYTE)pMem, TRUE, 0, 0, LR_DEFAULTCOLOR);
+	hRes = FindResource(hInstance, MAKEINTRESOURCE(nId), RT_ICON);
+	hMem = LoadResource(hInstance, hRes);
+	pMem = LockResource(hMem);
 
-	//HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.9.0", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
-	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
-	// 注册热键，Alt + Ctrl + S
-	//::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
-	//::RegisterHotKey(hwnd, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
+	// 从内存中的图标数据加载
+	unsigned char* pixels = stbi_load_from_memory((const stbi_uc*)pMem, SizeofResource(hInstance, hRes), &width, &height, &channels, 4);
+
+	if (pixels) {
+		GLFWimage images[1];
+		images[0].width = width;
+		images[0].height = height;
+		images[0].pixels = pixels;
+		glfwSetWindowIcon(wc, 1, images);
+		stbi_image_free(pixels);
+	}
+
+	// 创建隐藏窗口
+	// 
+	// // --- 创建隐藏的 Win32 消息窗口 ---
+	const wchar_t HIDDEN_CLASS_NAME[] = L"MineBackupHiddenWindowClass";
+	WNDCLASSW wc_hidden = {};
+	wc_hidden.lpfnWndProc = HiddenWndProc;
+	wc_hidden.hInstance = hInstance;
+	wc_hidden.lpszClassName = HIDDEN_CLASS_NAME;
+	RegisterClassW(&wc_hidden);
+
+	HWND hwnd_hidden = CreateWindowExW(0, HIDDEN_CLASS_NAME, L"MineBackup Hidden Window", 0,
+		0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
+	if (hwnd_hidden == NULL) {
+		return -1; // 创建失败
+	}
+
+	// --- 注册热键和托盘图标 ---
+	RegisterHotKey(hwnd_hidden, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
+	RegisterHotKey(hwnd_hidden, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
+
+	// 初始化托盘图标 (nid)
+	nid.cbSize = sizeof(NOTIFYICONDATA);
+	nid.hWnd = hwnd_hidden;
+	nid.uID = 1;
+	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+	nid.uCallbackMessage = WM_USER + 1;
+	nid.hIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICON3), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
+	wcscpy_s(nid.szTip, L"MineBackup");
+	Shell_NotifyIcon(NIM_ADD, &nid);
 	
 
 	// Show the window
@@ -881,21 +901,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
 	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
 	//IM_ASSERT(font != nullptr);
-	//加载任务栏图标
-	HICON hIcon = (HICON)LoadImage(
-		GetModuleHandle(NULL),
-		MAKEINTRESOURCE(IDI_ICON3),
-		IMAGE_ICON,
-		0, 0,
-		LR_DEFAULTSIZE
-	);
 
-	if (hIcon) {
-		// 设置大图标（任务栏/Alt+Tab）
-		//SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
-		// 设置小图标（窗口标题栏）
-		//SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
-	}
 
 	//float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
 	//io.FontGlobalScale = dpi_scale;
@@ -910,15 +916,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		ApplyTheme(configs[currentConfigIndex].theme); // 把主题加载放在这里了
 	else
 		ApplyTheme(specialConfigs[currentConfigIndex].theme);
-
-	// 为程序添加一个托盘图标
-
-	
-
-	// 添加托盘图标到系统托盘
-	Shell_NotifyIcon(NIM_ADD, &nid);
-
-
 
 	if (isFirstRun) {
 		LANGID lang_id = GetUserDefaultUILanguage();
@@ -970,7 +967,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	while (!done && !glfwWindowShouldClose(wc))
 	{
 
-		Sleep(1); // 这个居然能显著减低CPU占用……
+		// 如果窗口最小化或不显示，可以等待更长时间
+		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) || !showMainApp) {
+			// 使用带超时的等待，这样我们仍然可以周期性地处理Win32消息
+			glfwWaitEventsTimeout(0.1); // 等待100ms
+		}
+		else {
+			// 正常轮询，以保持流畅的UI动画
+			glfwPollEvents();
+		}
 
 		// Poll and handle messages (inputs, window resize, etc.)
 		// See the WndProc() function below for our to dispatch events to the Win32 backend.
@@ -1191,7 +1196,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 			ImGui::End();
 		}
-		else if (showMainApp) {
+		else if (!glfwGetWindowAttrib(wc, GLFW_ICONIFIED) && showMainApp) {
 			static int selectedWorldIndex = -1;       // 跟踪用户在列表中选择的世界
 			static char backupComment[CONSTANT1] = "";// 备份注释输入框的内容
 			// 获取当前配置
@@ -1604,6 +1609,46 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				draw_list->AddRectFilled(icon_pos, icon_end_pos, IM_COL32(50, 50, 50, 200), 4.0f);
 				draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
 
+
+				string iconKey_utf8 = wstring_to_utf8(worldFolder);
+				wstring iconKey = worldFolder;
+
+				// 迟加载逻辑
+				if (g_worldIconTextures.find(iconKey) == g_worldIconTextures.end()) {
+					// 标记为正在加载或失败，避免重复尝试
+					g_worldIconTextures[iconKey] = 0; // 0 表示无效纹理
+
+					string iconPath = wstring_to_utf8(worldFolder + L"\\icon.png");
+					string bedrockIconPath = wstring_to_utf8(worldFolder + L"\\world_icon.jpeg");
+
+					GLuint texture_id = 0;
+					int tex_w = 0, tex_h = 0;
+
+					if (filesystem::exists(iconPath)) {
+						LoadTextureFromFileGL(iconPath.c_str(), &texture_id, &tex_w, &tex_h);
+					}
+					else if (filesystem::exists(bedrockIconPath)) {
+						LoadTextureFromFileGL(bedrockIconPath.c_str(), &texture_id, &tex_w, &tex_h);
+					}
+
+					if (texture_id > 0) {
+						g_worldIconTextures[iconKey] = texture_id;
+						g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
+					}
+				}
+
+				// 渲染逻辑
+				GLuint current_texture = g_worldIconTextures[iconKey];
+				if (current_texture > 0) {
+					ImGui::Image((void*)(intptr_t)current_texture, ImVec2(iconSz, iconSz));
+				}
+				else {
+					const char* placeholder_icon = ICON_FA_FOLDER;
+					ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
+					ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
+					draw_list->AddText(text_pos, IM_COL32(200, 200, 200, 255), placeholder_icon);
+				}
+
 				// 迟加载
 				//if (!worldIconTextures[i]) {
 				//	string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
@@ -1632,19 +1677,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::SetCursorScreenPos(icon_pos);
 				ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
 				// 点击更换图标
-				//if (ImGui::IsItemClicked()) {
-				//	wstring sel = SelectFileDialog();
-				//	if (!sel.empty()) {
-				//		// 覆盖原 icon.png
-				//		CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
-				//		// 释放旧纹理并重新加载
-				//		if (worldIconTextures[i]) {
-				//			worldIconTextures[i]->Release();
-				//			worldIconTextures[i] = nullptr;
-				//		}
-				//		LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
-				//	}
-				//}
+				if (ImGui::IsItemClicked()) {
+					wstring sel = SelectFileDialog();
+					if (!sel.empty()) {
+						// 覆盖原 icon.png
+						CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
+						// 释放旧纹理并重新加载
+						if (current_texture) {
+							glDeleteTextures(1, &current_texture);
+						}
+						GLuint newTextureId = 0;
+						int tex_w = 0, tex_h = 0;
+						LoadTextureFromFileGL(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &newTextureId, &tex_w, &tex_h);
+						g_worldIconTextures[iconKey] = newTextureId;
+						g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
+					}
+				}
+
 				ImGui::SameLine();
 				// --- 状态逻辑 (为图标做准备) ---
 				lock_guard<mutex> lock(g_task_mutex); // 访问 g_active_auto_backups 需要加锁
@@ -2204,13 +2253,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			pair.second.worker.join(); // 等待线程执行完毕
 		}
 	}
-	/*for (auto& tex : worldIconTextures) {
-		if (tex) {
-			tex->Release();
-			tex = nullptr;
+	for (auto const& [key, val] : g_worldIconTextures) {
+		if (val > 0) {
+			glDeleteTextures(1, &val);
 		}
 	}
-	worldIconTextures.clear();*/
+
+	Shell_NotifyIcon(NIM_DELETE, &nid);
+	UnregisterHotKey(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
+	UnregisterHotKey(hwnd_hidden, MINERESTORE_HOTKEY_ID);
+	DestroyWindow(hwnd_hidden);
+
+	g_worldIconTextures.clear();
 	worldIconWidths.clear();
 	worldIconHeights.clear();
 	ImGui_ImplOpenGL3_Shutdown();
@@ -2247,145 +2301,112 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 }
 
 
-// Win32 message handler
-// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
-// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
-// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
-// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
-//LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-//{
-//	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-//		return true;
-//
-//	switch (msg)
-//	{
-//		// 处理托盘图标事件（左键/右键点击）
-//	case WM_USER + 1: {
-//		// lParam 表示具体事件（如左键点击、右键点击）
-//		switch (lParam) {
-//		case WM_LBUTTONUP: {
-//			// 显示并激活主窗口（如果隐藏/最小化）
-//			showMainApp = true;
-//			break;
-//		}
-//		// 右键点击托盘图标：弹出上下文菜单
-//		case WM_RBUTTONUP: {
-//			// 创建菜单
-//			HMENU hMenu = CreatePopupMenu();
-//			AppendMenu(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
-//			AppendMenu(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
-//
-//			// 获取鼠标位置（菜单显示在鼠标右键点击的位置）
-//			POINT pt;
-//			GetCursorPos(&pt);
-//
-//			// 显示菜单（TPM_BOTTOMALIGN：菜单底部对齐鼠标位置）
-//			TrackPopupMenu(
-//				hMenu,
-//				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // 菜单样式
-//				pt.x, pt.y,
-//				0,
-//				hWnd,
-//				NULL
-//			);
-//
-//			// 必须调用此函数，否则菜单可能无法正常关闭
-//			SetForegroundWindow(hWnd);
-//			// 销毁菜单（避免内存泄漏）
-//			DestroyMenu(hMenu);
-//			break;
-//		}
-//		}
-//		break;
-//	}
-//					// 处理菜单命令（点击“打开界面”或“关闭”后触发）
-//	case WM_COMMAND: {
-//		switch (LOWORD(wParam)) {
-//		case 1001:  // 点击“打开界面”
-//			showMainApp = true;
-//			SetForegroundWindow(hWnd);
-//			break;
-//		case 1002:  // 点击“关闭”
-//			// 先移除托盘图标，再退出程序
-//			done = true;
-//			Shell_NotifyIcon(NIM_DELETE, &nid);
-//			PostQuitMessage(0);
-//			break;
-//		}
-//		break;
-//	}
-//	case WM_HOTKEY:
-//		if (wParam == MINEBACKUP_HOTKEY_ID) {
-//			TriggerHotkeyBackup();
-//		}
-//		else if (wParam == MINERESTORE_HOTKEY_ID) {
-//			TriggerHotkeyRestore();
-//		}
-//		break;
-//	case WM_SIZE:
-//		if (wParam == SIZE_MINIMIZED)
-//			return 0;
-//		g_ResizeWidth = (UINT)LOWORD(lParam); // Queue resize
-//		g_ResizeHeight = (UINT)HIWORD(lParam);
-//		return 0;
-//	case WM_SYSCOMMAND:
-//		if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
-//			return 0;
-//		break;
-//	case WM_DESTROY:
-//		Shell_NotifyIcon(NIM_DELETE, &nid);  // 清理托盘图标
-//		done = true;
-//		::PostQuitMessage(0);
-//		return 0;
-//	}
-//	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
-//}
-//
-//// --- Helper function to load an image into a D3D11 texture ---
-//bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height) {
-//	// Load from disk into a raw RGBA buffer
-//	int image_width = 0;
-//	int image_height = 0;
-//	unsigned char* image_data = stbi_load(filename, &image_width, &image_height, NULL, 4);
-//	if (image_data == NULL)
-//		return false;
-//
-//	// Create texture
-//	D3D11_TEXTURE2D_DESC desc;
-//	ZeroMemory(&desc, sizeof(desc));
-//	desc.Width = image_width;
-//	desc.Height = image_height;
-//	desc.MipLevels = 1;
-//	desc.ArraySize = 1;
-//	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-//	desc.SampleDesc.Count = 1;
-//	desc.Usage = D3D11_USAGE_DEFAULT;
-//	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-//	desc.CPUAccessFlags = 0;
-//
-//	ID3D11Texture2D* pTexture = NULL;
-//	D3D11_SUBRESOURCE_DATA subResource;
-//	subResource.pSysMem = image_data;
-//	subResource.SysMemPitch = desc.Width * 4;
-//	subResource.SysMemSlicePitch = 0;
-//	g_pd3dDevice->CreateTexture2D(&desc, &subResource, &pTexture);
-//
-//	// Create texture view
-//	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-//	ZeroMemory(&srvDesc, sizeof(srvDesc));
-//	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-//	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-//	srvDesc.Texture2D.MipLevels = desc.MipLevels;
-//	srvDesc.Texture2D.MostDetailedMip = 0;
-//	g_pd3dDevice->CreateShaderResourceView(pTexture, &srvDesc, out_srv);
-//	pTexture->Release();
-//
-//	*out_width = image_width;
-//	*out_height = image_height;
-//	stbi_image_free(image_data);
-//
-//	return true;
-//}
+LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	switch (msg)
+	{
+	case WM_USER + 1: // 托盘图标消息
+		if (lParam == WM_LBUTTONUP) {
+			showMainApp = true; // 点击左键显示主窗口
+			if (wc) {
+				glfwShowWindow(wc);
+				glfwFocusWindow(wc);
+			}
+		}
+		else if (lParam == WM_RBUTTONUP) {
+			HMENU hMenu = CreatePopupMenu();
+			AppendMenu(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
+			AppendMenu(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
+
+			// 获取鼠标位置（菜单显示在鼠标右键点击的位置）
+			POINT pt;
+			GetCursorPos(&pt);
+
+			// 显示菜单（TPM_BOTTOMALIGN：菜单底部对齐鼠标位置）
+			TrackPopupMenu(
+				hMenu,
+				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // 菜单样式
+				pt.x, pt.y,
+				0,
+				hWnd,
+				NULL
+			);
+
+			// 必须调用此函数，否则菜单可能无法正常关闭
+			SetForegroundWindow(hWnd);
+			// 销毁菜单（避免内存泄漏）
+			DestroyMenu(hMenu);
+			break;
+		}
+		return 0;
+	case WM_HOTKEY:
+		if (wParam == MINEBACKUP_HOTKEY_ID) {
+			TriggerHotkeyBackup();
+		}
+		else if (wParam == MINERESTORE_HOTKEY_ID) {
+			TriggerHotkeyRestore();
+		}
+		return 0;
+	case WM_COMMAND: {
+		switch (LOWORD(wParam)) {
+		case 1001:  // 点击“打开界面”
+			showMainApp = true;
+			SetForegroundWindow(hWnd);
+			break;
+		case 1002:  // 点击“关闭”
+			// 先移除托盘图标，再退出程序
+			done = true;
+			Shell_NotifyIcon(NIM_DELETE, &nid);
+			PostQuitMessage(0);
+			break;
+		}
+		break;
+	}
+	case WM_SYSCOMMAND:
+		if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
+			return 0;
+		break;
+	case WM_DESTROY:
+		Shell_NotifyIcon(NIM_DELETE, &nid);  // 清理托盘图标
+		done = true;
+		::PostQuitMessage(0);
+		return 0;
+	}
+	return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+
+
+bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height)
+{
+	// 从文件加载图像数据
+	int image_width = 0;
+	int image_height = 0;
+	unsigned char* image_data = stbi_load(filename, &image_width, &image_height, NULL, 4);
+	if (image_data == NULL)
+		return false;
+
+	// 创建一个 OpenGL 纹理
+	GLuint image_texture;
+	glGenTextures(1, &image_texture);
+	glBindTexture(GL_TEXTURE_2D, image_texture);
+
+	// 设置纹理参数
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // 避免边缘伪影
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	// 上传纹理数据
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
+	stbi_image_free(image_data); // 释放CPU内存
+
+	*out_texture = image_texture;
+	*out_width = image_width;
+	*out_height = image_height;
+
+	return true;
+}
 
 void CheckForUpdatesThread() {
 	DWORD dwSize = 0;
