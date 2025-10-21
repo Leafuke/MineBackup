@@ -25,20 +25,13 @@ constexpr int CONSTANT1 = 256;
 constexpr int CONSTANT2 = 512;
 constexpr int MINEBACKUP_HOTKEY_ID = 1;
 constexpr int MINERESTORE_HOTKEY_ID = 2;
-// Data
-static ID3D11Device* g_pd3dDevice = nullptr;
-static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
-static IDXGISwapChain* g_pSwapChain = nullptr;
-static bool                     g_SwapChainOccluded = false;
-static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
-static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
-static vector<ID3D11ShaderResourceView*> worldIconTextures;
+
 static vector<int> worldIconWidths, worldIconHeights;
 static atomic<bool> g_UpdateCheckDone(false);
 static atomic<bool> g_NewVersionAvailable(false);
 static string g_LatestVersionStr;
 static string g_ReleaseNotes;
-const string CURRENT_VERSION = "1.6.1";
+const string CURRENT_VERSION = "1.9.0";
 
 // 结构体们
 struct Config {
@@ -155,6 +148,11 @@ extern enum class BackupCheckResult {
 	FORCE_FULL_BACKUP_BASE_MISSING
 };
 
+static void glfw_error_callback(int error, const char* description)
+{
+	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+}
+
 // 托盘
 NOTIFYICONDATA nid = { 0 };
 
@@ -182,7 +180,7 @@ string find_json_value(const string& json, const string& key);
 wstring SanitizeFileName(const wstring& input);
 void CheckForUpdatesThread();
 void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable);
-bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
+//bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool ExtractFontToTempFile(wstring& extractedPath);
 bool Extract7zToTempFile(wstring& extractedPath);
@@ -686,7 +684,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//_setmode(_fileno(stdout), _O_U8TEXT);
 	//_setmode(_fileno(stdin), _O_U8TEXT);
 	//CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-	ImGui_ImplWin32_EnableDpiAwareness();
+	//ImGui_ImplWin32_EnableDpiAwareness(); 这是win32特有的，现在迁移到glfw，需要重新实现
+
 
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
@@ -764,39 +763,67 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		long result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, registryPath, 0, KEY_READ, &hKey);
 		if (result == ERROR_SUCCESS) {
 			MessageBox(NULL, utf8_to_wstring(gbk_to_utf8(L("NO_RUNNINGTIME"))).c_str(), L"ERROR", MB_ICONERROR);
-			return -1;  // 程序退出
+			return -1;
 		}
 		else {
 			RegCloseKey(hKey);
 		}
 	}
 
+	glfwSetErrorCallback(glfw_error_callback);
+	if (!glfwInit())
+		return 1;
 
-	// Create application window
-	//ImGui_ImplWin32_EnableDpiAwareness();
-	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"MineBackup", nullptr };
-	::RegisterClassExW(&wc);
+	// Decide GL+GLSL versions
+#if defined(IMGUI_IMPL_OPENGL_ES2)
+	// GL ES 2.0 + GLSL 100 (WebGL 1.0)
+	const char* glsl_version = "#version 100";
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+	glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+#elif defined(IMGUI_IMPL_OPENGL_ES3)
+	// GL ES 3.0 + GLSL 300 es (WebGL 2.0)
+	const char* glsl_version = "#version 300 es";
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+	glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+#elif defined(__APPLE__)
+	// GL 3.2 + GLSL 150
+	const char* glsl_version = "#version 150";
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // Required on Mac
+#else
+	// GL 3.0 + GLSL 130
+	const char* glsl_version = "#version 130";
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#endif
+
+
+	// Create window with graphics context
+	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
+	GLFWwindow* wc = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "MineBackup", nullptr, nullptr);
+	if (wc == nullptr)
+		return 1;
+	glfwMakeContextCurrent(wc);
+	glfwSwapInterval(1); // Enable vsync
+
 	// 创建隐藏窗口
 	//HWND hwnd = CreateWindowEx(0, L"STATIC", L"HotkeyWnd", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
 
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.8.1", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+	//HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"MineBackup - v1.9.0", WS_OVERLAPPEDWINDOW, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
 	//HWND hwnd2 = ::CreateWindowW(wc.lpszClassName, L"MineBackup", WS_OVERLAPPEDWINDOW, 100, 100, 1000, 1000, nullptr, nullptr, wc.hInstance, nullptr);
 	// 注册热键，Alt + Ctrl + S
-	::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
-	::RegisterHotKey(hwnd, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
+	//::RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
+	//::RegisterHotKey(hwnd, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
 	
-	// Initialize Direct3D
-	if (!CreateDeviceD3D(hwnd))
-	{
-		CleanupDeviceD3D();
-		::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-		return 1;
-	}
 
 	// Show the window
 	//::ShowWindow(hwnd, SW_SHOW);
-	::ShowWindow(hwnd, SW_HIDE);
-	::UpdateWindow(hwnd);
+	//::ShowWindow(wc, SW_HIDE);
+	//::UpdateWindow(hwnd);
 	//::ShowWindow(hwnd2, SW_HIDE);
 	//::UpdateWindow(hwnd2);
 
@@ -822,9 +849,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
+	// 设置字体和全局缩放
+	style.ScaleAllSizes(main_scale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+	style.FontScaleDpi = main_scale;        // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
+	io.ConfigDpiScaleFonts = true;
+	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
+	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+	{
+		style.WindowRounding = 0.0f;
+		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+	}
+
 	// Setup Platform/Renderer backends
-	ImGui_ImplWin32_Init(hwnd);
-	ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+	ImGui_ImplGlfw_InitForOpenGL(wc, true);
+#ifdef __EMSCRIPTEN__
+	ImGui_ImplGlfw_InstallEmscriptenCallbacks(wc, "#canvas");
+#endif
+	ImGui_ImplOpenGL3_Init(glsl_version);
 
 	// Load Fonts
 	// - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
@@ -851,14 +892,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	if (hIcon) {
 		// 设置大图标（任务栏/Alt+Tab）
-		SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+		//SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
 		// 设置小图标（窗口标题栏）
-		SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+		//SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
 	}
 
-	// 设置字体和全局缩放
-	float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
-	io.FontGlobalScale = dpi_scale;
+	//float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
+	//io.FontGlobalScale = dpi_scale;
 
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists("config.ini");
@@ -872,13 +912,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		ApplyTheme(specialConfigs[currentConfigIndex].theme);
 
 	// 为程序添加一个托盘图标
-	nid.cbSize = sizeof(NOTIFYICONDATA);  // 结构体大小（兼容不同系统版本）
-	nid.hWnd = hwnd;                      // 接收托盘消息的窗口句柄
-	nid.uID = 1;                          // 托盘图标ID（唯一标识）
-	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;  // 启用图标、消息、提示
-	nid.uCallbackMessage = WM_USER + 1;   // 托盘事件的回调消息
-	wcscpy_s(nid.szTip, L"MineBackup");   // 鼠标悬停提示文本
-	nid.hIcon = hIcon;                    // 托盘图标
+
+	
 
 	// 添加托盘图标到系统托盘
 	Shell_NotifyIcon(NIM_ADD, &nid);
@@ -932,7 +967,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	static char backupComment[CONSTANT1] = "";
 
 	// Main loop
-	while (!done)
+	while (!done && !glfwWindowShouldClose(wc))
 	{
 
 		Sleep(1); // 这个居然能显著减低CPU占用……
@@ -948,26 +983,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				done = true;
 		}
 
-		// Handle window being minimized or screen locked
-		if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED)
+		glfwPollEvents();
+		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0)
 		{
-			Sleep(10);
+			ImGui_ImplGlfw_Sleep(10);
 			continue;
-		}
-		g_SwapChainOccluded = false;
-
-		// Handle window resize (we don't resize directly in the WM_SIZE handler)
-		if (g_ResizeWidth != 0 && g_ResizeHeight != 0)
-		{
-			CleanupRenderTarget();
-			g_pSwapChain->ResizeBuffers(0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
-			g_ResizeWidth = g_ResizeHeight = 0;
-			CreateRenderTarget();
 		}
 
 		// Start the Dear ImGui frame
-		ImGui_ImplDX11_NewFrame();
-		ImGui_ImplWin32_NewFrame();
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
 		if (showConfigWizard) {
@@ -1180,18 +1205,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			// --- 动态调整世界图标纹理和尺寸向量的大小 ---
 			vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
 			int worldCount = (int)displayWorlds.size();
-			if ((int)worldIconTextures.size() != worldCount) {
-				// 在调整大小前，释放旧的、不再需要的纹理资源
-				for (auto& tex : worldIconTextures) {
-					if (tex) {
-						tex->Release();
-						tex = nullptr;
-					}
-				}
-				worldIconTextures.assign(worldCount, nullptr); // 使用 assign 清空并设置为指定大小的空指针
-				worldIconWidths.resize(worldCount, 0);
-				worldIconHeights.resize(worldCount, 0);
-			}
+			//if ((int)worldIconTextures.size() != worldCount) {
+			//	// 在调整大小前，释放旧的、不再需要的纹理资源
+			//	for (auto& tex : worldIconTextures) {
+			//		if (tex) {
+			//			tex->Release();
+			//			tex = nullptr;
+			//		}
+			//	}
+			//	worldIconTextures.assign(worldCount, nullptr); // 使用 assign 清空并设置为指定大小的空指针
+			//	worldIconWidths.resize(worldCount, 0);
+			//	worldIconHeights.resize(worldCount, 0);
+			//}
 
 			ImGui::SetNextWindowSize(ImVec2(1300, 720), ImGuiCond_FirstUseEver);
 			ImGui::Begin(L("MAIN_WINDOW_TITLE"), &showMainApp, ImGuiWindowFlags_MenuBar);
@@ -1580,18 +1605,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
 
 				// 迟加载
-				if (!worldIconTextures[i]) {
-					string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
-					if (filesystem::exists(iconPath)) {
-						LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
-					}
-					else if (filesystem::exists(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")))) {
-						// 基岩版的 world_icon.jpeg
-						LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
-					}
-				}
+				//if (!worldIconTextures[i]) {
+				//	string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
+				//	if (filesystem::exists(iconPath)) {
+				//		LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+				//	}
+				//	else if (filesystem::exists(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")))) {
+				//		// 基岩版的 world_icon.jpeg
+				//		LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+				//	}
+				//}
 
-				if (worldIconTextures[i]) {
+				/*if (worldIconTextures[i]) {
 					ImGui::GetWindowDrawList()->AddImageRounded((ImTextureID)worldIconTextures[i], icon_pos, icon_end_pos, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
 				}
 				else {
@@ -1599,7 +1624,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
 					ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
 					draw_list->AddText(text_pos, IM_COL32(200, 200, 200, 255), placeholder_icon);
-				}
+				}*/
 
 				// 将光标移过图标区域
 				ImGui::Dummy(ImVec2(iconSz, iconSz));
@@ -1607,19 +1632,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ImGui::SetCursorScreenPos(icon_pos);
 				ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
 				// 点击更换图标
-				if (ImGui::IsItemClicked()) {
-					wstring sel = SelectFileDialog();
-					if (!sel.empty()) {
-						// 覆盖原 icon.png
-						CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
-						// 释放旧纹理并重新加载
-						if (worldIconTextures[i]) {
-							worldIconTextures[i]->Release();
-							worldIconTextures[i] = nullptr;
-						}
-						LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
-					}
-				}
+				//if (ImGui::IsItemClicked()) {
+				//	wstring sel = SelectFileDialog();
+				//	if (!sel.empty()) {
+				//		// 覆盖原 icon.png
+				//		CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
+				//		// 释放旧纹理并重新加载
+				//		if (worldIconTextures[i]) {
+				//			worldIconTextures[i]->Release();
+				//			worldIconTextures[i] = nullptr;
+				//		}
+				//		LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
+				//	}
+				//}
 				ImGui::SameLine();
 				// --- 状态逻辑 (为图标做准备) ---
 				lock_guard<mutex> lock(g_task_mutex); // 访问 g_active_auto_backups 需要加锁
@@ -2147,19 +2172,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			ImGui::End();
 		}
 
-		// Rendering渲染清理
+		// Rendering
 		ImGui::Render();
-		ImGui::UpdatePlatformWindows();
-		ImGui::RenderPlatformWindowsDefault();
-		const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
-		g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-		g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+		int display_w, display_h;
+		glfwGetFramebufferSize(wc, &display_w, &display_h);
+		glViewport(0, 0, display_w, display_h);
+		glClearColor(clear_color.x* clear_color.w, clear_color.y* clear_color.w, clear_color.z* clear_color.w, clear_color.w);
+		glClear(GL_COLOR_BUFFER_BIT);
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-		// Present
-		HRESULT hr = g_pSwapChain->Present(1, 0);   // Present with vsync
-		//HRESULT hr = g_pSwapChain->Present(0, 0); // Present without vsync
-		g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
+		// Update and Render additional Platform Windows
+		// (Platform functions may change the current OpenGL context, so we save/restore it to make it easier to paste this code elsewhere.
+		//  For this specific demo app we could also call glfwMakeContextCurrent(window) directly)
+		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+		{
+			GLFWwindow* backup_current_context = glfwGetCurrentContext();
+			ImGui::UpdatePlatformWindows();
+			ImGui::RenderPlatformWindowsDefault();
+			glfwMakeContextCurrent(backup_current_context);
+		}
+
+		glfwSwapBuffers(wc);
 	}
 
 	// 清理
@@ -2171,22 +2204,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			pair.second.worker.join(); // 等待线程执行完毕
 		}
 	}
-	for (auto& tex : worldIconTextures) {
+	/*for (auto& tex : worldIconTextures) {
 		if (tex) {
 			tex->Release();
 			tex = nullptr;
 		}
 	}
-	worldIconTextures.clear();
+	worldIconTextures.clear();*/
 	worldIconWidths.clear();
 	worldIconHeights.clear();
-	ImGui_ImplDX11_Shutdown();
-	ImGui_ImplWin32_Shutdown();
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext();
 
-	CleanupDeviceD3D();
+	glfwDestroyWindow(wc);
+	glfwTerminate();
+
+	/*CleanupDeviceD3D();
 	::DestroyWindow(hwnd);
-	::UnregisterClassW(wc.lpszClassName, wc.hInstance);
+	::UnregisterClassW(wc.lpszClassName, wc.hInstance);*/
 	
 	g_stopExitWatcher = true;
 	if (g_exitWatcherThread.joinable()) {
@@ -2205,209 +2241,151 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 
 	// 撤销热键
-	::UnregisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID);
-	::UnregisterHotKey(hwnd, MINERESTORE_HOTKEY_ID);
+	//::UnregisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID);
+	//::UnregisterHotKey(hwnd, MINERESTORE_HOTKEY_ID);
 	return 0;
 }
 
-// Helper functions
-
-bool CreateDeviceD3D(HWND hWnd)
-{
-	// Setup swap chain
-	DXGI_SWAP_CHAIN_DESC sd;
-	ZeroMemory(&sd, sizeof(sd));
-	sd.BufferCount = 2;
-	sd.BufferDesc.Width = 0;
-	sd.BufferDesc.Height = 0;
-	sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	sd.BufferDesc.RefreshRate.Numerator = 60;
-	sd.BufferDesc.RefreshRate.Denominator = 1;
-	sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-	sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	sd.OutputWindow = hWnd;
-	sd.SampleDesc.Count = 1;
-	sd.SampleDesc.Quality = 0;
-	sd.Windowed = TRUE;
-	sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-	UINT createDeviceFlags = 0;
-	//createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
-	D3D_FEATURE_LEVEL featureLevel;
-	const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
-	HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
-	if (res == DXGI_ERROR_UNSUPPORTED) // Try high-performance WARP software driver if hardware is not available.
-		res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
-	if (res != S_OK)
-		return false;
-
-	CreateRenderTarget();
-	return true;
-}
-
-void CleanupDeviceD3D()
-{
-	CleanupRenderTarget();
-	if (g_pSwapChain) { g_pSwapChain->Release(); g_pSwapChain = nullptr; }
-	if (g_pd3dDeviceContext) { g_pd3dDeviceContext->Release(); g_pd3dDeviceContext = nullptr; }
-	if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
-}
-
-void CreateRenderTarget()
-{
-	ID3D11Texture2D* pBackBuffer;
-	g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-	g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
-	pBackBuffer->Release();
-}
-
-void CleanupRenderTarget()
-{
-	if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
-}
-
-// Forward declare message handler from imgui_impl_win32.cpp
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // Win32 message handler
 // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
 // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
 // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
 // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-		return true;
-
-	switch (msg)
-	{
-		// 处理托盘图标事件（左键/右键点击）
-	case WM_USER + 1: {
-		// lParam 表示具体事件（如左键点击、右键点击）
-		switch (lParam) {
-		case WM_LBUTTONUP: {
-			// 显示并激活主窗口（如果隐藏/最小化）
-			showMainApp = true;
-			break;
-		}
-		// 右键点击托盘图标：弹出上下文菜单
-		case WM_RBUTTONUP: {
-			// 创建菜单
-			HMENU hMenu = CreatePopupMenu();
-			AppendMenu(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
-			AppendMenu(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
-
-			// 获取鼠标位置（菜单显示在鼠标右键点击的位置）
-			POINT pt;
-			GetCursorPos(&pt);
-
-			// 显示菜单（TPM_BOTTOMALIGN：菜单底部对齐鼠标位置）
-			TrackPopupMenu(
-				hMenu,
-				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // 菜单样式
-				pt.x, pt.y,
-				0,
-				hWnd,
-				NULL
-			);
-
-			// 必须调用此函数，否则菜单可能无法正常关闭
-			SetForegroundWindow(hWnd);
-			// 销毁菜单（避免内存泄漏）
-			DestroyMenu(hMenu);
-			break;
-		}
-		}
-		break;
-	}
-					// 处理菜单命令（点击“打开界面”或“关闭”后触发）
-	case WM_COMMAND: {
-		switch (LOWORD(wParam)) {
-		case 1001:  // 点击“打开界面”
-			showMainApp = true;
-			SetForegroundWindow(hWnd);
-			break;
-		case 1002:  // 点击“关闭”
-			// 先移除托盘图标，再退出程序
-			done = true;
-			Shell_NotifyIcon(NIM_DELETE, &nid);
-			PostQuitMessage(0);
-			break;
-		}
-		break;
-	}
-	case WM_HOTKEY:
-		if (wParam == MINEBACKUP_HOTKEY_ID) {
-			TriggerHotkeyBackup();
-		}
-		else if (wParam == MINERESTORE_HOTKEY_ID) {
-			TriggerHotkeyRestore();
-		}
-		break;
-	case WM_SIZE:
-		if (wParam == SIZE_MINIMIZED)
-			return 0;
-		g_ResizeWidth = (UINT)LOWORD(lParam); // Queue resize
-		g_ResizeHeight = (UINT)HIWORD(lParam);
-		return 0;
-	case WM_SYSCOMMAND:
-		if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
-			return 0;
-		break;
-	case WM_DESTROY:
-		Shell_NotifyIcon(NIM_DELETE, &nid);  // 清理托盘图标
-		done = true;
-		::PostQuitMessage(0);
-		return 0;
-	}
-	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
-}
-
-// --- Helper function to load an image into a D3D11 texture ---
-bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height) {
-	// Load from disk into a raw RGBA buffer
-	int image_width = 0;
-	int image_height = 0;
-	unsigned char* image_data = stbi_load(filename, &image_width, &image_height, NULL, 4);
-	if (image_data == NULL)
-		return false;
-
-	// Create texture
-	D3D11_TEXTURE2D_DESC desc;
-	ZeroMemory(&desc, sizeof(desc));
-	desc.Width = image_width;
-	desc.Height = image_height;
-	desc.MipLevels = 1;
-	desc.ArraySize = 1;
-	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	desc.SampleDesc.Count = 1;
-	desc.Usage = D3D11_USAGE_DEFAULT;
-	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	desc.CPUAccessFlags = 0;
-
-	ID3D11Texture2D* pTexture = NULL;
-	D3D11_SUBRESOURCE_DATA subResource;
-	subResource.pSysMem = image_data;
-	subResource.SysMemPitch = desc.Width * 4;
-	subResource.SysMemSlicePitch = 0;
-	g_pd3dDevice->CreateTexture2D(&desc, &subResource, &pTexture);
-
-	// Create texture view
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-	ZeroMemory(&srvDesc, sizeof(srvDesc));
-	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = desc.MipLevels;
-	srvDesc.Texture2D.MostDetailedMip = 0;
-	g_pd3dDevice->CreateShaderResourceView(pTexture, &srvDesc, out_srv);
-	pTexture->Release();
-
-	*out_width = image_width;
-	*out_height = image_height;
-	stbi_image_free(image_data);
-
-	return true;
-}
+//LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+//{
+//	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+//		return true;
+//
+//	switch (msg)
+//	{
+//		// 处理托盘图标事件（左键/右键点击）
+//	case WM_USER + 1: {
+//		// lParam 表示具体事件（如左键点击、右键点击）
+//		switch (lParam) {
+//		case WM_LBUTTONUP: {
+//			// 显示并激活主窗口（如果隐藏/最小化）
+//			showMainApp = true;
+//			break;
+//		}
+//		// 右键点击托盘图标：弹出上下文菜单
+//		case WM_RBUTTONUP: {
+//			// 创建菜单
+//			HMENU hMenu = CreatePopupMenu();
+//			AppendMenu(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
+//			AppendMenu(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
+//
+//			// 获取鼠标位置（菜单显示在鼠标右键点击的位置）
+//			POINT pt;
+//			GetCursorPos(&pt);
+//
+//			// 显示菜单（TPM_BOTTOMALIGN：菜单底部对齐鼠标位置）
+//			TrackPopupMenu(
+//				hMenu,
+//				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // 菜单样式
+//				pt.x, pt.y,
+//				0,
+//				hWnd,
+//				NULL
+//			);
+//
+//			// 必须调用此函数，否则菜单可能无法正常关闭
+//			SetForegroundWindow(hWnd);
+//			// 销毁菜单（避免内存泄漏）
+//			DestroyMenu(hMenu);
+//			break;
+//		}
+//		}
+//		break;
+//	}
+//					// 处理菜单命令（点击“打开界面”或“关闭”后触发）
+//	case WM_COMMAND: {
+//		switch (LOWORD(wParam)) {
+//		case 1001:  // 点击“打开界面”
+//			showMainApp = true;
+//			SetForegroundWindow(hWnd);
+//			break;
+//		case 1002:  // 点击“关闭”
+//			// 先移除托盘图标，再退出程序
+//			done = true;
+//			Shell_NotifyIcon(NIM_DELETE, &nid);
+//			PostQuitMessage(0);
+//			break;
+//		}
+//		break;
+//	}
+//	case WM_HOTKEY:
+//		if (wParam == MINEBACKUP_HOTKEY_ID) {
+//			TriggerHotkeyBackup();
+//		}
+//		else if (wParam == MINERESTORE_HOTKEY_ID) {
+//			TriggerHotkeyRestore();
+//		}
+//		break;
+//	case WM_SIZE:
+//		if (wParam == SIZE_MINIMIZED)
+//			return 0;
+//		g_ResizeWidth = (UINT)LOWORD(lParam); // Queue resize
+//		g_ResizeHeight = (UINT)HIWORD(lParam);
+//		return 0;
+//	case WM_SYSCOMMAND:
+//		if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
+//			return 0;
+//		break;
+//	case WM_DESTROY:
+//		Shell_NotifyIcon(NIM_DELETE, &nid);  // 清理托盘图标
+//		done = true;
+//		::PostQuitMessage(0);
+//		return 0;
+//	}
+//	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
+//}
+//
+//// --- Helper function to load an image into a D3D11 texture ---
+//bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height) {
+//	// Load from disk into a raw RGBA buffer
+//	int image_width = 0;
+//	int image_height = 0;
+//	unsigned char* image_data = stbi_load(filename, &image_width, &image_height, NULL, 4);
+//	if (image_data == NULL)
+//		return false;
+//
+//	// Create texture
+//	D3D11_TEXTURE2D_DESC desc;
+//	ZeroMemory(&desc, sizeof(desc));
+//	desc.Width = image_width;
+//	desc.Height = image_height;
+//	desc.MipLevels = 1;
+//	desc.ArraySize = 1;
+//	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+//	desc.SampleDesc.Count = 1;
+//	desc.Usage = D3D11_USAGE_DEFAULT;
+//	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+//	desc.CPUAccessFlags = 0;
+//
+//	ID3D11Texture2D* pTexture = NULL;
+//	D3D11_SUBRESOURCE_DATA subResource;
+//	subResource.pSysMem = image_data;
+//	subResource.SysMemPitch = desc.Width * 4;
+//	subResource.SysMemSlicePitch = 0;
+//	g_pd3dDevice->CreateTexture2D(&desc, &subResource, &pTexture);
+//
+//	// Create texture view
+//	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+//	ZeroMemory(&srvDesc, sizeof(srvDesc));
+//	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+//	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+//	srvDesc.Texture2D.MipLevels = desc.MipLevels;
+//	srvDesc.Texture2D.MostDetailedMip = 0;
+//	g_pd3dDevice->CreateShaderResourceView(pTexture, &srvDesc, out_srv);
+//	pTexture->Release();
+//
+//	*out_width = image_width;
+//	*out_height = image_height;
+//	stbi_image_free(image_data);
+//
+//	return true;
+//}
 
 void CheckForUpdatesThread() {
 	DWORD dwSize = 0;

@@ -846,6 +846,9 @@ std::unordered_map<std::string, std::map<std::string, std::string>> g_LangTable 
 		{ "RESTORE_METHOD_CUSTOM", "Custom Restore" },
 		{ "TIP_RESTORE_METHOD_CUSTOM", "Only extracts and overwrites the files or folders you specify in the list below from the backup file.\nThis is an advanced mode for precise fixes or data extraction." },
 		{ "CUSTOM_RESTORE_ITEMS_HINT", "Files/folders to restore (comma-separated)" },
+		{ "UPDATE_POPUP_DOWNLOAD_BUTTON", "Download" },
+		{ "UPDATE_POPUP_DOWNLOAD_BUTTON_2", "Donwload(Faster)" },
+		{ "UPDATE_POPUP_DOWNLOAD_BUTTON_3", "Download(Backup)" },
 }},
 };
 std::string g_CurrentLang; // Default language
