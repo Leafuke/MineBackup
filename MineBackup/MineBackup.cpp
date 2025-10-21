@@ -95,6 +95,7 @@ struct HistoryEntry {
 	wstring backupFile;
 	wstring backupType;
 	wstring comment;
+	bool isImportant = false;
 };
 struct AutoBackupTask {
 	thread worker;
@@ -778,13 +779,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 #endif
 
 
-	// Create window with graphics context
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
 	wc = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "MineBackup", nullptr, nullptr);
 	if (wc == nullptr)
 		return 1;
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
+	
 
 	int width, height, channels;
 	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
@@ -809,9 +810,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		stbi_image_free(pixels);
 	}
 
-	// 创建隐藏窗口
-	// 
-	// // --- 创建隐藏的 Win32 消息窗口 ---
+
 	const wchar_t HIDDEN_CLASS_NAME[] = L"MineBackupHiddenWindowClass";
 	WNDCLASSW wc_hidden = {};
 	wc_hidden.lpfnWndProc = HiddenWndProc;
@@ -825,7 +824,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		return -1; // 创建失败
 	}
 
-	// --- 注册热键和托盘图标 ---
+	// 注册热键和托盘图标
 	RegisterHotKey(hwnd_hidden, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
 	RegisterHotKey(hwnd_hidden, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
 
@@ -838,14 +837,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	nid.hIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICON3), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
 	wcscpy_s(nid.szTip, L"MineBackup");
 	Shell_NotifyIcon(NIM_ADD, &nid);
-	
-
-	// Show the window
-	//::ShowWindow(hwnd, SW_SHOW);
-	//::ShowWindow(wc, SW_HIDE);
-	//::UpdateWindow(hwnd);
-	//::ShowWindow(hwnd2, SW_HIDE);
-	//::UpdateWindow(hwnd2);
 
 	// Setup Dear ImGui context
 	IMGUI_CHECKVERSION();
@@ -854,7 +845,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// 启用Docking
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
+	//io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
 	io.ConfigViewportsNoAutoMerge = true; // 不自动合并视口
 
 	// 圆润风格
@@ -910,8 +901,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	bool isFirstRun = !filesystem::exists("config.ini");
 	static bool showConfigWizard = isFirstRun;
 	showMainApp = !isFirstRun;
-	ImGui::StyleColorsLight();//默认亮色
-	//LoadConfigs("config.ini"); 
+	if (isFirstRun)
+		ImGui::StyleColorsLight();//默认亮色
+
 	if (configs.count(currentConfigIndex))
 		ApplyTheme(configs[currentConfigIndex].theme); // 把主题加载放在这里了
 	else
@@ -962,6 +954,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// 记录注释
 	static char backupComment[CONSTANT1] = "";
+
 
 	// Main loop
 	while (!done && !glfwWindowShouldClose(wc))
@@ -1197,6 +1190,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			ImGui::End();
 		}
 		else if (!glfwGetWindowAttrib(wc, GLFW_ICONIFIED) && showMainApp) {
+
+
+			ImGuiViewport* viewport = ImGui::GetMainViewport();
+			ImGui::SetNextWindowPos(viewport->Pos);
+			ImGui::SetNextWindowSize(viewport->Size);
+			ImGui::SetNextWindowViewport(viewport->ID);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+
+			ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking;
+			window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+			ImGui::Begin("DockSpace", nullptr, window_flags);
+			ImGui::PopStyleVar(3);
+
+			// Submit the DockSpace
+			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+
+
+
 			static int selectedWorldIndex = -1;       // 跟踪用户在列表中选择的世界
 			static char backupComment[CONSTANT1] = "";// 备份注释输入框的内容
 			// 获取当前配置
@@ -1223,7 +1239,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			//	worldIconHeights.resize(worldCount, 0);
 			//}
 
-			ImGui::SetNextWindowSize(ImVec2(1300, 720), ImGuiCond_FirstUseEver);
 			ImGui::Begin(L("MAIN_WINDOW_TITLE"), &showMainApp, ImGuiWindowFlags_MenuBar);
 
 			float totalW = ImGui::GetContentRegionAvail().x;
@@ -2219,6 +2234,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			//console.Draw(L("CONSOLE_TITLE"), &showMainApp);
 			//ImGui::EndChild();
 			ImGui::End();
+			ImGui::End();
 		}
 
 		// Rendering
@@ -2307,11 +2323,7 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	{
 	case WM_USER + 1: // 托盘图标消息
 		if (lParam == WM_LBUTTONUP) {
-			showMainApp = true; // 点击左键显示主窗口
-			if (wc) {
-				glfwShowWindow(wc);
-				glfwFocusWindow(wc);
-			}
+			showMainApp = true;
 		}
 		else if (lParam == WM_RBUTTONUP) {
 			HMENU hMenu = CreatePopupMenu();
