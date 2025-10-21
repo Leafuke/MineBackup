@@ -160,13 +160,6 @@ static void glfw_error_callback(int error, const char* description)
 // 托盘
 NOTIFYICONDATA nid = { 0 };
 
-// 声明辅助函数
-bool CreateDeviceD3D(HWND hWnd);
-void CleanupDeviceD3D();
-void CreateRenderTarget();
-void CleanupRenderTarget();
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 string wstring_to_utf8(const wstring& wstr);
 wstring utf8_to_wstring(const string& str);
 string gbk_to_utf8(const string& gbk);
@@ -845,7 +838,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// 启用Docking
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-	//io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
+	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
 	io.ConfigViewportsNoAutoMerge = true; // 不自动合并视口
 
 	// 圆润风格
@@ -1193,62 +1186,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 
 			ImGuiViewport* viewport = ImGui::GetMainViewport();
-			ImGui::SetNextWindowPos(viewport->Pos);
-			ImGui::SetNextWindowSize(viewport->Size);
+			ImGui::SetNextWindowPos(viewport->WorkPos);
+			ImGui::SetNextWindowSize(viewport->WorkSize);
 			ImGui::SetNextWindowViewport(viewport->ID);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
-			ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking;
-			window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+			ImGuiWindowFlags host_window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+			host_window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+			host_window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
-			ImGui::Begin("DockSpace", nullptr, window_flags);
+			ImGui::Begin("MainDockSpaceHost", nullptr, host_window_flags);
 			ImGui::PopStyleVar(3);
 
-			// Submit the DockSpace
-			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
-
-
-
-			static int selectedWorldIndex = -1;       // 跟踪用户在列表中选择的世界
-			static char backupComment[CONSTANT1] = "";// 备份注释输入框的内容
-			// 获取当前配置
-			if (!configs.count(currentConfigIndex)) { // 找不到，说明应该对应的是特殊配置
-				specialSetting = true;
-			}
-
-			//Config& cfg = configs[currentConfigIndex];
-
-
-			// --- 动态调整世界图标纹理和尺寸向量的大小 ---
-			vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
-			int worldCount = (int)displayWorlds.size();
-			//if ((int)worldIconTextures.size() != worldCount) {
-			//	// 在调整大小前，释放旧的、不再需要的纹理资源
-			//	for (auto& tex : worldIconTextures) {
-			//		if (tex) {
-			//			tex->Release();
-			//			tex = nullptr;
-			//		}
-			//	}
-			//	worldIconTextures.assign(worldCount, nullptr); // 使用 assign 清空并设置为指定大小的空指针
-			//	worldIconWidths.resize(worldCount, 0);
-			//	worldIconHeights.resize(worldCount, 0);
-			//}
-
-			ImGui::Begin(L("MAIN_WINDOW_TITLE"), &showMainApp, ImGuiWindowFlags_MenuBar);
-
-			float totalW = ImGui::GetContentRegionAvail().x;
-			float leftW = totalW * 0.32f;
-			float midW = totalW * 0.25f;
-			float rightW = totalW * 0.42f;
 			static bool showAboutWindow = false;
 			// --- 顶部菜单栏 ---
 			if (ImGui::BeginMenuBar()) {
-				
+
 				if (ImGui::BeginMenu(L("MENU_FILE"))) {
 					if (ImGui::MenuItem(L("EXIT"))) {
 						done = true;
@@ -1266,7 +1221,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
 
-					
+
 					ImGui::Separator();
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
@@ -1300,7 +1255,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					}
 					ImGui::EndMenu();
 				}
-				
+
 				// 在菜单栏右侧显示更新按钮
 				if (g_NewVersionAvailable) {
 					ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(L("UPDATE_AVAILABLE_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2 - 100);
@@ -1317,7 +1272,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 						ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
 						ImGui::Separator();
 						ImGui::TextWrapped(L("UPDATE_POPUP_NOTES"));
-						
+
 						ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 450), true);
 						ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
 						ImGui::EndChild();
@@ -1339,7 +1294,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(ImGui::GetContentRegionAvail().x/2, 0))) {
+						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(ImGui::GetContentRegionAvail().x / 2, 0))) {
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1367,32 +1322,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					// Minimize Button
 					if (ImGui::Button("-", ImVec2(buttonSize, buttonSize))) {
 						showMainApp = false;
+						glfwHideWindow(wc);
 					}
-					ImGui::SameLine(0, 0);
 
-					// Maximize/Restore Button
-					static bool is_maximized = false;
-					if (ImGui::Button("O", ImVec2(buttonSize, buttonSize))) {
-						if (is_maximized) {
-							ImGui::SetWindowSize(ImVec2(1300, 720));
-							is_maximized = false;
-						}
-						else {
-							ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-							ImGui::SetWindowSize(displaySize);
-							ImGui::SetWindowPos(ImVec2(0, 0));
-							is_maximized = true;
-						}
-					}
-					ImGui::SameLine(0, 0);
-
-					// Close Button
-					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.1f, 0.1f, 0.8f));
-					if (ImGui::Button("x", ImVec2(buttonSize, buttonSize))) {
-						done = true; // 结束程序
-						SaveConfigs();
-					}
-					ImGui::PopStyleColor();
 					ImGui::PopStyleColor(3);
 				}
 
@@ -1401,7 +1333,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			}
 			if (showAboutWindow)
 				ImGui::OpenPopup(L("MENU_ABOUT"));
-			
+
 			//ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			if (ImGui::BeginPopupModal(L("MENU_ABOUT"), &showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
 			{
@@ -1444,780 +1376,790 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 
 
-			// --- 左侧面板：世界列表和操作 ---
-			//ImGui::BeginChild("LeftPane", ImVec2(ImGui::GetContentRegionAvail().x * 0.875f, 0), true);
-			
-			float left_pane_width = ImGui::GetContentRegionAvail().x * 0.55f;
-			if (selectedWorldIndex == -1) {
-				left_pane_width = ImGui::GetContentRegionAvail().x; // 如果未选择任何项，左侧面板占满
-			}
-			
-			ImGui::BeginChild("LeftPane", ImVec2(leftW, 0), true);
+			ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_None);
 
-			ImGui::SeparatorText(L("QUICK_CONFIG_SWITCHER"));
-			ImGui::SetNextItemWidth(-1);
-			string current_config_label = "None";
-			if (specialSetting && specialConfigs.count(currentConfigIndex)) {
-				current_config_label = "[Sp." + to_string(currentConfigIndex) + "] " + specialConfigs[currentConfigIndex].name;
-			}
-			else if (!specialSetting && configs.count(currentConfigIndex)) {
-				current_config_label = "[No." + to_string(currentConfigIndex) + "] " + configs[currentConfigIndex].name;
-			}
-			//string(L("CONFIG_N")) + to_string(currentConfigIndex)
-			static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
+			static bool first_time_layout = true;
+			if (first_time_layout) {
+				first_time_layout = false;
+				ImGui::DockBuilderRemoveNode(dockspace_id); // clear any previous layout
+				ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+				ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
 
-			if (ImGui::BeginCombo("##ConfigSwitcher", current_config_label.c_str())) {
-				// 普通配置
-				for (auto const& [idx, val] : configs) {
-					const bool is_selected = (currentConfigIndex == idx);
-					string label = "[No." + to_string(idx) + "] " + val.name;
+				ImGuiID dock_main_id = dockspace_id;
+				ImGuiID dock_right_id = ImGui::DockBuilderSplitNode(dock_main_id, ImGuiDir_Right, 0.4f, nullptr, &dock_main_id);
+				ImGuiID dock_middle_id = ImGui::DockBuilderSplitNode(dock_main_id, ImGuiDir_Right, 0.45f, nullptr, &dock_main_id);
+				ImGuiID dock_left_id = dock_main_id;
 
-					if (ImGui::Selectable(label.c_str(), is_selected)) {
-						currentConfigIndex = idx;
-						specialSetting = false;
-					}
-					if (is_selected) {
-						ImGui::SetItemDefaultFocus();
-					}
-				}
-				ImGui::Separator();
-				// 特殊配置
-				for (auto const& [idx, val] : specialConfigs) {
-					const bool is_selected = (currentConfigIndex == (idx));
-					string label = "[Sp." + to_string((idx)) + "] " + val.name;
-					if (ImGui::Selectable(label.c_str(), is_selected)) {
-						currentConfigIndex = (idx);
-						specialSetting = true;
-						//specialConfigMode = true;
-					}
-					if (is_selected) ImGui::SetItemDefaultFocus();
-				}
-				ImGui::Separator();
-				if (ImGui::Selectable(L("BUTTON_ADD_CONFIG"))) {
-					showAddConfigPopup = true;
-				}
-				
-				if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
-					if ((!specialSetting && configs.size() > 1) || (specialSetting && !specialConfigs.empty())) { // 至少保留一个
-						showDeleteConfigPopup = true;
-					}
-				}
-
-				
-				ImGui::EndCombo();
+				ImGui::DockBuilderDockWindow(L("WORLD_LIST"), dock_left_id);
+				ImGui::DockBuilderDockWindow(L("WORLD_DETAILS_PANE_TITLE"), dock_middle_id);
+				ImGui::DockBuilderDockWindow(L("CONSOLE_TITLE"), dock_right_id);
+				ImGui::DockBuilderFinish(dockspace_id);
 			}
 
-			// 删除配置弹窗
-			if (showDeleteConfigPopup)
-				ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
-			if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-				showDeleteConfigPopup = false;
-				if (specialSetting) {
-					ImGui::Text("[Sp.]");
-					ImGui::SameLine();
-					ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, specialConfigs[currentConfigIndex].name);
-				}
-				else {
-					ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, configs[currentConfigIndex].name);
-				}
-				ImGui::Separator();
-				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-					if (specialSetting) {
-						specialConfigs.erase(currentConfigIndex);
-						specialConfigMode = false;
-						currentConfigIndex = configs.empty() ? 0 : configs.begin()->first;
-					}
-					else {
-						configs.erase(currentConfigIndex);
-						currentConfigIndex = configs.begin()->first;
-					}
-					ImGui::CloseCurrentPopup();
-				}
-				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-					ImGui::CloseCurrentPopup();
-				}
-				ImGui::EndPopup();
+			ImGui::End(); // End of MainDockSpaceHost
+
+			static int selectedWorldIndex = -1;       // 跟踪用户在列表中选择的世界
+			static char backupComment[CONSTANT1] = "";// 备份注释输入框的内容
+			// 获取当前配置
+			if (!configs.count(currentConfigIndex)) { // 找不到，说明应该对应的是特殊配置
+				specialSetting = true;
 			}
-			// 添加新配置弹窗
-			if (showAddConfigPopup)
-				ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
-			if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
-			{
-				showAddConfigPopup = false;
-				static int config_type = 0; // 0 for Normal, 1 for Special
-				static char new_config_name[128] = "New Config";
 
-				ImGui::Text(L("CONFIG_TYPE_LABEL"));
-				ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
-				ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
+			float totalW = ImGui::GetContentRegionAvail().x;
+			float leftW = totalW * 0.32f;
+			float midW = totalW * 0.25f;
+			float rightW = totalW * 0.42f;
+			// --- 动态调整世界图标纹理和尺寸向量的大小 ---
+			vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
+			int worldCount = (int)displayWorlds.size();
 
-				if (config_type == 0) {
-					ImGui::TextWrapped(L("CONFIG_TYPE_NORMAL_DESC"));
+
+			if (ImGui::Begin(L("WORLD_LIST"))) {
+				ImGui::SeparatorText(L("QUICK_CONFIG_SWITCHER"));
+				ImGui::SetNextItemWidth(-1);
+				string current_config_label = "None";
+				if (specialSetting && specialConfigs.count(currentConfigIndex)) {
+					current_config_label = "[Sp." + to_string(currentConfigIndex) + "] " + specialConfigs[currentConfigIndex].name;
 				}
-				else {
-					ImGui::TextWrapped(L("CONFIG_TYPE_SPECIAL_DESC"));
+				else if (!specialSetting && configs.count(currentConfigIndex)) {
+					current_config_label = "[No." + to_string(currentConfigIndex) + "] " + configs[currentConfigIndex].name;
 				}
+				//string(L("CONFIG_N")) + to_string(currentConfigIndex)
+				static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
 
-				ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
-				ImGui::Separator();
+				if (ImGui::BeginCombo("##ConfigSwitcher", current_config_label.c_str())) {
+					// 普通配置
+					for (auto const& [idx, val] : configs) {
+						const bool is_selected = (currentConfigIndex == idx);
+						string label = "[No." + to_string(idx) + "] " + val.name;
 
-				if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
-					if (strlen(new_config_name) > 0) {
-						if (config_type == 0) {
-							//int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
-							// 原本是 configs.rbegin()->first + 1，这样不太好，现在统一成nextConfigId
-							int new_index = CreateNewNormalConfig(new_config_name);
-							// 继承当前配置（如果有），但保留路径为空
-							if (configs.count(currentConfigIndex)) {
-								configs[new_index] = configs[currentConfigIndex];
-								configs[new_index].name = new_config_name;
-								configs[new_index].saveRoot.clear();
-								configs[new_index].backupPath.clear();
-								configs[new_index].worlds.clear();
-							}
-							currentConfigIndex = new_index;
+						if (ImGui::Selectable(label.c_str(), is_selected)) {
+							currentConfigIndex = idx;
 							specialSetting = false;
 						}
-						else { // Special
-							int new_index = CreateNewSpecialConfig(new_config_name);
-							currentConfigIndex = new_index;
-							specialSetting = true;
+						if (is_selected) {
+							ImGui::SetItemDefaultFocus();
 						}
-						showSettings = true; // Open detailed settings for the new config
+					}
+					ImGui::Separator();
+					// 特殊配置
+					for (auto const& [idx, val] : specialConfigs) {
+						const bool is_selected = (currentConfigIndex == (idx));
+						string label = "[Sp." + to_string((idx)) + "] " + val.name;
+						if (ImGui::Selectable(label.c_str(), is_selected)) {
+							currentConfigIndex = (idx);
+							specialSetting = true;
+							//specialConfigMode = true;
+						}
+						if (is_selected) ImGui::SetItemDefaultFocus();
+					}
+					ImGui::Separator();
+					if (ImGui::Selectable(L("BUTTON_ADD_CONFIG"))) {
+						showAddConfigPopup = true;
+					}
+
+					if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
+						if ((!specialSetting && configs.size() > 1) || (specialSetting && !specialConfigs.empty())) { // 至少保留一个
+							showDeleteConfigPopup = true;
+						}
+					}
+
+
+					ImGui::EndCombo();
+				}
+
+				// 删除配置弹窗
+				if (showDeleteConfigPopup)
+					ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
+				if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+					showDeleteConfigPopup = false;
+					if (specialSetting) {
+						ImGui::Text("[Sp.]");
+						ImGui::SameLine();
+						ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, specialConfigs[currentConfigIndex].name);
+					}
+					else {
+						ImGui::Text(L("CONFIRM_DELETE_MSG"), currentConfigIndex, configs[currentConfigIndex].name);
+					}
+					ImGui::Separator();
+					if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+						if (specialSetting) {
+							specialConfigs.erase(currentConfigIndex);
+							specialConfigMode = false;
+							currentConfigIndex = configs.empty() ? 0 : configs.begin()->first;
+						}
+						else {
+							configs.erase(currentConfigIndex);
+							currentConfigIndex = configs.begin()->first;
+						}
 						ImGui::CloseCurrentPopup();
 					}
-				}
-				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-					ImGui::CloseCurrentPopup();
-				}
-				ImGui::EndPopup();
-			}
-
-			ImGui::SeparatorText(L("WORLD_LIST"));
-			
-			// 新的自定义卡片
-			//ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // 预留底部按钮空间
-			ImGui::BeginChild("WorldListChild", ImVec2(0, 0), true);
-
-			// selectedWorldIndex 的语义现在改变了——它现在是 displayWorlds 的索引（而不是 cfg.worlds 的索引）
-
-
-			for (int i = 0; i < worldCount; ++i) {
-				const auto& dw = displayWorlds[i];
-				ImGui::PushID(i);
-				bool is_selected = (selectedWorldIndex == i);
-
-				// worldFolder / backupFolder 基于 effectiveConfig
-				wstring worldFolder = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
-				wstring backupFolder = dw.effectiveConfig.backupPath + L"\\" + dw.name;
-
-				// --- 左侧图标区 ---
-				ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-				float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
-				ImVec2 icon_pos = ImGui::GetCursorScreenPos();
-				ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
-
-				// 绘制占位符和边框
-				draw_list->AddRectFilled(icon_pos, icon_end_pos, IM_COL32(50, 50, 50, 200), 4.0f);
-				draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
-
-
-				string iconKey_utf8 = wstring_to_utf8(worldFolder);
-				wstring iconKey = worldFolder;
-
-				// 迟加载逻辑
-				if (g_worldIconTextures.find(iconKey) == g_worldIconTextures.end()) {
-					// 标记为正在加载或失败，避免重复尝试
-					g_worldIconTextures[iconKey] = 0; // 0 表示无效纹理
-
-					string iconPath = wstring_to_utf8(worldFolder + L"\\icon.png");
-					string bedrockIconPath = wstring_to_utf8(worldFolder + L"\\world_icon.jpeg");
-
-					GLuint texture_id = 0;
-					int tex_w = 0, tex_h = 0;
-
-					if (filesystem::exists(iconPath)) {
-						LoadTextureFromFileGL(iconPath.c_str(), &texture_id, &tex_w, &tex_h);
-					}
-					else if (filesystem::exists(bedrockIconPath)) {
-						LoadTextureFromFileGL(bedrockIconPath.c_str(), &texture_id, &tex_w, &tex_h);
-					}
-
-					if (texture_id > 0) {
-						g_worldIconTextures[iconKey] = texture_id;
-						g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
-					}
-				}
-
-				// 渲染逻辑
-				GLuint current_texture = g_worldIconTextures[iconKey];
-				if (current_texture > 0) {
-					ImGui::Image((void*)(intptr_t)current_texture, ImVec2(iconSz, iconSz));
-				}
-				else {
-					const char* placeholder_icon = ICON_FA_FOLDER;
-					ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
-					ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
-					draw_list->AddText(text_pos, IM_COL32(200, 200, 200, 255), placeholder_icon);
-				}
-
-				// 迟加载
-				//if (!worldIconTextures[i]) {
-				//	string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
-				//	if (filesystem::exists(iconPath)) {
-				//		LoadTextureFromFile(iconPath.c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
-				//	}
-				//	else if (filesystem::exists(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")))) {
-				//		// 基岩版的 world_icon.jpeg
-				//		LoadTextureFromFile(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg")).c_str(), &worldIconTextures[i], &worldIconWidths[i], &worldIconHeights[i]);
-				//	}
-				//}
-
-				/*if (worldIconTextures[i]) {
-					ImGui::GetWindowDrawList()->AddImageRounded((ImTextureID)worldIconTextures[i], icon_pos, icon_end_pos, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
-				}
-				else {
-					const char* placeholder_icon = ICON_FA_FOLDER;
-					ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
-					ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
-					draw_list->AddText(text_pos, IM_COL32(200, 200, 200, 255), placeholder_icon);
-				}*/
-
-				// 将光标移过图标区域
-				ImGui::Dummy(ImVec2(iconSz, iconSz));
-
-				ImGui::SetCursorScreenPos(icon_pos);
-				ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
-				// 点击更换图标
-				if (ImGui::IsItemClicked()) {
-					wstring sel = SelectFileDialog();
-					if (!sel.empty()) {
-						// 覆盖原 icon.png
-						CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
-						// 释放旧纹理并重新加载
-						if (current_texture) {
-							glDeleteTextures(1, &current_texture);
-						}
-						GLuint newTextureId = 0;
-						int tex_w = 0, tex_h = 0;
-						LoadTextureFromFileGL(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &newTextureId, &tex_w, &tex_h);
-						g_worldIconTextures[iconKey] = newTextureId;
-						g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
-					}
-				}
-
-				ImGui::SameLine();
-				// --- 状态逻辑 (为图标做准备) ---
-				lock_guard<mutex> lock(g_task_mutex); // 访问 g_active_auto_backups 需要加锁
-                bool is_task_running = g_active_auto_backups.count(make_pair(displayWorlds[i].baseConfigIndex, i)) > 0;
-				// 如果最后打开时间比最后备份时间新，则认为需要备份
-				//wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
-				bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
-
-				// 整个区域作为一个可选项
-				// ImGuiSelectableFlags_AllowItemOverlap 允许我们在可选项上面绘制其他控件
-				if (ImGui::Selectable("##world_selectable", is_selected, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2.5f))) {
-					selectedWorldIndex = i;
-				}
-
-				ImVec2 p_min = ImGui::GetItemRectMin();
-				ImVec2 p_max = ImGui::GetItemRectMax();
-
-				// --- 卡片背景和高亮 ---
-				if (ImGui::IsItemHovered()) {
-					draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBg), 4.0f);
-				}
-				else if (is_selected) {
-					draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgActive, 0.5f), 4.0f);
-				}
-
-				if (is_selected) {
-					draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f, 0, 2.0f);
-				}
-
-				// 我们在可选项的相同位置开始绘制我们的自定义内容
-				ImGui::SameLine();
-				ImGui::BeginGroup(); // 将所有内容组合在一起
-
-				// --- 第一行：世界名和描述 (自动换行) ---
-				string name_utf8 = wstring_to_utf8(dw.name);
-				string desc_utf8 = wstring_to_utf8(dw.desc);
-				ImGui::TextWrapped("%s", name_utf8.c_str());
-
-				//// --- 第二行：时间和状态 ---
-				//wstring openTime = GetLastOpenTime(worldFolder);
-				//wstring backupTime = GetLastBackupTime(backupFolder);
-
-				//// 将次要信息颜色变灰，更具层次感
-				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-				if(desc_utf8.empty()) {
-					ImGui::TextWrapped(L("CARD_WORLD_NO_DESC"));
-				}
-				else {
-					ImGui::TextWrapped("%s", desc_utf8.c_str());
-				}
-				ImGui::PopStyleColor();
-
-				ImGui::EndGroup();
-
-				// --- 右侧的状态图标 ---
-				float icon_pane_width = 40.0f;
-				ImGui::SameLine(ImGui::GetContentRegionAvail().x - icon_pane_width);
-				ImGui::BeginGroup();
-				ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 0.25f)); // 垂直居中一点
-				if (is_task_running) {
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); // 蓝色
-					ImGui::Text(ICON_FA_ROTATE); // 旋转图标，表示正在运行
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_AUTOBACKUP_RUNNING"));
-					ImGui::PopStyleColor();
-				}
-				else if (needs_backup) {
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f)); // 黄色
-					ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION); // 警告图标
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_NEEDS_BACKUP"));
-					ImGui::PopStyleColor();
-				}
-				else {
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.6f, 1.0f)); // 绿色
-					ImGui::Text(ICON_FA_CIRCLE_CHECK); // 对勾图标
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_UP_TO_DATE"));
-					ImGui::PopStyleColor();
-				}
-				ImGui::EndGroup();
-
-
-				ImGui::PopID();
-				ImGui::Separator();
-			}
-
-			ImGui::EndChild(); // 结束 WorldListChild
-
-			ImGui::EndChild();
-			
-			if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
-				ImGui::SameLine();
-				ImGui::BeginChild("MidPane", ImVec2(midW, 0), true);
-				{
-					ImGui::SeparatorText(L("CURRENT_CONFIG_INFO"));
-
-					ImGui::Text("%s: %s", L("SAVES_PATH_LABEL"), wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot).c_str());
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot).c_str());
-					ImGui::Text("%s: %s", L("BACKUP_PATH_LABEL"), wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath).c_str());
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath).c_str());
-
-					ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
-					ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
-					ImGui::Text("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].name).c_str());
-					ImGui::PopTextWrapPos();
-					ImGui::Separator();
-
-					// -- 详细信息 --
-					wstring worldFolder = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
-					wstring backupFolder = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
-					ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(GetLastOpenTime(worldFolder)).c_str());
-					ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(GetLastBackupTime(backupFolder)).c_str());
-
-					ImGui::Separator();
-
-					// -- 注释输入框 --if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
-					//cfg.worlds[i].second = utf8_to_wstring(desc);
-					//ImGui::InputTextMultiline(L("COMMENT_HINT"), backupComment, IM_ARRAYSIZE(backupComment), ImVec2(-1, ImGui::GetTextLineHeight() * 3));
-					char buffer[CONSTANT1] = "";
-					// 增加检查，确保 selectedWorldIndex 仍然有效
-					if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
-						const auto& dw = displayWorlds[selectedWorldIndex];
-						wstring desc = dw.desc;
-						strncpy_s(buffer, wstring_to_utf8(desc).c_str(), sizeof(buffer));
-						ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-						ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer), ImGuiInputTextFlags_EnterReturnsTrue);
-
-						// 在写入前，再次进行完整的检查
-						if (configs.count(dw.baseConfigIndex)) {
-							Config& cfg = configs.at(dw.baseConfigIndex);
-							if (dw.baseWorldIndex >= 0 && dw.baseWorldIndex < cfg.worlds.size()) {
-								if (desc.find(L"\"") != wstring::npos || desc.find(L":") != wstring::npos || desc.find(L"\\") != wstring::npos || desc.find(L"/") != wstring::npos || desc.find(L">") != wstring::npos || desc.find(L"<") != wstring::npos || desc.find(L"|") != wstring::npos || desc.find(L"?") != wstring::npos || desc.find(L"*") != wstring::npos) {
-									memset(buffer, '\0', sizeof(buffer));
-									cfg.worlds[dw.baseWorldIndex].second = L"";
-								}
-								else {
-									cfg.worlds[dw.baseWorldIndex].second = utf8_to_wstring(buffer);
-								}
-							}
-						}
-					}
-					else {
-						// 如果索引无效，显示一个禁用的占位输入框
-						strcpy_s(buffer, "N/A");
-						ImGui::BeginDisabled();
-						ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer));
-						ImGui::EndDisabled();
-					}
-					
-					ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-					ImGui::InputTextWithHint("##backup_comment", L("HINT_BACKUP_COMMENT"), backupComment, IM_ARRAYSIZE(backupComment), ImGuiInputTextFlags_EnterReturnsTrue);
-
-					// -- 主要操作按钮 --
-					float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
-					if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
-						thread backup_thread(DoBackup, displayWorlds[selectedWorldIndex].effectiveConfig, make_pair(displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc), ref(console), utf8_to_wstring(backupComment));
-						backup_thread.detach();
-						strcpy_s(backupComment, "");
-					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
-						ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
-					}
-
-					if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
-						g_worldToFocusInHistory = displayWorlds[selectedWorldIndex].name; // 设置要聚焦的世界
-						showHistoryWindow = true; // 打开历史窗口
-					}
-					if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
-						// 先做最小范围的本地检查并拷贝要操作的 DisplayWorld（displayWorlds 是本地变量）
-						if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
-							DisplayWorld dw_copy = displayWorlds[selectedWorldIndex]; // 做一个值拷贝，之后在锁内用索引去改 configs
-
-							bool did_change = false;
-
-							// 在修改全局 configs 前加锁，防止其它线程并发读/写导致崩溃
-							{
-								lock_guard<mutex> cfg_lock(g_configsMutex);
-
-								auto it = configs.find(dw_copy.baseConfigIndex);
-								if (it != configs.end()) {
-									Config& cfg = it->second;
-									if (dw_copy.baseWorldIndex >= 0 && dw_copy.baseWorldIndex < (int)cfg.worlds.size()) {
-										cfg.worlds[dw_copy.baseWorldIndex].second = L"#";
-										did_change = true;
-									}
-								}
-							} // 解锁 g_configsMutex 
-						}
-					}
-
-					if (ImGui::Button(L("BUTTON_PIN_WORLD"), ImVec2(-1, 0))) {
-						// 检查索引是否有效且不是第一个
-						if (selectedWorldIndex > 0 && selectedWorldIndex < displayWorlds.size()) {
-							DisplayWorld& dw = displayWorlds[selectedWorldIndex];
-							int configIdx = dw.baseConfigIndex;
-							int worldIdx = dw.baseWorldIndex;
-
-							// 确保我们操作的是普通配置中的世界列表
-							if (!specialSetting && configs.count(configIdx)) {
-								Config& cfg = configs[configIdx];
-								if (worldIdx < cfg.worlds.size()) {
-									// 存储要移动的世界
-									pair<wstring, wstring> worldToMove = cfg.worlds[worldIdx];
-
-									// 从原位置删除
-									cfg.worlds.erase(cfg.worlds.begin() + worldIdx);
-
-									// 插入到列表顶部
-									cfg.worlds.insert(cfg.worlds.begin(), worldToMove);
-
-									// 更新选中项为新的顶部项
-									selectedWorldIndex = 0;
-								}
-							}
-						}
-					}
-					if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
-						wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
-						if (filesystem::exists(path)) {
-							ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
-						}
-						else {
-							ShellExecuteW(NULL, L"open", displayWorlds[selectedWorldIndex].effectiveConfig.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
-						}
-					}
-					if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
-						wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
-						ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
-					}
-
-					// 模组备份
-					if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(-1, 0))) {
-						if (selectedWorldIndex != -1) {
-							ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE"));
-						}
-					}
-
-					if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_OTHERS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-						static char mods_comment[256] = "";
-						ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
-						ImGui::InputText(L("HINT_BACKUP_COMMENT"), mods_comment, IM_ARRAYSIZE(mods_comment));
-						ImGui::Separator();
-
-						if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-							if (configs.count(currentConfigIndex)) {
-								filesystem::path tempPath = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot;
-								filesystem::path modsPath = tempPath.parent_path() / "mods";
-								if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
-									modsPath = tempPath / "mods";
-								}
-								thread backup_thread(DoOthersBackup, configs[currentConfigIndex], modsPath, utf8_to_wstring(mods_comment));
-								backup_thread.detach();
-								strcpy_s(mods_comment, "");
-							}
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-							strcpy_s(mods_comment, "");
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::EndPopup();
-					}
-
-					// 其他备份
-					float availWidth = ImGui::GetContentRegionAvail().x;
-					float btnWidth = ImGui::CalcTextSize(L("BUTTON_BACKUP_OTHERS")).x + ImGui::GetStyle().FramePadding.x * 2;
-					if (ImGui::Button(L("BUTTON_BACKUP_OTHERS"), ImVec2(btnWidth, 0))) {
-						if (selectedWorldIndex != -1) {
-							ImGui::OpenPopup("Others");
-						}
-					}
-					ImGui::SameLine();
-					ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97);
-					// 可以输入需要备份的其他内容的路径，比如 D:\Games\configs
-					static char buf[CONSTANT1] = "";
-					strcpy(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
-					if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
-						displayWorlds[selectedWorldIndex].effectiveConfig.othersPath = utf8_to_wstring(buf);
-						configs[displayWorlds[selectedWorldIndex].baseConfigIndex].othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
-					}
-
-					if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-						static char others_comment[CONSTANT1] = "";
-						ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
-						ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));
-						ImGui::Separator();
-
-						if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-							if (configs.count(currentConfigIndex)) {
-								thread backup_thread(DoOthersBackup, configs[currentConfigIndex], buf, utf8_to_wstring(others_comment));
-								backup_thread.detach();
-								strcpy_s(others_comment, "");
-							}
-							SaveConfigs(); // 保存一下路径
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-							strcpy_s(others_comment, "");
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::EndPopup();
-					}
-
-
-					if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
-						// 云同步逻辑
-						const Config& config = configs[displayWorlds[selectedWorldIndex].baseConfigIndex];
-						if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
-							console.AddLog(L("CLOUD_SYNC_START"));
-							wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
-							// 另起一个线程来执行云同步，避免阻塞后续操作
-							thread([rclone_command, config]() {
-								RunCommandInBackground(rclone_command, console, config.useLowPriority);
-								console.AddLog(L("CLOUD_SYNC_FINISH"));
-							}).detach();
-						}
-						else {
-							console.AddLog(L("CLOUD_SYNC_INVALID"));
-						}
-					}
-
-					// 导出分享
-					if (ImGui::Button(L("BUTTON_EXPORT_FOR_SHARING"), ImVec2(-1, 0))) {
-						if (selectedWorldIndex != -1) {
-							ImGui::OpenPopup(L("EXPORT_WINDOW_TITLE"));
-						}
-					}
-					if (ImGui::BeginPopupModal(L("EXPORT_WINDOW_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-						// 使用 static 变量来持有一次性配置，它们只在弹窗首次打开时被初始化
-						static Config tempExportConfig;
-						static char outputPathBuf[MAX_PATH];
-						static char descBuf[CONSTANT2];
-						static char blacklistAddItemBuf[CONSTANT1];
-						static int selectedBlacklistItem = -1;
-						static int selectedFormat = 0;
-
-						// 弹窗首次打开时，进行初始化
-						if (ImGui::IsWindowAppearing()) {
-							const auto& dw = displayWorlds[selectedWorldIndex];
-							tempExportConfig = dw.effectiveConfig; // 复制当前配置作为基础
-
-							// 智能设置默认输出路径为MineBackup当前位置
-							wchar_t currentPath[MAX_PATH];
-							GetCurrentDirectoryW(MAX_PATH, currentPath);
-							wstring cleanWorldName = SanitizeFileName(dw.name);
-							wstring finalPath = wstring(currentPath) + L"\\" + cleanWorldName + L"_shared." + tempExportConfig.zipFormat;
-							strncpy_s(outputPathBuf, wstring_to_utf8(finalPath).c_str(), sizeof(outputPathBuf));
-
-							// 预设默认黑名单
-							tempExportConfig.blacklist.clear();
-							tempExportConfig.blacklist.push_back(L"playerdata");
-							tempExportConfig.blacklist.push_back(L"stats");
-							tempExportConfig.blacklist.push_back(L"advancements");
-							tempExportConfig.blacklist.push_back(L"session.lock");
-							tempExportConfig.blacklist.push_back(L"level.dat_old");
-
-
-							// 清空上次的输入
-							memset(descBuf, 0, sizeof(descBuf));
-							memset(blacklistAddItemBuf, 0, sizeof(blacklistAddItemBuf));
-							selectedBlacklistItem = -1;
-						}
-
-						// 如果取消勾选 "包含数据包"，则动态添加/移除 datapacks
-						/*bool datapacksInBlacklist = find(tempBlacklist.begin(), tempBlacklist.end(), L"datapacks") != tempBlacklist.end();
-						if (includeDatapacks && datapacksInBlacklist) {
-							tempBlacklist.erase(remove(tempBlacklist.begin(), tempBlacklist.end(), L"datapacks"), tempBlacklist.end());
-						}
-						else if (!includeDatapacks && !datapacksInBlacklist) {
-							tempBlacklist.push_back(L"datapacks");
-						}*/
-
-						// --- UI 渲染 ---
-						ImGui::SeparatorText(L("GROUP_EXPORT_OPTIONS"));
-						ImGui::InputText(L("LABEL_EXPORT_PATH"), outputPathBuf, sizeof(outputPathBuf));
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_BROWSE"))) { 
-							strcpy_s(outputPathBuf, MAX_PATH, wstring_to_utf8(SelectFolderDialog() + L"\\" + displayWorlds[selectedWorldIndex].name + L"_shared." + tempExportConfig.zipFormat).c_str());
-						}
-
-						if (ImGui::RadioButton("7z", &selectedFormat, 0)) { tempExportConfig.zipFormat = L"7z"; } ImGui::SameLine();
-						if (ImGui::RadioButton("zip", &selectedFormat, 1)) { tempExportConfig.zipFormat = L"zip"; }
-
-						ImGui::SeparatorText(L("GROUP_EXPORT_BLACKLIST"));
-						ImGui::BeginChild("BlacklistChild", ImVec2(0, 150), true);
-						for (int i = 0; i < tempExportConfig.blacklist.size(); ++i) {
-							if (ImGui::Selectable(wstring_to_utf8(tempExportConfig.blacklist[i]).c_str(), selectedBlacklistItem == i)) {
-								selectedBlacklistItem = i;
-							}
-						}
-						ImGui::EndChild();
-
-						if (ImGui::Button(L("BUTTON_REMOVE_SELECTED")) && selectedBlacklistItem != -1) {
-							tempExportConfig.blacklist.erase(tempExportConfig.blacklist.begin() + selectedBlacklistItem);
-							selectedBlacklistItem = -1;
-						}
-						ImGui::InputTextWithHint("##AddItem", L("HINT_ADD_BLACKLIST_ITEM"), blacklistAddItemBuf, sizeof(blacklistAddItemBuf));
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_ADD")) && strlen(blacklistAddItemBuf) > 0) {
-							tempExportConfig.blacklist.push_back(utf8_to_wstring(blacklistAddItemBuf));
-							memset(blacklistAddItemBuf, 0, sizeof(blacklistAddItemBuf));
-						}
-
-
-						ImGui::SeparatorText(L("GROUP_EXPORT_DESCRIPTION"));
-						ImGui::InputTextMultiline("##Desc", descBuf, sizeof(descBuf), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4), ImGuiInputTextFlags_AllowTabInput);
-
-						ImGui::Separator();
-						if (ImGui::Button(L("BUTTON_EXPORT"), ImVec2(120, 0))) {
-							const auto& dw = displayWorlds[selectedWorldIndex];
-
-							wstring worldFullPath = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
-
-							thread export_thread(DoExportForSharing, tempExportConfig, dw.name, worldFullPath, utf8_to_wstring(outputPathBuf), utf8_to_wstring(descBuf), ref(console));
-							export_thread.detach();
-
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
-						}
-
-						ImGui::EndPopup();
-					}
-
-
-				}
-
-				// 自动备份弹窗
-				if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-					bool is_task_running = false;
-					pair<int, int> taskKey = { -1,-1 };
-					vector<DisplayWorld> localDisplayWorlds; // 供显示使用
-					{
-						lock_guard<mutex> lock(g_task_mutex);
-						if (selectedWorldIndex >= 0) {
-							// 如果使用 displayWorlds：
-							localDisplayWorlds = BuildDisplayWorldsForSelection();
-							if (selectedWorldIndex < (int)localDisplayWorlds.size()) {
-								taskKey = { localDisplayWorlds[selectedWorldIndex].baseConfigIndex, localDisplayWorlds[selectedWorldIndex].baseWorldIndex };
-								is_task_running = (g_active_auto_backups.count(taskKey) > 0);
-							}
-						}
-					}
-
-					if (is_task_running) {
-						ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
-						ImGui::Separator();
-						if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(240, 0))) {
-							if (g_active_auto_backups.count(taskKey)) {
-								// 1. 设置停止标志
-								g_active_auto_backups.at(taskKey).stop_flag = true;
-								// 2. 等待线程结束
-								if (g_active_auto_backups.at(taskKey).worker.joinable())
-									g_active_auto_backups.at(taskKey).worker.join();
-								// 3. 从管理器中移除
-								g_active_auto_backups.erase(taskKey);
-							}
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
-						}
-					}
-					else {
-						ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(BuildDisplayWorldsForSelection()[selectedWorldIndex].name).c_str());
-						ImGui::Separator();
-						static int interval = 15;
-						ImGui::InputInt(L("INTERVAL_MINUTES"), &interval);
-						if (interval < 1) interval = 1;
-						if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
-							// 注册并启动线程
-							lock_guard<mutex> lock(g_task_mutex);
-							if (taskKey.first >= 0) {
-								AutoBackupTask& task = g_active_auto_backups[taskKey];
-								task.stop_flag = false;
-
-								task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console, ref(task.stop_flag));
-
-								ImGui::CloseCurrentPopup();
-							}
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
-						}
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
 				}
-				ImGui::EndChild();
+				// 添加新配置弹窗
+				if (showAddConfigPopup)
+					ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+				if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
+				{
+					showAddConfigPopup = false;
+					static int config_type = 0; // 0 for Normal, 1 for Special
+					static char new_config_name[128] = "New Config";
+
+					ImGui::Text(L("CONFIG_TYPE_LABEL"));
+					ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
+					ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
+
+					if (config_type == 0) {
+						ImGui::TextWrapped(L("CONFIG_TYPE_NORMAL_DESC"));
+					}
+					else {
+						ImGui::TextWrapped(L("CONFIG_TYPE_SPECIAL_DESC"));
+					}
+
+					ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
+					ImGui::Separator();
+
+					if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
+						if (strlen(new_config_name) > 0) {
+							if (config_type == 0) {
+								//int new_index = configs.empty() ? 1 : configs.rbegin()->first + 1;
+								// 原本是 configs.rbegin()->first + 1，这样不太好，现在统一成nextConfigId
+								int new_index = CreateNewNormalConfig(new_config_name);
+								// 继承当前配置（如果有），但保留路径为空
+								if (configs.count(currentConfigIndex)) {
+									configs[new_index] = configs[currentConfigIndex];
+									configs[new_index].name = new_config_name;
+									configs[new_index].saveRoot.clear();
+									configs[new_index].backupPath.clear();
+									configs[new_index].worlds.clear();
+								}
+								currentConfigIndex = new_index;
+								specialSetting = false;
+							}
+							else { // Special
+								int new_index = CreateNewSpecialConfig(new_config_name);
+								currentConfigIndex = new_index;
+								specialSetting = true;
+							}
+							showSettings = true; // Open detailed settings for the new config
+							ImGui::CloseCurrentPopup();
+						}
+					}
+					ImGui::SameLine();
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::EndPopup();
+				}
+
+				ImGui::SeparatorText(L("WORLD_LIST"));
+
+				// 新的自定义卡片
+				//ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // 预留底部按钮空间
+				ImGui::BeginChild("WorldListChild", ImVec2(0, 0), true);
+
+				// selectedWorldIndex 的语义现在改变了——它现在是 displayWorlds 的索引（而不是 cfg.worlds 的索引）
+
+
+				for (int i = 0; i < worldCount; ++i) {
+					const auto& dw = displayWorlds[i];
+					ImGui::PushID(i);
+					bool is_selected = (selectedWorldIndex == i);
+
+					// worldFolder / backupFolder 基于 effectiveConfig
+					wstring worldFolder = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
+					wstring backupFolder = dw.effectiveConfig.backupPath + L"\\" + dw.name;
+
+					// --- 左侧图标区 ---
+					ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
+					ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+					ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
+
+					// 绘制占位符和边框
+					draw_list->AddRectFilled(icon_pos, icon_end_pos, IM_COL32(50, 50, 50, 200), 4.0f);
+					draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
+
+
+					string iconKey_utf8 = wstring_to_utf8(worldFolder);
+					wstring iconKey = worldFolder;
+
+					// 迟加载逻辑
+					if (g_worldIconTextures.find(iconKey) == g_worldIconTextures.end()) {
+						// 标记为正在加载或失败，避免重复尝试
+						g_worldIconTextures[iconKey] = 0; // 0 表示无效纹理
+
+						string iconPath = wstring_to_utf8(worldFolder + L"\\icon.png");
+						string bedrockIconPath = wstring_to_utf8(worldFolder + L"\\world_icon.jpeg");
+
+						GLuint texture_id = 0;
+						int tex_w = 0, tex_h = 0;
+
+						if (filesystem::exists(iconPath)) {
+							LoadTextureFromFileGL(iconPath.c_str(), &texture_id, &tex_w, &tex_h);
+						}
+						else if (filesystem::exists(bedrockIconPath)) {
+							LoadTextureFromFileGL(bedrockIconPath.c_str(), &texture_id, &tex_w, &tex_h);
+						}
+
+						if (texture_id > 0) {
+							g_worldIconTextures[iconKey] = texture_id;
+							g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
+						}
+					}
+
+					// 渲染逻辑
+					GLuint current_texture = g_worldIconTextures[iconKey];
+					if (current_texture > 0) {
+						ImGui::Image((void*)(intptr_t)current_texture, ImVec2(iconSz, iconSz));
+					}
+					else {
+						const char* placeholder_icon = ICON_FA_FOLDER;
+						ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
+						ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
+						draw_list->AddText(text_pos, IM_COL32(200, 200, 200, 255), placeholder_icon);
+					}
+
+
+					// 将光标移过图标区域
+					ImGui::Dummy(ImVec2(iconSz, iconSz));
+
+					ImGui::SetCursorScreenPos(icon_pos);
+					ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
+					// 点击更换图标
+					if (ImGui::IsItemClicked()) {
+						wstring sel = SelectFileDialog();
+						if (!sel.empty()) {
+							// 覆盖原 icon.png
+							CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
+							// 释放旧纹理并重新加载
+							if (current_texture) {
+								glDeleteTextures(1, &current_texture);
+							}
+							GLuint newTextureId = 0;
+							int tex_w = 0, tex_h = 0;
+							LoadTextureFromFileGL(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &newTextureId, &tex_w, &tex_h);
+							g_worldIconTextures[iconKey] = newTextureId;
+							g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
+						}
+					}
+
+					ImGui::SameLine();
+					// --- 状态逻辑 (为图标做准备) ---
+					lock_guard<mutex> lock(g_task_mutex); // 访问 g_active_auto_backups 需要加锁
+					bool is_task_running = g_active_auto_backups.count(make_pair(displayWorlds[i].baseConfigIndex, i)) > 0;
+					// 如果最后打开时间比最后备份时间新，则认为需要备份
+					//wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
+					bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
+
+					// 整个区域作为一个可选项
+					// ImGuiSelectableFlags_AllowItemOverlap 允许我们在可选项上面绘制其他控件
+					if (ImGui::Selectable("##world_selectable", is_selected, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2.5f))) {
+						selectedWorldIndex = i;
+					}
+
+					ImVec2 p_min = ImGui::GetItemRectMin();
+					ImVec2 p_max = ImGui::GetItemRectMax();
+
+					// --- 卡片背景和高亮 ---
+					if (ImGui::IsItemHovered()) {
+						draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBg), 4.0f);
+					}
+					else if (is_selected) {
+						draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgActive, 0.5f), 4.0f);
+					}
+
+					if (is_selected) {
+						draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f, 0, 2.0f);
+					}
+
+					// 我们在可选项的相同位置开始绘制我们的自定义内容
+					ImGui::SameLine();
+					ImGui::BeginGroup(); // 将所有内容组合在一起
+
+					// --- 第一行：世界名和描述 (自动换行) ---
+					string name_utf8 = wstring_to_utf8(dw.name);
+					string desc_utf8 = wstring_to_utf8(dw.desc);
+					ImGui::TextWrapped("%s", name_utf8.c_str());
+
+					//// --- 第二行：时间和状态 ---
+					//wstring openTime = GetLastOpenTime(worldFolder);
+					//wstring backupTime = GetLastBackupTime(backupFolder);
+
+					//// 将次要信息颜色变灰，更具层次感
+					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+					if (desc_utf8.empty()) {
+						ImGui::TextWrapped(L("CARD_WORLD_NO_DESC"));
+					}
+					else {
+						ImGui::TextWrapped("%s", desc_utf8.c_str());
+					}
+					ImGui::PopStyleColor();
+
+					ImGui::EndGroup();
+
+					// --- 右侧的状态图标 ---
+					float icon_pane_width = 40.0f;
+					ImGui::SameLine(ImGui::GetContentRegionAvail().x - icon_pane_width);
+					ImGui::BeginGroup();
+					ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 0.25f)); // 垂直居中一点
+					if (is_task_running) {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); // 蓝色
+						ImGui::Text(ICON_FA_ROTATE); // 旋转图标，表示正在运行
+						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_AUTOBACKUP_RUNNING"));
+						ImGui::PopStyleColor();
+					}
+					else if (needs_backup) {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f)); // 黄色
+						ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION); // 警告图标
+						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_NEEDS_BACKUP"));
+						ImGui::PopStyleColor();
+					}
+					else {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.6f, 1.0f)); // 绿色
+						ImGui::Text(ICON_FA_CIRCLE_CHECK); // 对勾图标
+						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_UP_TO_DATE"));
+						ImGui::PopStyleColor();
+					}
+					ImGui::EndGroup();
+
+
+					ImGui::PopID();
+					ImGui::Separator();
+				}
+
+				ImGui::EndChild(); // 结束 WorldListChild
+
 			}
-			else {
-				ImGui::SameLine();
-				ImGui::BeginChild("MidPane", ImVec2(midW, 0), true);
-				ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
-				ImVec2 window_size = ImGui::GetWindowSize();
-				ImVec2 text_size = ImGui::CalcTextSize(L("PROMPT_SELECT_WORLD"));
-				ImGui::SetCursorPos(ImVec2((window_size.x - text_size.x) * 0.5f, (window_size.y - text_size.y) * 0.5f));
-				ImGui::TextDisabled("%s", L("PROMPT_SELECT_WORLD"));
-				ImGui::EndChild();
+			ImGui::End();			
+
+			if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
+				if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
+					ImGui::SameLine();
+					{
+						ImGui::SeparatorText(L("CURRENT_CONFIG_INFO"));
+
+						ImGui::Text("%s: %s", L("SAVES_PATH_LABEL"), wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot).c_str());
+						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot).c_str());
+						ImGui::Text("%s: %s", L("BACKUP_PATH_LABEL"), wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath).c_str());
+						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath).c_str());
+
+						ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
+						ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
+						ImGui::Text("%s", wstring_to_utf8(displayWorlds[selectedWorldIndex].name).c_str());
+						ImGui::PopTextWrapPos();
+						ImGui::Separator();
+
+						// -- 详细信息 --
+						wstring worldFolder = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
+						wstring backupFolder = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
+						ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(GetLastOpenTime(worldFolder)).c_str());
+						ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(GetLastBackupTime(backupFolder)).c_str());
+
+						ImGui::Separator();
+
+						// -- 注释输入框 --if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
+						//cfg.worlds[i].second = utf8_to_wstring(desc);
+						//ImGui::InputTextMultiline(L("COMMENT_HINT"), backupComment, IM_ARRAYSIZE(backupComment), ImVec2(-1, ImGui::GetTextLineHeight() * 3));
+						char buffer[CONSTANT1] = "";
+						// 增加检查，确保 selectedWorldIndex 仍然有效
+						if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
+							const auto& dw = displayWorlds[selectedWorldIndex];
+							wstring desc = dw.desc;
+							strncpy_s(buffer, wstring_to_utf8(desc).c_str(), sizeof(buffer));
+							ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+							ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+							// 在写入前，再次进行完整的检查
+							if (configs.count(dw.baseConfigIndex)) {
+								Config& cfg = configs.at(dw.baseConfigIndex);
+								if (dw.baseWorldIndex >= 0 && dw.baseWorldIndex < cfg.worlds.size()) {
+									if (desc.find(L"\"") != wstring::npos || desc.find(L":") != wstring::npos || desc.find(L"\\") != wstring::npos || desc.find(L"/") != wstring::npos || desc.find(L">") != wstring::npos || desc.find(L"<") != wstring::npos || desc.find(L"|") != wstring::npos || desc.find(L"?") != wstring::npos || desc.find(L"*") != wstring::npos) {
+										memset(buffer, '\0', sizeof(buffer));
+										cfg.worlds[dw.baseWorldIndex].second = L"";
+									}
+									else {
+										cfg.worlds[dw.baseWorldIndex].second = utf8_to_wstring(buffer);
+									}
+								}
+							}
+						}
+						else {
+							// 如果索引无效，显示一个禁用的占位输入框
+							strcpy_s(buffer, "N/A");
+							ImGui::BeginDisabled();
+							ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer));
+							ImGui::EndDisabled();
+						}
+
+						ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+						ImGui::InputTextWithHint("##backup_comment", L("HINT_BACKUP_COMMENT"), backupComment, IM_ARRAYSIZE(backupComment), ImGuiInputTextFlags_EnterReturnsTrue);
+
+						// -- 主要操作按钮 --
+						float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
+						if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
+							thread backup_thread(DoBackup, displayWorlds[selectedWorldIndex].effectiveConfig, make_pair(displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc), ref(console), utf8_to_wstring(backupComment));
+							backup_thread.detach();
+							strcpy_s(backupComment, "");
+						}
+						ImGui::SameLine();
+						if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
+							ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
+						}
+
+						if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
+							g_worldToFocusInHistory = displayWorlds[selectedWorldIndex].name; // 设置要聚焦的世界
+							showHistoryWindow = true; // 打开历史窗口
+						}
+						if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
+							// 先做最小范围的本地检查并拷贝要操作的 DisplayWorld（displayWorlds 是本地变量）
+							if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
+								DisplayWorld dw_copy = displayWorlds[selectedWorldIndex]; // 做一个值拷贝，之后在锁内用索引去改 configs
+
+								bool did_change = false;
+
+								// 在修改全局 configs 前加锁，防止其它线程并发读/写导致崩溃
+								{
+									lock_guard<mutex> cfg_lock(g_configsMutex);
+
+									auto it = configs.find(dw_copy.baseConfigIndex);
+									if (it != configs.end()) {
+										Config& cfg = it->second;
+										if (dw_copy.baseWorldIndex >= 0 && dw_copy.baseWorldIndex < (int)cfg.worlds.size()) {
+											cfg.worlds[dw_copy.baseWorldIndex].second = L"#";
+											did_change = true;
+										}
+									}
+								} // 解锁 g_configsMutex 
+							}
+						}
+
+						if (ImGui::Button(L("BUTTON_PIN_WORLD"), ImVec2(-1, 0))) {
+							// 检查索引是否有效且不是第一个
+							if (selectedWorldIndex > 0 && selectedWorldIndex < displayWorlds.size()) {
+								DisplayWorld& dw = displayWorlds[selectedWorldIndex];
+								int configIdx = dw.baseConfigIndex;
+								int worldIdx = dw.baseWorldIndex;
+
+								// 确保我们操作的是普通配置中的世界列表
+								if (!specialSetting && configs.count(configIdx)) {
+									Config& cfg = configs[configIdx];
+									if (worldIdx < cfg.worlds.size()) {
+										// 存储要移动的世界
+										pair<wstring, wstring> worldToMove = cfg.worlds[worldIdx];
+
+										// 从原位置删除
+										cfg.worlds.erase(cfg.worlds.begin() + worldIdx);
+
+										// 插入到列表顶部
+										cfg.worlds.insert(cfg.worlds.begin(), worldToMove);
+
+										// 更新选中项为新的顶部项
+										selectedWorldIndex = 0;
+									}
+								}
+							}
+						}
+						if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
+							wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
+							if (filesystem::exists(path)) {
+								ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
+							}
+							else {
+								ShellExecuteW(NULL, L"open", displayWorlds[selectedWorldIndex].effectiveConfig.backupPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
+							}
+						}
+						if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
+							wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
+							ShellExecuteW(NULL, L"open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
+						}
+
+						// 模组备份
+						if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(-1, 0))) {
+							if (selectedWorldIndex != -1) {
+								ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE"));
+							}
+						}
+
+						if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_OTHERS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+							static char mods_comment[256] = "";
+							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
+							ImGui::InputText(L("HINT_BACKUP_COMMENT"), mods_comment, IM_ARRAYSIZE(mods_comment));
+							ImGui::Separator();
+
+							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+								if (configs.count(currentConfigIndex)) {
+									filesystem::path tempPath = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot;
+									filesystem::path modsPath = tempPath.parent_path() / "mods";
+									if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
+										modsPath = tempPath / "mods";
+									}
+									thread backup_thread(DoOthersBackup, configs[currentConfigIndex], modsPath, utf8_to_wstring(mods_comment));
+									backup_thread.detach();
+									strcpy_s(mods_comment, "");
+								}
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::SameLine();
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+								strcpy_s(mods_comment, "");
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::EndPopup();
+						}
+
+						// 其他备份
+						float availWidth = ImGui::GetContentRegionAvail().x;
+						float btnWidth = ImGui::CalcTextSize(L("BUTTON_BACKUP_OTHERS")).x + ImGui::GetStyle().FramePadding.x * 2;
+						if (ImGui::Button(L("BUTTON_BACKUP_OTHERS"), ImVec2(btnWidth, 0))) {
+							if (selectedWorldIndex != -1) {
+								ImGui::OpenPopup("Others");
+							}
+						}
+						ImGui::SameLine();
+						ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97);
+						// 可以输入需要备份的其他内容的路径，比如 D:\Games\configs
+						static char buf[CONSTANT1] = "";
+						strcpy(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
+						if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
+							displayWorlds[selectedWorldIndex].effectiveConfig.othersPath = utf8_to_wstring(buf);
+							configs[displayWorlds[selectedWorldIndex].baseConfigIndex].othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
+						}
+
+						if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+							static char others_comment[CONSTANT1] = "";
+							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
+							ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));
+							ImGui::Separator();
+
+							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+								if (configs.count(currentConfigIndex)) {
+									thread backup_thread(DoOthersBackup, configs[currentConfigIndex], buf, utf8_to_wstring(others_comment));
+									backup_thread.detach();
+									strcpy_s(others_comment, "");
+								}
+								SaveConfigs(); // 保存一下路径
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::SameLine();
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+								strcpy_s(others_comment, "");
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::EndPopup();
+						}
+
+
+						if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
+							// 云同步逻辑
+							const Config& config = configs[displayWorlds[selectedWorldIndex].baseConfigIndex];
+							if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
+								console.AddLog(L("CLOUD_SYNC_START"));
+								wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
+								// 另起一个线程来执行云同步，避免阻塞后续操作
+								thread([rclone_command, config]() {
+									RunCommandInBackground(rclone_command, console, config.useLowPriority);
+									console.AddLog(L("CLOUD_SYNC_FINISH"));
+									}).detach();
+							}
+							else {
+								console.AddLog(L("CLOUD_SYNC_INVALID"));
+							}
+						}
+
+						// 导出分享
+						if (ImGui::Button(L("BUTTON_EXPORT_FOR_SHARING"), ImVec2(-1, 0))) {
+							if (selectedWorldIndex != -1) {
+								ImGui::OpenPopup(L("EXPORT_WINDOW_TITLE"));
+							}
+						}
+						if (ImGui::BeginPopupModal(L("EXPORT_WINDOW_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+							// 使用 static 变量来持有一次性配置，它们只在弹窗首次打开时被初始化
+							static Config tempExportConfig;
+							static char outputPathBuf[MAX_PATH];
+							static char descBuf[CONSTANT2];
+							static char blacklistAddItemBuf[CONSTANT1];
+							static int selectedBlacklistItem = -1;
+							static int selectedFormat = 0;
+
+							// 弹窗首次打开时，进行初始化
+							if (ImGui::IsWindowAppearing()) {
+								const auto& dw = displayWorlds[selectedWorldIndex];
+								tempExportConfig = dw.effectiveConfig; // 复制当前配置作为基础
+
+								// 智能设置默认输出路径为MineBackup当前位置
+								wchar_t currentPath[MAX_PATH];
+								GetCurrentDirectoryW(MAX_PATH, currentPath);
+								wstring cleanWorldName = SanitizeFileName(dw.name);
+								wstring finalPath = wstring(currentPath) + L"\\" + cleanWorldName + L"_shared." + tempExportConfig.zipFormat;
+								strncpy_s(outputPathBuf, wstring_to_utf8(finalPath).c_str(), sizeof(outputPathBuf));
+
+								// 预设默认黑名单
+								tempExportConfig.blacklist.clear();
+								tempExportConfig.blacklist.push_back(L"playerdata");
+								tempExportConfig.blacklist.push_back(L"stats");
+								tempExportConfig.blacklist.push_back(L"advancements");
+								tempExportConfig.blacklist.push_back(L"session.lock");
+								tempExportConfig.blacklist.push_back(L"level.dat_old");
+
+
+								// 清空上次的输入
+								memset(descBuf, 0, sizeof(descBuf));
+								memset(blacklistAddItemBuf, 0, sizeof(blacklistAddItemBuf));
+								selectedBlacklistItem = -1;
+							}
+
+							// 如果取消勾选 "包含数据包"，则动态添加/移除 datapacks
+							/*bool datapacksInBlacklist = find(tempBlacklist.begin(), tempBlacklist.end(), L"datapacks") != tempBlacklist.end();
+							if (includeDatapacks && datapacksInBlacklist) {
+								tempBlacklist.erase(remove(tempBlacklist.begin(), tempBlacklist.end(), L"datapacks"), tempBlacklist.end());
+							}
+							else if (!includeDatapacks && !datapacksInBlacklist) {
+								tempBlacklist.push_back(L"datapacks");
+							}*/
+
+							// --- UI 渲染 ---
+							ImGui::SeparatorText(L("GROUP_EXPORT_OPTIONS"));
+							ImGui::InputText(L("LABEL_EXPORT_PATH"), outputPathBuf, sizeof(outputPathBuf));
+							ImGui::SameLine();
+							if (ImGui::Button(L("BUTTON_BROWSE"))) {
+								strcpy_s(outputPathBuf, MAX_PATH, wstring_to_utf8(SelectFolderDialog() + L"\\" + displayWorlds[selectedWorldIndex].name + L"_shared." + tempExportConfig.zipFormat).c_str());
+							}
+
+							if (ImGui::RadioButton("7z", &selectedFormat, 0)) { tempExportConfig.zipFormat = L"7z"; } ImGui::SameLine();
+							if (ImGui::RadioButton("zip", &selectedFormat, 1)) { tempExportConfig.zipFormat = L"zip"; }
+
+							ImGui::SeparatorText(L("GROUP_EXPORT_BLACKLIST"));
+							ImGui::BeginChild("BlacklistChild", ImVec2(0, 150), true);
+							for (int i = 0; i < tempExportConfig.blacklist.size(); ++i) {
+								if (ImGui::Selectable(wstring_to_utf8(tempExportConfig.blacklist[i]).c_str(), selectedBlacklistItem == i)) {
+									selectedBlacklistItem = i;
+								}
+							}
+							ImGui::EndChild();
+
+							if (ImGui::Button(L("BUTTON_REMOVE_SELECTED")) && selectedBlacklistItem != -1) {
+								tempExportConfig.blacklist.erase(tempExportConfig.blacklist.begin() + selectedBlacklistItem);
+								selectedBlacklistItem = -1;
+							}
+							ImGui::InputTextWithHint("##AddItem", L("HINT_ADD_BLACKLIST_ITEM"), blacklistAddItemBuf, sizeof(blacklistAddItemBuf));
+							ImGui::SameLine();
+							if (ImGui::Button(L("BUTTON_ADD")) && strlen(blacklistAddItemBuf) > 0) {
+								tempExportConfig.blacklist.push_back(utf8_to_wstring(blacklistAddItemBuf));
+								memset(blacklistAddItemBuf, 0, sizeof(blacklistAddItemBuf));
+							}
+
+
+							ImGui::SeparatorText(L("GROUP_EXPORT_DESCRIPTION"));
+							ImGui::InputTextMultiline("##Desc", descBuf, sizeof(descBuf), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4), ImGuiInputTextFlags_AllowTabInput);
+
+							ImGui::Separator();
+							if (ImGui::Button(L("BUTTON_EXPORT"), ImVec2(120, 0))) {
+								const auto& dw = displayWorlds[selectedWorldIndex];
+
+								wstring worldFullPath = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
+
+								thread export_thread(DoExportForSharing, tempExportConfig, dw.name, worldFullPath, utf8_to_wstring(outputPathBuf), utf8_to_wstring(descBuf), ref(console));
+								export_thread.detach();
+
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::SameLine();
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+								ImGui::CloseCurrentPopup();
+							}
+
+							ImGui::EndPopup();
+						}
+
+
+					}
+
+					// 自动备份弹窗
+					if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+						bool is_task_running = false;
+						pair<int, int> taskKey = { -1,-1 };
+						vector<DisplayWorld> localDisplayWorlds; // 供显示使用
+						{
+							lock_guard<mutex> lock(g_task_mutex);
+							if (selectedWorldIndex >= 0) {
+								// 如果使用 displayWorlds：
+								localDisplayWorlds = BuildDisplayWorldsForSelection();
+								if (selectedWorldIndex < (int)localDisplayWorlds.size()) {
+									taskKey = { localDisplayWorlds[selectedWorldIndex].baseConfigIndex, localDisplayWorlds[selectedWorldIndex].baseWorldIndex };
+									is_task_running = (g_active_auto_backups.count(taskKey) > 0);
+								}
+							}
+						}
+
+						if (is_task_running) {
+							ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
+							ImGui::Separator();
+							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(240, 0))) {
+								if (g_active_auto_backups.count(taskKey)) {
+									// 1. 设置停止标志
+									g_active_auto_backups.at(taskKey).stop_flag = true;
+									// 2. 等待线程结束
+									if (g_active_auto_backups.at(taskKey).worker.joinable())
+										g_active_auto_backups.at(taskKey).worker.join();
+									// 3. 从管理器中移除
+									g_active_auto_backups.erase(taskKey);
+								}
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::SameLine();
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+								ImGui::CloseCurrentPopup();
+							}
+						}
+						else {
+							ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(BuildDisplayWorldsForSelection()[selectedWorldIndex].name).c_str());
+							ImGui::Separator();
+							static int interval = 15;
+							ImGui::InputInt(L("INTERVAL_MINUTES"), &interval);
+							if (interval < 1) interval = 1;
+							if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
+								// 注册并启动线程
+								lock_guard<mutex> lock(g_task_mutex);
+								if (taskKey.first >= 0) {
+									AutoBackupTask& task = g_active_auto_backups[taskKey];
+									task.stop_flag = false;
+
+									task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, interval, &console, ref(task.stop_flag));
+
+									ImGui::CloseCurrentPopup();
+								}
+							}
+							ImGui::SameLine();
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+								ImGui::CloseCurrentPopup();
+							}
+						}
+						ImGui::EndPopup();
+					}
+				}
+				else {
+					ImGui::SameLine();
+					ImGui::SeparatorText(L("WORLD_DETAILS_PANE_TITLE"));
+					ImVec2 window_size = ImGui::GetWindowSize();
+					ImVec2 text_size = ImGui::CalcTextSize(L("PROMPT_SELECT_WORLD"));
+					ImGui::SetCursorPos(ImVec2((window_size.x - text_size.x) * 0.5f, (window_size.y - text_size.y) * 0.5f));
+					ImGui::TextDisabled("%s", L("PROMPT_SELECT_WORLD"));
+				}
 			}
+			ImGui::End();
 			
-			ImGui::SameLine();
-			ImGui::BeginChild("RightColumn", ImVec2(rightW, 0), true);
-			console.DrawEmbedded();
-			ImGui::EndChild();
+			if (ImGui::Begin(L("CONSOLE_TITLE"))) {
+				console.DrawEmbedded();
+			}
+			ImGui::End();
+			
 
 			if (showSettings) ShowSettingsWindow();
 			if (showHistoryWindow) {
@@ -2232,9 +2174,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				}
 			}
 			//console.Draw(L("CONSOLE_TITLE"), &showMainApp);
-			//ImGui::EndChild();
-			ImGui::End();
-			ImGui::End();
 		}
 
 		// Rendering
@@ -2311,8 +2250,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 
 	// 撤销热键
-	//::UnregisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID);
-	//::UnregisterHotKey(hwnd, MINERESTORE_HOTKEY_ID);
+	::UnregisterHotKey(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
+	::UnregisterHotKey(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 	return 0;
 }
 
@@ -2324,6 +2263,7 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_USER + 1: // 托盘图标消息
 		if (lParam == WM_LBUTTONUP) {
 			showMainApp = true;
+			glfwShowWindow(wc);
 		}
 		else if (lParam == WM_RBUTTONUP) {
 			HMENU hMenu = CreatePopupMenu();
@@ -2363,10 +2303,12 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		switch (LOWORD(wParam)) {
 		case 1001:  // 点击“打开界面”
 			showMainApp = true;
+			glfwShowWindow(wc);
 			SetForegroundWindow(hWnd);
 			break;
 		case 1002:  // 点击“关闭”
 			// 先移除托盘图标，再退出程序
+			SaveConfigs();
 			done = true;
 			Shell_NotifyIcon(NIM_DELETE, &nid);
 			PostQuitMessage(0);

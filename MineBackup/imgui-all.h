@@ -13,7 +13,7 @@
 #pragma comment (lib,"glfw3.lib")
 #pragma comment (lib,"opengl32.lib") 
 #include "imgui/imgui.h"
-//#include "imgui/imgui_internal.h"  // °üº¬ÄÚ²¿
+#include <imgui_internal.h>
 #include "imgui/imgui_impl_opengl3.h"
 #include "imgui/imgui_impl_glfw.h"
 #include "stb_image.h"
