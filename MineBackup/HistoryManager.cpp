@@ -1,36 +1,25 @@
-#include <cstdio>
-#include <string>
 #include <map>
 #include <vector>
 #include <fstream>
 #include <sstream>
-#include <Windows.h>
+#include "AppState.h"
+#include "text_to_text.h"
 using namespace std;
 
-string wstring_to_utf8(const wstring& wstr);
-wstring utf8_to_wstring(const string& str);
-string gbk_to_utf8(const string& gbk);
-string utf8_to_gbk(const string& utf8);
-
-extern struct HistoryEntry {
-	wstring timestamp_str;
-	wstring worldName;
-	wstring backupFile;
-	wstring backupType;
-	wstring comment;
-};
-extern map<int, vector<HistoryEntry>> g_history;
-
-// 新增：将历史记录写入文件
+void SetFileAttributesWin(const wstring& path, bool isHidden);
+// 将历史记录保存到隐藏的 history.dat 文件
+// 文件结构：
+// [Config<id>]
+// Entry=<timestamp>|<worldName>|<backupFile>|<backupType>|<comment>
 void SaveHistory() {
 	const wstring filename = L"history.dat"; // 使用 .dat 并设为隐藏，避免用户误操作
-	SetFileAttributes(filename.c_str(), FILE_ATTRIBUTE_NORMAL);
+	SetFileAttributesWin(filename, 0);
 	wofstream out(filename, ios::binary);
 	out.clear();
 	if (!out.is_open()) return;
 	out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
 
-	for (const auto& config_pair : g_history) {
+	for (const auto& config_pair : g_appState.g_history) {
 		out << L"[Config" << config_pair.first << L"]\n";
 		for (const auto& entry : config_pair.second) {
 			// 使用 | 作为分隔符
@@ -38,18 +27,20 @@ void SaveHistory() {
 				<< entry.worldName << L"|"
 				<< entry.backupFile << L"|"
 				<< entry.backupType << L"|"
-				<< entry.comment << L"\n";
+				<< entry.comment 
+				<< (entry.isImportant ? L"|important" : L"")
+				<< L"\n";
 		}
 	}
 	out.close();
 	// 设置文件为隐藏属性
-	SetFileAttributesW(filename.c_str(), FILE_ATTRIBUTE_HIDDEN);
+	SetFileAttributesWin(filename, 1);
 }
 
 // 从文件加载历史记录
 void LoadHistory() {
 	const wstring filename = L"history.dat";
-	g_history.clear();
+	g_appState.g_history.clear();
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) return;
 
@@ -78,23 +69,24 @@ void LoadHistory() {
 					while (getline(ss, segment, L'|')) {
 						segments.push_back(segment);
 					}
-					if (segments.size() == 5) {
+					if (segments.size() >= 5) {
 						HistoryEntry entry;
 						entry.timestamp_str = segments[0];
 						entry.worldName = segments[1];
 						entry.backupFile = segments[2];
 						entry.backupType = segments[3];
 						entry.comment = segments[4];
-						g_history[current_config_id].push_back(entry);
+						entry.isImportant = (segments.size() >= 6 && segments[5] == L"important");
+						g_appState.g_history[current_config_id].push_back(entry);
 					}
-					else if (segments.size() == 4) { // 用户没有设置注释
+					else if (segments.size() == 4) { // 没有设置注释
 						HistoryEntry entry;
 						entry.timestamp_str = segments[0];
 						entry.worldName = segments[1];
 						entry.backupFile = segments[2];
 						entry.backupType = segments[3];
 						entry.comment = L"";
-						g_history[current_config_id].push_back(entry);
+						g_appState.g_history[current_config_id].push_back(entry);
 					}
 				}
 			}
@@ -118,14 +110,14 @@ void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& b
 	entry.backupType = backupType;
 	entry.comment = comment;
 
-	g_history[configIndex].push_back(entry);
+	g_appState.g_history[configIndex].push_back(entry);
 	SaveHistory();
 }
 
 // 删除指定的历史记录条目（通过备份文件名匹配）
 void RemoveHistoryEntry(int configIndex, const wstring& backupFileToRemove) {
-	if (g_history.count(configIndex)) {
-		auto& history_vec = g_history[configIndex];
+	if (g_appState.g_history.count(configIndex)) {
+		auto& history_vec = g_appState.g_history[configIndex];
 		history_vec.erase(
 			remove_if(history_vec.begin(), history_vec.end(),
 				[&](const HistoryEntry& entry) {

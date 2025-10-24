@@ -1,4 +1,5 @@
 #include "json.hpp"
+#include "text_to_text.h"
 #include <string>
 #include <map>
 #include <filesystem>
@@ -7,85 +8,6 @@
 #include <regex>
 using namespace std;
 
-// 注册表查询
-string GetRegistryValue(const string& keyPath, const string& valueName)
-{
-	HKEY hKey;
-	string valueData;
-	if (RegOpenKeyExA(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-		char buffer[1024];
-		DWORD dataSize = sizeof(buffer);
-		if (RegGetValueA(hKey, NULL, valueName.c_str(), RRF_RT_ANY, NULL, buffer, &dataSize) == ERROR_SUCCESS) {
-			valueData = buffer;
-		}
-		RegCloseKey(hKey);
-	}
-	else
-		return "";
-	return valueData;
-}
-
-wstring GetLastOpenTime(const wstring& worldPath) {
-	try {
-		auto ftime = filesystem::last_write_time(worldPath);
-		// 转换为 system_clock::time_point
-		auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
-			ftime - filesystem::file_time_type::clock::now()
-			+ chrono::system_clock::now()
-		);
-		time_t cftime = chrono::system_clock::to_time_t(sctp);
-		wchar_t buf[64];
-		struct tm timeinfo;
-		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtime要换成更安全的localtime
-		if (localtime_s(&timeinfo, &cftime) == 0) {
-			wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
-			return buf;
-		}
-		else {
-			return L"N/A";
-		}
-	}
-	catch (...) {
-		return L"N/A";
-	}
-}
-
-wstring GetLastBackupTime(const wstring& backupDir) {
-	time_t latest = 0;
-	try {
-		if (filesystem::exists(backupDir)) {
-			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-				if (entry.is_regular_file()) {
-					auto ftime = entry.last_write_time();
-					// 转换为 system_clock::time_point
-					auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
-						ftime - filesystem::file_time_type::clock::now()
-						+ chrono::system_clock::now()
-					);
-					time_t cftime = chrono::system_clock::to_time_t(sctp);
-					if (cftime > latest) latest = cftime;
-				}
-			}
-		}
-		if (latest == 0) return L"/";
-		wchar_t buf[64];
-		struct tm timeinfo;
-		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtime要换成更安全的localtime
-		if (localtime_s(&timeinfo, &latest) == 0) {
-			wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
-			return buf;
-		}
-		else {
-			return L"N/A";
-		}
-	}
-	catch (...) {
-		return L"N/A";
-	}
-}
-
-wstring utf8_to_wstring(const string& str);
-string wstring_to_utf8(const wstring& str);
 
 // 计算文件的哈希值（这是一个简单的实现，很不严格哒）
 size_t CalculateFileHash(const filesystem::path& filepath) {
@@ -197,24 +119,7 @@ vector<filesystem::path> GetChangedFiles(
 	return changedFiles;
 }
 
-void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const map<wstring, size_t>& currentState) {
-	filesystem::create_directories(metadataPath);
-	filesystem::path metadataFile = metadataPath / L"metadata.json";
 
-	nlohmann::json metadata;
-	metadata["version"] = 1;
-	metadata["lastBackupFile"] = wstring_to_utf8(newBackupFile);
-	metadata["basedOnBackupFile"] = wstring_to_utf8(basedOnBackupFile);
-
-	nlohmann::json fileStates = nlohmann::json::object();
-	for (const auto& pair : currentState) {
-		fileStates[wstring_to_utf8(pair.first)] = pair.second;
-	}
-	metadata["fileStates"] = fileStates;
-
-	ofstream o(metadataFile, ios::trunc);
-	o << metadata.dump(2); // 两个空格缩进
-}
 
 
 // 获取已更改的文件列表，并更新状态文件
@@ -270,40 +175,7 @@ bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& 
 	return true;
 }
 
-// 开机自启功能终于来啦
-// configType: 1 特殊配置
-void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable) {
-	HKEY hKey;
-	const wstring keyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-	// LSTATUS是Windows API中标准返回类型
-	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_WRITE, &hKey);
-
-	if (status == ERROR_SUCCESS) {
-		if (enable) {
-			wstring command;
-			if (configType) // 特殊配置
-				command = L"\"" + appPath + L"\" -specialcfg " + to_wstring(configId);
-			else // 普通配置
-				command = L"\"" + appPath + L"\" -cfg " + to_wstring(configId);
-
-			// RegSetValueExW 需要6个参数: HKEY, LPCWSTR, DWORD, DWORD, const BYTE*, DWORD
-			RegSetValueExW(
-				hKey,
-				utf8_to_wstring(appName).c_str(),
-				0,
-				REG_SZ,
-				(const BYTE*)command.c_str(),
-				(DWORD)((command.length() + 1) * sizeof(wchar_t))
-			);
-		}
-		else {
-			// RegDeleteValueW 需要2个参数: HKEY, LPCWSTR
-			RegDeleteValueW(hKey, utf8_to_wstring(appName).c_str());
-		}
-		RegCloseKey(hKey);
-	}
-}
 
 wstring SanitizeFileName(const wstring& input) {
 	wstring output = input;

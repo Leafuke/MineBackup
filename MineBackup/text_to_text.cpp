@@ -1,6 +1,7 @@
 #include <string>
 #include <windows.h>
 using namespace std;
+
 // 辅助函数：wstring <-> utf8 string（使用WinAPI，兼容C++17+）本地多字节编码（GBK）转UTF-8
 string wstring_to_utf8(const wstring& wstr) {
     if (wstr.empty()) return string();

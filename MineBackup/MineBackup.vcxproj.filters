@@ -39,12 +39,6 @@
     <ClCompile Include="imgui\imgui_draw.cpp">
       <Filter>ImGui</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_impl_dx11.cpp">
-      <Filter>ImGui</Filter>
-    </ClCompile>
-    <ClCompile Include="imgui\imgui_impl_win32.cpp">
-      <Filter>ImGui</Filter>
-    </ClCompile>
     <ClCompile Include="imgui\imgui_tables.cpp">
       <Filter>ImGui</Filter>
     </ClCompile>
@@ -60,7 +54,7 @@
     <ClCompile Include="basic_func.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="history.cpp">
+    <ClCompile Include="HistoryManager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="KnotLink\main.cpp">
@@ -68,6 +62,39 @@
     </ClCompile>
     <ClCompile Include="MineBackup.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_impl_glfw.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_impl_opengl3.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="BackupManager.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Platform_win.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="AppState.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="i18n.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="ConfigManager.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Console.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Broadcast.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="OpenSocketResponser.cpp">
+      <Filter>KnotLink</Filter>
+    </ClCompile>
+    <ClCompile Include="SignalSender.cpp">
+      <Filter>KnotLink</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -87,12 +114,6 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imgui.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imgui_impl_dx11.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imgui_impl_win32.h">
       <Filter>ImGui</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imgui_internal.h">
@@ -122,6 +143,39 @@
     <ClInclude Include="json.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="imgui\imgui_impl_opengl3.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui\imgui_impl_glfw.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui\imgui_impl_opengl3_loader.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="Platform_win.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="text_to_text.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="AppState.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="ConfigManager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Console.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Broadcast.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="HistoryManager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="BackupManager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MineBackup.rc">
@@ -133,21 +187,6 @@
     <None Include="D:\Downloads\Programs\MineBackup\7za.exe" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="..\..\..\..\Pictures\图标\mine10.ico">
-      <Filter>资源文件</Filter>
-    </Image>
-    <Image Include="..\..\..\..\Pictures\图标\mine20.ico">
-      <Filter>资源文件</Filter>
-    </Image>
-    <Image Include="..\..\..\..\Pictures\图标\mine30.ico">
-      <Filter>资源文件</Filter>
-    </Image>
-    <Image Include="..\..\..\..\Pictures\图标\mine40.ico">
-      <Filter>资源文件</Filter>
-    </Image>
-    <Image Include="..\..\..\..\Pictures\图标\mine50.ico">
-      <Filter>资源文件</Filter>
-    </Image>
     <Image Include="D:\Pictures\图标\mine10.ico">
       <Filter>资源文件</Filter>
     </Image>
