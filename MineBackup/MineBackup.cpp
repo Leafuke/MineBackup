@@ -39,8 +39,7 @@ int last_interval = 15;
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 wstring Fontss;
 bool showSettings = false;
-bool isSilence = false;
-
+bool isSilence = false, isSafeDelete = false;
 bool specialSetting = false;
 bool g_CheckForUpdates = true, g_RunOnStartup = false;
 bool showHistoryWindow = false;
@@ -70,26 +69,16 @@ static void glfw_error_callback(int error, const char* description)
 
 inline void ApplyTheme(int& theme);
 wstring SanitizeFileName(const wstring& input);
-void CheckForUpdatesThread();
-void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool ExtractFontToTempFile(wstring& extractedPath);
 bool Extract7zToTempFile(wstring& extractedPath);
-void TriggerHotkeyBackup();
-void TriggerHotkeyRestore();
 void GameSessionWatcherThread();
-
 bool IsFileLocked(const wstring& path);
 bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
-wstring SelectFileDialog(HWND hwndOwner = NULL);
-wstring SelectFolderDialog(HWND hwndOwner = NULL);
 size_t CalculateFileHash(const filesystem::path& filepath);
 string GetRegistryValue(const string& keyPath, const string& valueName);
-wstring GetLastOpenTime(const wstring& worldPath);
-wstring GetLastBackupTime(const wstring& backupDir);
-
 void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const map<wstring, size_t>& currentState);
 
 
@@ -98,11 +87,9 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex);
 vector<DisplayWorld> BuildDisplayWorldsForSelection();
 
 LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-void LimitBackupFiles(const wstring& folderPath, int limit, Console* console = nullptr);
-bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 
+bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 string ProcessCommand(const string& commandStr, Console* console);
-wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& snapshotPath, Console& console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
 void RunSpecialMode(int configId);
 void CheckForConfigConflicts();
@@ -112,7 +99,7 @@ void ConsoleLog(Console* console, const char* format, ...);
 
 
 // Main code
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
 	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
 	wchar_t exePath[MAX_PATH];
@@ -122,16 +109,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//_setmode(_fileno(stdout), _O_U8TEXT);
 	//_setmode(_fileno(stdin), _O_U8TEXT);
 	//CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-	//ImGui_ImplWin32_EnableDpiAwareness(); 这是win32特有的，现在迁移到glfw，需要重新实现
 
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
 	CreateTrayIcon(hwnd_hidden, hInstance);
+	RegisterHotkeys(hwnd_hidden);
 
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
 	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
-	if (!ExtractFontToTempFile(g_FontTempPath)) {
-		printf("\a");
+	if (!sevenZipExtracted || !fontExtracted) {
+		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"));
 		return 0;
 	}
 
@@ -252,7 +239,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	int width, height, channels;
 	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
-	// unsigned char* pixels = stbi_load("path/to/icon.png", &width, &height, 0, 4); 
+	// unsigned char* pixels = stbi_load("icon.png", &width, &height, 0, 4); 
 	HRSRC hRes = FindResource(hInstance, MAKEINTRESOURCE(IDI_ICON3), RT_GROUP_ICON);
 	HGLOBAL hMem = LoadResource(hInstance, hRes);
 	void* pMem = LockResource(hMem);
@@ -1364,7 +1351,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 							}
 						}
 						ImGui::SameLine();
-						ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97);
+						ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97f);
 						// 可以输入需要备份的其他内容的路径，比如 D:\Games\g_appState.configs
 						static char buf[CONSTANT1] = "";
 						strcpy(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
@@ -2187,6 +2174,7 @@ void ShowSettingsWindow() {
 			if (ImGui::RadioButton("7z", &format_choice, 0)) { cfg.zipFormat = L"7z"; } ImGui::SameLine();
 			if (ImGui::RadioButton("zip", &format_choice, 1)) { cfg.zipFormat = L"zip"; }
 
+
 			ImGui::Text(L("TEXT_BACKUP_MODE")); ImGui::SameLine();
 			ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_NORMAL"), &cfg.backupMode, 1);
 			ImGui::SameLine();
@@ -2223,6 +2211,25 @@ void ShowSettingsWindow() {
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(L("TIP_SKIP_IF_UNCHANGED"));
 			}
+
+			const char* zip_methods[] = { "LZMA2", "Deflate", "BZip2", "ZStandard" };
+			int method_idx = 0;
+			for (int i = 0; i < IM_ARRAYSIZE(zip_methods); ++i) {
+				if (_wcsicmp(cfg.zipMethod.c_str(), utf8_to_wstring(zip_methods[i]).c_str()) == 0) {
+					method_idx = i;
+					break;
+				}
+			}
+
+			if (ImGui::Combo(L("COMPRESSION_METHOD"), &method_idx, zip_methods, IM_ARRAYSIZE(zip_methods))) {
+				cfg.zipMethod = utf8_to_wstring(zip_methods[method_idx]);
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", L("TIP_COMPRESSION_METHOD"));
+			}
+			
+			
+
 			// CPU 线程
 			int max_threads = thread::hardware_concurrency();
 			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &cfg.cpuThreads, 0, max_threads);
@@ -2231,6 +2238,9 @@ void ShowSettingsWindow() {
 			}
 			ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
 			ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
+			ImGui::SameLine();
+			ImGui::Checkbox(L("IS_SAFE_DELETE"), &isSafeDelete);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("IS_SAFE_DELETE_TIP"));
 			ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
 			ImGui::SeparatorText(L("BLACKLIST_HEADER"));
@@ -2803,7 +2813,18 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					ImGui::TextUnformatted(entry_label_utf8.c_str());
 					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 30, p_min.y + 5 + ImGui::GetTextLineHeightWithSpacing()));
 					ImGui::TextDisabled("%s", wstring_to_utf8(entry->timestamp_str + L" | " + entry->comment).c_str());
+					ImGui::SameLine();
+					ImGui::SetCursorScreenPos(ImVec2(p_max.x - 25, p_min.y + (p_max.y - p_min.y) / 2 - ImGui::GetTextLineHeight() / 2));
 
+					if (entry->isImportant) {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f)); // Gold color for important
+					}
+					else {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]); // Grey for not important
+					}
+					ImGui::Text(ICON_FA_STAR);
+
+					ImGui::PopStyleColor();
 					ImGui::PopID();
 				}
 				ImGui::TreePop();
@@ -2939,7 +2960,12 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
 			ShellExecuteW(NULL, L"open", L"explorer.exe", cmd.c_str(), NULL, SW_SHOWNORMAL);
 		}
+		ImGui::SameLine();
+		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
+			selected_entry->isImportant = !selected_entry->isImportant;
+		}
 		if (!file_exists) ImGui::EndDisabled();
+
 
 		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
@@ -2984,11 +3010,19 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::Separator();
 			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
 				filesystem::path path_to_delete = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / entry_to_delete->worldName / entry_to_delete->backupFile;
-				if (filesystem::exists(path_to_delete)) {
-					filesystem::remove(path_to_delete);
+				DoDeleteBackup(g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
+				is_comment_editing = false;
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(L("CONFIRM_SAFEDELETE"), ImVec2(120, 0))) {
+				if (entry_to_delete->backupType.find(L"Smart") != wstring::npos) {
+					thread safe_delete_thread(DoSafeDeleteBackup, g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
+					safe_delete_thread.detach();
 				}
-				RemoveHistoryEntry(tempCurrentConfigIndex, entry_to_delete->backupFile);
-				//selected_entry = nullptr; 会崩溃
+				else {
+					MessageBoxWin("Error", "Not a [Smart] Backup");
+				}
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();
 			}
@@ -2996,6 +3030,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
 			ImGui::EndPopup();
 		}
+
+		
 
 		ImGui::SeparatorText(L("HISTORY_GROUP_COMMENT"));
 		if (is_comment_editing) {
@@ -3137,33 +3173,7 @@ void GameSessionWatcherThread() {
 	console.AddLog(L("LOG_EXIT_WATCHER_STOP"));
 }
 
-void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, Console& console) {
-	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
-	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
-	vector<filesystem::path> filesToDelete;
-	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
-
-	// 执行删除操作
-	for (const auto& path : filesToDelete) {
-		try {
-			if (filesystem::exists(path)) {
-				filesystem::remove(path);
-				console.AddLog("  - %s OK", wstring_to_utf8(path.filename().wstring()).c_str());
-				// 从历史记录中移除对应条目
-				RemoveHistoryEntry(g_appState.currentConfigIndex, path.filename().wstring());
-			}
-			else {
-				console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
-				RemoveHistoryEntry(g_appState.currentConfigIndex, path.filename().wstring());
-			}
-		}
-		catch (const filesystem::filesystem_error& e) {
-			console.AddLog(L("LOG_ERROR_DELETE_BACKUP"), wstring_to_utf8(path.filename().wstring()).c_str(), e.what());
-		}
-	}
-	SaveHistory(); // 保存历史记录的更改
-}
 
 // 构建当前选择（普通 / 特殊）下用于显示的世界列表
 static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
@@ -3278,7 +3288,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		ofs.close();
 
 		// 构建并执行 7z 命令
-		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -mx=" + to_wstring(tempConfig.zipLevel) +
+		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(tempConfig.zipLevel) +
 			L" \"" + outputPath + L"\"" + L" @" + filelist_path;
 
 		// 工作目录应为原始世界路径，以确保压缩包内路径正确
@@ -3300,119 +3310,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 	filesystem::remove_all(temp_export_dir);
 }
 
-void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
-	console.AddLog(L("LOG_SAFE_DELETE_START"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
-	if (entryToDelete.isImportant) {
-		console.AddLog(L("LOG_SAFE_DELETE_ABORT_IMPORTANT"), wstring_to_utf8(entryToDelete.backupFile).c_str());
-		return;
-	}
-
-	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
-	filesystem::path pathToDelete = backupDir / entryToDelete.backupFile;
-	const HistoryEntry* nextEntryRaw = nullptr;
-
-	// Create a sorted list of history entries for this world to reliably find the next one
-	vector<const HistoryEntry*> worldHistory;
-	for (const auto& entry : g_appState.g_history[configIndex]) {
-		if (entry.worldName == entryToDelete.worldName) {
-			worldHistory.push_back(&entry);
-		}
-	}
-	sort(worldHistory.begin(), worldHistory.end(), [](const auto* a, const auto* b) {
-		return a->timestamp_str < b->timestamp_str;
-		});
-
-	for (size_t i = 0; i < worldHistory.size(); ++i) {
-		if (worldHistory[i]->backupFile == entryToDelete.backupFile) {
-			if (i + 1 < worldHistory.size()) {
-				nextEntryRaw = worldHistory[i + 1];
-			}
-			break;
-		}
-	}
-
-	if (!nextEntryRaw || nextEntryRaw->backupType == L"Full") {
-		console.AddLog(L("LOG_SAFE_DELETE_END_OF_CHAIN"));
-		DoDeleteBackup(config, entryToDelete, console);
-		return;
-	}
-
-	if (nextEntryRaw->isImportant) {
-		console.AddLog(L("LOG_SAFE_DELETE_ABORT_IMPORTANT_TARGET"), wstring_to_utf8(nextEntryRaw->backupFile).c_str());
-		return;
-	}
-
-	const HistoryEntry nextEntry = *nextEntryRaw;
-	filesystem::path pathToMergeInto = backupDir / nextEntry.backupFile;
-	console.AddLog(L("LOG_SAFE_DELETE_MERGE_INFO"), wstring_to_utf8(entryToDelete.backupFile).c_str(), wstring_to_utf8(nextEntry.backupFile).c_str());
-
-	filesystem::path tempExtractDir = filesystem::temp_directory_path() / L"MineBackup_Merge";
-
-	try {
-		filesystem::remove_all(tempExtractDir);
-		filesystem::create_directories(tempExtractDir);
-
-		console.AddLog(L("LOG_SAFE_DELETE_STEP_1"));
-		wstring cmdExtract = L"\"" + config.zipPath + L"\" x \"" + pathToDelete.wstring() + L"\" -o\"" + tempExtractDir.wstring() + L"\" -y";
-		if (!RunCommandInBackground(cmdExtract, console, config.useLowPriority)) {
-			throw runtime_error("Failed to extract source archive.");
-		}
-
-		console.AddLog(L("LOG_SAFE_DELETE_STEP_2"));
-		auto original_mod_time = filesystem::last_write_time(pathToMergeInto);
-
-		wstring cmdMerge = L"\"" + config.zipPath + L"\" a \"" + pathToMergeInto.wstring() + L"\" .\\*";
-		if (!RunCommandInBackground(cmdMerge, console, config.useLowPriority, tempExtractDir.wstring())) {
-			filesystem::last_write_time(pathToMergeInto, original_mod_time);
-			throw runtime_error("Failed to merge files into the target archive.");
-		}
-		filesystem::last_write_time(pathToMergeInto, original_mod_time);
-
-		filesystem::path finalArchivePath = pathToMergeInto;
-		wstring finalBackupType = nextEntry.backupType;
-		wstring finalBackupFile = nextEntry.backupFile;
-
-		if (entryToDelete.backupType == L"Full") {
-			console.AddLog(L("LOG_SAFE_DELETE_STEP_3"));
-			finalBackupType = L"Full";
-			wstring newFilename = nextEntry.backupFile;
-			size_t pos = newFilename.find(L"[Smart]");
-			if (pos != wstring::npos) {
-				newFilename.replace(pos, 7, L"[Full]");
-				finalBackupFile = newFilename;
-				filesystem::path newPath = backupDir / newFilename;
-				filesystem::rename(pathToMergeInto, newPath);
-				finalArchivePath = newPath;
-				console.AddLog(L("LOG_SAFE_DELETE_RENAMED"), wstring_to_utf8(newFilename).c_str());
-			}
-		}
-		else {
-			console.AddLog(L("LOG_SAFE_DELETE_STEP_3_SKIP"));
-		}
-
-		console.AddLog(L("LOG_SAFE_DELETE_STEP_4"));
-		filesystem::remove(pathToDelete);
-		RemoveHistoryEntry(configIndex, entryToDelete.backupFile);
-
-		for (auto& entry : g_appState.g_history[configIndex]) {
-			if (entry.worldName == nextEntry.worldName && entry.backupFile == nextEntry.backupFile) {
-				entry.backupFile = finalBackupFile;
-				entry.backupType = finalBackupType;
-				break;
-			}
-		}
-
-		SaveHistory();
-		filesystem::remove_all(tempExtractDir);
-		console.AddLog(L("LOG_SAFE_DELETE_SUCCESS"));
-
-	}
-	catch (const exception& e) {
-		console.AddLog(L("LOG_SAFE_DELETE_FATAL_ERROR"), e.what());
-		filesystem::remove_all(tempExtractDir);
-	}
-}
 
 void TriggerHotkeyBackup() {
 	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));

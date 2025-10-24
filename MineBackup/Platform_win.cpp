@@ -8,6 +8,7 @@
 #include "json.hpp"
 #include <GLFW/glfw3.h>
 #include <filesystem>
+#include <chrono>
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
 using namespace std;
@@ -215,7 +216,7 @@ void CheckForUpdatesThread() {
 	BOOL bResults = FALSE;
 	HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
 
-	hSession = WinHttpOpen(L"MineBackup Update Checker/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	hSession = WinHttpOpen(L"MineBackup Update Checker/2.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
 	if (!hSession) goto cleanup;
 
 	hConnect = WinHttpConnect(hSession, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -224,7 +225,9 @@ void CheckForUpdatesThread() {
 	hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/repos/Leafuke/MineBackup/releases/latest", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
 	if (!hRequest) goto cleanup;
 
-	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+	//WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+
+	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", (DWORD)(wcslen(L"User-Agent: MineBackup-Update-Checker\r\n") * sizeof(wchar_t)), WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 
 	bResults = WinHttpReceiveResponse(hRequest, NULL);
 	if (!bResults) goto cleanup;
@@ -248,17 +251,17 @@ void CheckForUpdatesThread() {
 		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
 			latestVersion = latestVersion.substr(1);
 		}
-		short pos1 = latestVersion.find('.');
-		short pos2 = latestVersion.find('.', pos1 + 1);
-		short pos3 = latestVersion.find('-');
-		short pos11 = CURRENT_VERSION.find('.');
-		short pos22 = CURRENT_VERSION.find('.', pos1 + 1);
-		short pos33 = CURRENT_VERSION.find('-');
+		size_t pos1 = latestVersion.find('.');
+		size_t pos2 = latestVersion.find('.', pos1 + 1);
+		size_t pos3 = latestVersion.find('-');
+		size_t pos11 = CURRENT_VERSION.find('.');
+		size_t pos22 = CURRENT_VERSION.find('.', pos1 + 1);
+		size_t pos33 = CURRENT_VERSION.find('-');
 		bool isNew = false;
 		// 把所有数值都赋值
-		short curMajor = stoi(CURRENT_VERSION.substr(0, pos11)), curMinor1 = stoi(CURRENT_VERSION.substr(pos11 + 1, pos22)), newMajor = stoi(latestVersion.substr(0, pos1)), newMinor1 = stoi(latestVersion.substr(pos1 + 1, pos2));
-		short curMinor2 = pos33 == string::npos ? stoi(CURRENT_VERSION.substr(pos22 + 1)) : stoi(CURRENT_VERSION.substr(pos22 + 1, pos33)), newMinor2 = pos3 == string::npos ? stoi(latestVersion.substr(pos2 + 1)) : stoi(latestVersion.substr(pos2 + 1, pos3));
-		short curSp = pos33 == string::npos ? 0 : stoi(CURRENT_VERSION.substr(pos33 + 3)), newSp = pos3 == string::npos ? 0 : stoi(latestVersion.substr(pos3 + 3));
+		size_t curMajor = stoi(CURRENT_VERSION.substr(0, pos11)), curMinor1 = stoi(CURRENT_VERSION.substr(pos11 + 1, pos22)), newMajor = stoi(latestVersion.substr(0, pos1)), newMinor1 = stoi(latestVersion.substr(pos1 + 1, pos2));
+		size_t curMinor2 = pos33 == string::npos ? stoi(CURRENT_VERSION.substr(pos22 + 1)) : stoi(CURRENT_VERSION.substr(pos22 + 1, pos33)), newMinor2 = pos3 == string::npos ? stoi(latestVersion.substr(pos2 + 1)) : stoi(latestVersion.substr(pos2 + 1, pos3));
+		size_t curSp = pos33 == string::npos ? 0 : stoi(CURRENT_VERSION.substr(pos33 + 3)), newSp = pos3 == string::npos ? 0 : stoi(latestVersion.substr(pos3 + 3));
 		// 有这几种版本号 v1.7.9 v1.7.10 v1.7.9-sp1
 		// 这一段我写得非常非常不满意，但是……将就着吧
 
@@ -328,4 +331,115 @@ cleanup:
 	if (hConnect) WinHttpCloseHandle(hConnect);
 	if (hSession) WinHttpCloseHandle(hSession);
 	g_UpdateCheckDone = true;
+}
+
+// 注册表查询
+string GetRegistryValue(const string & keyPath, const string & valueName)
+{
+	HKEY hKey;
+	string valueData;
+	if (RegOpenKeyExA(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+		char buffer[1024];
+		DWORD dataSize = sizeof(buffer);
+		if (RegGetValueA(hKey, NULL, valueName.c_str(), RRF_RT_ANY, NULL, buffer, &dataSize) == ERROR_SUCCESS) {
+			valueData = buffer;
+		}
+		RegCloseKey(hKey);
+	}
+	else
+		return "";
+	return valueData;
+}
+
+wstring GetLastOpenTime(const wstring& worldPath) {
+	try {
+		auto ftime = filesystem::last_write_time(worldPath);
+		// 转换为 system_clock::time_point
+		auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
+			ftime - filesystem::file_time_type::clock::now()
+			+ chrono::system_clock::now()
+		);
+		time_t cftime = chrono::system_clock::to_time_t(sctp);
+		wchar_t buf[64];
+		struct tm timeinfo;
+		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtime要换成更安全的localtime
+		if (localtime_s(&timeinfo, &cftime) == 0) {
+			wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
+			return buf;
+		}
+		else {
+			return L"N/A";
+		}
+	}
+	catch (...) {
+		return L"N/A";
+	}
+}
+
+wstring GetLastBackupTime(const wstring& backupDir) {
+	time_t latest = 0;
+	try {
+		if (filesystem::exists(backupDir)) {
+			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+				if (entry.is_regular_file()) {
+					auto ftime = entry.last_write_time();
+					// 转换为 system_clock::time_point
+					auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
+						ftime - filesystem::file_time_type::clock::now()
+						+ chrono::system_clock::now()
+					);
+					time_t cftime = chrono::system_clock::to_time_t(sctp);
+					if (cftime > latest) latest = cftime;
+				}
+			}
+		}
+		if (latest == 0) return L"/";
+		wchar_t buf[64];
+		struct tm timeinfo;
+		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtime要换成更安全的localtime
+		if (localtime_s(&timeinfo, &latest) == 0) {
+			wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
+			return buf;
+		}
+		else {
+			return L"N/A";
+		}
+	}
+	catch (...) {
+		return L"N/A";
+	}
+}
+
+// configType: 1 特殊配置
+void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable) {
+	HKEY hKey;
+	const wstring keyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+	// LSTATUS是Windows API中标准返回类型
+	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_WRITE, &hKey);
+
+	if (status == ERROR_SUCCESS) {
+		if (enable) {
+			wstring command;
+			if (configType) // 特殊配置
+				command = L"\"" + appPath + L"\" -specialcfg " + to_wstring(configId);
+			else // 普通配置
+				command = L"\"" + appPath + L"\" -cfg " + to_wstring(configId);
+
+			// RegSetValueExW 需要6个参数: HKEY, LPCWSTR, DWORD, DWORD, const BYTE*, DWORD
+			RegSetValueExW(
+				hKey,
+				utf8_to_wstring(appName).c_str(),
+				0,
+				REG_SZ,
+				(const BYTE*)command.c_str(),
+				(DWORD)((command.length() + 1) * sizeof(wchar_t))
+			);
+		}
+		else {
+			// RegDeleteValueW 需要2个参数: HKEY, LPCWSTR
+			RegDeleteValueW(hKey, utf8_to_wstring(appName).c_str());
+		}
+		RegCloseKey(hKey);
+	}
 }

@@ -17,7 +17,6 @@
 
 // 结构体们
 struct Config {
-	int backupMode;
 	std::wstring saveRoot;
 	std::vector<std::pair<std::wstring, std::wstring>> worlds; // {name, desc}
 	std::wstring backupPath;
@@ -25,10 +24,11 @@ struct Config {
 	std::wstring zipFormat = L"7z";
 	std::wstring fontPath;
 	std::wstring zipMethod = L"LZMA2";
-	int zipLevel;
-	int keepCount;
-	bool hotBackup;
-	bool backupBefore;
+	int backupMode = 1;
+	int zipLevel = 5;
+	int keepCount = 0;
+	bool hotBackup = false;
+	bool backupBefore = false;
 	int theme = 1;
 	int folderNameType = 0;
 	std::string name;
@@ -88,12 +88,12 @@ struct DisplayWorld { // 一个新的结构体，让 UI 不再直接读取 configs[currentConfi
 	Config effectiveConfig;   // 合并后的配置（拷贝）
 };
 
-struct WorldStateCache {
-	wstring lastOpenTime;
-	wstring lastBackupTime;
-	bool needsBackup;
-	filesystem::file_time_type lastChecked;
-};
+//struct WorldStateCache {
+//	std::wstring lastOpenTime;
+//	std::wstring lastBackupTime;
+//	bool needsBackup;
+//	std::filesystem::file_time_type lastChecked;
+//};
 
 struct AppState {
 
@@ -113,7 +113,7 @@ struct AppState {
 	std::map<int, SpecialConfig> specialConfigs;
 
 	std::map<std::pair<int, int>, AutoBackupTask> g_active_auto_backups; // Key: {configIdx, worldIdx}
-	std::map<std::pair<int, int>, WorldStateCache> worldCache; // Key: {configIdx, worldIdx}
+	//std::map<std::pair<int, int>, WorldStateCache> worldCache; // Key: {configIdx, worldIdx}
 
 
 

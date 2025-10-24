@@ -14,6 +14,7 @@ extern bool g_RunOnStartup;
 extern bool g_enableKnotLink;
 extern bool g_CheckForUpdates;
 extern bool isSilence;
+extern bool isSafeDelete;
 extern wstring Fontss;
 extern vector<wstring> restoreWhitelist;
 extern int last_interval;
@@ -195,6 +196,9 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"RunOnStartup") {
 					g_RunOnStartup = (val != L"0");
 				}
+				else if (key == L"IsSafeDelete") {
+					isSafeDelete = (val != L"0");
+				}
 				else if (key == L"AutoBackupInterval") {
 					last_interval = stoi(val);
 				}
@@ -227,10 +231,12 @@ void SaveConfigs(const wstring& filename) {
 	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
 	out << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
 	out << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
+	out << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
 	out << L"AutoBackupInterval=" << last_interval << L"\n";
 	for (const auto& item : restoreWhitelist) {
-		out << L"RestoreWhitelistItem=" << item << L"\n\n";
+		out << L"RestoreWhitelistItem=" << item << L"\n";
 	}
+	out << "\n";
 
 	for (auto& kv : g_appState.configs) {
 		int idx = kv.first;

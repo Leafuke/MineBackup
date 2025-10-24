@@ -25,7 +25,7 @@ bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::pat
 bool IsFileLocked(const wstring& path);
 
 extern vector<wstring> restoreWhitelist;
-
+extern bool isSafeDelete;
 
 
 
@@ -100,7 +100,7 @@ void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& new
 
 
 // 限制备份文件数量，超出则自动删除最旧的
-void LimitBackupFiles(const wstring& folderPath, int limit, Console* console)
+void LimitBackupFiles(const Config &config, const int &configIndex, const wstring& folderPath, int limit, Console* console)
 {
 	if (limit <= 0) return;
 	namespace fs = filesystem;
@@ -123,20 +123,60 @@ void LimitBackupFiles(const wstring& folderPath, int limit, Console* console)
 	// 如果未超出限制，无需处理
 	if ((int)files.size() <= limit) return;
 
+	const auto& history_it = g_appState.g_history.find(g_appState.realConfigIndex);
+	bool history_available = (history_it != g_appState.g_history.end());
+
 	// 按最后写入时间升序排序（最旧的在前）
 	sort(files.begin(), files.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
 		return fs::last_write_time(a) < fs::last_write_time(b);
 		});
 
-	// 删除多余的最旧文件
-	int to_delete = (int)files.size() - limit;
-	for (int i = 0; i < to_delete && to_delete <= (int)files.size(); ++i) {
+	vector<fs::directory_entry> deletable_files;
+	for (const auto& file : files) {
+		bool is_important = false;
+		if (history_available) {
+			for (const auto& entry : history_it->second) {
+				if (entry.worldName == file.path().parent_path().filename().wstring() && entry.backupFile == file.path().filename().wstring()) {
+					if (entry.isImportant) {
+						is_important = true;
+					}
+					break;
+				}
+			}
+		}
+
+		if (!is_important) {
+			deletable_files.push_back(file);
+		}
+	}
+
+	// 如果可删除的文件数量不足，就不进行删除
+	if ((int)files.size() - (int)deletable_files.size() >= limit) {
+		if (console) console->AddLog("[Info] Cannot delete more files; remaining backups are marked as important.");
+		return;
+	}
+
+	int to_delete_count = (int)files.size() - limit;
+	for (int i = 0; i < to_delete_count && i < deletable_files.size(); ++i) {
+		const auto& file_to_delete = deletable_files[i];
 		try {
 			if (files[i].path().filename().wstring().find(L"[Smart]") == 0 || files[i + 1].path().filename().wstring().find(L"[Smart]") == 0) // 如果是智能备份，不能删除！如果是完整备份，不能是基底
 			{
 				if (console) console->AddLog(L("LOG_WARNING_DELETE_SMART_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 			}
-			fs::remove(files[i]);
+			
+			if (isSafeDelete) {
+				// 在 history 中找到这一项并安全删除
+				for (const auto& entry : history_it->second) {
+					if (entry.worldName == file_to_delete.path().parent_path().filename().wstring() && entry.backupFile == file_to_delete.path().filename().wstring()) {
+						DoSafeDeleteBackup(config, entry, configIndex, *console);
+						break;
+					}
+				}
+			}
+			else {
+				fs::remove(file_to_delete);
+			}
 			if (console) console->AddLog(L("LOG_DELETE_OLD_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 		}
 		catch (const fs::filesystem_error& e) {
@@ -180,7 +220,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	time_t now = time(0);
 	tm ltm;
 	localtime_s(&ltm, &now);
-	wchar_t timeBuf[80];
+	wchar_t timeBuf[160];
 	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
 	archivePath = destinationFolder + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
@@ -365,7 +405,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	{
 		backupTypeStr = L"Full";
 		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 		// 基于自身
 		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
@@ -393,7 +433,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		// 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
 		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 	}
 	else if (config.backupMode == 3) // 覆盖备份 - v1.7.8 暂时移除覆盖模式的黑名单功能
@@ -421,7 +461,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		else {
 			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel)+ L" -m0=" + config.zipMethod  +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
 			// -spf 强制使用完整路径，-spf2 使用相对路径
 		}
@@ -447,7 +487,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 			console.AddLog("[Error] Could not check backup file size: %s", e.what());
 		}
 
-		LimitBackupFiles(destinationFolder, config.keepCount, &console);
+		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder, config.keepCount, &console);
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
 		if (g_appState.realConfigIndex != -1)
@@ -513,7 +553,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	time_t now = time(0);
 	tm ltm;
 	localtime_s(&ltm, &now);
-	wchar_t timeBuf[80];
+	wchar_t timeBuf[160];
 	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
 	wstring archivePath = destinationFolder.wstring() + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
@@ -527,11 +567,11 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 		return;
 	}
 
-	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -mx=" + to_wstring(config.zipLevel) +
+	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
 		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
-		LimitBackupFiles(destinationFolder.wstring(), config.keepCount, &console);
+		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 		// 用特殊名字添加到历史
 		AddHistoryEntry(g_appState.currentConfigIndex, backupWhat, filesystem::path(archivePath).filename().wstring(), backupWhat, comment);
 	}
@@ -739,6 +779,147 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 	BroadcastEvent("event=restore_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile));
 	return;
+}
+
+void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int &configIndex, Console& console) {
+	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+
+	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
+	vector<filesystem::path> filesToDelete;
+	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
+
+	// 执行删除操作
+	for (const auto& path : filesToDelete) {
+		try {
+			if (filesystem::exists(path)) {
+				filesystem::remove(path);
+				console.AddLog("  - %s OK", wstring_to_utf8(path.filename().wstring()).c_str());
+				// 从历史记录中移除对应条目
+				RemoveHistoryEntry(configIndex, path.filename().wstring());
+			}
+			else {
+				console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+				RemoveHistoryEntry(configIndex, path.filename().wstring());
+			}
+		}
+		catch (const filesystem::filesystem_error& e) {
+			console.AddLog(L("LOG_ERROR_DELETE_BACKUP"), wstring_to_utf8(path.filename().wstring()).c_str(), e.what());
+		}
+	}
+	SaveHistory(); // 保存历史记录的更改
+}
+
+void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
+	console.AddLog(L("LOG_SAFE_DELETE_START"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+
+	if (entryToDelete.isImportant) {
+		console.AddLog(L("LOG_SAFE_DELETE_ABORT_IMPORTANT"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+		return;
+	}
+
+	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
+	filesystem::path pathToDelete = backupDir / entryToDelete.backupFile;
+	const HistoryEntry* nextEntryRaw = nullptr;
+
+	// Create a sorted list of history entries for this world to reliably find the next one
+	vector<const HistoryEntry*> worldHistory;
+	for (const auto& entry : g_appState.g_history[configIndex]) {
+		if (entry.worldName == entryToDelete.worldName) {
+			worldHistory.push_back(&entry);
+		}
+	}
+	sort(worldHistory.begin(), worldHistory.end(), [](const auto* a, const auto* b) {
+		return a->timestamp_str < b->timestamp_str;
+		});
+
+	for (size_t i = 0; i < worldHistory.size(); ++i) {
+		if (worldHistory[i]->backupFile == entryToDelete.backupFile) {
+			if (i + 1 < worldHistory.size()) {
+				nextEntryRaw = worldHistory[i + 1];
+			}
+			break;
+		}
+	}
+
+	if (!nextEntryRaw || nextEntryRaw->backupType == L"Full") {
+		console.AddLog(L("LOG_SAFE_DELETE_END_OF_CHAIN"));
+		DoDeleteBackup(config, entryToDelete, configIndex, console);
+		return;
+	}
+
+	if (nextEntryRaw->isImportant) {
+		console.AddLog(L("LOG_SAFE_DELETE_ABORT_IMPORTANT_TARGET"), wstring_to_utf8(nextEntryRaw->backupFile).c_str());
+		return;
+	}
+
+	const HistoryEntry nextEntry = *nextEntryRaw;
+	filesystem::path pathToMergeInto = backupDir / nextEntry.backupFile;
+	console.AddLog(L("LOG_SAFE_DELETE_MERGE_INFO"), wstring_to_utf8(entryToDelete.backupFile).c_str(), wstring_to_utf8(nextEntry.backupFile).c_str());
+
+	filesystem::path tempExtractDir = filesystem::temp_directory_path() / L"MineBackup_Merge";
+
+	try {
+		filesystem::remove_all(tempExtractDir);
+		filesystem::create_directories(tempExtractDir);
+
+		console.AddLog(L("LOG_SAFE_DELETE_STEP_1"));
+		wstring cmdExtract = L"\"" + config.zipPath + L"\" x \"" + pathToDelete.wstring() + L"\" -o\"" + tempExtractDir.wstring() + L"\" -y";
+		if (!RunCommandInBackground(cmdExtract, console, config.useLowPriority)) {
+			throw runtime_error("Failed to extract source archive.");
+		}
+
+		console.AddLog(L("LOG_SAFE_DELETE_STEP_2"));
+		auto original_mod_time = filesystem::last_write_time(pathToMergeInto);
+
+		wstring cmdMerge = L"\"" + config.zipPath + L"\" a \"" + pathToMergeInto.wstring() + L"\" .\\*";
+		if (!RunCommandInBackground(cmdMerge, console, config.useLowPriority, tempExtractDir.wstring())) {
+			filesystem::last_write_time(pathToMergeInto, original_mod_time);
+			throw runtime_error("Failed to merge files into the target archive.");
+		}
+		filesystem::last_write_time(pathToMergeInto, original_mod_time);
+
+		filesystem::path finalArchivePath = pathToMergeInto;
+		wstring finalBackupType = nextEntry.backupType;
+		wstring finalBackupFile = nextEntry.backupFile;
+
+		if (entryToDelete.backupType == L"Full") {
+			console.AddLog(L("LOG_SAFE_DELETE_STEP_3"));
+			finalBackupType = L"Full";
+			wstring newFilename = nextEntry.backupFile;
+			size_t pos = newFilename.find(L"[Smart]");
+			if (pos != wstring::npos) {
+				newFilename.replace(pos, 7, L"[Full]");
+				finalBackupFile = newFilename;
+				filesystem::path newPath = backupDir / newFilename;
+				filesystem::rename(pathToMergeInto, newPath);
+				finalArchivePath = newPath;
+				console.AddLog(L("LOG_SAFE_DELETE_RENAMED"), wstring_to_utf8(newFilename).c_str());
+			}
+		}
+		else {
+			console.AddLog(L("LOG_SAFE_DELETE_STEP_3_SKIP"));
+		}
+
+		console.AddLog(L("LOG_SAFE_DELETE_STEP_4"));
+		filesystem::remove(pathToDelete);
+		RemoveHistoryEntry(configIndex, entryToDelete.backupFile);
+
+		for (auto& entry : g_appState.g_history[configIndex]) {
+			if (entry.worldName == nextEntry.worldName && entry.backupFile == nextEntry.backupFile) {
+				entry.backupFile = finalBackupFile;
+				entry.backupType = finalBackupType;
+				break;
+			}
+		}
+
+		filesystem::remove_all(tempExtractDir);
+		console.AddLog(L("LOG_SAFE_DELETE_SUCCESS"));
+
+	}
+	catch (const exception& e) {
+		console.AddLog(L("LOG_SAFE_DELETE_FATAL_ERROR"), e.what());
+		filesystem::remove_all(tempExtractDir);
+	}
 }
 
 // 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
