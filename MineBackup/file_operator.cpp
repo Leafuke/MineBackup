@@ -60,18 +60,6 @@ wstring SelectFolderDialog(HWND hwndOwner = NULL) {
 }
 
 bool Extract7zToTempFile(wstring& extractedPath) {
-    // 用主模块句柄
-    HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_EXE1), L"EXE");
-    if (!hRes) return false;
-
-    HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
-    if (!hData) return false;
-
-    DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
-    if (dataSize == 0) return false;
-
-    LPVOID pData = LockResource(hData);
-    if (!pData) return false;
 
     // 获取“文档”文件夹路径
     PWSTR documentsPath = nullptr;
@@ -91,6 +79,19 @@ bool Extract7zToTempFile(wstring& extractedPath) {
         extractedPath = finalPath;
         return true;
     }
+
+    // 用主模块句柄
+    HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_EXE1), L"EXE");
+    if (!hRes) return false;
+
+    HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
+    if (!hData) return false;
+
+    DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
+    if (dataSize == 0) return false;
+
+    LPVOID pData = LockResource(hData);
+    if (!pData) return false;
 
     HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;
@@ -116,6 +117,24 @@ bool Extract7zToTempFile(wstring& extractedPath) {
 }
 
 bool ExtractFontToTempFile(wstring& extractedPath) {
+
+    PWSTR documentsPath = nullptr;
+    HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath);
+    if (FAILED(hr)) {
+        return false;
+    }
+
+    wstring finalPath = documentsPath;
+    CoTaskMemFree(documentsPath);
+
+    if (finalPath.back() != L'\\') finalPath += L'\\';
+    finalPath += L"fontawesome - sp.otf";
+
+    if (filesystem::exists(finalPath)) {
+        extractedPath = finalPath;
+        return true;
+    }
+
     HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_FONTS1), L"FONTS");
     if (!hRes) return false;
 
@@ -127,25 +146,6 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
 
     LPVOID pData = LockResource(hData);
     if (!pData) return false;
-
-    // 获取“文档”文件夹路径
-    PWSTR documentsPath = nullptr;
-    HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath);
-    if (FAILED(hr)) {
-        return false;
-    }
-
-    // 构造目标路径：文档\7z.exe
-    wstring finalPath = documentsPath;
-    CoTaskMemFree(documentsPath); // 释放 SHGetKnownFolderPath 分配的内存
-
-    if (finalPath.back() != L'\\') finalPath += L'\\';
-    finalPath += L"fontawesome-sp.otf";
-
-    if (filesystem::exists(finalPath)) {
-        extractedPath = finalPath;
-        return true;
-    }
 
     HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;

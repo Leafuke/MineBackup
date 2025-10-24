@@ -1023,8 +1023,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 						// 标记为正在加载或失败，避免重复尝试
 						g_worldIconTextures[iconKey] = 0; // 0 表示无效纹理
 
-						string iconPath = wstring_to_utf8(worldFolder + L"\\icon.png");
-						string bedrockIconPath = wstring_to_utf8(worldFolder + L"\\world_icon.jpeg");
+						string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
+						string bedrockIconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg"));
 
 						GLuint texture_id = 0;
 						int tex_w = 0, tex_h = 0;
