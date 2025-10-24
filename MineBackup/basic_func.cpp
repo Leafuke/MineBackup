@@ -197,24 +197,7 @@ vector<filesystem::path> GetChangedFiles(
 	return changedFiles;
 }
 
-void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const map<wstring, size_t>& currentState) {
-	filesystem::create_directories(metadataPath);
-	filesystem::path metadataFile = metadataPath / L"metadata.json";
 
-	nlohmann::json metadata;
-	metadata["version"] = 1;
-	metadata["lastBackupFile"] = wstring_to_utf8(newBackupFile);
-	metadata["basedOnBackupFile"] = wstring_to_utf8(basedOnBackupFile);
-
-	nlohmann::json fileStates = nlohmann::json::object();
-	for (const auto& pair : currentState) {
-		fileStates[wstring_to_utf8(pair.first)] = pair.second;
-	}
-	metadata["fileStates"] = fileStates;
-
-	ofstream o(metadataFile, ios::trunc);
-	o << metadata.dump(2); // 两个空格缩进
-}
 
 
 // 获取已更改的文件列表，并更新状态文件

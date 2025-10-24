@@ -1,5 +1,6 @@
 #ifndef OPEN_SOCKET_RESPONSER_HPP
 #define OPEN_SOCKET_RESPONSER_HPP
+#pragma once
 
 #include <string>
 #include <functional>

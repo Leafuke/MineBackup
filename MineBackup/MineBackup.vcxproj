@@ -132,9 +132,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AppState.cpp" />
+    <ClCompile Include="BackupManager.cpp" />
     <ClCompile Include="basic_func.cpp" />
+    <ClCompile Include="Broadcast.cpp" />
+    <ClCompile Include="ConfigManager.cpp" />
+    <ClCompile Include="Console.cpp" />
     <ClCompile Include="file_operator.cpp" />
-    <ClCompile Include="history.cpp" />
+    <ClCompile Include="HistoryManager.cpp" />
+    <ClCompile Include="i18n.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -144,9 +150,18 @@
     <ClCompile Include="imgui\imgui_widgets.cpp" />
     <ClCompile Include="KnotLink\main.cpp" />
     <ClCompile Include="MineBackup.cpp" />
+    <ClCompile Include="OpenSocketResponser.cpp" />
+    <ClCompile Include="Platform_win.cpp" />
+    <ClCompile Include="SignalSender.cpp" />
     <ClCompile Include="text_to_text.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AppState.h" />
+    <ClInclude Include="BackupManager.h" />
+    <ClInclude Include="Broadcast.h" />
+    <ClInclude Include="ConfigManager.h" />
+    <ClInclude Include="Console.h" />
+    <ClInclude Include="HistoryManager.h" />
     <ClInclude Include="i18n.h" />
     <ClInclude Include="IconsFontAwesome6.h" />
     <ClInclude Include="imgui-all.h" />
@@ -163,8 +178,10 @@
     <ClInclude Include="KnotLink\OpenSocketResponser.hpp" />
     <ClInclude Include="KnotLink\SignalSender.hpp" />
     <ClInclude Include="KnotLink\TcpClient.hpp" />
+    <ClInclude Include="Platform_win.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="stb_image.h" />
+    <ClInclude Include="text_to_text.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MineBackup.rc" />
@@ -174,11 +191,6 @@
     <None Include="D:\Downloads\Programs\MineBackup\7za.exe" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="..\..\..\..\Pictures\图标\mine10.ico" />
-    <Image Include="..\..\..\..\Pictures\图标\mine20.ico" />
-    <Image Include="..\..\..\..\Pictures\图标\mine30.ico" />
-    <Image Include="..\..\..\..\Pictures\图标\mine40.ico" />
-    <Image Include="..\..\..\..\Pictures\图标\mine50.ico" />
     <Image Include="D:\Pictures\图标\mine10.ico" />
     <Image Include="D:\Pictures\图标\mine20.ico" />
     <Image Include="D:\Pictures\图标\mine30.ico" />
