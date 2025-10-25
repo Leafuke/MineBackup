@@ -1,9 +1,9 @@
 #include "i18n.h"
 std::string g_CurrentLang;
-const char* lang_codes[2] = { "zh-CN", "en-US" };
+const char* lang_codes[2] = { "zh_CN", "en_US" };
 const char* langs[2] = { u8"简体中文", "English" };
 std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_LangTable = {
-	{ "zh-CN", {
+	{ "zh_CN", {
 		{"SETTINGS", u8"设置"},
 		{"EXIT", u8"退出"},
 		{"OPEN", u8"打开界面"},
@@ -444,7 +444,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "HISTORY_MARK_IMPORTANT", u8"标记为重要" },
 		{ "HISTORY_UNMARK_IMPORTANT", u8"取消重要标记" },
 }},
-	{ "en-US", {
+	{ "en_US", {
 		{"SETTINGS", "Settings"},
 		{"EXIT", "Exit"},
 		{"OPEN", "Open Main Window"},

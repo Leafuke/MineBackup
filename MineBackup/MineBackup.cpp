@@ -334,7 +334,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 	if (isFirstRun) {
 		GetUserDefaultUILanguageWin();
-		if (g_CurrentLang == "zh-CN") {
+		if (g_CurrentLang == "zh_CN") {
 			if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
 				Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
 			else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
@@ -344,7 +344,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 		}
 	}
-	if (g_CurrentLang == "zh-CN")
+	if (g_CurrentLang == "zh_CN")
 		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
 	else
 		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
@@ -587,7 +587,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 						initialConfig.backupBefore = false;
 						initialConfig.skipIfUnchanged = true;
 						isSilence = false;
-						if (g_CurrentLang == "zh-CN") {
+						if (g_CurrentLang == "zh_CN") {
 							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
 								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttc";
 							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
