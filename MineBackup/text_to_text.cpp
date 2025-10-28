@@ -1,5 +1,9 @@
 #include <string>
-#include <windows.h>
+#ifdef _WIN32
+#include "Platform_win.h"
+#else
+#include "Platform_linux.h"
+#endif
 using namespace std;
 
 // 辅助函数：wstring <-> utf8 string（使用WinAPI，兼容C++17+）本地多字节编码（GBK）转UTF-8

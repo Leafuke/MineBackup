@@ -2,7 +2,11 @@
 #include "AppState.h"
 #include "text_to_text.h"
 #include "i18n.h"
+#ifdef _WIN32
 #include "Platform_win.h"
+#else
+#include "Platform_linux.h"
+#endif
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -131,10 +135,10 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"Font") {
 					cur->fontPath = val;
 					Fontss = val;
-					if (val.empty() || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
+					if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
 						GetUserDefaultUILanguageWin();
-
-						if (g_CurrentLang == "zh-CN") {
+#ifdef _WIN32
+						if (g_CurrentLang == "zh_CN") {
 							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
 								Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
 							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
@@ -143,6 +147,14 @@ void LoadConfigs(const string& filename) {
 						else {
 							Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 						}
+#else
+						if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
+							Fontss = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+						else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
+							Fontss = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
+						else
+							Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+#endif
 					}
 				}
 			}
@@ -185,6 +197,8 @@ void LoadConfigs(const string& filename) {
 					if (nextConfigId <= maxId) nextConfigId = maxId + 1;
 				}
 				else if (key == L"Language") {
+					if (val[2] == L'-')
+						val[2] = L'_';
 					g_CurrentLang = wstring_to_utf8(val);
 				}
 				else if (key == L"CheckForUpdates") {

@@ -123,7 +123,7 @@ void LimitBackupFiles(const Config &config, const int &configIndex, const wstrin
 	// 如果未超出限制，无需处理
 	if ((int)files.size() <= limit) return;
 
-	const auto& history_it = g_appState.g_history.find(g_appState.realConfigIndex);
+	const auto& history_it = g_appState.g_history.find(configIndex);
 	bool history_available = (history_it != g_appState.g_history.end());
 
 	// 按最后写入时间升序排序（最旧的在前）
@@ -167,10 +167,12 @@ void LimitBackupFiles(const Config &config, const int &configIndex, const wstrin
 			
 			if (isSafeDelete) {
 				// 在 history 中找到这一项并安全删除
-				for (const auto& entry : history_it->second) {
-					if (entry.worldName == file_to_delete.path().parent_path().filename().wstring() && entry.backupFile == file_to_delete.path().filename().wstring()) {
-						DoSafeDeleteBackup(config, entry, configIndex, *console);
-						break;
+				if (history_available) {
+					for (const auto& entry : history_it->second) {
+						if (entry.worldName == file_to_delete.path().parent_path().filename().wstring() && entry.backupFile == file_to_delete.path().filename().wstring()) {
+							DoSafeDeleteBackup(config, entry, configIndex, *console);
+							break;
+						}
 					}
 				}
 			}
@@ -487,7 +489,11 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 			console.AddLog("[Error] Could not check backup file size: %s", e.what());
 		}
 
-		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder, config.keepCount, &console);
+		if (g_appState.realConfigIndex != -1)
+			LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder, config.keepCount, &console);
+		else
+			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder, config.keepCount, &console);
+
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
 		if (g_appState.realConfigIndex != -1)

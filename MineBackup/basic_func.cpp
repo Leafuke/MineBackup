@@ -4,7 +4,6 @@
 #include <map>
 #include <filesystem>
 #include <fstream>
-#include <Windows.h>
 #include <regex>
 using namespace std;
 
