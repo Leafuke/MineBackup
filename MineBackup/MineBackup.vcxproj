@@ -178,6 +178,7 @@
     <ClInclude Include="KnotLink\OpenSocketResponser.hpp" />
     <ClInclude Include="KnotLink\SignalSender.hpp" />
     <ClInclude Include="KnotLink\TcpClient.hpp" />
+    <ClInclude Include="Platform_linux.h" />
     <ClInclude Include="Platform_win.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="stb_image.h" />
