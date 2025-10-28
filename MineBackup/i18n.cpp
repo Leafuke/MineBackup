@@ -1,5 +1,5 @@
 #include "i18n.h"
-std::string g_CurrentLang;
+std::string g_CurrentLang = "en_US";
 const char* lang_codes[2] = { "zh_CN", "en_US" };
 const char* langs[2] = { u8"¼òÌåÖĞÎÄ", "English" };
 std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_LangTable = {

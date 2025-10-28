@@ -176,6 +176,9 @@
     <ClInclude Include="BackupManager.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Platform_linux.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MineBackup.rc">

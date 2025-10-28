@@ -4,7 +4,11 @@
 #include "imgui-all.h"
 #include "i18n.h"
 #include "AppState.h"
+#ifdef _WIN32
 #include "Platform_win.h"
+#else
+#include "Platform_linux.h"
+#endif
 #include "Console.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
@@ -26,7 +30,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.9.0";
+string CURRENT_VERSION = "1.9.1";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -44,8 +48,6 @@ bool specialSetting = false;
 bool g_CheckForUpdates = true, g_RunOnStartup = false;
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
-
-extern NOTIFYICONDATA nid;
 
 atomic<bool> specialTasksRunning = false;
 atomic<bool> specialTasksComplete = false;
@@ -66,7 +68,7 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-
+void OpenLinkInBrowser(const wstring& url);
 inline void ApplyTheme(int& theme);
 wstring SanitizeFileName(const wstring& input);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
@@ -86,7 +88,6 @@ void ShowSettingsWindow();
 void ShowHistoryWindow(int& tempCurrentConfigIndex);
 vector<DisplayWorld> BuildDisplayWorldsForSelection();
 
-LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 string ProcessCommand(const string& commandStr, Console* console);
@@ -97,10 +98,11 @@ void ConsoleLog(Console* console, const char* format, ...);
 
 
 
-
+#ifdef _WIN32
 // Main code
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
+
 	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
 	wchar_t exePath[MAX_PATH];
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
@@ -113,6 +115,10 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
 	CreateTrayIcon(hwnd_hidden, hInstance);
 	RegisterHotkeys(hwnd_hidden);
+#else
+int main(int argc, char** argv)
+{
+#endif
 
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
@@ -236,7 +242,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 	
-
+#ifdef _WIN32
 	int width, height, channels;
 	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
 	// unsigned char* pixels = stbi_load("icon.png", &width, &height, 0, 4); 
@@ -247,6 +253,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	hRes = FindResource(hInstance, MAKEINTRESOURCE(nId), RT_ICON);
 	hMem = LoadResource(hInstance, hRes);
 	pMem = LockResource(hMem);
+#endif
 
 	// 从内存中的图标数据加载
 	unsigned char* pixels = stbi_load_from_memory((const stbi_uc*)pMem, SizeofResource(hInstance, hRes), &width, &height, &channels, 4);
@@ -333,16 +340,22 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 		ApplyTheme(g_appState.specialConfigs[g_appState.currentConfigIndex].theme);
 
 	if (isFirstRun) {
+#ifdef _WIN32
 		GetUserDefaultUILanguageWin();
-		if (g_CurrentLang == "zh_CN") {
-			if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-				Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-				Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
-		}
-		else {
+		if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
+			Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
+		else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
+			Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
+		else
 			Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-		}
+#else
+		if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
+			Fontss = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+		else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
+			Fontss = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
+		else
+			Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"; // 英文/通用
+#endif
 	}
 	if (g_CurrentLang == "zh_CN")
 		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
@@ -353,12 +366,12 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	ImFontConfig config2;
 	config2.MergeMode = true;
 	config2.PixelSnapH = true;
-	config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
+	config2.GlyphMinAdvanceX = 20.0f * main_scale; // 图标的宽度
 	// 定义要从图标字体中加载的图标范围
 	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
 	// 加载并合并
-	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
+	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f * main_scale, &config2, icon_ranges);
 
 	// 构建字体图谱
 	io.Fonts->Build();
@@ -383,7 +396,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 		// 如果窗口最小化或不显示，可以等待更长时间
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) || !g_appState.showMainApp) {
 			// 使用带超时的等待，这样我们仍然可以周期性地处理Win32消息
-			glfwWaitEventsTimeout(0.1); // 等待100ms
+			glfwWaitEventsTimeout(0.2); // 等待200ms
 		}
 		else {
 			// 正常轮询，以保持流畅的UI动画
@@ -587,6 +600,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 						initialConfig.backupBefore = false;
 						initialConfig.skipIfUnchanged = true;
 						isSilence = false;
+#ifdef _WIN32
 						if (g_CurrentLang == "zh_CN") {
 							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
 								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttc";
@@ -595,7 +609,14 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 						}
 						else
 							initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-
+#else
+						if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
+							initialConfig.fontPath = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+						else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
+							initialConfig.fontPath = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
+						else
+							initialConfig.fontPath = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+#endif
 						g_appState.specialConfigs.clear();
 
 						// 4. 保存到文件并切换到主应用界面
@@ -668,13 +689,13 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 				}
 				if (ImGui::BeginMenu(L("MENU_HELP"))) {
 					if (ImGui::MenuItem(L("MENU_GITHUB"))) {
-						ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup", NULL, NULL, SW_SHOWNORMAL);
+						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup");
 					}
 					if (ImGui::MenuItem(L("MENU_ISSUE"))) {
-						ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup/issues", NULL, NULL, SW_SHOWNORMAL);
+						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/issues");
 					}
 					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
-						ShellExecuteA(NULL, "open", "https://docs.qq.com/doc/DUUp4UVZOYmZWcm5M", NULL, NULL, SW_SHOWNORMAL);
+						OpenLinkInBrowser(L"https://docs.qq.com/doc/DUUp4UVZOYmZWcm5M");
 					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
 						showAboutWindow = true;
@@ -682,6 +703,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 					}
 					ImGui::EndMenu();
 				}
+			
 
 				// 在菜单栏右侧显示更新按钮
 				if (g_NewVersionAvailable) {
@@ -705,19 +727,19 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 						ImGui::EndChild();
 						ImGui::Separator();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(180, 0))) {
-							ShellExecuteA(NULL, "open", ("https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
+							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(180, 0))) {
-							ShellExecuteA(NULL, "open", ("https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + g_LatestVersionStr + "/MineBackup.exe").c_str(), NULL, NULL, SW_SHOWNORMAL);
+							OpenLinkInBrowser(L"https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_3"), ImVec2(180, 0))) {
-							ShellExecuteA(NULL, "open", "https://www.123865.com/s/Zsyijv-UTuGd?pwd=mine#", NULL, NULL, SW_SHOWNORMAL);
+							OpenLinkInBrowser(L"https://www.123865.com/s/Zsyijv-UTuGd?pwd=mine#");
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -727,7 +749,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("CHECK_FOR_UPDATES"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-							ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup/releases", NULL, NULL, SW_SHOWNORMAL);
+							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases");
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -774,16 +796,16 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 				if (ImGui::Button(L("ABOUT_VISIT_GITHUB")))
 				{
-					ShellExecuteA(NULL, "open", "https://github.com/Leafuke/MineBackup", NULL, NULL, SW_SHOWNORMAL);
+					OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup");
 				}
 				ImGui::SameLine();
 				if (ImGui::Button(L("ABOUT_VISIT_BILIBILI")))
 				{
-					ShellExecuteA(NULL, "open", "https://space.bilibili.com/545429962", NULL, NULL, SW_SHOWNORMAL);
+					OpenLinkInBrowser(L"https://space.bilibili.com/545429962");
 				}
 				if (ImGui::Button(L("ABOUT_VISIT_KNOTLINK")))
 				{
-					ShellExecuteA(NULL, "open", "https://github.com/hxh230802/KnotLink", NULL, NULL, SW_SHOWNORMAL);
+					OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_KNOTLINK_TIP"));
 
@@ -1006,7 +1028,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 					// --- 左侧图标区 ---
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
+					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f * main_scale;
 					ImVec2 icon_pos = ImGui::GetCursorScreenPos();
 					ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
 
@@ -1642,11 +1664,11 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	}
 
 	SaveConfigs();
-
+#ifdef _WIN32
 	RemoveTrayIcon();
 	UnregisterHotkeys(hwnd_hidden);
 	DestroyWindow(hwnd_hidden);
-
+#endif
 	g_worldIconTextures.clear();
 	worldIconWidths.clear();
 	worldIconHeights.clear();
@@ -1656,10 +1678,6 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 	glfwDestroyWindow(wc);
 	glfwTerminate();
-
-	/*CleanupDeviceD3D();
-	::DestroyWindow(hwnd);
-	::UnregisterClassW(wc.lpszClassName, wc.hInstance);*/
 	
 	g_stopExitWatcher = true;
 	if (g_exitWatcherThread.joinable()) {
@@ -2199,8 +2217,6 @@ void ShowSettingsWindow() {
 			}
 			ImGui::Checkbox(L("BACKUP_ON_START"), &cfg.backupOnGameStart);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_START"));
-			ImGui::SameLine();
-			ImGui::Checkbox(L("SHOW_PROGRESS"), &isSilence);
 			// 低优先级
 			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &cfg.useLowPriority);
 			if (ImGui::IsItemHovered()) {
@@ -2219,6 +2235,15 @@ void ShowSettingsWindow() {
 					method_idx = i;
 					break;
 				}
+			}
+			// 在压缩格式为 zip 时默认使用 Deflate
+			if (cfg.zipFormat == L"zip" && method_idx == 0) {
+				method_idx = 1;
+				cfg.zipMethod = L"Deflate";
+			}
+			else if (cfg.zipFormat == L"7z" && method_idx == 1) {
+				method_idx = 0;
+				cfg.zipMethod = L"LZMA2";
 			}
 
 			if (ImGui::Combo(L("COMPRESSION_METHOD"), &method_idx, zip_methods, IM_ARRAYSIZE(zip_methods))) {
@@ -2419,71 +2444,6 @@ void ShowSettingsWindow() {
 	ImGui::End();
 }
 
-
-
-//在后台静默执行一个命令行程序（如7z.exe），并等待其完成。
-//这是实现备份和还原功能的核心，避免了GUI卡顿和黑窗口弹出。
-// 参数:
-//   - command: 要执行的完整命令行（宽字符）。
-//   - console: 监控台对象的引用，用于输出日志信息。
-bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory) {
-	// CreateProcessW需要一个可写的C-style字符串，所以我们将wstring复制到vector<wchar_t>
-	vector<wchar_t> cmd_line(command.begin(), command.end());
-	cmd_line.push_back(L'\0'); // 添加字符串结束符
-
-	STARTUPINFOW si = {};
-	PROCESS_INFORMATION pi = {};
-	si.cb = sizeof(si);
-	si.dwFlags |= STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE; // 隐藏子进程的窗口
-
-	DWORD creationFlags = CREATE_NO_WINDOW;
-	if (useLowPriority) {
-		creationFlags |= BELOW_NORMAL_PRIORITY_CLASS;
-	}
-
-	// 开始创建进程
-	const wchar_t* pWorkingDir = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
-	console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
-
-	if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, pWorkingDir, &si, &pi)) {
-		console.AddLog(L("LOG_ERROR_CREATE_PROCESS"), GetLastError());
-		return false;
-	}
-
-	// 等待子进程执行完毕
-	WaitForSingleObject(pi.hProcess, INFINITE);
-
-	// 检查子进程的退出代码
-	DWORD exit_code;
-	if (GetExitCodeProcess(pi.hProcess, &exit_code)) {
-		if (exit_code == 0) {
-			console.AddLog(L("LOG_SUCCESS_CMD"));
-		}
-		else {
-			console.AddLog(L("LOG_ERROR_CMD_FAILED"), exit_code);
-			if (exit_code == 1) // 警告
-				console.AddLog(L("LOG_ERROR_CMD_FAILED_HOTBACKUP_SUGGESTION"));
-			if (exit_code == 2) // 致命错误
-				console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
-		}
-	}
-	else {
-		console.AddLog(L("LOG_ERROR_GET_EXIT_CODE"));
-	}
-
-	// 清理句柄
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
-	return true;
-}
-
-
-
-
-
-
-
 void RunSpecialMode(int configId) {
 	SpecialConfig spCfg;
 	if (g_appState.specialConfigs.count(configId)) {
@@ -2494,11 +2454,12 @@ void RunSpecialMode(int configId) {
 		Sleep(3000);
 		return;
 	}
-
+#ifdef _WIN32
 	// 隐藏控制台窗口（如果配置要求）
 	if (spCfg.hideWindow) {
 		ShowWindow(GetConsoleWindow(), SW_HIDE);
 	}
+#endif
 
 	// 设置控制台标题和头部信息
 	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
@@ -2631,9 +2592,11 @@ void RunSpecialMode(int configId) {
 				g_appState.specialConfigs[configId].autoExecute = false;
 				SaveConfigs();
 				ConsoleLog(&console, L("INFO_SWITCHING_TO_GUI_MODE"));
+#ifdef _WIN32
 				wchar_t selfPath[MAX_PATH];
 				GetModuleFileNameW(NULL, selfPath, MAX_PATH); // 获得程序路径
 				ShellExecuteW(NULL, L"open", selfPath, NULL, NULL, SW_SHOWNORMAL); // 开启
+#endif
 			}
 		}
 
