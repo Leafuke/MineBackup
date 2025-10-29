@@ -230,9 +230,9 @@ void CheckForUpdatesThread() {
 	hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/repos/Leafuke/MineBackup/releases/latest", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
 	if (!hRequest) goto cleanup;
 
-	//WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 
-	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", (DWORD)(wcslen(L"User-Agent: MineBackup-Update-Checker\r\n") * sizeof(wchar_t)), WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+	//WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", (DWORD)(wcslen(L"User-Agent: MineBackup-Update-Checker\r\n") * sizeof(wchar_t)), WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 
 	bResults = WinHttpReceiveResponse(hRequest, NULL);
 	if (!bResults) goto cleanup;

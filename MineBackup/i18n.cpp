@@ -443,6 +443,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "IS_SAFE_DELETE_TIP", u8"删除备份后，会将当前删除内容合并到后面的备份" },
 		{ "HISTORY_MARK_IMPORTANT", u8"标记为重要" },
 		{ "HISTORY_UNMARK_IMPORTANT", u8"取消重要标记" },
+		{"UI_SCALE", u8"界面缩放"},
 }},
 	{ "en_US", {
 		{"SETTINGS", "Settings"},
@@ -887,6 +888,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "LOG_SAFE_DELETE_SUCCESS", "[Safe Delete] Operation completed successfully." },
 		{ "HISTORY_MARK_IMPORTANT", "Mark as Important" },
 		{ "HISTORY_UNMARK_IMPORTANT", "Unmark as Important" },
+		{ "UI_SCALE", u8"UI Scale" },
 }},
 };
 const char* L(const char* key) {

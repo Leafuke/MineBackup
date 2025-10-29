@@ -30,11 +30,13 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.9.1";
+string CURRENT_VERSION = "1.9.2";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
 string g_ReleaseNotes;
+int g_windowWidth = 1280, g_windowHeight = 800;
+float g_uiScale = 1.0f;
 
 int last_interval = 15;
 
@@ -236,7 +238,7 @@ int main(int argc, char** argv)
 
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
-	wc = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "MineBackup", nullptr, nullptr);
+	wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
 	if (wc == nullptr)
 		return 1;
 	glfwMakeContextCurrent(wc);
@@ -273,6 +275,8 @@ int main(int argc, char** argv)
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 
+	io.FontGlobalScale = g_uiScale;
+
 	// 启用Docking
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
@@ -292,7 +296,6 @@ int main(int argc, char** argv)
 
 	// 设置字体和全局缩放
 	style.ScaleAllSizes(main_scale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
-	style.FontScaleDpi = main_scale;        // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
 	io.ConfigDpiScaleFonts = true;
 	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
 	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
@@ -325,7 +328,6 @@ int main(int argc, char** argv)
 
 
 	//float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
-	//io.FontGlobalScale = dpi_scale;
 
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists("config.ini");
@@ -358,9 +360,9 @@ int main(int argc, char** argv)
 #endif
 	}
 	if (g_CurrentLang == "zh_CN")
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f * main_scale, nullptr, io.Fonts->GetGlyphRangesChineseFull());
 	else
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
+		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f * main_scale, nullptr, io.Fonts->GetGlyphRangesDefault());
 
 	// 准备合并图标字体
 	ImFontConfig config2;
@@ -1663,6 +1665,7 @@ int main(int argc, char** argv)
 		}
 	}
 
+	glfwGetWindowSize(wc, &g_windowWidth, &g_windowHeight);
 	SaveConfigs();
 #ifdef _WIN32
 	RemoveTrayIcon();
@@ -2417,6 +2420,15 @@ void ShowSettingsWindow() {
 			if (ImGui::RadioButton(L("THEME_DARK"), &cfg.theme, 0)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
 			if (ImGui::RadioButton(L("THEME_LIGHT"), &cfg.theme, 1)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
 			if (ImGui::RadioButton(L("THEME_CLASSIC"), &cfg.theme, 2)) { ApplyTheme(cfg.theme); }
+
+			ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
+			ImGui::SameLine();
+			if (ImGui::Button(L("BUTTON_OK"))) {
+				/*ImGuiStyle& style = ImGui::GetStyle();
+				style.ScaleAllSizes(cfg.uiScale);*/
+				ImGuiIO& io = ImGui::GetIO(); (void)io;
+				io.FontGlobalScale = g_uiScale;
+			}
 
 			ImGui::Text(L("FONT_SETTINGS"));
 			char Fonts[CONSTANT1];
