@@ -22,6 +22,8 @@ extern bool isSafeDelete;
 extern wstring Fontss;
 extern vector<wstring> restoreWhitelist;
 extern int last_interval;
+extern int g_windowHeight, g_windowWidth;
+extern float g_uiScale;
 
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool IsFileLocked(const wstring& path);
@@ -220,6 +222,19 @@ void LoadConfigs(const string& filename) {
 					restoreWhiteList = true;
 					restoreWhitelist.push_back(val);
 				}
+				else if (key == L"WindowWidth") {
+					if (stoi(val) > 10) {
+						g_windowWidth = stoi(val);
+					}
+				}
+				else if (key == L"WindowHeight") {
+					if (stoi(val) > 10) {
+						g_windowHeight = stoi(val);
+					}
+				}
+				else if (key == L"UIScale") {
+					g_uiScale = stof(val);
+				}
 			}
 		}
 	}
@@ -247,6 +262,9 @@ void SaveConfigs(const wstring& filename) {
 	out << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
 	out << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
 	out << L"AutoBackupInterval=" << last_interval << L"\n";
+	out << L"WindowWidth=" << g_windowWidth << L"\n";
+	out << L"WindowHeight=" << g_windowHeight << L"\n";
+	out << L"UIScale=" << g_uiScale << L"\n";
 	for (const auto& item : restoreWhitelist) {
 		out << L"RestoreWhitelistItem=" << item << L"\n";
 	}
