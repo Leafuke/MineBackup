@@ -279,9 +279,12 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return success_msg;
 	}
 	else if (command == "SHUT_DOWN_WORLD_SUCCESS") {
-		g_appState.isRespond = true;
-		return "OK:Start Restore";
-	}
+		if (g_appState.hotkeyRestoreState == HotRestoreState::WAITING_FOR_MOD) {
+			g_appState.isRespond = true;
+			return "OK:Acknowledged. Restore will now proceed.";
+		}
+		return "ERROR:Not currently waiting for a world shutdown signal.";
+		}
 
 	return "ERROR:Unknown command '" + command + "'.";
 }

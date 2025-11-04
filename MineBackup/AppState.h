@@ -90,6 +90,12 @@ struct DisplayWorld { // 一个新的结构体，让 UI 不再直接读取 configs[currentConfi
 	Config effectiveConfig;   // 合并后的配置（拷贝）
 };
 
+enum class HotRestoreState {
+	IDLE,              // 空闲状态
+	WAITING_FOR_MOD,   // 已发送请求，正在等待模组响应
+	RESTORING,         // 模组已响应，正在执行还原
+};
+
 //struct WorldStateCache {
 //	std::wstring lastOpenTime;
 //	std::wstring lastBackupTime;
@@ -103,8 +109,6 @@ struct AppState {
 
     // UI State
     bool showMainApp = false;
-    bool showSettings = false;
-    bool showHistoryWindow = false;
 	bool specialConfigMode = false; // 用来开启简单UI
 
 
@@ -122,6 +126,7 @@ struct AppState {
 	std::mutex configsMutex;			// 用于保护全局配置的互斥锁
 	std::mutex task_mutex;		// 专门用于保护 g_active_auto_backups
 	bool isRespond = false;
+	std::atomic<HotRestoreState> hotkeyRestoreState = HotRestoreState::IDLE;
     // Settings
     bool g_CheckForUpdates = true;
 };

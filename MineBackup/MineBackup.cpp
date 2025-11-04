@@ -14,14 +14,6 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
-#include <locale>
-#include <codecvt>
-#include <fcntl.h>
-#include <io.h>
-#include <thread>
-#include <atomic> // 用于线程安全的标志
-#include <mutex>  // 用于互斥锁
-#include <shellapi.h> // 托盘图标相关
 #include <conio.h>
 
 using namespace std;
@@ -30,7 +22,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.9.2";
+string CURRENT_VERSION = "1.10.0";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -105,7 +97,6 @@ void ConsoleLog(Console* console, const char* format, ...);
 // Main code
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
-
 	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
 	wchar_t exePath[MAX_PATH];
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
@@ -244,6 +235,7 @@ int main(int argc, char** argv)
 		return 1;
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
+
 	
 #ifdef _WIN32
 	int width, height, channels;
@@ -3366,6 +3358,14 @@ void TriggerHotkeyBackup() {
 }
 
 void TriggerHotkeyRestore() {
+
+	HotRestoreState expected_idle = HotRestoreState::IDLE;
+	// 使用CAS操作确保线程安全地从IDLE转换到WAITING_FOR_MOD
+	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
+		console.AddLog(L("[Hotkey] A restore operation is already in progress. Ignoring request."));
+		return;
+	}
+
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
 
@@ -3389,51 +3389,86 @@ void TriggerHotkeyRestore() {
 			}
 
 			if (IsFileLocked(levelDatPath)) {
+
+
 				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
 				// KnotLink 通知
 				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
 				console.AddLog(L("KNOTLINK_PRE_RESTORE"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
 
-				// 等待模组保存
-				this_thread::sleep_for(chrono::seconds(5));
-				if (!g_appState.isRespond) {
-					return;
-				}
 
-				// 查找最新备份文件
-				wstring backupDir = cfg.backupPath + L"\\" + world.first;
-				filesystem::path latestBackup;
-				auto latest_time = filesystem::file_time_type{};
-				for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-					if (entry.is_regular_file()) {
-						auto fname = entry.path().filename().wstring();
-						if ((fname.find(L"[Full]") != wstring::npos || fname.find(L"[Smart]") != wstring::npos)
-							&& entry.last_write_time() > latest_time) {
-							latest_time = entry.last_write_time();
-							latestBackup = entry.path();
+
+				// 4. 启动后台等待线程
+				thread([=]() {
+					using namespace std::chrono;
+					auto startTime = steady_clock::now();
+					const auto timeout = seconds(15);
+
+					// 等待响应或超时
+					while (steady_clock::now() - startTime < timeout) {
+						if (g_appState.isRespond) {
+							break; // 收到响应
+						}
+						this_thread::sleep_for(milliseconds(100));
+					}
+
+					// 检查是收到了响应还是超时了
+					if (!g_appState.isRespond) {
+						console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
+						BroadcastEvent("event=restore_cancelled;reason=timeout");
+						g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
+						return;
+					}
+
+					// --- 收到响应，开始还原 ---
+					g_appState.isRespond = false; // 重置标志位
+					g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+					console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
+
+					// 查找最新备份文件 (这部分逻辑保持不变)
+					wstring backupDir = cfg.backupPath + L"\\" + world.first;
+					filesystem::path latestBackup;
+					auto latest_time = filesystem::file_time_type{};
+					bool found = false;
+
+					if (filesystem::exists(backupDir)) {
+						for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+							if (entry.is_regular_file()) {
+								if (entry.last_write_time() > latest_time) {
+									latest_time = entry.last_write_time();
+									latestBackup = entry.path();
+									found = true;
+								}
+							}
 						}
 					}
-				}
 
-				if (latestBackup.empty()) {
-					console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-					return;
-				}
+					if (!found) {
+						console.AddLog(L("LOG_NO_BACKUP_FOUND"));
+						BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
+						g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+						return;
+					}
 
-				console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
+					console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
 
-				// 还原（默认清理还原 restoreMethod=0）
-				thread restore_thread(DoRestore, cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
-				restore_thread.detach();
+					DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
 
-				// KnotLink 通知还原完成
-				BroadcastEvent("event=hot_restore_completed;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-				console.AddLog(L("KNOTLINK_HOT_RESTORE_COMPLETED"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
-				g_appState.isRespond = false;
+					// 假设成功，广播完成事件
+					BroadcastEvent("event=restore_finished;status=success;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
+					console.AddLog(L("[Hotkey] Restore completed successfully."));
+
+					// 最终，重置状态
+					g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+					g_appState.isRespond = false;
+
+
+				}).detach(); // 分离线程，让它在后台运行
 				return;
 			}
 		}
 	}
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
+	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
 }
