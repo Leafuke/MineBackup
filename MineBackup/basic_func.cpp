@@ -7,6 +7,14 @@
 #include <regex>
 using namespace std;
 
+bool IsPureASCII(const wstring& s) {
+	for (wchar_t c : s) {
+		if (c < 0 || c > 127) {
+			return false;
+		}
+	}
+	return true;
+}
 
 // 计算文件的哈希值（这是一个简单的实现，很不严格哒）
 size_t CalculateFileHash(const filesystem::path& filepath) {

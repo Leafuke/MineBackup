@@ -27,6 +27,18 @@ NOTIFYICONDATA nid = { 0 };
 
 LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+wstring GetDocumentsPath() {
+#ifdef _WIN32
+	PWSTR path = NULL;
+	HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, 0, NULL, &path);
+	if (SUCCEEDED(hr)) {
+		wstring result(path);
+		CoTaskMemFree(path);
+		return result;
+	}
+#endif
+	return L"";
+}
 
 void SetFileAttributesWin(const wstring& path, bool isHidden) {
 	if(isHidden)
@@ -507,16 +519,9 @@ wstring SelectFolderDialog() {
 
 bool Extract7zToTempFile(wstring& extractedPath) {
 
-	// 获取“文档”文件夹路径
-	PWSTR documentsPath = nullptr;
-	HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath);
-	if (FAILED(hr)) {
-		return false;
-	}
 
 	// 构造目标路径：文档\7z.exe
-	wstring finalPath = documentsPath;
-	CoTaskMemFree(documentsPath); // 释放 SHGetKnownFolderPath 分配的内存
+	wstring finalPath = GetDocumentsPath();
 
 	if (finalPath.back() != L'\\') finalPath += L'\\';
 	finalPath += L"7z.exe";
@@ -564,14 +569,7 @@ bool Extract7zToTempFile(wstring& extractedPath) {
 
 bool ExtractFontToTempFile(wstring& extractedPath) {
 
-	PWSTR documentsPath = nullptr;
-	HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath);
-	if (FAILED(hr)) {
-		return false;
-	}
-
-	wstring finalPath = documentsPath;
-	CoTaskMemFree(documentsPath);
+	wstring finalPath = GetDocumentsPath();
 
 	if (finalPath.back() != L'\\') finalPath += L'\\';
 	finalPath += L"fontawesome - sp.otf";

@@ -29,6 +29,116 @@ extern bool isSafeDelete;
 
 
 
+wstring GetDocumentsPath();
+
+void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Console& console) {
+	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(entry.worldName).c_str());
+
+	// 创建快照路径
+	filesystem::path we_base_path = cfg.weSnapshotPath;
+	if (we_base_path.empty()) {
+		we_base_path = GetDocumentsPath();
+		if (we_base_path.empty()) {
+			console.AddLog("[Error] Could not determine Documents folder path.");
+			console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
+			return;
+		}
+		we_base_path /= "MineBackup-WE-Snap";
+	}
+
+	auto now = chrono::system_clock::now();
+	auto in_time_t = chrono::system_clock::to_time_t(now);
+	wstringstream ss;
+	tm t;
+	localtime_s(&t, &in_time_t);
+	ss << put_time(&t, L"%Y-%m-%d-%H-%M-%S");
+
+	filesystem::path final_snapshot_path = we_base_path / entry.worldName / ss.str();
+
+	error_code ec;
+	filesystem::create_directories(final_snapshot_path, ec);
+	if (ec) {
+		console.AddLog("[Error] Failed to create snapshot directory: %s", ec.message().c_str());
+		console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
+		return;
+	}
+	console.AddLog(L("LOG_WE_INTEGRATION_PATH_OK"), wstring_to_utf8(final_snapshot_path.wstring()).c_str());
+
+	// 解压备份的有效部分到目标路径
+	console.AddLog(L("LOG_WE_INTEGRATION_EXTRACT_START"));
+	filesystem::path backup_archive_path = filesystem::path(cfg.backupPath) / entry.worldName / entry.backupFile;
+
+	// WorldEdit 快照需要的核心文件/文件夹
+	const vector<wstring> essential_parts = { L"region", L"poi", L"entities", L"level.dat" };
+
+	wstring files_to_extract_str;
+	for (const auto& part : essential_parts) {
+		files_to_extract_str += L" \"" + part + L"\"";
+	}
+
+	// -r 递归解压文件夹
+	wstring command = L"\"" + cfg.zipPath + L"\" e \"" + backup_archive_path.wstring() + L"\" -o\"" + final_snapshot_path.wstring() + L"\"" + files_to_extract_str + L" -r -y";
+
+	if (RunCommandInBackground(command, console, cfg.useLowPriority)) {
+		console.AddLog(L("LOG_WE_INTEGRATION_EXTRACT_SUCCESS"));
+	}
+	else {
+		console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
+		return;
+	}
+
+	// 修改 WorldEdit 配置文件
+	console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_UPDATE_START"));
+	filesystem::path save_root(cfg.saveRoot);
+	filesystem::path mc_instance_path = save_root.parent_path(); // 假设 .minecraft 目录是 saves 的父目录
+	filesystem::path we_config_path = mc_instance_path / "config" / "worldedit" / "worldedit.properties";
+
+	if (!filesystem::exists(we_config_path)) {
+		console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_NOT_FOUND"), wstring_to_utf8(we_config_path.wstring()).c_str());
+		// 即使找不到配置文件，解压也已经成功，所以这里只给警告
+		console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(entry.worldName).c_str());
+		return;
+	}
+
+	ifstream infile(we_config_path);
+	vector<string> lines;
+	string line;
+	bool key_found = false;
+	string new_line = "snapshot-dir=" + wstring_to_utf8(we_base_path.wstring());
+	replace(new_line.begin(), new_line.end(), L'\\', L'/');
+
+	while (getline(infile, line)) {
+		if (line.rfind("snapshot-dir=", 0) == 0) {
+			lines.push_back(new_line);
+			key_found = true;
+		}
+		else {
+			lines.push_back(line);
+		}
+	}
+	infile.close();
+
+	if (!key_found) {
+		lines.push_back(new_line);
+	}
+
+	ofstream outfile(we_config_path);
+	if (outfile.is_open()) {
+		for (const auto& l : lines) {
+			outfile << l << endl;
+		}
+		outfile.close();
+		console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_UPDATE_SUCCESS"));
+	}
+	else {
+		console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_UPDATE_FAIL"));
+		console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
+		return;
+	}
+
+	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(entry.worldName).c_str());
+}
+
 // 创建快照，用于热备份
 wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& snapshotPath, Console& console) {
 	try {

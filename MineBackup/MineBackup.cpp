@@ -70,6 +70,7 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
+bool IsPureASCII(const wstring& s);
 void OpenLinkInBrowser(const wstring& url);
 inline void ApplyTheme(int& theme);
 wstring SanitizeFileName(const wstring& input);
@@ -1391,11 +1392,9 @@ int main(int argc, char** argv)
 							ImGui::Separator();
 
 							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-								if (g_appState.configs.count(g_appState.currentConfigIndex)) {
-									thread backup_thread(DoOthersBackup, g_appState.configs[g_appState.currentConfigIndex], buf, utf8_to_wstring(others_comment));
-									backup_thread.detach();
-									strcpy_s(others_comment, "");
-								}
+								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment));
+								backup_thread.detach();
+								strcpy_s(others_comment, "");
 								SaveConfigs(); // 保存一下路径
 								ImGui::CloseCurrentPopup();
 							}
@@ -2380,6 +2379,34 @@ void ShowSettingsWindow() {
 			}
 		}
 
+		if (ImGui::CollapsingHeader(L("GROUP_WE_INTEGRATION"))) {
+			ImGui::Checkbox(L("ENABLE_WE_INTEGRATION"), &cfg.enableWEIntegration);
+
+			ImGui::BeginDisabled(!cfg.enableWEIntegration);
+
+			static char wePathBuf[CONSTANT1];
+			static int last_config_idx = -1;
+			if (g_appState.currentConfigIndex != last_config_idx) {
+				strncpy_s(wePathBuf, wstring_to_utf8(cfg.weSnapshotPath).c_str(), sizeof(wePathBuf));
+				last_config_idx = g_appState.currentConfigIndex;
+			}
+
+			if (ImGui::InputText(L("WE_SNAPSHOT_PATH_LABEL"), wePathBuf, CONSTANT1)) {
+				wstring newPath = utf8_to_wstring(wePathBuf);
+				if (!IsPureASCII(newPath)) {
+					//MessageBoxWin(L("ERROR_TITLE"), L("ERROR_NON_ASCII_PATH"));
+					strcpy_s(wePathBuf, "");
+					cfg.weSnapshotPath = L"";
+				}
+				else {
+					cfg.weSnapshotPath = newPath;
+				}
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_WE_SNAPSHOT_PATH"));
+
+			ImGui::EndDisabled();
+		}
+
 		// 云同步设置
 		if (ImGui::CollapsingHeader(L("GROUP_CLOUD_SYNC")))
 		{
@@ -2939,6 +2966,16 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 			selected_entry->isImportant = !selected_entry->isImportant;
 		}
+		// -----------
+		if (!cfg.enableWEIntegration) ImGui::BeginDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button(L("BUTTON_ADD_TO_WE"))) {
+			thread we_thread(AddBackupToWESnapshots, cfg, *selected_entry, ref(console));
+			we_thread.detach();
+		}
+
+		if (!cfg.enableWEIntegration) ImGui::EndDisabled();
+		// -----------
 		if (!file_exists) ImGui::EndDisabled();
 
 

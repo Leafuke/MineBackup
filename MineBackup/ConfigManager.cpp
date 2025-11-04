@@ -130,6 +130,8 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
 				else if (key == L"SnapshotPath") cur->snapshotPath = val;
 				else if (key == L"OtherPath") cur->othersPath = val;
+				else if (key == L"EnableWEIntegration") cur->enableWEIntegration = (val != L"0");
+				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
 					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
@@ -305,6 +307,8 @@ void SaveConfigs(const wstring& filename) {
 		out << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
 		out << L"SnapshotPath=" << c.snapshotPath << L"\n";
 		out << L"OtherPath=" << c.othersPath << L"\n";
+		out << L"EnableWEIntegration=" << (c.enableWEIntegration ? 1 : 0) << L"\n";
+		out << L"WESnapshotPath=" << c.weSnapshotPath << L"\n";
 		for (const auto& item : c.blacklist) {
 			out << L"BlacklistItem=" << item << L"\n";
 		}

@@ -43,6 +43,8 @@ struct Config {
 	std::wstring rcloneRemotePath;
 	std::wstring snapshotPath;
 	std::wstring othersPath;
+	bool enableWEIntegration = false;
+	std::wstring weSnapshotPath = L"";
 };
 struct AutomatedTask {
 	int configIndex = -1;
