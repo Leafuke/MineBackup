@@ -77,7 +77,7 @@ void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Consol
 	}
 
 	// -r 递归解压文件夹
-	wstring command = L"\"" + cfg.zipPath + L"\" e \"" + backup_archive_path.wstring() + L"\" -o\"" + final_snapshot_path.wstring() + L"\"" + files_to_extract_str + L" -r -y";
+	wstring command = L"\"" + cfg.zipPath + L"\" x \"" + backup_archive_path.wstring() + L"\" -o\"" + final_snapshot_path.wstring() + L"\"" + files_to_extract_str + L" -r -y";
 
 	if (RunCommandInBackground(command, console, cfg.useLowPriority)) {
 		console.AddLog(L("LOG_WE_INTEGRATION_EXTRACT_SUCCESS"));
@@ -90,8 +90,17 @@ void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Consol
 	// 修改 WorldEdit 配置文件
 	console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_UPDATE_START"));
 	filesystem::path save_root(cfg.saveRoot);
-	filesystem::path mc_instance_path = save_root.parent_path(); // 假设 .minecraft 目录是 saves 的父目录
-	filesystem::path we_config_path = mc_instance_path / "config" / "worldedit" / "worldedit.properties";
+	//filesystem::path mc_instance_path = save_root.parent_path(); // 假设 .minecraft 目录是 saves 的父目录
+	filesystem::path we_config_path;
+	if (filesystem::exists(save_root.parent_path() / "config" / "worldedit" / "worldedit.properties")) {
+		we_config_path = save_root.parent_path() / "config" / "worldedit" / "worldedit.properties";
+	}
+	else if (filesystem::exists(save_root / "config" / "worldedit" / "worldedit.properties")) {
+		we_config_path = save_root / "config" / "worldedit" / "worldedit.properties";
+	}
+	else if (filesystem::exists(save_root / "worldedit.conf")) {
+		we_config_path = save_root / "worldedit.conf";
+	}
 
 	if (!filesystem::exists(we_config_path)) {
 		console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_NOT_FOUND"), wstring_to_utf8(we_config_path.wstring()).c_str());
@@ -104,11 +113,11 @@ void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Consol
 	vector<string> lines;
 	string line;
 	bool key_found = false;
-	string new_line = "snapshot-dir=" + wstring_to_utf8(we_base_path.wstring());
+	string new_line = "snapshots-dir=" + wstring_to_utf8(we_base_path.wstring());
 	replace(new_line.begin(), new_line.end(), L'\\', L'/');
 
 	while (getline(infile, line)) {
-		if (line.rfind("snapshot-dir=", 0) == 0) {
+		if (line.rfind("snapshots-dir=", 0) == 0) {
 			lines.push_back(new_line);
 			key_found = true;
 		}
