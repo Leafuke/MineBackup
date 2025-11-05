@@ -3074,7 +3074,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 
 void GameSessionWatcherThread() {
-	console.AddLog(L("LOG_EXIT_WATCHER_START"));
+	console.AddLog(L("LOG_START_WATCHER_START"));
 
 	while (!g_stopExitWatcher) {
 		map<pair<int, int>, wstring> currently_locked_worlds;
@@ -3132,7 +3132,6 @@ void GameSessionWatcherThread() {
 		}
 
 		{
-			// 检查已关闭的世界
 			vector<pair<int, int>> worlds_to_backup;
 
 			// 检查新启动的世界
@@ -3156,8 +3155,7 @@ void GameSessionWatcherThread() {
 			// 更新当前活动的世界列表
 			g_activeWorlds = currently_locked_worlds;
 
-			// 对于刚关闭的世界，启动备份
-			if (!worlds_to_backup.empty()) {
+			if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
 				lock_guard<mutex> config_lock(g_appState.configsMutex);
 				for (const auto& backup_target : worlds_to_backup) {
 					int config_idx = backup_target.first;

@@ -272,7 +272,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "LOG_HOTKEY_RESTORE_TRIGGERED", u8"[热键] 已触发还原到最近备份..." },
 		{ "LOG_NO_ACTIVE_WORLD_FOUND", u8"[提示] 未找到当前正在运行的游戏存档。" },
 		{ "LOG_ACTIVE_WORLD_FOUND", u8"[提示] 检测到活动存档: %s (来自配置 '%s')。准备热备份。" },
-		{ "LOG_EXIT_WATCHER_START", u8"[自动备份] 游戏启动监控已启动。" },
+		{ "LOG_START_WATCHER_START", u8"[自动备份] 游戏启动监控已启动。" },
 		{ "LOG_EXIT_WATCHER_STOP", u8"[自动备份] 游戏启动监控已停止。" },
 		{ "LOG_GAME_SESSION_STARTED", u8"[监控] 检测到游戏会话开始: %s。触发备份..." },
 		{ "LOG_GAME_SESSION_ENDED", u8"[监控] 检测到游戏会话结束: %s。" },
