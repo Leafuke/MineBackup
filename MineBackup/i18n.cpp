@@ -461,6 +461,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "LOG_WE_INTEGRATION_CONFIG_UPDATE_FAIL", u8"[WE联动] [错误] 更新 worldedit.properties 失败。" },
 		{ "LOG_WE_INTEGRATION_SUCCESS", u8"[WE联动] 成功为 '%s' 添加快照！" },
 		{ "LOG_WE_INTEGRATION_FAILED", u8"[WE联动] [错误] 添加快照失败，详情请查看日志。" },
+		{"BUTTON_AUTO_SCAN_WORLDS", u8"自动扫描父目录"},
+		{ "TIP_BUTTON_AUTO_SCAN_WORLDS", u8"开启后将自动扫描“存档文件夹”同一个目录下的其他文件夹并添加为新的配置。可以开启" },
 }},
 	{ "en_US", {
 		{"SETTINGS", "Settings"},

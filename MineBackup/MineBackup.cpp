@@ -39,7 +39,7 @@ wstring Fontss;
 bool showSettings = false;
 bool isSilence = false, isSafeDelete = false;
 bool specialSetting = false;
-bool g_CheckForUpdates = true, g_RunOnStartup = false;
+bool g_CheckForUpdates = true, g_RunOnStartup = false, g_AutoScanForWorlds = false;
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
 
@@ -384,6 +384,34 @@ int main(int argc, char** argv)
 	static char backupComment[CONSTANT1] = "";
 
 
+	// 如果开了自动扫描，那么就检查一下，然后添加
+	if (g_AutoScanForWorlds) {
+		for (auto& [idx, config] : g_appState.configs) {
+			for (auto& entry : filesystem::directory_iterator(filesystem::path(config.saveRoot).parent_path().parent_path())) {
+				if (!entry.is_directory() || !(filesystem::exists(entry.path() / "saves")))
+					continue;
+				// 检查是否已经在配置中了
+				bool alreadyExists = false;
+				for (auto& [i, c] : g_appState.configs) {
+					if (c.saveRoot == (entry.path() / "saves").wstring()) {
+						alreadyExists = true;
+						break;
+					}
+				}
+				if (alreadyExists)
+					continue;
+
+				// 没有的话添加为新的配置
+				int index = CreateNewNormalConfig(entry.path().filename().string());
+				g_appState.configs[index] = config;
+				g_appState.configs[index].name = entry.path().filename().string();
+				g_appState.configs[index].saveRoot = (entry.path() / "saves").wstring();
+				g_appState.configs[index].worlds.clear();
+			}
+		}
+	}
+
+
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
@@ -461,7 +489,18 @@ int main(int argc, char** argv)
 				}
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) { // 不能用 getenv，改成_dupenv_s了...
-					if (filesystem::exists("C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
+					if (filesystem::exists((string)getenv("APPDATA") + "\\Minecraft Bedrock\\Users")) {
+						pathTemp = (string)getenv("APPDATA") + "\\Minecraft Bedrock\\Users";
+						// 这个文件夹下有多个用户文件夹，默认选第一个
+						for (const auto& entry : filesystem::directory_iterator(pathTemp)) {
+							if (entry.is_directory() && (entry.path().filename().string()[0] - '0') < 10 && (entry.path().filename().string()[0] - '0') >= 0) {
+								pathTemp = pathTemp + entry.path().filename().string() + "games" + "com.mojang" + "minecraftWorlds";
+								strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
+								break;
+							}
+						}
+					}
+					else if (filesystem::exists("C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
 						pathTemp = "C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
 						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
 					}
@@ -553,6 +592,11 @@ int main(int argc, char** argv)
 				ImGui::InputText(L("WIZARD_7Z_PATH"), zipPath, IM_ARRAYSIZE(zipPath));
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
+				
+				ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
+
+				ImGui::Dummy(ImVec2(0.0f, 20.0f));
 				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_FINISH_CONFIG"), ImVec2(120, 0))) {
@@ -562,9 +606,22 @@ int main(int argc, char** argv)
 						Config& initialConfig = g_appState.configs[g_appState.currentConfigIndex];
 
 						// 1. 保存向导中收集的路径
+						initialConfig.name = filesystem::path(saveRootPath).filename().string();
 						initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
 						initialConfig.backupPath = utf8_to_wstring(backupPath);
 						initialConfig.zipPath = utf8_to_wstring(zipPath);
+
+						if (g_AutoScanForWorlds) {
+							for (auto& entry : filesystem::directory_iterator(filesystem::path(saveRootPath).parent_path().parent_path())) {
+								if (!entry.is_directory() || !(filesystem::exists(entry.path() / "save")))
+									continue;
+								int index = CreateNewNormalConfig(entry.path().filename().string());
+								g_appState.configs[index] = initialConfig;
+								g_appState.configs[index].name = entry.path().filename().string();
+								g_appState.configs[index].saveRoot = (entry.path() / "save").wstring();
+								g_appState.configs[index].worlds.clear();
+							}
+						}
 
 						// 2. 自动扫描存档目录，填充世界列表
 						if (filesystem::exists(initialConfig.saveRoot)) {
@@ -663,8 +720,8 @@ int main(int argc, char** argv)
 						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup);
 					}
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
-
-
+					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Separator();
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
