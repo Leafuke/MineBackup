@@ -11,3 +11,4 @@ void DoOthersBackup(const Config config, std::filesystem::path backupWhat, const
 void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, std::atomic<bool>& stop_flag);
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console);
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console);
+void AddBackupToWESnapshots(const Config config, const std::wstring& worldName, const std::wstring& backupFile, Console& console);

@@ -14,14 +14,6 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
-#include <locale>
-#include <codecvt>
-#include <fcntl.h>
-#include <io.h>
-#include <thread>
-#include <atomic> // 用于线程安全的标志
-#include <mutex>  // 用于互斥锁
-#include <shellapi.h> // 托盘图标相关
 #include <conio.h>
 
 using namespace std;
@@ -30,7 +22,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.9.2";
+string CURRENT_VERSION = "1.10.0";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -47,7 +39,7 @@ wstring Fontss;
 bool showSettings = false;
 bool isSilence = false, isSafeDelete = false;
 bool specialSetting = false;
-bool g_CheckForUpdates = true, g_RunOnStartup = false;
+bool g_CheckForUpdates = true, g_RunOnStartup = false, g_AutoScanForWorlds = false;
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
 
@@ -70,6 +62,7 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
+bool IsPureASCII(const wstring& s);
 void OpenLinkInBrowser(const wstring& url);
 inline void ApplyTheme(int& theme);
 wstring SanitizeFileName(const wstring& input);
@@ -104,7 +97,6 @@ void ConsoleLog(Console* console, const char* format, ...);
 // Main code
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
-
 	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
 	wchar_t exePath[MAX_PATH];
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
@@ -243,6 +235,7 @@ int main(int argc, char** argv)
 		return 1;
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
+
 	
 #ifdef _WIN32
 	int width, height, channels;
@@ -391,6 +384,34 @@ int main(int argc, char** argv)
 	static char backupComment[CONSTANT1] = "";
 
 
+	// 如果开了自动扫描，那么就检查一下，然后添加
+	if (g_AutoScanForWorlds) {
+		for (auto& [idx, config] : g_appState.configs) {
+			for (auto& entry : filesystem::directory_iterator(filesystem::path(config.saveRoot).parent_path().parent_path())) {
+				if (!entry.is_directory() || !(filesystem::exists(entry.path() / "saves")))
+					continue;
+				// 检查是否已经在配置中了
+				bool alreadyExists = false;
+				for (auto& [i, c] : g_appState.configs) {
+					if (c.saveRoot == (entry.path() / "saves").wstring()) {
+						alreadyExists = true;
+						break;
+					}
+				}
+				if (alreadyExists)
+					continue;
+
+				// 没有的话添加为新的配置
+				int index = CreateNewNormalConfig(entry.path().filename().string());
+				g_appState.configs[index] = config;
+				g_appState.configs[index].name = entry.path().filename().string();
+				g_appState.configs[index].saveRoot = (entry.path() / "saves").wstring();
+				g_appState.configs[index].worlds.clear();
+			}
+		}
+	}
+
+
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
@@ -468,7 +489,18 @@ int main(int argc, char** argv)
 				}
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) { // 不能用 getenv，改成_dupenv_s了...
-					if (filesystem::exists("C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
+					if (filesystem::exists((string)getenv("APPDATA") + "\\Minecraft Bedrock\\Users")) {
+						pathTemp = (string)getenv("APPDATA") + "\\Minecraft Bedrock\\Users";
+						// 这个文件夹下有多个用户文件夹，默认选第一个
+						for (const auto& entry : filesystem::directory_iterator(pathTemp)) {
+							if (entry.is_directory() && (entry.path().filename().string()[0] - '0') < 10 && (entry.path().filename().string()[0] - '0') >= 0) {
+								pathTemp = pathTemp + entry.path().filename().string() + "games" + "com.mojang" + "minecraftWorlds";
+								strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
+								break;
+							}
+						}
+					}
+					else if (filesystem::exists("C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
 						pathTemp = "C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
 						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
 					}
@@ -560,6 +592,11 @@ int main(int argc, char** argv)
 				ImGui::InputText(L("WIZARD_7Z_PATH"), zipPath, IM_ARRAYSIZE(zipPath));
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
+				
+				ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
+
+				ImGui::Dummy(ImVec2(0.0f, 20.0f));
 				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_FINISH_CONFIG"), ImVec2(120, 0))) {
@@ -569,9 +606,22 @@ int main(int argc, char** argv)
 						Config& initialConfig = g_appState.configs[g_appState.currentConfigIndex];
 
 						// 1. 保存向导中收集的路径
+						initialConfig.name = filesystem::path(saveRootPath).filename().string();
 						initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
 						initialConfig.backupPath = utf8_to_wstring(backupPath);
 						initialConfig.zipPath = utf8_to_wstring(zipPath);
+
+						if (g_AutoScanForWorlds) {
+							for (auto& entry : filesystem::directory_iterator(filesystem::path(saveRootPath).parent_path().parent_path())) {
+								if (!entry.is_directory() || !(filesystem::exists(entry.path() / "save")))
+									continue;
+								int index = CreateNewNormalConfig(entry.path().filename().string());
+								g_appState.configs[index] = initialConfig;
+								g_appState.configs[index].name = entry.path().filename().string();
+								g_appState.configs[index].saveRoot = (entry.path() / "save").wstring();
+								g_appState.configs[index].worlds.clear();
+							}
+						}
 
 						// 2. 自动扫描存档目录，填充世界列表
 						if (filesystem::exists(initialConfig.saveRoot)) {
@@ -670,8 +720,8 @@ int main(int argc, char** argv)
 						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup);
 					}
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
-
-
+					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Separator();
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
@@ -1391,11 +1441,9 @@ int main(int argc, char** argv)
 							ImGui::Separator();
 
 							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-								if (g_appState.configs.count(g_appState.currentConfigIndex)) {
-									thread backup_thread(DoOthersBackup, g_appState.configs[g_appState.currentConfigIndex], buf, utf8_to_wstring(others_comment));
-									backup_thread.detach();
-									strcpy_s(others_comment, "");
-								}
+								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment));
+								backup_thread.detach();
+								strcpy_s(others_comment, "");
 								SaveConfigs(); // 保存一下路径
 								ImGui::CloseCurrentPopup();
 							}
@@ -2380,6 +2428,34 @@ void ShowSettingsWindow() {
 			}
 		}
 
+		if (ImGui::CollapsingHeader(L("GROUP_WE_INTEGRATION"))) {
+			ImGui::Checkbox(L("ENABLE_WE_INTEGRATION"), &cfg.enableWEIntegration);
+
+			ImGui::BeginDisabled(!cfg.enableWEIntegration);
+
+			static char wePathBuf[CONSTANT1];
+			static int last_config_idx = -1;
+			if (g_appState.currentConfigIndex != last_config_idx) {
+				strncpy_s(wePathBuf, wstring_to_utf8(cfg.weSnapshotPath).c_str(), sizeof(wePathBuf));
+				last_config_idx = g_appState.currentConfigIndex;
+			}
+
+			if (ImGui::InputText(L("WE_SNAPSHOT_PATH_LABEL"), wePathBuf, CONSTANT1)) {
+				wstring newPath = utf8_to_wstring(wePathBuf);
+				if (!IsPureASCII(newPath)) {
+					//MessageBoxWin(L("ERROR_TITLE"), L("ERROR_NON_ASCII_PATH"));
+					strcpy_s(wePathBuf, "");
+					cfg.weSnapshotPath = L"";
+				}
+				else {
+					cfg.weSnapshotPath = newPath;
+				}
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_WE_SNAPSHOT_PATH"));
+
+			ImGui::EndDisabled();
+		}
+
 		// 云同步设置
 		if (ImGui::CollapsingHeader(L("GROUP_CLOUD_SYNC")))
 		{
@@ -2939,6 +3015,16 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 			selected_entry->isImportant = !selected_entry->isImportant;
 		}
+		// -----------
+		if (!cfg.enableWEIntegration) ImGui::BeginDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button(L("BUTTON_ADD_TO_WE"))) {
+			thread we_thread(AddBackupToWESnapshots, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console));
+			we_thread.detach();
+		}
+
+		if (!cfg.enableWEIntegration) ImGui::EndDisabled();
+		// -----------
 		if (!file_exists) ImGui::EndDisabled();
 
 
@@ -3045,7 +3131,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 
 void GameSessionWatcherThread() {
-	console.AddLog(L("LOG_EXIT_WATCHER_START"));
+	console.AddLog(L("LOG_START_WATCHER_START"));
 
 	while (!g_stopExitWatcher) {
 		map<pair<int, int>, wstring> currently_locked_worlds;
@@ -3103,7 +3189,6 @@ void GameSessionWatcherThread() {
 		}
 
 		{
-			// 检查已关闭的世界
 			vector<pair<int, int>> worlds_to_backup;
 
 			// 检查新启动的世界
@@ -3127,8 +3212,7 @@ void GameSessionWatcherThread() {
 			// 更新当前活动的世界列表
 			g_activeWorlds = currently_locked_worlds;
 
-			// 对于刚关闭的世界，启动备份
-			if (!worlds_to_backup.empty()) {
+			if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
 				lock_guard<mutex> config_lock(g_appState.configsMutex);
 				for (const auto& backup_target : worlds_to_backup) {
 					int config_idx = backup_target.first;
@@ -3329,6 +3413,14 @@ void TriggerHotkeyBackup() {
 }
 
 void TriggerHotkeyRestore() {
+
+	HotRestoreState expected_idle = HotRestoreState::IDLE;
+	// 使用CAS操作确保线程安全地从IDLE转换到WAITING_FOR_MOD
+	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
+		console.AddLog(L("[Hotkey] A restore operation is already in progress. Ignoring request."));
+		return;
+	}
+
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
 
@@ -3352,51 +3444,88 @@ void TriggerHotkeyRestore() {
 			}
 
 			if (IsFileLocked(levelDatPath)) {
+
+
 				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
 				// KnotLink 通知
 				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
 				console.AddLog(L("KNOTLINK_PRE_RESTORE"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
 
-				// 等待模组保存
-				this_thread::sleep_for(chrono::seconds(5));
-				if (!g_appState.isRespond) {
-					return;
-				}
 
-				// 查找最新备份文件
-				wstring backupDir = cfg.backupPath + L"\\" + world.first;
-				filesystem::path latestBackup;
-				auto latest_time = filesystem::file_time_type{};
-				for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-					if (entry.is_regular_file()) {
-						auto fname = entry.path().filename().wstring();
-						if ((fname.find(L"[Full]") != wstring::npos || fname.find(L"[Smart]") != wstring::npos)
-							&& entry.last_write_time() > latest_time) {
-							latest_time = entry.last_write_time();
-							latestBackup = entry.path();
+
+				// 4. 启动后台等待线程
+				thread([=]() {
+					using namespace std::chrono;
+					auto startTime = steady_clock::now();
+					const auto timeout = seconds(15);
+
+					// 等待响应或超时
+					while (steady_clock::now() - startTime < timeout) {
+						if (g_appState.isRespond) {
+							break; // 收到响应
+						}
+						this_thread::sleep_for(milliseconds(100));
+					}
+
+					// 检查是收到了响应还是超时了
+					if (!g_appState.isRespond) {
+						console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
+						BroadcastEvent("event=restore_cancelled;reason=timeout");
+						g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
+						return;
+					}
+
+					// --- 收到响应，开始还原 ---
+					g_appState.isRespond = false; // 重置标志位
+					g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+					console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
+
+					// 查找最新备份文件 (这部分逻辑保持不变)
+					wstring backupDir = cfg.backupPath + L"\\" + world.first;
+					filesystem::path latestBackup;
+					auto latest_time = filesystem::file_time_type{};
+					bool found = false;
+
+					if (filesystem::exists(backupDir)) {
+						for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+							if (entry.is_regular_file()) {
+								if (entry.last_write_time() > latest_time) {
+									latest_time = entry.last_write_time();
+									latestBackup = entry.path();
+									found = true;
+								}
+							}
 						}
 					}
-				}
 
-				if (latestBackup.empty()) {
-					console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-					return;
-				}
+					if (!found) {
+						console.AddLog(L("LOG_NO_BACKUP_FOUND"));
+						BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
+						g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+						return;
+					}
 
-				console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
+					console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
 
-				// 还原（默认清理还原 restoreMethod=0）
-				thread restore_thread(DoRestore, cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
-				restore_thread.detach();
+					DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
 
-				// KnotLink 通知还原完成
-				BroadcastEvent("event=hot_restore_completed;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-				console.AddLog(L("KNOTLINK_HOT_RESTORE_COMPLETED"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
-				g_appState.isRespond = false;
+					this_thread::sleep_for(seconds(3));
+
+					// 假设成功，广播完成事件
+					BroadcastEvent("event=restore_finished");
+					console.AddLog(L("[Hotkey] Restore completed successfully."));
+
+					// 最终，重置状态
+					g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+					g_appState.isRespond = false;
+
+
+				}).detach(); // 分离线程，让它在后台运行
 				return;
 			}
 		}
 	}
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
+	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
 }
