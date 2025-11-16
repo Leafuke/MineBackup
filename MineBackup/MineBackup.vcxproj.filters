@@ -187,7 +187,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\7za.exe" />
-    <None Include="D:\Downloads\Programs\MineBackup\7za.exe" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="D:\Pictures\图标\mine10.ico">
@@ -205,6 +204,5 @@
   </ItemGroup>
   <ItemGroup>
     <Font Include="..\fontawesome-sp.otf" />
-    <Font Include="D:\Downloads\Programs\MineBackup\fontawesome-sp.otf" />
   </ItemGroup>
 </Project>
