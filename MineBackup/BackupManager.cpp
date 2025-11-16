@@ -31,12 +31,8 @@ extern bool isSafeDelete;
 
 wstring GetDocumentsPath();
 
-void AddBackupToWESnapshots(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
-
-}
-
-void AddBackupToWESnapshots(const Config cfg, const wstring& worldName, const wstring& backupFile, Console& console) {
-	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
+void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Console& console) {
+	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(entry.worldName).c_str());
 
 	// 创建快照路径
 	filesystem::path we_base_path = cfg.weSnapshotPath;
@@ -57,7 +53,7 @@ void AddBackupToWESnapshots(const Config cfg, const wstring& worldName, const ws
 	localtime_s(&t, &in_time_t);
 	ss << put_time(&t, L"%Y-%m-%d-%H-%M-%S");
 
-	filesystem::path final_snapshot_path = we_base_path / worldName / ss.str();
+	filesystem::path final_snapshot_path = we_base_path / entry.worldName / ss.str();
 
 	error_code ec;
 	filesystem::create_directories(final_snapshot_path, ec);
@@ -70,7 +66,7 @@ void AddBackupToWESnapshots(const Config cfg, const wstring& worldName, const ws
 
 	// 解压备份的有效部分到目标路径
 	console.AddLog(L("LOG_WE_INTEGRATION_EXTRACT_START"));
-	filesystem::path backup_archive_path = filesystem::path(cfg.backupPath) / worldName / backupFile;
+	filesystem::path backup_archive_path = filesystem::path(cfg.backupPath) / entry.worldName / entry.backupFile;
 
 	// WorldEdit 快照需要的核心文件/文件夹
 	const vector<wstring> essential_parts = { L"region", L"poi", L"entities", L"level.dat" };
@@ -109,7 +105,7 @@ void AddBackupToWESnapshots(const Config cfg, const wstring& worldName, const ws
 	if (!filesystem::exists(we_config_path)) {
 		console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_NOT_FOUND"), wstring_to_utf8(we_config_path.wstring()).c_str());
 		// 即使找不到配置文件，解压也已经成功，所以这里只给警告
-		console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
+		console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(entry.worldName).c_str());
 		return;
 	}
 
@@ -149,7 +145,7 @@ void AddBackupToWESnapshots(const Config cfg, const wstring& worldName, const ws
 		return;
 	}
 
-	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
+	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(entry.worldName).c_str());
 }
 
 // 创建快照，用于热备份

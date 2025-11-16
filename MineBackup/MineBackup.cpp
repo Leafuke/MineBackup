@@ -22,7 +22,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.10.0";
+string CURRENT_VERSION = "1.9.9";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -3019,7 +3019,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (!cfg.enableWEIntegration) ImGui::BeginDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_ADD_TO_WE"))) {
-			thread we_thread(AddBackupToWESnapshots, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console));
+			thread we_thread(AddBackupToWESnapshots, cfg, *selected_entry, ref(console));
 			we_thread.detach();
 		}
 
@@ -3509,10 +3509,8 @@ void TriggerHotkeyRestore() {
 
 					DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
 
-					this_thread::sleep_for(seconds(3));
-
 					// 假设成功，广播完成事件
-					BroadcastEvent("event=restore_finished");
+					BroadcastEvent("event=restore_finished;status=success;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
 					console.AddLog(L("[Hotkey] Restore completed successfully."));
 
 					// 最终，重置状态
