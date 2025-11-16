@@ -3038,7 +3038,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (!cfg.enableWEIntegration) ImGui::BeginDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_ADD_TO_WE"))) {
-			thread we_thread(AddBackupToWESnapshots, cfg, *selected_entry, ref(console));
+			thread we_thread(AddBackupToWESnapshots, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console));
 			we_thread.detach();
 		}
 

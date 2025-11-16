@@ -278,13 +278,49 @@ string ProcessCommand(const string& commandStr, Console* console) {
 
 		return success_msg;
 	}
-	else if (command == "SHUT_DOWN_WORLD_SUCCESS") {
+	else if (command == "SHUTDOWN_WORLD_SUCCESS") {
 		if (g_appState.hotkeyRestoreState == HotRestoreState::WAITING_FOR_MOD) {
 			g_appState.isRespond = true;
 			return "OK:Acknowledged. Restore will now proceed.";
 		}
 		return "ERROR:Not currently waiting for a world shutdown signal.";
+	}
+	else if (command == "ADD_TO_WE") {
+		int config_idx, world_idx;
+		string backup_file;
+		if (!(ss >> config_idx) || g_appState.configs.find(config_idx) == g_appState.configs.end()) {
+			BroadcastEvent(L("BROADCAST_CONFIG_INDEX_ERROR"));
+			return error_response(L("BROADCAST_CONFIG_INDEX_ERROR"));
 		}
+		if (!(ss >> world_idx) || world_idx >= g_appState.configs[config_idx].worlds.size() || world_idx < 0) {
+			BroadcastEvent(L("BROADCAST_WORLD_INDEX_ERROR"));
+			return error_response(L("BROADCAST_WORLD_INDEX_ERROR"));
+		}
+		if (!(ss >> backup_file)) {
+			BroadcastEvent(L("BROADCAST_MISSING_BACKUP_FILE"));
+			return error_response(L("BROADCAST_MISSING_BACKUP_FILE"));
+		}
+
+		thread([=]() {
+			lock_guard<mutex> thread_lock(g_appState.configsMutex);
+			if (g_appState.configs.count(config_idx)) {
+				AddBackupToWESnapshots(g_appState.configs[config_idx], g_appState.configs[config_idx].worlds[world_idx].first, utf8_to_wstring(backup_file), *console);
+			}
+			}).detach();
+
+		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+		BroadcastEvent("event=we_snapshot_completed;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
+		return "OK:Snapshot completed for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
+	}
+	else if (command == "SEND") {
+
+		string comment_part;
+		getline(ss, comment_part); // 获取剩余部分
+		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
+		console->AddLog("send: %s", comment_part);
+		BroadcastEvent("event=" + comment_part);
+		return "OK:Event Sent";
+	}
 
 	return "ERROR:Unknown command '" + command + "'.";
 }
@@ -348,4 +384,3 @@ void  Console::ExecCommand(const char* command_line)
 	// On command input, we scroll to bottom even if AutoScroll==false
 	ScrollToBottom = true;
 }
-

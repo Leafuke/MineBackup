@@ -31,11 +31,11 @@ extern bool isSafeDelete;
 
 wstring GetDocumentsPath();
 
-void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Console& console) {
-	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(entry.worldName).c_str());
+void AddBackupToWESnapshots(const Config config, const wstring& worldName, const wstring& backupFile, Console& console) {
+	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
 
 	// 创建快照路径
-	filesystem::path we_base_path = cfg.weSnapshotPath;
+	filesystem::path we_base_path = config.weSnapshotPath;
 	if (we_base_path.empty()) {
 		we_base_path = GetDocumentsPath();
 		if (we_base_path.empty()) {
@@ -53,7 +53,7 @@ void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Consol
 	localtime_s(&t, &in_time_t);
 	ss << put_time(&t, L"%Y-%m-%d-%H-%M-%S");
 
-	filesystem::path final_snapshot_path = we_base_path / entry.worldName / ss.str();
+	filesystem::path final_snapshot_path = we_base_path / worldName / ss.str();
 
 	error_code ec;
 	filesystem::create_directories(final_snapshot_path, ec);
@@ -64,33 +64,79 @@ void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Consol
 	}
 	console.AddLog(L("LOG_WE_INTEGRATION_PATH_OK"), wstring_to_utf8(final_snapshot_path.wstring()).c_str());
 
-	// 解压备份的有效部分到目标路径
-	console.AddLog(L("LOG_WE_INTEGRATION_EXTRACT_START"));
-	filesystem::path backup_archive_path = filesystem::path(cfg.backupPath) / entry.worldName / entry.backupFile;
-
 	// WorldEdit 快照需要的核心文件/文件夹
 	const vector<wstring> essential_parts = { L"region", L"poi", L"entities", L"level.dat" };
 
+	// 还原链处理
+	wstring sourceDir = config.backupPath + L"\\" + worldName;
+	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
+
+	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(targetBackupPath)) {
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
+		return;
+	}
+
+	// 收集所有相关的备份文件
+	vector<filesystem::path> backupsToApply;
+
+	if (backupFile.find(L"[Smart]") != wstring::npos) {
+		// 寻找基础的完整备份
+		filesystem::path baseFullBackup;
+		auto baseFullTime = filesystem::file_time_type{};
+
+		for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
+			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
+				if (entry.last_write_time() < filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
+					baseFullTime = entry.last_write_time();
+					baseFullBackup = entry.path();
+				}
+			}
+		}
+
+		if (baseFullBackup.empty()) {
+			console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
+			return;
+		}
+
+		console.AddLog(L("LOG_BACKUP_SMART_FOUND"), wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
+		backupsToApply.push_back(baseFullBackup);
+
+		// 收集从基础备份到目标备份之间的所有增量备份
+		for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
+			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
+				if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= filesystem::last_write_time(targetBackupPath)) {
+					backupsToApply.push_back(entry.path());
+				}
+			}
+		}
+		// 按时间顺序排序
+		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
+			});
+	}
+	else {
+		backupsToApply.push_back(targetBackupPath);
+	}
+
+	// 依次解压核心文件/文件夹
 	wstring files_to_extract_str;
 	for (const auto& part : essential_parts) {
 		files_to_extract_str += L" \"" + part + L"\"";
 	}
 
-	// -r 递归解压文件夹
-	wstring command = L"\"" + cfg.zipPath + L"\" x \"" + backup_archive_path.wstring() + L"\" -o\"" + final_snapshot_path.wstring() + L"\"" + files_to_extract_str + L" -r -y";
-
-	if (RunCommandInBackground(command, console, cfg.useLowPriority)) {
-		console.AddLog(L("LOG_WE_INTEGRATION_EXTRACT_SUCCESS"));
+	for (size_t i = 0; i < backupsToApply.size(); ++i) {
+		const auto& backup = backupsToApply[i];
+		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
+		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + final_snapshot_path.wstring() + L"\"" + files_to_extract_str + L" -r -y";
+		if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+			console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
+			return;
+		}
 	}
-	else {
-		console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
-		return;
-	}
 
-	// 修改 WorldEdit 配置文件
+	// 修改 WorldEdit 配置文件（与原有实现一致）
 	console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_UPDATE_START"));
-	filesystem::path save_root(cfg.saveRoot);
-	//filesystem::path mc_instance_path = save_root.parent_path(); // 假设 .minecraft 目录是 saves 的父目录
+	filesystem::path save_root(config.saveRoot);
 	filesystem::path we_config_path;
 	if (filesystem::exists(save_root.parent_path() / "config" / "worldedit" / "worldedit.properties")) {
 		we_config_path = save_root.parent_path() / "config" / "worldedit" / "worldedit.properties";
@@ -104,8 +150,7 @@ void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Consol
 
 	if (!filesystem::exists(we_config_path)) {
 		console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_NOT_FOUND"), wstring_to_utf8(we_config_path.wstring()).c_str());
-		// 即使找不到配置文件，解压也已经成功，所以这里只给警告
-		console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(entry.worldName).c_str());
+		console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
 		return;
 	}
 
@@ -145,7 +190,7 @@ void AddBackupToWESnapshots(const Config& cfg, const HistoryEntry& entry, Consol
 		return;
 	}
 
-	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(entry.worldName).c_str());
+	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
 }
 
 // 创建快照，用于热备份
@@ -219,7 +264,7 @@ void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& new
 
 
 // 限制备份文件数量，超出则自动删除最旧的
-void LimitBackupFiles(const Config &config, const int &configIndex, const wstring& folderPath, int limit, Console* console)
+void LimitBackupFiles(const Config& config, const int& configIndex, const wstring& folderPath, int limit, Console* console)
 {
 	if (limit <= 0) return;
 	namespace fs = filesystem;
@@ -283,7 +328,7 @@ void LimitBackupFiles(const Config &config, const int &configIndex, const wstrin
 			{
 				if (console) console->AddLog(L("LOG_WARNING_DELETE_SMART_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 			}
-			
+
 			if (isSafeDelete) {
 				// 在 history 中找到这一项并安全删除
 				if (history_available) {
@@ -582,7 +627,7 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 		else {
 			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel)+ L" -m0=" + config.zipMethod  +
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
 			// -spf 强制使用完整路径，-spf2 使用相对路径
 		}
@@ -906,7 +951,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	return;
 }
 
-void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int &configIndex, Console& console) {
+void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console) {
 	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
 	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
