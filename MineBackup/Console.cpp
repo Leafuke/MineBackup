@@ -384,4 +384,3 @@ void  Console::ExecCommand(const char* command_line)
 	// On command input, we scroll to bottom even if AutoScroll==false
 	ScrollToBottom = true;
 }
-

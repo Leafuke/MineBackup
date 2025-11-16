@@ -22,7 +22,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.10.0";
+string CURRENT_VERSION = "1.10.1";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -337,10 +337,18 @@ int main(int argc, char** argv)
 	if (isFirstRun) {
 #ifdef _WIN32
 		GetUserDefaultUILanguageWin();
-		if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-			Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
-		else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-			Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
+		if (g_CurrentLang == "zh_CN") {
+			if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
+				Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
+			else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
+				Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
+			else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
+				Fontss = L"C:\\Windows\\Fonts\\msjh.ttc";
+			else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
+				Fontss = L"C:\\Windows\\Fonts\\msjh.ttf";
+			else
+				Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
+		}
 		else
 			Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 #else
@@ -388,7 +396,7 @@ int main(int argc, char** argv)
 	if (g_AutoScanForWorlds) {
 		for (auto& [idx, config] : g_appState.configs) {
 			for (auto& entry : filesystem::directory_iterator(filesystem::path(config.saveRoot).parent_path().parent_path())) {
-				if (!entry.is_directory() || !(filesystem::exists(entry.path() / "saves")))
+				if (!entry.is_directory() || !(filesystem::exists(entry.path() / "saves")) || filesystem::path(config.saveRoot).parent_path().parent_path() == "")
 					continue;
 				// 检查是否已经在配置中了
 				bool alreadyExists = false;
@@ -402,9 +410,9 @@ int main(int argc, char** argv)
 					continue;
 
 				// 没有的话添加为新的配置
-				int index = CreateNewNormalConfig(entry.path().filename().string());
+				int index = CreateNewNormalConfig();
 				g_appState.configs[index] = config;
-				g_appState.configs[index].name = entry.path().filename().string();
+				g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
 				g_appState.configs[index].saveRoot = (entry.path() / "saves").wstring();
 				g_appState.configs[index].worlds.clear();
 			}
@@ -424,6 +432,7 @@ int main(int argc, char** argv)
 		else {
 			// 正常轮询，以保持流畅的UI动画
 			glfwPollEvents();
+			Sleep(0.1);
 		}
 
 		// Poll and handle messages (inputs, window resize, etc.)
@@ -606,7 +615,8 @@ int main(int argc, char** argv)
 						Config& initialConfig = g_appState.configs[g_appState.currentConfigIndex];
 
 						// 1. 保存向导中收集的路径
-						initialConfig.name = filesystem::path(saveRootPath).filename().string();
+						initialConfig.name = "First";
+						// wstring_to_utf8(filesystem::path(saveRootPath).filename().wstring()) filename会错误地将中文和连续英文混淆
 						initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
 						initialConfig.backupPath = utf8_to_wstring(backupPath);
 						initialConfig.zipPath = utf8_to_wstring(zipPath);
@@ -615,9 +625,9 @@ int main(int argc, char** argv)
 							for (auto& entry : filesystem::directory_iterator(filesystem::path(saveRootPath).parent_path().parent_path())) {
 								if (!entry.is_directory() || !(filesystem::exists(entry.path() / "save")))
 									continue;
-								int index = CreateNewNormalConfig(entry.path().filename().string());
+								int index = CreateNewNormalConfig();
 								g_appState.configs[index] = initialConfig;
-								g_appState.configs[index].name = entry.path().filename().string();
+								//g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
 								g_appState.configs[index].saveRoot = (entry.path() / "save").wstring();
 								g_appState.configs[index].worlds.clear();
 							}
@@ -658,6 +668,12 @@ int main(int argc, char** argv)
 								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttc";
 							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
 								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttf";
+							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
+								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msjh.ttc";
+							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
+								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msjh.ttf";
+							else
+								initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 						}
 						else
 							initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
@@ -1714,7 +1730,10 @@ int main(int argc, char** argv)
 	}
 
 	glfwGetWindowSize(wc, &g_windowWidth, &g_windowHeight);
-	SaveConfigs();
+
+	if (filesystem::exists("config.ini"))
+		SaveConfigs();
+
 #ifdef _WIN32
 	RemoveTrayIcon();
 	UnregisterHotkeys(hwnd_hidden);
@@ -3509,10 +3528,8 @@ void TriggerHotkeyRestore() {
 
 					DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
 
-					this_thread::sleep_for(seconds(3));
-
 					// 假设成功，广播完成事件
-					BroadcastEvent("event=restore_finished");
+					BroadcastEvent("event=restore_finished;status=success;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
 					console.AddLog(L("[Hotkey] Restore completed successfully."));
 
 					// 最终，重置状态
