@@ -1676,7 +1676,10 @@ int main(int argc, char** argv)
 			ImGui::End();
 			
 
-			if (showSettings) ShowSettingsWindow();
+			if (showSettings) {
+				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // 强制窗口不参与停靠
+				ShowSettingsWindow();
+			}
 			if (showHistoryWindow) {
 				if (specialSetting) {
 					if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size())
@@ -1812,7 +1815,7 @@ inline void ApplyTheme(int& theme)
 
 
 void ShowSettingsWindow() {
-	ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+	ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
 	ImGui::SeparatorText(L("CONFIG_MANAGEMENT"));
 
 	string current_config_label = "None";
@@ -2770,7 +2773,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 	ImGui::SetNextWindowSize(ImVec2(850, 600), ImGuiCond_FirstUseEver);
 
-	if (!ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow)) {
+	if (!ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow, ImGuiWindowFlags_NoDocking)) {
 		ImGui::End();
 		return;
 	}
@@ -2831,16 +2834,14 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}
 
 		for (auto& pair : world_history_map) {
-
+			ImGuiWindowFlags treeNodeFlags = ImGuiTreeNodeFlags_None;
+			ImGui::SetNextItemOpen(false, ImGuiCond_Appearing);
 			// 默认展开世界
 			if (!g_worldToFocusInHistory.empty() && pair.first == g_worldToFocusInHistory) {
-				ImGui::SetNextItemOpen(true);
-			}
-			else if (!g_worldToFocusInHistory.empty()) {
-				ImGui::SetNextItemOpen(false);
+				treeNodeFlags = ImGuiTreeNodeFlags_Leaf;
 			}
 
-			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
+			if (ImGui::TreeNodeEx(wstring_to_utf8(pair.first).c_str(), treeNodeFlags)) {
 				sort(pair.second.begin(), pair.second.end(), [](const HistoryEntry* a, const HistoryEntry* b) {
 					return a->timestamp_str > b->timestamp_str;
 					});
@@ -3468,7 +3469,6 @@ void TriggerHotkeyRestore() {
 				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
 				// KnotLink 通知
 				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-				console.AddLog(L("KNOTLINK_PRE_RESTORE"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
 
 
 

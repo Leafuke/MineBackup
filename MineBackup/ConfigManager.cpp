@@ -141,6 +141,7 @@ void LoadConfigs(const string& filename) {
 					cur->fontPath = val;
 					Fontss = val;
 					if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
+						MessageBoxWin("Warning", "Invalid font path!\nPlease check and reload.");
 						GetUserDefaultUILanguageWin();
 #ifdef _WIN32
 						if (g_CurrentLang == "zh_CN") {
@@ -148,6 +149,12 @@ void LoadConfigs(const string& filename) {
 								Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
 							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
 								Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
+							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
+								Fontss = L"C:\\Windows\\Fonts\\msjh.ttc";
+							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
+								Fontss = L"C:\\Windows\\Fonts\\msjh.ttf";
+							else
+								Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
 						}
 						else {
 							Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
