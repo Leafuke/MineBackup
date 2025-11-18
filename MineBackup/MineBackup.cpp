@@ -1,4 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
 #define STB_IMAGE_IMPLEMENTATION
 #include "Broadcast.h"
 #include "imgui-all.h"
@@ -22,7 +21,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.10.1";
+string CURRENT_VERSION = "1.10.2";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -266,14 +265,6 @@ int main(int argc, char** argv)
 	// Setup Dear ImGui context
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO(); (void)io;
-
-	io.FontGlobalScale = g_uiScale;
-
-	// 启用Docking
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
-	io.ConfigViewportsNoAutoMerge = true; // 不自动合并视口
 
 	// 圆润风格
 	ImGuiStyle& style = ImGui::GetStyle();
@@ -284,6 +275,12 @@ int main(int argc, char** argv)
 	style.ScrollbarRounding = 5.0f;
 	style.ChildRounding = 8.0f;
 
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	io.FontGlobalScale = g_uiScale;
+	// 启用Docking
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
+	io.ConfigViewportsNoAutoMerge = true; // 不自动合并视口
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
@@ -491,15 +488,21 @@ int main(int argc, char** argv)
 				// 找路径
 				string pathTemp;
 				if (ImGui::Button(L("BUTTON_AUTO_JAVA"))) {
-					if (filesystem::exists((string)getenv("APPDATA") + "\\.minecraft\\saves")) {
-						pathTemp = (string)getenv("APPDATA") + "\\.minecraft\\saves";
+					char* buffer_env_appdata = nullptr;
+					// 将getenv换成_dupenv_s
+					_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
+					if (filesystem::exists((string)buffer_env_appdata + "\\.minecraft\\saves")) {
+						pathTemp = (string)buffer_env_appdata + "\\.minecraft\\saves";
 						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
 					}
 				}
 				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) { // 不能用 getenv，改成_dupenv_s了...
-					if (filesystem::exists((string)getenv("APPDATA") + "\\Minecraft Bedrock\\Users")) {
-						pathTemp = (string)getenv("APPDATA") + "\\Minecraft Bedrock\\Users";
+				if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) {
+					char* buffer_env_appdata = nullptr, * buffer_env_username = nullptr;
+					_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
+					_dupenv_s(&buffer_env_username, nullptr, "USERNAME");
+					if (filesystem::exists((string)buffer_env_appdata + "\\Minecraft Bedrock\\Users")) {
+						pathTemp = (string)buffer_env_appdata + "\\Minecraft Bedrock\\Users";
 						// 这个文件夹下有多个用户文件夹，默认选第一个
 						for (const auto& entry : filesystem::directory_iterator(pathTemp)) {
 							if (entry.is_directory() && (entry.path().filename().string()[0] - '0') < 10 && (entry.path().filename().string()[0] - '0') >= 0) {
@@ -509,8 +512,8 @@ int main(int argc, char** argv)
 							}
 						}
 					}
-					else if (filesystem::exists("C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
-						pathTemp = "C:\\Users\\" + (string)getenv("USERNAME") + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
+					else if (filesystem::exists("C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
+						pathTemp = "C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
 						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
 					}
 				}
@@ -1444,7 +1447,7 @@ int main(int argc, char** argv)
 						ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97f);
 						// 可以输入需要备份的其他内容的路径，比如 D:\Games\g_appState.configs
 						static char buf[CONSTANT1] = "";
-						strcpy(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
+						strcpy_s(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
 						if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
 							displayWorlds[selectedWorldIndex].effectiveConfig.othersPath = utf8_to_wstring(buf);
 							g_appState.configs[displayWorlds[selectedWorldIndex].baseConfigIndex].othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
@@ -1676,7 +1679,10 @@ int main(int argc, char** argv)
 			ImGui::End();
 			
 
-			if (showSettings) ShowSettingsWindow();
+			if (showSettings) {
+				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // 强制窗口不参与停靠
+				ShowSettingsWindow();
+			}
 			if (showHistoryWindow) {
 				if (specialSetting) {
 					if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size())
@@ -1812,7 +1818,7 @@ inline void ApplyTheme(int& theme)
 
 
 void ShowSettingsWindow() {
-	ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+	ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
 	ImGui::SeparatorText(L("CONFIG_MANAGEMENT"));
 
 	string current_config_label = "None";
@@ -2770,7 +2776,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 	ImGui::SetNextWindowSize(ImVec2(850, 600), ImGuiCond_FirstUseEver);
 
-	if (!ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow)) {
+	if (!ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow, ImGuiWindowFlags_NoDocking)) {
 		ImGui::End();
 		return;
 	}
@@ -2831,16 +2837,14 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}
 
 		for (auto& pair : world_history_map) {
-
+			ImGuiWindowFlags treeNodeFlags = ImGuiTreeNodeFlags_None;
+			ImGui::SetNextItemOpen(false, ImGuiCond_Appearing);
 			// 默认展开世界
 			if (!g_worldToFocusInHistory.empty() && pair.first == g_worldToFocusInHistory) {
-				ImGui::SetNextItemOpen(true);
-			}
-			else if (!g_worldToFocusInHistory.empty()) {
-				ImGui::SetNextItemOpen(false);
+				treeNodeFlags = ImGuiTreeNodeFlags_Leaf;
 			}
 
-			if (ImGui::TreeNode(wstring_to_utf8(pair.first).c_str())) {
+			if (ImGui::TreeNodeEx(wstring_to_utf8(pair.first).c_str(), treeNodeFlags)) {
 				sort(pair.second.begin(), pair.second.end(), [](const HistoryEntry* a, const HistoryEntry* b) {
 					return a->timestamp_str > b->timestamp_str;
 					});
@@ -3468,7 +3472,6 @@ void TriggerHotkeyRestore() {
 				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
 				// KnotLink 通知
 				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-				console.AddLog(L("KNOTLINK_PRE_RESTORE"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
 
 
 
