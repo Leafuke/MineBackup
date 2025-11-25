@@ -138,7 +138,6 @@
     <ClCompile Include="Broadcast.cpp" />
     <ClCompile Include="ConfigManager.cpp" />
     <ClCompile Include="Console.cpp" />
-    <ClCompile Include="file_operator.cpp" />
     <ClCompile Include="HistoryManager.cpp" />
     <ClCompile Include="i18n.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />

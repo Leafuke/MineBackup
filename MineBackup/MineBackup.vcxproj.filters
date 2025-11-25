@@ -24,9 +24,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="file_operator.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="text_to_text.cpp">
       <Filter>源文件</Filter>
     </ClCompile>

@@ -1,4 +1,6 @@
 #pragma once
+#ifndef _PLATFORM_LINUX_H
+#define _PLATFORM_LINUX_H
 #include <iostream>
 void CheckForUpdatesThread();
 std::wstring SelectFileDialog();
@@ -14,3 +16,4 @@ void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);
 void ReStartApplication();
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable);
+#endif // !_PLATFORM_LINUX_H

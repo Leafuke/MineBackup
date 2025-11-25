@@ -1,4 +1,6 @@
 #pragma once
+#ifndef _BACKUP_MANAGER_H
+#define _BACKUP_MANAGER_H
 #include <iostream>
 #include <filesystem>
 #include <atomic>
@@ -12,3 +14,4 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console);
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console);
 void AddBackupToWESnapshots(const Config config, const std::wstring& worldName, const std::wstring& backupFile, Console& console);
+#endif // BACKUP_MANAGER_H
