@@ -45,9 +45,6 @@
     <ClCompile Include="text_to_text.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="file_operator.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="basic_func.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
