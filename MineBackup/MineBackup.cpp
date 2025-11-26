@@ -1,6 +1,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "Broadcast.h"
 #include "imgui-all.h"
+#include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
 #ifdef _WIN32
@@ -1808,9 +1809,14 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 inline void ApplyTheme(int& theme)
 {
 	switch (theme) {
-	case 0: ImGui::StyleColorsDark(); break;
-	case 1: ImGui::StyleColorsLight(); break;
-	case 2: ImGui::StyleColorsClassic(); break;
+		case 0: ImGui::StyleColorsDark(); break;
+		case 1: ImGui::StyleColorsLight(); break;
+		case 2: ImGui::StyleColorsClassic(); break;
+		case 3: ImGuiTheme::ApplyWindows11(false); break;
+		case 4: ImGuiTheme::ApplyWindows11(true); break;
+		case 5: ImGuiTheme::ApplyNord(false); break;
+		case 6: ImGuiTheme::ApplyNord(true); break;
+		case 7: ImGuiTheme::ApplyCustom(); break;
 	}
 }
 
@@ -2008,9 +2014,27 @@ void ShowSettingsWindow() {
 				ImGui::EndTable();
 			}
 
-			if (ImGui::RadioButton(L("THEME_DARK"), &spCfg.theme, 0)) { ApplyTheme(spCfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_LIGHT"), &spCfg.theme, 1)) { ApplyTheme(spCfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_CLASSIC"), &spCfg.theme, 2)) { ApplyTheme(spCfg.theme); }
+
+			// 将主题选择替换成下拉列表的模式
+			char current_theme[16];
+			if (spCfg.theme == 0) strcpy_s(current_theme, L("THEME_DARK"));
+			else if (spCfg.theme == 1) strcpy_s(current_theme, L("THEME_LIGHT"));
+			else strcpy_s(current_theme, L("THEME_CLASSIC"));
+			ImGui::BeginCombo(L("THEME"), current_theme);
+			if (ImGui::Selectable(L("THEME_DARK"), spCfg.theme == 0)) {
+				spCfg.theme = 0;
+				ApplyTheme(spCfg.theme);
+			}
+			if (ImGui::Selectable(L("THEME_LIGHT"), spCfg.theme == 1)) {
+				spCfg.theme = 1;
+				ApplyTheme(spCfg.theme);
+			}
+			if (ImGui::Selectable(L("THEME_CLASSIC"), spCfg.theme == 2)) {
+				spCfg.theme = 2;
+				ApplyTheme(spCfg.theme);
+			}
+			ImGui::EndCombo();
+			//ImGui::Combo(L("THEME"), &spCfg.theme, L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"));
 
 			if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
 				g_appState.specialConfigs[g_appState.currentConfigIndex].autoExecute = true;
@@ -2518,9 +2542,20 @@ void ShowSettingsWindow() {
 			}
 			ImGui::Separator();
 			ImGui::Text(L("THEME_SETTINGS"));
-			if (ImGui::RadioButton(L("THEME_DARK"), &cfg.theme, 0)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_LIGHT"), &cfg.theme, 1)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_CLASSIC"), &cfg.theme, 2)) { ApplyTheme(cfg.theme); }
+			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
+			int theme_idx = cfg.theme;
+			if (ImGui::Combo("##Theme", &theme_idx, theme_names, IM_ARRAYSIZE(theme_names))) {
+				if (theme_idx == 7 && !filesystem::exists("custom_theme.json")) {
+					// 打开自定义主题编辑器
+					ImGuiTheme::WriteDefaultCustomTheme();
+					// 打开 custom_theme.json 文件供用户编辑
+					OpenFolder(L"custom_theme.json");
+				}
+				else {
+					cfg.theme = theme_idx;
+					ApplyTheme(cfg.theme);
+				}
+			}
 
 			ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
 			ImGui::SameLine();
