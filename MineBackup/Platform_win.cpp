@@ -26,6 +26,7 @@ extern atomic<bool> g_NewVersionAvailable;
 extern string g_LatestVersionStr;
 extern string g_ReleaseNotes;
 extern string CURRENT_VERSION;
+extern int g_hotKeyBackupId, g_hotKeyRestoreId;
 
 NOTIFYICONDATA nid = { 0 };
 
@@ -119,14 +120,11 @@ HWND CreateHiddenWindow(HINSTANCE hInstance) {
 	return hwnd_hidden;
 }
 
-void RegisterHotkeys(HWND hwnd) {
-	// 注册热键和托盘图标
-	RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
-	RegisterHotKey(hwnd, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
+void RegisterHotkeys(HWND hwnd, int hotkeyId, int key) {
+	RegisterHotKey(hwnd, hotkeyId, MOD_ALT | MOD_CONTROL, key);
 }
-void UnregisterHotkeys(HWND hwnd) {
-	::UnregisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID);
-	::UnregisterHotKey(hwnd, MINERESTORE_HOTKEY_ID);
+void UnregisterHotkeys(HWND hwnd, int hotKeyId) {
+	::UnregisterHotKey(hwnd, hotKeyId);
 }
 void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance) {
 	// 初始化托盘图标 (nid)

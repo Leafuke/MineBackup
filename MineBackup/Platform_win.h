@@ -4,8 +4,8 @@
 #include <iostream>
 #include <windows.h>
 void CheckForUpdatesThread();
-void RegisterHotkeys(HWND hwnd);
-void UnregisterHotkeys(HWND hwnd);
+void RegisterHotkeys(HWND hwnd, int hotkeyId, int key);
+void UnregisterHotkeys(HWND hwnd, int hotkeyId);
 std::wstring SelectFileDialog();
 std::wstring SelectFolderDialog();
 std::wstring GetLastOpenTime(const std::wstring& worldPath);

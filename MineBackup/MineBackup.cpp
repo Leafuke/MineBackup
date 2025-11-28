@@ -42,6 +42,7 @@ bool specialSetting = false;
 bool g_CheckForUpdates = true, g_RunOnStartup = false, g_AutoScanForWorlds = false;
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
+int g_hotKeyBackupId = 'S', g_hotKeyRestoreId = 'Z';
 
 atomic<bool> specialTasksRunning = false;
 atomic<bool> specialTasksComplete = false;
@@ -79,6 +80,7 @@ void ShowSettingsWindow();
 void ShowHistoryWindow(int& tempCurrentConfigIndex);
 vector<DisplayWorld> BuildDisplayWorldsForSelection();
 
+int ImGuiKeyToVK(ImGuiKey key);
 bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 string ProcessCommand(const string& commandStr, Console* console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
@@ -93,23 +95,26 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
 	SetCurrentDirectoryW(filesystem::path(exePath).parent_path().c_str());
 
+	LoadConfigs("config.ini");
+
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
 	CreateTrayIcon(hwnd_hidden, hInstance);
-	RegisterHotkeys(hwnd_hidden);
+	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+	RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
 #else
 int main(int argc, char** argv)
 {
+	LoadConfigs("config.ini");
 #endif
 
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
 	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
+
 	if (!sevenZipExtracted || !fontExtracted) {
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"));
-		return 0;
 	}
 
-	LoadConfigs("config.ini");
 	CheckForConfigConflicts();
 	LoadHistory();
 	if (g_CheckForUpdates) {
@@ -416,7 +421,7 @@ int main(int argc, char** argv)
 
 		if (showConfigWizard) {
 			// 首次启动向导使用的静态变量
-			static int page = 0, themeId = 1;
+			static int page = 0, themeId = 5;
 			static bool isWizardOpen = true;
 			static char saveRootPath[CONSTANT1] = "";
 			static char backupPath[CONSTANT1] = "";
@@ -725,6 +730,48 @@ int main(int argc, char** argv)
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Separator();
+					// 热键设置右拉栏（鼠标放上去会向右展开两个）
+#ifdef _WIN32
+					static bool waitingForHotkey = false;
+					static int whichFunc = 0;
+					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
+						if (ImGui::MenuItem(L("BUTTON_BACKUP_SELECTED"))) {
+							console.AddLog(L("HOTKEY_INSTRUCTION"));
+							waitingForHotkey = true;
+							whichFunc = 1;
+						}
+						if (ImGui::MenuItem(L("BUTTON_RESTORE_SELECTED"))) {
+							console.AddLog(L("HOTKEY_INSTRUCTION"));
+							waitingForHotkey = true;
+							whichFunc = 2;
+						}
+						if (waitingForHotkey) {
+							ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Waiting...");
+							for (int key = ImGuiKey_0; key <= ImGuiKey_Z; ++key) {
+								if (ImGui::IsKeyPressed((ImGuiKey)key)) {
+									waitingForHotkey = false;
+									if (whichFunc == 1) {
+										g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
+										UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
+										RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
+										break;
+									}
+									else if (whichFunc == 2) {
+										g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
+										UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
+										RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
+										break;
+									}
+									break;
+								}
+							}
+						}
+						ImGui::EndMenu();
+					}
+					ImGui::Separator();
+#endif
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
@@ -843,7 +890,7 @@ int main(int argc, char** argv)
 			{
 				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
 				ImGui::Separator();
-				ImGui::TextWrapped("%s", L("ABOUT_DESCRIPTION"));
+				ImGui::TextWrapped("%s %c %c", L("ABOUT_DESCRIPTION"), (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId);
 				ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1722,7 +1769,8 @@ int main(int argc, char** argv)
 
 #ifdef _WIN32
 	RemoveTrayIcon();
-	UnregisterHotkeys(hwnd_hidden);
+	UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
+	UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 	DestroyWindow(hwnd_hidden);
 #endif
 	g_worldIconTextures.clear();
@@ -1841,7 +1889,6 @@ void ShowSettingsWindow() {
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				g_appState.currentConfigIndex = (idx);
 				specialSetting = true;
-				//g_appState.specialConfigMode = true;
 			}
 			if (is_selected) ImGui::SetItemDefaultFocus();
 		}
@@ -1929,7 +1976,7 @@ void ShowSettingsWindow() {
 					g_appState.currentConfigIndex = new_index;
 					specialSetting = true;
 				}
-				showSettings = true; // Open detailed settings for the new config
+				showSettings = true;
 				ImGui::CloseCurrentPopup();
 			}
 		}
@@ -1993,26 +2040,20 @@ void ShowSettingsWindow() {
 			}
 
 
-			// 将主题选择替换成下拉列表的模式
-			char current_theme[16];
-			if (spCfg.theme == 0) strcpy_s(current_theme, L("THEME_DARK"));
-			else if (spCfg.theme == 1) strcpy_s(current_theme, L("THEME_LIGHT"));
-			else strcpy_s(current_theme, L("THEME_CLASSIC"));
-			ImGui::BeginCombo(L("THEME"), current_theme);
-			if (ImGui::Selectable(L("THEME_DARK"), spCfg.theme == 0)) {
-				spCfg.theme = 0;
-				ApplyTheme(spCfg.theme);
+			ImGui::Separator();
+			ImGui::Text(L("THEME_SETTINGS"));
+			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
+			if (ImGui::Combo("##Theme", &spCfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
+				if (spCfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
+					// 打开自定义主题编辑器
+					ImGuiTheme::WriteDefaultCustomTheme();
+					// 打开 custom_theme.json 文件供用户编辑
+					OpenFolder(L"custom_theme.json");
+				}
+				else {
+					ApplyTheme(spCfg.theme);
+				}
 			}
-			if (ImGui::Selectable(L("THEME_LIGHT"), spCfg.theme == 1)) {
-				spCfg.theme = 1;
-				ApplyTheme(spCfg.theme);
-			}
-			if (ImGui::Selectable(L("THEME_CLASSIC"), spCfg.theme == 2)) {
-				spCfg.theme = 2;
-				ApplyTheme(spCfg.theme);
-			}
-			ImGui::EndCombo();
-			//ImGui::Combo(L("THEME"), &spCfg.theme, L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"));
 
 			if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
 				g_appState.specialConfigs[g_appState.currentConfigIndex].autoExecute = true;
@@ -2493,16 +2534,14 @@ void ShowSettingsWindow() {
 			ImGui::Separator();
 			ImGui::Text(L("THEME_SETTINGS"));
 			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
-			int theme_idx = cfg.theme;
-			if (ImGui::Combo("##Theme", &theme_idx, theme_names, IM_ARRAYSIZE(theme_names))) {
-				if (theme_idx == 7 && !filesystem::exists("custom_theme.json")) {
+			if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
+				if (cfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
 					// 打开自定义主题编辑器
 					ImGuiTheme::WriteDefaultCustomTheme();
 					// 打开 custom_theme.json 文件供用户编辑
 					OpenFolder(L"custom_theme.json");
 				}
 				else {
-					cfg.theme = theme_idx;
 					ApplyTheme(cfg.theme);
 				}
 			}
@@ -3185,3 +3224,11 @@ static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 	return out;
 }
 
+
+int ImGuiKeyToVK(ImGuiKey key) {
+	if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+		return 'A' + (key - ImGuiKey_A);
+	if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+		return '0' + (key - ImGuiKey_0);
+	return 0;
+}
