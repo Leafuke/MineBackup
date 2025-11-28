@@ -471,6 +471,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{"HOTKEY_INSTRUCTION", u8"请再次打开热键设置并点击一个0-9/A-Z的按键以完成快捷键设置"},
 		{"HOTKEY_SETTINGS", u8"热键设置"},
 		{"HOTKEY_SET_TO", u8"热键已设置为 Alt+Ctrl+%c" },
+		{ "THREAD_STOPPED_FOR_WORLD", u8"[提示] 已停止对世界 '%s' 的自动备份线程。" },
+		{ "BUTTON_AUTO_LOG", u8"自动日志记录" },
 }},
 	{ "en_US", {
 		{"SETTINGS", "Settings"},
@@ -940,6 +942,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "HOTKEY_INSTRUCTION", "Please reopen the hotkey setting and press 0-9/A-Z to finish" },
 		{ "HOTKEY_SETTINGS", "Hotkey Setting" },
 		{ "HOTKEY_SET_TO", "Hotkey change to Alt+Ctrl+%c successfully" },
+		{ "THREAD_STOPPED_FOR_WORLD", "[Info] Stopped automatic backup thread for world '%s'." },
+		{ "BUTTON_AUTO_LOG", "Auto Log" },
 }},
 };
 const char* L(const char* key) {

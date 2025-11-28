@@ -97,6 +97,14 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 	LoadConfigs("config.ini");
 
+	if (g_autoLogEnabled)
+	{
+		time_t now = time(0);
+		char time_buf[100];
+		ctime_s(time_buf, sizeof(time_buf), &now);
+		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
+	}
+
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
 	CreateTrayIcon(hwnd_hidden, hInstance);
 	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);

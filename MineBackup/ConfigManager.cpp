@@ -256,6 +256,9 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"HotkeyRestore") {
 					g_hotKeyRestoreId = stoi(val);
 				}
+				else if (key == L"AutoLog") {
+					g_autoLogEnabled = (val != L"0");
+				}
 			}
 		}
 	}
@@ -289,6 +292,7 @@ void SaveConfigs(const wstring& filename) {
 	out << L"UIScale=" << g_uiScale << L"\n";
 	out << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
 	out << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
+	out << L"AutoLog=" << (g_autoLogEnabled ? 1 : 0) << L"\n";
 	for (const auto& item : restoreWhitelist) {
 		out << L"RestoreWhitelistItem=" << item << L"\n";
 	}
