@@ -15,6 +15,10 @@
 #include <filesystem>
 #include <chrono>
 #include <winhttp.h>
+#include <fstream>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
@@ -472,6 +476,35 @@ void SetAutoStart(const string& appName, const wstring& appPath, bool configType
 	}
 }
 
+
+static std::string g_logFilePath = "auto_log.txt";
+
+void SetLogFilePath(const std::string& path) {
+    g_logFilePath = path;
+}
+
+std::string GetCurrentTimestamp() {
+    std::time_t now = std::time(nullptr);
+    std::tm tm_now;
+    localtime_s(&tm_now, &now);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+void WriteLogEntry(const std::string& message, LogLevel level) {
+    std::ofstream log_file(g_logFilePath, std::ios::app);
+    if (!log_file.is_open()) return;
+    std::string level_str;
+    switch (level) {
+        case LogLevel::Info: level_str = "[INFO]"; break;
+        case LogLevel::Warning: level_str = "[WARN]"; break;
+        case LogLevel::Error: level_str = "[ERROR]"; break;
+        default: level_str = "[INFO]"; break;
+    }
+    log_file << GetCurrentTimestamp() << " " << level_str << " " << message << std::endl;
+    log_file.close();
+}
 
 //Ñ¡ÔñÎÄ¼þ
 wstring SelectFileDialog() {

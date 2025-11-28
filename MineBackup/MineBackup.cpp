@@ -39,7 +39,7 @@ wstring Fontss;
 bool showSettings = false;
 bool isSilence = false, isSafeDelete = false;
 bool specialSetting = false;
-bool g_CheckForUpdates = true, g_RunOnStartup = false, g_AutoScanForWorlds = false;
+bool g_CheckForUpdates = true, g_RunOnStartup = false, g_AutoScanForWorlds = false, g_autoLogEnabled = true;
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
 int g_hotKeyBackupId = 'S', g_hotKeyRestoreId = 'Z';
@@ -97,6 +97,14 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 	LoadConfigs("config.ini");
 
+	if (g_autoLogEnabled)
+	{
+		time_t now = time(0);
+		char time_buf[100];
+		ctime_s(time_buf, sizeof(time_buf), &now);
+		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
+	}
+
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
 	CreateTrayIcon(hwnd_hidden, hInstance);
 	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
@@ -107,6 +115,8 @@ int main(int argc, char** argv)
 	LoadConfigs("config.ini");
 #endif
 
+
+	
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
 	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
@@ -115,6 +125,7 @@ int main(int argc, char** argv)
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"));
 	}
 
+	LoadConfigs("config.ini");
 	CheckForConfigConflicts();
 	LoadHistory();
 	if (g_CheckForUpdates) {
@@ -164,9 +175,26 @@ int main(int argc, char** argv)
 			freopen_s(&pCout, "CONOUT$", "w", stdout);
 			freopen_s(&pCerr, "CONOUT$", "w", stderr);
 			freopen_s(&pCin, "CONIN$", "r", stdin);
+			// 将 stdout 和 stderr 设置为 UTF-8 编码
+			SetConsoleOutputCP(CP_UTF8);
 		}
 
 		RunSpecialMode(g_appState.currentConfigIndex);
+
+		// 将捕获到的所有日志写入文件
+		ofstream log_file("special_mode_log.txt", ios::app);
+		if (log_file.is_open()) {
+			log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+
+			for (const char* item : console.Items) {
+				log_file << (item) << endl;
+			}
+			log_file << L("SPECIAL_MODE_LOG_END") << endl << endl;
+			log_file.close();
+		}
+		else {
+			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
+		}
 
 		if (!hide) {
 			FreeConsole();
@@ -727,6 +755,7 @@ int main(int argc, char** argv)
 						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup);
 					}
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
+					ImGui::Checkbox(L("BUTTON_AUTO_LOG"), &g_autoLogEnabled);
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Separator();
@@ -1767,6 +1796,18 @@ int main(int argc, char** argv)
 	if (filesystem::exists("config.ini"))
 		SaveConfigs();
 
+	// 将捕获到的所有日志写入文件
+	ofstream log_file("auto_log.txt", ios::app);
+	if (log_file.is_open()) {
+		log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+
+		for (const char* item : console.Items) {
+			log_file << (item) << endl;
+		}
+		log_file << "=== End ===" << endl << endl;
+		log_file.close();
+	}
+
 #ifdef _WIN32
 	RemoveTrayIcon();
 	UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
@@ -2596,10 +2637,15 @@ void RunSpecialMode(int configId) {
 	}
 #endif
 
+	time_t now = time(0);
+	char time_buf[100];
+	ctime_s(time_buf, sizeof(time_buf), &now);
+	ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
+
 	// 设置控制台标题和头部信息
 	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
 	ConsoleLog(&console, L("AUTOMATED_TASK_RUNNER_HEADER"));
-	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), utf8_to_gbk(spCfg.name.c_str()));
+	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), (spCfg.name.c_str()));
 	ConsoleLog(&console, "----------------------------------------------");
 	if (!spCfg.hideWindow) {
 		ConsoleLog(&console, L("CONSOLE_QUIT_PROMPT"));
@@ -2637,15 +2683,15 @@ void RunSpecialMode(int configId) {
 		//taskConfig.blacklist = spCfg.blacklist; 沿用普通配置的黑名单
 
 		if (task.backupType == 0) { // 类型 0: 一次性备份
-			ConsoleLog(&console, L("TASK_QUEUE_ONETIME_BACKUP"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
+			ConsoleLog(&console, L("TASK_QUEUE_ONETIME_BACKUP"), (wstring_to_utf8(worldData.first)).c_str());
 			g_appState.realConfigIndex = task.configIndex;
 			DoBackup(taskConfig, worldData, dummyConsole, L"SpecialMode");
 			// 成功
-			ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
+			ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(worldData.first)).c_str());
 		}
 		else { // 类型 1 (间隔) 和 2 (计划) 在后台线程运行
 			taskThreads.emplace_back([task, taskConfig, worldData, &shouldExit]() {
-				ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
+				ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), (wstring_to_utf8(worldData.first)).c_str());
 
 				while (!shouldExit) {
 					// 计算下次运行时间
@@ -2684,7 +2730,7 @@ void RunSpecialMode(int configId) {
 						char time_buf[26];
 						ctime_s(time_buf, sizeof(time_buf), &next_run_t);
 						time_buf[strlen(time_buf) - 1] = '\0';
-						ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()), time_buf);
+						ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), (wstring_to_utf8(worldData.first).c_str()), time_buf);
 
 						// 等待直到目标时间，同时检查退出信号
 						while (time(nullptr) < next_run_t && !shouldExit) {
@@ -2694,12 +2740,12 @@ void RunSpecialMode(int configId) {
 
 					if (shouldExit) break;
 
-					ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()));
+					ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), (wstring_to_utf8(worldData.first).c_str()));
 					g_appState.realConfigIndex = task.configIndex;
 					DoBackup(taskConfig, worldData, console, L"SpecialMode");
-					ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), utf8_to_gbk(wstring_to_utf8(worldData.first)).c_str());
+					ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(worldData.first)).c_str());
 				}
-				ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), utf8_to_gbk(wstring_to_utf8(worldData.first).c_str()));
+				ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), (wstring_to_utf8(worldData.first).c_str()));
 				});
 		}
 	}
@@ -2764,24 +2810,7 @@ void RunSpecialMode(int configId) {
 
 	ConsoleLog(&console, L("INFO_ALL_TASKS_SHUT_DOWN"));
 
-	// 将捕获到的所有日志写入文件
-	ofstream log_file("special_mode_log.txt", ios::app);
-	if (log_file.is_open()) {
-		time_t now = time(0);
-		char time_buf[100];
-		ctime_s(time_buf, sizeof(time_buf), &now);
-		log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-		log_file << L("SPECIAL_MODE_LOG_START") << time_buf << endl;
-		
-		for (const char* item : console.Items) {
-			log_file << gbk_to_utf8(item) << endl;
-		}
-		log_file << L("SPECIAL_MODE_LOG_END") << endl << endl;
-		log_file.close();
-	}
-	else {
-		ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
-	}
+	
 	return;
 }
 

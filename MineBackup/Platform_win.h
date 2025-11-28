@@ -3,6 +3,12 @@
 #define _PLATFORM_WIN_H
 #include <iostream>
 #include <windows.h>
+#include <string>
+enum class LogLevel {
+    Info,
+    Warning,
+    Error
+};
 void CheckForUpdatesThread();
 void RegisterHotkeys(HWND hwnd, int hotkeyId, int key);
 void UnregisterHotkeys(HWND hwnd, int hotkeyId);

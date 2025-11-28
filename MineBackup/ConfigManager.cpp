@@ -21,6 +21,7 @@ extern bool g_CheckForUpdates;
 extern bool isSilence;
 extern bool isSafeDelete;
 extern bool g_AutoScanForWorlds;
+extern bool g_autoLogEnabled;
 extern wstring Fontss;
 extern vector<wstring> restoreWhitelist;
 extern int last_interval;
@@ -255,6 +256,9 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"HotkeyRestore") {
 					g_hotKeyRestoreId = stoi(val);
 				}
+				else if (key == L"AutoLog") {
+					g_autoLogEnabled = (val != L"0");
+				}
 			}
 		}
 	}
@@ -288,6 +292,7 @@ void SaveConfigs(const wstring& filename) {
 	out << L"UIScale=" << g_uiScale << L"\n";
 	out << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
 	out << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
+	out << L"AutoLog=" << (g_autoLogEnabled ? 1 : 0) << L"\n";
 	for (const auto& item : restoreWhitelist) {
 		out << L"RestoreWhitelistItem=" << item << L"\n";
 	}
@@ -366,6 +371,12 @@ void SaveConfigs(const wstring& filename) {
 	}
 }
 
+// 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口
+// 例如：
+// WriteLogEntry("Configs loaded from " + filename, LogLevel::Info);
+// WriteLogEntry("Configs saved to " + wstring_to_utf8(filename), LogLevel::Info);
+// WriteLogEntry("Config conflict detected: " + wstring_to_utf8(conflictDetails), LogLevel::Warning);
+
 void CheckForConfigConflicts() {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	map<wstring, vector<pair<int, wstring>>> worldMap; // Key: World Name, Value: {ConfigIndex, BackupPath}
@@ -389,15 +400,14 @@ void CheckForConfigConflicts() {
 				for (size_t j = i + 1; j < entries.size(); ++j) { // 比较每对配置
 					if (entries[i].second == entries[j].second && !entries[i].second.empty()) {
 						ifConf = true;
-						break;
-						//wchar_t buffer[512];
-						/*swprintf_s(buffer, 50, L"%d plus %d is %d", 10, 20, (10 + 20));
-						swprintf_s(buffer, CONSTANT1, L(L("CONFIG_CONFLICT_ENTRY")),
+						wchar_t buffer[CONSTANT2];
+						swprintf_s(buffer, CONSTANT2, L"Num:%d and Num:%d / World:%s and World:%s",
 							entries[i].first,
 							entries[j].first,
 							map_pair.first.c_str(),
-							entries[i].second.c_str());*/
-							//conflictDetails += buffer;
+							entries[i].second.c_str());
+						conflictDetails += buffer;
+						break;
 					}
 				}
 			}
