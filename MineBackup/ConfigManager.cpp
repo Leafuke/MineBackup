@@ -13,6 +13,7 @@
 using namespace std;
 
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
+extern int g_hotKeyBackupId , g_hotKeyRestoreId;
 
 extern bool g_RunOnStartup;
 extern bool g_enableKnotLink;
@@ -248,6 +249,12 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"AutoScanForWorlds") {
 					g_AutoScanForWorlds = (val != L"0");
 				}
+				else if (key == L"HotkeyBackup") {
+					g_hotKeyBackupId = stoi(val);
+				}
+				else if (key == L"HotkeyRestore") {
+					g_hotKeyRestoreId = stoi(val);
+				}
 			}
 		}
 	}
@@ -279,6 +286,8 @@ void SaveConfigs(const wstring& filename) {
 	out << L"WindowWidth=" << g_windowWidth << L"\n";
 	out << L"WindowHeight=" << g_windowHeight << L"\n";
 	out << L"UIScale=" << g_uiScale << L"\n";
+	out << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
+	out << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
 	for (const auto& item : restoreWhitelist) {
 		out << L"RestoreWhitelistItem=" << item << L"\n";
 	}

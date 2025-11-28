@@ -1,3 +1,5 @@
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <dwmapi.h>
 #include "Platform_win.h"
 #include "text_to_text.h"
 #include "AppState.h"
@@ -9,10 +11,12 @@
 #include <shobjidl.h>
 #include <shlobj.h>
 #include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
 #include <filesystem>
 #include <chrono>
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "dwmapi.lib")
 using namespace std;
 
 extern GLFWwindow* wc;
@@ -22,10 +26,20 @@ extern atomic<bool> g_NewVersionAvailable;
 extern string g_LatestVersionStr;
 extern string g_ReleaseNotes;
 extern string CURRENT_VERSION;
+extern int g_hotKeyBackupId, g_hotKeyRestoreId;
 
 NOTIFYICONDATA nid = { 0 };
 
 LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+void EnableDarkModeWin(bool enable) {
+	HWND hwnd = glfwGetWin32Window(wc);
+	BOOL useDark = enable ? TRUE : FALSE;
+	DwmSetWindowAttribute(hwnd, 20 , &useDark, sizeof(useDark));
+	return;
+}
+
+
 
 wstring GetDocumentsPath() {
 #ifdef _WIN32
@@ -106,14 +120,11 @@ HWND CreateHiddenWindow(HINSTANCE hInstance) {
 	return hwnd_hidden;
 }
 
-void RegisterHotkeys(HWND hwnd) {
-	// 注册热键和托盘图标
-	RegisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'S');
-	RegisterHotKey(hwnd, MINERESTORE_HOTKEY_ID, MOD_ALT | MOD_CONTROL, 'Z');
+void RegisterHotkeys(HWND hwnd, int hotkeyId, int key) {
+	RegisterHotKey(hwnd, hotkeyId, MOD_ALT | MOD_CONTROL, key);
 }
-void UnregisterHotkeys(HWND hwnd) {
-	::UnregisterHotKey(hwnd, MINEBACKUP_HOTKEY_ID);
-	::UnregisterHotKey(hwnd, MINERESTORE_HOTKEY_ID);
+void UnregisterHotkeys(HWND hwnd, int hotKeyId) {
+	::UnregisterHotKey(hwnd, hotKeyId);
 }
 void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance) {
 	// 初始化托盘图标 (nid)

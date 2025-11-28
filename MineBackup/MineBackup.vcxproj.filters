@@ -24,16 +24,10 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="file_operator.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="text_to_text.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="imgui\imgui.cpp">
-      <Filter>ImGui</Filter>
-    </ClCompile>
-    <ClCompile Include="imgui\imgui_demo.cpp">
       <Filter>ImGui</Filter>
     </ClCompile>
     <ClCompile Include="imgui\imgui_draw.cpp">
@@ -46,9 +40,6 @@
       <Filter>ImGui</Filter>
     </ClCompile>
     <ClCompile Include="text_to_text.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="file_operator.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="basic_func.cpp">
@@ -95,6 +86,9 @@
     </ClCompile>
     <ClCompile Include="SignalSender.cpp">
       <Filter>KnotLink</Filter>
+    </ClCompile>
+    <ClCompile Include="GameSessionManager.cpp">
+      <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -179,6 +173,9 @@
     <ClInclude Include="Platform_linux.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="imgui_style.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MineBackup.rc">
@@ -204,5 +201,8 @@
   </ItemGroup>
   <ItemGroup>
     <Font Include="..\fontawesome-sp.otf" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CustomTheme.txt" />
   </ItemGroup>
 </Project>

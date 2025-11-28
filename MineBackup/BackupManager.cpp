@@ -566,6 +566,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 	wstring backupTypeStr; // 用于历史记录
 	wstring basedOnBackupFile; // 用于元数据记录智能备份基于的完整备份文件
+	filesystem::path latestBackupPath;
+
 
 	if (config.backupMode == 1 || forceFullBackup) // 普通备份
 	{
@@ -606,7 +608,6 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	{
 		backupTypeStr = L"Overwrite";
 		console.AddLog(L("LOG_OVERWRITE"));
-		filesystem::path latestBackupPath;
 		auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
 		bool found = false;
 
@@ -660,14 +661,42 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
-		if (g_appState.realConfigIndex != -1)
+		if (g_appState.realConfigIndex != -1 && config.backupMode != 3)
 			AddHistoryEntry(g_appState.realConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
-		else
+		else if (config.backupMode != 3)
 			AddHistoryEntry(g_appState.currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
 		g_appState.realConfigIndex = -1; // 重置
 		// 广播一个成功事件
 		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
 		BroadcastEvent(payload);
+
+
+		if (config.backupMode == 3) { // 如果是覆写模式，修改一下文件名
+			wstring oldName = latestBackupPath.filename().wstring();
+			size_t leftBracket = oldName.find(L"["); // 第一个对应Full Smart
+			leftBracket = oldName.find(L"[", leftBracket + 1);
+			size_t rightBracket = oldName.find(L"]");
+			rightBracket = oldName.find(L"]", rightBracket + 1);
+			wstring newName = oldName;
+			if (leftBracket != wstring::npos && rightBracket != wstring::npos && rightBracket > leftBracket) {
+				// 构造新的时间戳
+				wchar_t timeBuf[160];
+				time_t now = time(0);
+				tm ltm;
+				localtime_s(&ltm, &now);
+				wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+				// 替换时间戳部分
+				newName.replace(leftBracket + 1, rightBracket - leftBracket - 1, timeBuf);
+				filesystem::path newPath = latestBackupPath.parent_path() / newName;
+				filesystem::rename(latestBackupPath, newPath);
+				latestBackupPath = newPath;
+			}
+			if (g_appState.realConfigIndex != -1)
+				AddHistoryEntry(g_appState.realConfigIndex, world.first, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+			else
+				AddHistoryEntry(g_appState.currentConfigIndex, world.first, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+		}
+
 
 		// 云同步逻辑
 		if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
@@ -1132,4 +1161,85 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 			}
 		}
 	}
+}
+
+void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console) {
+	console.AddLog(L("LOG_EXPORT_STARTED"), wstring_to_utf8(worldName).c_str());
+
+	// 准备临时文件和路径
+	filesystem::path temp_export_dir = filesystem::temp_directory_path() / L"MineBackup_Export" / worldName;
+	filesystem::path readme_path = temp_export_dir / L"readme.txt";
+
+	try {
+		// 清理并创建临时工作目录
+		if (filesystem::exists(temp_export_dir)) {
+			filesystem::remove_all(temp_export_dir);
+		}
+		filesystem::create_directories(temp_export_dir);
+
+		// 如果有描述，创建 readme.txt
+		if (!description.empty()) {
+			wofstream readme_file(readme_path);
+			readme_file.imbue(locale(readme_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+			readme_file << L"[Name]\n" << worldName << L"\n\n";
+			readme_file << L"[Description]\n" << description << L"\n\n";
+			readme_file << L"[Exported by MineBackup]\n";
+			readme_file.close();
+		}
+
+		// 收集并过滤文件
+		vector<filesystem::path> files_to_export;
+		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
+			if (!is_blacklisted(entry.path(), worldPath, worldPath, tempConfig.blacklist)) {
+				files_to_export.push_back(entry.path());
+			}
+		}
+
+		// 将 readme.txt 也加入待压缩列表
+		if (!description.empty()) {
+			files_to_export.push_back(readme_path);
+		}
+
+		if (files_to_export.empty()) {
+			console.AddLog("[Error] No files left to export after applying blacklist.");
+			filesystem::remove_all(temp_export_dir);
+			return;
+		}
+
+		// 创建文件列表供 7z 使用
+		wstring filelist_path = (temp_export_dir / L"filelist.txt").wstring();
+		wofstream ofs(filelist_path);
+		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+		for (const auto& file : files_to_export) {
+			// 对于世界文件，写入相对路径；对于readme，写入绝对路径
+			if (file.wstring().rfind(worldPath, 0) == 0) {
+				ofs << filesystem::relative(file, worldPath).wstring() << endl;
+			}
+			else {
+				ofs << file.wstring() << endl;
+			}
+		}
+		ofs.close();
+
+		// 构建并执行 7z 命令
+		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(tempConfig.zipLevel) +
+			L" \"" + outputPath + L"\"" + L" @" + filelist_path;
+
+		// 工作目录应为原始世界路径，以确保压缩包内路径正确
+		if (RunCommandInBackground(command, console, tempConfig.useLowPriority, worldPath)) {
+			console.AddLog(L("LOG_EXPORT_SUCCESS"), wstring_to_utf8(outputPath).c_str());
+			wstring cmd = L"/select,\"" + outputPath + L"\"";
+			ShellExecuteW(NULL, L"open", L"explorer.exe", cmd.c_str(), NULL, SW_SHOWNORMAL);
+		}
+		else {
+			console.AddLog(L("LOG_EXPORT_FAILED"));
+		}
+
+	}
+	catch (const exception& e) {
+		console.AddLog("[Error] An exception occurred during export: %s", e.what());
+	}
+
+	// 清理临时目录
+	filesystem::remove_all(temp_export_dir);
 }

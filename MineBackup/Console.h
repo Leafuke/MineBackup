@@ -1,4 +1,7 @@
 #pragma once
+#ifndef _CONSOLE_
+#define _CONSOLE_
+
 #include "imgui/imgui.h"
 #include "AppState.h"
 #include "Platform_win.h"
@@ -384,3 +387,4 @@ struct Console
 	}
 };
 extern Console console;
+#endif // _CONSOLE_
