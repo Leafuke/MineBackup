@@ -1,3 +1,5 @@
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <dwmapi.h>
 #include "Platform_win.h"
 #include "text_to_text.h"
 #include "AppState.h"
@@ -9,10 +11,12 @@
 #include <shobjidl.h>
 #include <shlobj.h>
 #include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
 #include <filesystem>
 #include <chrono>
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "dwmapi.lib")
 using namespace std;
 
 extern GLFWwindow* wc;
@@ -26,6 +30,15 @@ extern string CURRENT_VERSION;
 NOTIFYICONDATA nid = { 0 };
 
 LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+void EnableDarkModeWin(bool enable) {
+	HWND hwnd = glfwGetWin32Window(wc);
+	BOOL useDark = enable ? TRUE : FALSE;
+	DwmSetWindowAttribute(hwnd, 20 , &useDark, sizeof(useDark));
+	return;
+}
+
+
 
 wstring GetDocumentsPath() {
 #ifdef _WIN32

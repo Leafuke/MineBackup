@@ -2,6 +2,10 @@
 #include "imgui.h"
 #include "json.hpp"
 #include <fstream>
+#include <sstream>
+#include <iomanip>
+
+void EnableDarkModeWin(bool enable);
 
 namespace ImGuiTheme {
 
@@ -12,14 +16,88 @@ namespace ImGuiTheme {
         return ImVec4(r, g, b, alpha);
     }
 
-    inline const char* ToHex(const ImVec4& color) {
-        unsigned int r = static_cast<unsigned int>(color.x * 255.0f);
-        unsigned int g = static_cast<unsigned int>(color.y * 255.0f);
-        unsigned int b = static_cast<unsigned int>(color.z * 255.0f);
-        unsigned int a = static_cast<unsigned int>(color.w * 255.0f);
-        char buffer[10];
-        snprintf(buffer, sizeof(buffer), "0x%02X%02X%02X%02X", r, g, b, a);
-        return buffer;
+    // ImVec4转HEX
+    std::string ImVec4ToHex(const ImVec4& color) {
+        std::stringstream ss;
+        int r = static_cast<int>(std::round(color.x * 255.0f));
+        int g = static_cast<int>(std::round(color.y * 255.0f));
+        int b = static_cast<int>(std::round(color.z * 255.0f));
+
+        ss << std::uppercase << std::hex << std::setfill('0')
+            << std::setw(2) << r
+            << std::setw(2) << g
+            << std::setw(2) << b;
+
+        return ("#" + ss.str());
+    }
+
+    void ApplyImGuiLight() {
+
+        EnableDarkModeWin(false);
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding = 8.0f;
+        style.FrameRounding = 5.0f;
+        style.GrabRounding = 5.0f;
+        style.PopupRounding = 5.0f;
+        style.ScrollbarRounding = 5.0f;
+        style.ChildRounding = 8.0f;
+
+        style.WindowBorderSize = 1.0f;
+        style.ChildBorderSize = 1.0f;
+        style.PopupBorderSize = 1.0f;
+        style.FrameBorderSize = 0.0f;
+        style.TabBorderSize = 0.0f;
+
+        style.WindowPadding = ImVec2(8, 8);
+        style.FramePadding = ImVec2(6, 4);
+        style.ItemSpacing = ImVec2(8, 6);
+        style.ScrollbarSize = 14.0f;
+
+        ImGui::StyleColorsLight();
+	}
+    void ApplyImGuiDark() {
+        EnableDarkModeWin(true);
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding = 8.0f;
+        style.FrameRounding = 5.0f;
+        style.GrabRounding = 5.0f;
+        style.PopupRounding = 5.0f;
+        style.ScrollbarRounding = 5.0f;
+        style.ChildRounding = 8.0f;
+
+        style.WindowBorderSize = 1.0f;
+        style.ChildBorderSize = 1.0f;
+        style.PopupBorderSize = 1.0f;
+        style.FrameBorderSize = 0.0f;
+        style.TabBorderSize = 0.0f;
+
+        style.WindowPadding = ImVec2(8, 8);
+        style.FramePadding = ImVec2(6, 4);
+        style.ItemSpacing = ImVec2(8, 6);
+        style.ScrollbarSize = 14.0f;
+        ImGui::StyleColorsDark();
+    }
+    void ApplyImGuiClassic() {
+        EnableDarkModeWin(true);
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding = 8.0f;
+        style.FrameRounding = 5.0f;
+        style.GrabRounding = 5.0f;
+        style.PopupRounding = 5.0f;
+        style.ScrollbarRounding = 5.0f;
+        style.ChildRounding = 8.0f;
+
+        style.WindowBorderSize = 1.0f;
+        style.ChildBorderSize = 1.0f;
+        style.PopupBorderSize = 1.0f;
+        style.FrameBorderSize = 0.0f;
+        style.TabBorderSize = 0.0f;
+
+        style.WindowPadding = ImVec2(8, 8);
+        style.FramePadding = ImVec2(6, 4);
+        style.ItemSpacing = ImVec2(8, 6);
+        style.ScrollbarSize = 14.0f;
+        ImGui::StyleColorsClassic();
     }
 
     // --- Windows 11 深度修复版（增强对比度与层级感） ---
@@ -48,6 +126,7 @@ namespace ImGuiTheme {
         style.ScrollbarSize = 14.0f;
 
         if (dark_mode) {
+            EnableDarkModeWin(true);
             // 强化层级：child 与 tab 更亮，边框稍强，focus 状态更清晰
             ImVec4 bg_base = Hex(0x1E1E1E);  // 更贴近 Win11 Mica Dark
             ImVec4 bg_child = Hex(0x282828);
@@ -98,6 +177,7 @@ namespace ImGuiTheme {
             colors[ImGuiCol_ScrollbarGrabActive] = Hex(0x5A5A5A);
         }
         else {
+            EnableDarkModeWin(false);
             ImVec4 bg_base = Hex(0xF3F3F3);
             ImVec4 bg_child = Hex(0xFFFFFF);
             ImVec4 border = Hex(0xE5E5E5);
@@ -236,6 +316,7 @@ namespace ImGuiTheme {
         style.ItemSpacing = ImVec2(8, 8);
 
         if (dark_mode) {
+            EnableDarkModeWin(true);
             ImVec4 bg_main = Hex(0x2E3440);
             ImVec4 bg_child = Hex(0x3B4252);
             ImVec4 border = Hex(0x4C566A);
@@ -284,6 +365,7 @@ namespace ImGuiTheme {
             colors[ImGuiCol_TextSelectedBg] = Hex(0x81A1C1, 0.35f);
         }
         else {
+            EnableDarkModeWin(false);
             ImVec4 bg_main = Hex(0xECEFF4);
             ImVec4 bg_child = Hex(0xE5E9F0);
             ImVec4 border = Hex(0xD8DEE9);
@@ -436,14 +518,14 @@ namespace ImGuiTheme {
 
     void ApplyCustom() {
         ImGuiStyle& style = ImGui::GetStyle();
-		ImVec4* colors = style.Colors;
-		// 从本地 JSON 文件加载框架和颜色配置
+        ImVec4* colors = style.Colors;
+        // 从本地 JSON 文件加载框架和颜色配置
         try {
             std::ifstream file("custom_theme.json");
             if (file.is_open()) {
                 nlohmann::json j;
                 file >> j;
-				// 几何设定-从Json读取
+                // 几何设定-从Json读取
                 style.WindowRounding = j.value("window_rounding", 0.0f);
                 style.ChildRounding = j.value("child_rounding", 0.0f);
                 style.FrameRounding = j.value("frame_rounding", 0.0f);
@@ -472,46 +554,34 @@ namespace ImGuiTheme {
                 );
                 style.ScrollbarSize = j.value("scrollbar_size", 14.0f);
 
-				// 颜色设定
+                // 颜色设定
                 for (auto& [key, value] : j["colors"].items()) {
-					// 读取的是十六进制颜色值和float类型的 alpha 通道
-                    // 注意现在的索引不是数字是字符了！
-                    /*"9": {
-                        "alpha": 1.0,
-                            "hex" : "0xEBEBEBF"
-                    }
-					现在是这样
-                    "WindowBg": {
-                        "alpha": 0.9399999976158142,
-                        "hex": "0x0F0F0FE"
-                    } AI写一下具体实现！
-                    */
-					unsigned int hex = std::stoul(value["hex"].get<std::string>(), nullptr, 16);
+                    // hex: "0xRRGGBB"
+                    std::string hexstr = value["hex"].get<std::string>();
+                    unsigned int hex = std::stoul(hexstr.substr(1), nullptr, 16); // 跳过"#"
                     float alpha = value.value("alpha", 1.0f);
                     ImVec4 col = Hex(hex, alpha);
-					// 通过遍历所有枚举值来找到对应的索引
-					ImGuiCol col_index = ImGuiCol_COUNT;
+                    ImGuiCol col_index = ImGuiCol_COUNT;
                     for (int i = 0; i < ImGuiCol_COUNT; i++) {
                         if (std::string(ImGui::GetStyleColorName(static_cast<ImGuiCol>(i))) == key) {
                             col_index = static_cast<ImGuiCol>(i);
                             break;
                         }
-					}
-					colors[col_index] = col;
-
-
-				}
+                    }
+                    if (col_index != ImGuiCol_COUNT)
+                        colors[col_index] = col;
+                }
             }
         }
         catch (...) {
             // 如果加载失败，应用默认 Solarized 主题
-			ApplySolarized(true);
+            ApplySolarized(true);
         }
     }
 
     void WriteDefaultCustomTheme() {
         nlohmann::json j;
-		// 将当前使用的样式写入 JSON
+        // 将当前使用的样式写入 JSON
         ImGuiStyle& style = ImGui::GetStyle();
         j["window_rounding"] = style.WindowRounding;
         j["child_rounding"] = style.ChildRounding;
@@ -537,10 +607,9 @@ namespace ImGuiTheme {
 
         // 颜色设定
         for (int i = 0; i < ImGuiCol_COUNT; i++) {
-			// 输出结果是单纯的数字，这不好辨认，可以改成字符串形式的索引
             ImVec4 col = style.Colors[i];
             j["colors"][ImGui::GetStyleColorName(static_cast<ImGuiCol>(i))] = {
-                {"hex", ToHex(col)},
+                {"hex", ImVec4ToHex(col)},
                 {"alpha", col.w}
             };
         }
