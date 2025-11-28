@@ -22,7 +22,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.11.0";
+string CURRENT_VERSION = "1.10.3";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -255,6 +255,18 @@ int main(int argc, char** argv)
 	ImGui::CreateContext();
 
 
+
+	bool errorShow = false;
+	bool isFirstRun = !filesystem::exists("config.ini");
+	static bool showConfigWizard = isFirstRun;
+	g_appState.showMainApp = !isFirstRun;
+	if (isFirstRun) {
+		ImGuiTheme::ApplyNord(false);
+		g_uiScale = main_scale;
+	}
+
+
+
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 	io.FontGlobalScale = g_uiScale;
 	// 启用Docking
@@ -266,7 +278,7 @@ int main(int argc, char** argv)
 
 	ImGuiStyle& style = ImGui::GetStyle();
 	// 设置字体和全局缩放
-	style.ScaleAllSizes(main_scale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+	style.ScaleAllSizes(g_uiScale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
 	io.ConfigDpiScaleFonts = true;
 	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
 	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
@@ -300,13 +312,6 @@ int main(int argc, char** argv)
 
 	//float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
 
-	bool errorShow = false;
-	bool isFirstRun = !filesystem::exists("config.ini");
-	static bool showConfigWizard = isFirstRun;
-	g_appState.showMainApp = !isFirstRun;
-	if (isFirstRun)
-		ImGuiTheme::ApplyNord(false);
-
 	if (g_appState.configs.count(g_appState.currentConfigIndex))
 		ApplyTheme(g_appState.configs[g_appState.currentConfigIndex].theme); // 把主题加载放在这里了
 	else if (g_appState.specialConfigs.count(g_appState.currentConfigIndex))
@@ -339,20 +344,20 @@ int main(int argc, char** argv)
 #endif
 	}
 	if (g_CurrentLang == "zh_CN")
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f * main_scale, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
 	else
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f * main_scale, nullptr, io.Fonts->GetGlyphRangesDefault());
+		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
 
 	// 准备合并图标字体
 	ImFontConfig config2;
 	config2.MergeMode = true;
 	config2.PixelSnapH = true;
-	config2.GlyphMinAdvanceX = 20.0f * main_scale; // 图标的宽度
+	config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
 	// 定义要从图标字体中加载的图标范围
 	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
 	// 加载并合并
-	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f * main_scale, &config2, icon_ranges);
+	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
 
 	// 构建字体图谱
 	io.Fonts->Build();
@@ -1077,7 +1082,7 @@ int main(int argc, char** argv)
 					// --- 左侧图标区 ---
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f * main_scale;
+					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
 					ImVec2 icon_pos = ImGui::GetCursorScreenPos();
 					ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
 
