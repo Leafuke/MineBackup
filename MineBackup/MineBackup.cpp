@@ -404,7 +404,7 @@ int main(int argc, char** argv)
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
-		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0) {
+		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(0.2);
 			ImGui_ImplGlfw_Sleep(10);
 			continue;
