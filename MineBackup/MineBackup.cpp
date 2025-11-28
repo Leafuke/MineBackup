@@ -1,6 +1,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "Broadcast.h"
 #include "imgui-all.h"
+#include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
 #ifdef _WIN32
@@ -21,7 +22,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.10.2";
+string CURRENT_VERSION = "1.11.0";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -41,12 +42,12 @@ bool specialSetting = false;
 bool g_CheckForUpdates = true, g_RunOnStartup = false, g_AutoScanForWorlds = false, g_autoLogEnabled = true;
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
+int g_hotKeyBackupId = 'S', g_hotKeyRestoreId = 'Z';
 
 atomic<bool> specialTasksRunning = false;
 atomic<bool> specialTasksComplete = false;
 thread g_exitWatcherThread;
 atomic<bool> g_stopExitWatcher(false);
-map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 wstring g_worldToFocusInHistory = L"";
 vector<wstring> restoreWhitelist;
 extern enum class BackupCheckResult {
@@ -61,39 +62,32 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
+void CheckForConfigConflicts();
 bool IsPureASCII(const wstring& s);
+wstring SanitizeFileName(const wstring& input);
+
 void OpenLinkInBrowser(const wstring& url);
 inline void ApplyTheme(int& theme);
-wstring SanitizeFileName(const wstring& input);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
-bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool ExtractFontToTempFile(wstring& extractedPath);
 bool Extract7zToTempFile(wstring& extractedPath);
-void GameSessionWatcherThread();
-bool IsFileLocked(const wstring& path);
-bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
-size_t CalculateFileHash(const filesystem::path& filepath);
 string GetRegistryValue(const string& keyPath, const string& valueName);
-void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const map<wstring, size_t>& currentState);
 
+void GameSessionWatcherThread();
 
 void ShowSettingsWindow();
 void ShowHistoryWindow(int& tempCurrentConfigIndex);
 vector<DisplayWorld> BuildDisplayWorldsForSelection();
 
-
+int ImGuiKeyToVK(ImGuiKey key);
 bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 string ProcessCommand(const string& commandStr, Console* console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
 void RunSpecialMode(int configId);
-void CheckForConfigConflicts();
 void ConsoleLog(Console* console, const char* format, ...);
 
-
-
 #ifdef _WIN32
-// Main code
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
 	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
@@ -101,16 +95,16 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
 	SetCurrentDirectoryW(filesystem::path(exePath).parent_path().c_str());
 
-	//_setmode(_fileno(stdout), _O_U8TEXT);
-	//_setmode(_fileno(stdin), _O_U8TEXT);
-	//CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	LoadConfigs("config.ini");
 
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
 	CreateTrayIcon(hwnd_hidden, hInstance);
-	RegisterHotkeys(hwnd_hidden);
+	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+	RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
 #else
 int main(int argc, char** argv)
 {
+	LoadConfigs("config.ini");
 #endif
 
 
@@ -118,20 +112,12 @@ int main(int argc, char** argv)
 	wstring g_7zTempPath, g_FontTempPath;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
 	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
+
 	if (!sevenZipExtracted || !fontExtracted) {
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"));
 	}
 
 	LoadConfigs("config.ini");
-	if (g_autoLogEnabled)
-	{
-		time_t now = time(0);
-		char time_buf[100];
-		ctime_s(time_buf, sizeof(time_buf), &now);
-		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
-	}
-	
-
 	CheckForConfigConflicts();
 	LoadHistory();
 	if (g_CheckForUpdates) {
@@ -256,13 +242,22 @@ int main(int argc, char** argv)
 
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
+	bool errorShow = false;
+	bool isFirstRun = !filesystem::exists("config.ini");
+	static bool showConfigWizard = isFirstRun;
+	g_appState.showMainApp = !isFirstRun;
+	if (isFirstRun) {
+		g_windowWidth *= main_scale, g_windowHeight *= main_scale;
+		g_uiScale = main_scale;
+	}
+
 	wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
 	if (wc == nullptr)
 		return 1;
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
-	
+
 #ifdef _WIN32
 	int width, height, channels;
 	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
@@ -293,15 +288,6 @@ int main(int argc, char** argv)
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 
-	// 圆润风格
-	ImGuiStyle& style = ImGui::GetStyle();
-	style.WindowRounding = 8.0f;
-	style.FrameRounding = 5.0f;
-	style.GrabRounding = 5.0f;
-	style.PopupRounding = 5.0f;
-	style.ScrollbarRounding = 5.0f;
-	style.ChildRounding = 8.0f;
-
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 	io.FontGlobalScale = g_uiScale;
 	// 启用Docking
@@ -311,8 +297,9 @@ int main(int argc, char** argv)
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
+	ImGuiStyle& style = ImGui::GetStyle();
 	// 设置字体和全局缩放
-	style.ScaleAllSizes(main_scale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+	style.ScaleAllSizes(g_uiScale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
 	io.ConfigDpiScaleFonts = true;
 	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
 	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
@@ -346,16 +333,9 @@ int main(int argc, char** argv)
 
 	//float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
 
-	bool errorShow = false;
-	bool isFirstRun = !filesystem::exists("config.ini");
-	static bool showConfigWizard = isFirstRun;
-	g_appState.showMainApp = !isFirstRun;
-	if (isFirstRun)
-		ImGui::StyleColorsLight();//默认亮色
-
 	if (g_appState.configs.count(g_appState.currentConfigIndex))
 		ApplyTheme(g_appState.configs[g_appState.currentConfigIndex].theme); // 把主题加载放在这里了
-	else
+	else if (g_appState.specialConfigs.count(g_appState.currentConfigIndex))
 		ApplyTheme(g_appState.specialConfigs[g_appState.currentConfigIndex].theme);
 
 	if (isFirstRun) {
@@ -385,32 +365,25 @@ int main(int argc, char** argv)
 #endif
 	}
 	if (g_CurrentLang == "zh_CN")
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f * main_scale, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
 	else
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f * main_scale, nullptr, io.Fonts->GetGlyphRangesDefault());
+		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
 
 	// 准备合并图标字体
 	ImFontConfig config2;
 	config2.MergeMode = true;
 	config2.PixelSnapH = true;
-	config2.GlyphMinAdvanceX = 20.0f * main_scale; // 图标的宽度
+	config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
 	// 定义要从图标字体中加载的图标范围
 	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
 	// 加载并合并
-	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f * main_scale, &config2, icon_ranges);
+	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
 
 	// 构建字体图谱
 	io.Fonts->Build();
 
 	console.AddLog(L("CONSOLE_WELCOME"));
-
-	if (sevenZipExtracted) {
-		console.AddLog(L("LOG_7Z_EXTRACT_SUCCESS"));
-	}
-	else {
-		console.AddLog(L("LOG_7Z_EXTRACT_FAIL"));
-	}
 
 	// 记录注释
 	static char backupComment[CONSTANT1] = "";
@@ -443,38 +416,22 @@ int main(int argc, char** argv)
 		}
 	}
 
+	if (isFirstRun)
+	{
+		ImGuiTheme::ApplyNord(false);
+	}
 
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
-
-		// 如果窗口最小化或不显示，可以等待更长时间
-		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) || !g_appState.showMainApp) {
-			// 使用带超时的等待，这样我们仍然可以周期性地处理Win32消息
-			glfwWaitEventsTimeout(0.2); // 等待200ms
-		}
-		else {
-			// 正常轮询，以保持流畅的UI动画
-			glfwPollEvents();
-			Sleep(0.1);
-		}
-
-		// Poll and handle messages (inputs, window resize, etc.)
-		// See the WndProc() function below for our to dispatch events to the Win32 backend.
-		MSG msg;
-		while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
-		{
-			::TranslateMessage(&msg);
-			::DispatchMessage(&msg);
-			if (msg.message == WM_QUIT)
-				g_appState.done = true;
-		}
-
-		glfwPollEvents();
-		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0)
-		{
+		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
+			glfwWaitEventsTimeout(0.2);
 			ImGui_ImplGlfw_Sleep(10);
 			continue;
+		}
+		else {
+			glfwPollEvents();
+			Sleep(0.1);
 		}
 
 		// Start the Dear ImGui frame
@@ -484,7 +441,7 @@ int main(int argc, char** argv)
 
 		if (showConfigWizard) {
 			// 首次启动向导使用的静态变量
-			static int page = 0;
+			static int page = 0, themeId = 5;
 			static bool isWizardOpen = true;
 			static char saveRootPath[CONSTANT1] = "";
 			static char backupPath[CONSTANT1] = "";
@@ -501,6 +458,29 @@ int main(int argc, char** argv)
 				ImGui::TextWrapped(L("WIZARD_INTRO1"));
 				ImGui::TextWrapped(L("WIZARD_INTRO2"));
 				ImGui::TextWrapped(L("WIZARD_INTRO3"));
+
+				
+				ImGui::Text(L("THEME_SETTINGS"));
+				const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
+				if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
+					if (themeId == 7 && !filesystem::exists("custom_theme.json")) {
+						// 打开自定义主题编辑器
+						ImGuiTheme::WriteDefaultCustomTheme();
+						// 打开 custom_theme.json 文件供用户编辑
+						OpenFolder(L"custom_theme.json");
+					}
+					else {
+						ApplyTheme(themeId);
+					}
+				}
+
+				ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_OK"))) {
+					ImGuiIO& io = ImGui::GetIO(); (void)io;
+					io.FontGlobalScale = g_uiScale;
+				}
+
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				if (ImGui::Button(L("BUTTON_START_CONFIG"), ImVec2(120, 0))) {
 					page++;
@@ -691,6 +671,7 @@ int main(int argc, char** argv)
 						initialConfig.hotBackup = false;
 						initialConfig.backupBefore = false;
 						initialConfig.skipIfUnchanged = true;
+						initialConfig.theme = themeId;
 						isSilence = false;
 #ifdef _WIN32
 						if (g_CurrentLang == "zh_CN") {
@@ -728,7 +709,7 @@ int main(int argc, char** argv)
 
 			ImGui::End();
 		}
-		else if (!glfwGetWindowAttrib(wc, GLFW_ICONIFIED) && g_appState.showMainApp) {
+		else if (g_appState.showMainApp) {
 
 
 			ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -770,6 +751,48 @@ int main(int argc, char** argv)
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Separator();
+					// 热键设置右拉栏（鼠标放上去会向右展开两个）
+#ifdef _WIN32
+					static bool waitingForHotkey = false;
+					static int whichFunc = 0;
+					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
+						if (ImGui::MenuItem(L("BUTTON_BACKUP_SELECTED"))) {
+							console.AddLog(L("HOTKEY_INSTRUCTION"));
+							waitingForHotkey = true;
+							whichFunc = 1;
+						}
+						if (ImGui::MenuItem(L("BUTTON_RESTORE_SELECTED"))) {
+							console.AddLog(L("HOTKEY_INSTRUCTION"));
+							waitingForHotkey = true;
+							whichFunc = 2;
+						}
+						if (waitingForHotkey) {
+							ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Waiting...");
+							for (int key = ImGuiKey_0; key <= ImGuiKey_Z; ++key) {
+								if (ImGui::IsKeyPressed((ImGuiKey)key)) {
+									waitingForHotkey = false;
+									if (whichFunc == 1) {
+										g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
+										UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
+										RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
+										break;
+									}
+									else if (whichFunc == 2) {
+										g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
+										UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
+										RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
+										break;
+									}
+									break;
+								}
+							}
+						}
+						ImGui::EndMenu();
+					}
+					ImGui::Separator();
+#endif
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
@@ -888,7 +911,7 @@ int main(int argc, char** argv)
 			{
 				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
 				ImGui::Separator();
-				ImGui::TextWrapped("%s", L("ABOUT_DESCRIPTION"));
+				ImGui::TextWrapped("%s %c %c", L("ABOUT_DESCRIPTION"), (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId);
 				ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1127,7 +1150,7 @@ int main(int argc, char** argv)
 					// --- 左侧图标区 ---
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f * main_scale;
+					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
 					ImVec2 icon_pos = ImGui::GetCursorScreenPos();
 					ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
 
@@ -1734,9 +1757,6 @@ int main(int argc, char** argv)
 		glClear(GL_COLOR_BUFFER_BIT);
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-		// Update and Render additional Platform Windows
-		// (Platform functions may change the current OpenGL context, so we save/restore it to make it easier to paste this code elsewhere.
-		//  For this specific demo app we could also call glfwMakeContextCurrent(window) directly)
 		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
 		{
 			GLFWwindow* backup_current_context = glfwGetCurrentContext();
@@ -1782,7 +1802,8 @@ int main(int argc, char** argv)
 
 #ifdef _WIN32
 	RemoveTrayIcon();
-	UnregisterHotkeys(hwnd_hidden);
+	UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
+	UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 	DestroyWindow(hwnd_hidden);
 #endif
 	g_worldIconTextures.clear();
@@ -1816,7 +1837,6 @@ int main(int argc, char** argv)
 
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height)
 {
-	// 从文件加载图像数据
 	int image_width = 0;
 	int image_height = 0;
 	unsigned char* image_data = stbi_load(filename, &image_width, &image_height, NULL, 4);
@@ -1836,7 +1856,7 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 
 	// 上传纹理数据
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
-	stbi_image_free(image_data); // 释放CPU内存
+	stbi_image_free(image_data);
 
 	*out_texture = image_texture;
 	*out_width = image_width;
@@ -1848,9 +1868,14 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 inline void ApplyTheme(int& theme)
 {
 	switch (theme) {
-	case 0: ImGui::StyleColorsDark(); break;
-	case 1: ImGui::StyleColorsLight(); break;
-	case 2: ImGui::StyleColorsClassic(); break;
+		case 0: ImGuiTheme::ApplyImGuiDark();break;
+		case 1: ImGuiTheme::ApplyImGuiLight(); break;
+		case 2: ImGuiTheme::ApplyImGuiClassic(); break;
+		case 3: ImGuiTheme::ApplyWindows11(false); break;
+		case 4: ImGuiTheme::ApplyWindows11(true); break;
+		case 5: ImGuiTheme::ApplyNord(false); break;
+		case 6: ImGuiTheme::ApplyNord(true); break;
+		case 7: ImGuiTheme::ApplyCustom(); break;
 	}
 }
 
@@ -1897,7 +1922,6 @@ void ShowSettingsWindow() {
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				g_appState.currentConfigIndex = (idx);
 				specialSetting = true;
-				//g_appState.specialConfigMode = true;
 			}
 			if (is_selected) ImGui::SetItemDefaultFocus();
 		}
@@ -1985,7 +2009,7 @@ void ShowSettingsWindow() {
 					g_appState.currentConfigIndex = new_index;
 					specialSetting = true;
 				}
-				showSettings = true; // Open detailed settings for the new config
+				showSettings = true;
 				ImGui::CloseCurrentPopup();
 			}
 		}
@@ -2048,9 +2072,21 @@ void ShowSettingsWindow() {
 				ImGui::EndTable();
 			}
 
-			if (ImGui::RadioButton(L("THEME_DARK"), &spCfg.theme, 0)) { ApplyTheme(spCfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_LIGHT"), &spCfg.theme, 1)) { ApplyTheme(spCfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_CLASSIC"), &spCfg.theme, 2)) { ApplyTheme(spCfg.theme); }
+
+			ImGui::Separator();
+			ImGui::Text(L("THEME_SETTINGS"));
+			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
+			if (ImGui::Combo("##Theme", &spCfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
+				if (spCfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
+					// 打开自定义主题编辑器
+					ImGuiTheme::WriteDefaultCustomTheme();
+					// 打开 custom_theme.json 文件供用户编辑
+					OpenFolder(L"custom_theme.json");
+				}
+				else {
+					ApplyTheme(spCfg.theme);
+				}
+			}
 
 			if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
 				g_appState.specialConfigs[g_appState.currentConfigIndex].autoExecute = true;
@@ -2058,32 +2094,6 @@ void ShowSettingsWindow() {
 				ReStartApplication();
 				g_appState.done = true;
 			}
-
-			//ImGui::SeparatorText(L("BLACKLIST_HEADER"));
-			//if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
-			//	wstring sel = SelectFileDialog(); if (!sel.empty()) spCfg.blacklist.push_back(sel);
-			//}
-			//ImGui::SameLine();
-			//if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
-			//	wstring sel = SelectFolderDialog(); if (!sel.empty()) spCfg.blacklist.push_back(sel);
-			//}
-			//static int sel_bl_item = -1;
-			//if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 2 * ImGui::GetTextLineHeightWithSpacing()))) {
-			//	// 检查 blacklist 是否为空
-			//	if (spCfg.blacklist.empty()) {
-			//		ImGui::Text(L("No items in blacklist")); // 显示空列表提示
-			//	}
-			//	else {
-			//		// 遍历显示黑名单项
-			//		for (int n = 0; n < spCfg.blacklist.size(); n++) {
-			//			string label = wstring_to_utf8(spCfg.blacklist[n]);
-			//			if (ImGui::Selectable(label.c_str(), sel_bl_item == n)) {
-			//				sel_bl_item = n;
-			//			}
-			//		}
-			//	}
-			//	ImGui::EndListBox();
-			//}
 
 			ImGui::SeparatorText(L("COMMANDS_TO_RUN"));
 			static char cmd_buf[512] = "";
@@ -2219,10 +2229,8 @@ void ShowSettingsWindow() {
 					cfg.backupPath = sel;
 				}
 			}
-			//ImVec2 item_width = ImGui::CalcTextSize(L("BUTTON_SELECT_BACKUP_DIR"));
-			//item_width.x = abs(ImGui::CalcTextSize(L("BUTTON_SELECT_SAVES_DIR")).x - ImGui::CalcTextSize(L("BUTTON_SELECT_BACKUP_DIR")).x);
-			/*ImGui::SameLine();
-			ImGui::InvisibleButton("##width", item_width);*/
+			
+
 			ImGui::SameLine();
 			if (ImGui::InputText(L("BACKUP_DEST_PATH_LABEL"), buf, CONSTANT1)) {
 				cfg.backupPath = utf8_to_wstring(buf);
@@ -2558,15 +2566,22 @@ void ShowSettingsWindow() {
 			}
 			ImGui::Separator();
 			ImGui::Text(L("THEME_SETTINGS"));
-			if (ImGui::RadioButton(L("THEME_DARK"), &cfg.theme, 0)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_LIGHT"), &cfg.theme, 1)) { ApplyTheme(cfg.theme); } ImGui::SameLine();
-			if (ImGui::RadioButton(L("THEME_CLASSIC"), &cfg.theme, 2)) { ApplyTheme(cfg.theme); }
+			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
+			if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
+				if (cfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
+					// 打开自定义主题编辑器
+					ImGuiTheme::WriteDefaultCustomTheme();
+					// 打开 custom_theme.json 文件供用户编辑
+					OpenFolder(L"custom_theme.json");
+				}
+				else {
+					ApplyTheme(cfg.theme);
+				}
+			}
 
 			ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_OK"))) {
-				/*ImGuiStyle& style = ImGui::GetStyle();
-				style.ScaleAllSizes(cfg.uiScale);*/
 				ImGuiIO& io = ImGui::GetIO(); (void)io;
 				io.FontGlobalScale = g_uiScale;
 			}
@@ -3180,111 +3195,6 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 }
 
 
-
-void GameSessionWatcherThread() {
-	console.AddLog(L("LOG_START_WATCHER_START"));
-
-	while (!g_stopExitWatcher) {
-		map<pair<int, int>, wstring> currently_locked_worlds;
-
-		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			
-			for (const auto& config_pair : g_appState.configs) {
-				const Config& cfg = config_pair.second;
-				if (!cfg.backupOnGameStart) continue;
-				for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
-					wstring levelDatPath = cfg.saveRoot + L"\\" + cfg.worlds[world_idx].first + L"\\session.lock";
-					if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
-						wstring temp = cfg.saveRoot + L"\\" + cfg.worlds[world_idx].first + L"\\db";
-						if (!filesystem::exists(temp))
-							continue;
-						for (const auto& entry : filesystem::directory_iterator(temp)) {
-							if (IsFileLocked(entry.path())) {
-								levelDatPath = entry.path();
-								break;
-							}
-						}
-					}
-					if (IsFileLocked(levelDatPath)) {
-						currently_locked_worlds[{config_pair.first, world_idx}] = cfg.worlds[world_idx].first;
-					}
-				}
-			}
-			
-			for (const auto& sp_config_pair : g_appState.specialConfigs) {
-				const SpecialConfig& sp_cfg = sp_config_pair.second;
-				if (!sp_cfg.backupOnGameStart) continue;
-				for (const auto& task : sp_cfg.tasks) {
-					if (g_appState.configs.count(task.configIndex) && task.worldIndex < g_appState.configs[task.configIndex].worlds.size()) {
-						const Config& base_cfg = g_appState.configs[task.configIndex];
-						const auto& world = base_cfg.worlds[task.worldIndex];
-						wstring levelDatPath = base_cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
-						if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
-							wstring temp = base_cfg.saveRoot + L"\\" + world.first + L"\\db";
-							if (!filesystem::exists(temp))
-								continue;
-							for (const auto& entry : filesystem::directory_iterator(temp)) {
-								if (IsFileLocked(entry.path())) {
-									levelDatPath = entry.path();
-									break;
-								}
-							}
-						}
-						if (IsFileLocked(levelDatPath)) {
-							currently_locked_worlds[{task.configIndex, task.worldIndex}] = world.first;
-						}
-					}
-				}
-			}
-		}
-
-		{
-			vector<pair<int, int>> worlds_to_backup;
-
-			// 检查新启动的世界
-			for (const auto& locked_pair : currently_locked_worlds) {
-				if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
-					console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
-					string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
-					BroadcastEvent(payload);
-					worlds_to_backup.push_back(locked_pair.first);
-				}
-			}
-
-			for (const auto& active_pair : g_activeWorlds) {
-				if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
-					console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
-					string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
-					BroadcastEvent(payload);
-				}
-			}
-
-			// 更新当前活动的世界列表
-			g_activeWorlds = currently_locked_worlds;
-
-			if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
-				lock_guard<mutex> config_lock(g_appState.configsMutex);
-				for (const auto& backup_target : worlds_to_backup) {
-					int config_idx = backup_target.first;
-					int world_idx = backup_target.second;
-					if (g_appState.configs.count(config_idx) && world_idx < g_appState.configs[config_idx].worlds.size()) {
-						Config backupConfig = g_appState.configs[config_idx];
-						backupConfig.hotBackup = true; // 必须热备份
-						thread backup_thread(DoBackup, backupConfig, backupConfig.worlds[world_idx], ref(console), L"OnStart");
-						backup_thread.detach();
-					}
-				}
-			}
-		}
-
-		this_thread::sleep_for(chrono::seconds(10));
-	}
-	console.AddLog(L("LOG_EXIT_WATCHER_STOP"));
-}
-
-
-
 // 构建当前选择（普通 / 特殊）下用于显示的世界列表
 static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 	lock_guard<mutex> lock(g_appState.configsMutex);
@@ -3336,244 +3246,10 @@ static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 }
 
 
-
-
-
-void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console) {
-	console.AddLog(L("LOG_EXPORT_STARTED"), wstring_to_utf8(worldName).c_str());
-
-	// 准备临时文件和路径
-	filesystem::path temp_export_dir = filesystem::temp_directory_path() / L"MineBackup_Export" / worldName;
-	filesystem::path readme_path = temp_export_dir / L"readme.txt";
-
-	try {
-		// 清理并创建临时工作目录
-		if (filesystem::exists(temp_export_dir)) {
-			filesystem::remove_all(temp_export_dir);
-		}
-		filesystem::create_directories(temp_export_dir);
-
-		// 如果有描述，创建 readme.txt
-		if (!description.empty()) {
-			wofstream readme_file(readme_path);
-			readme_file.imbue(locale(readme_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-			readme_file << L"[Name]\n" << worldName << L"\n\n";
-			readme_file << L"[Description]\n" << description << L"\n\n";
-			readme_file << L"[Exported by MineBackup]\n";
-			readme_file.close();
-		}
-
-		// 收集并过滤文件
-		vector<filesystem::path> files_to_export;
-		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
-			if (!is_blacklisted(entry.path(), worldPath, worldPath, tempConfig.blacklist)) {
-				files_to_export.push_back(entry.path());
-			}
-		}
-
-		// 将 readme.txt 也加入待压缩列表
-		if (!description.empty()) {
-			files_to_export.push_back(readme_path);
-		}
-
-		if (files_to_export.empty()) {
-			console.AddLog("[Error] No files left to export after applying blacklist.");
-			filesystem::remove_all(temp_export_dir);
-			return;
-		}
-
-		// 创建文件列表供 7z 使用
-		wstring filelist_path = (temp_export_dir / L"filelist.txt").wstring();
-		wofstream ofs(filelist_path);
-		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-		for (const auto& file : files_to_export) {
-			// 对于世界文件，写入相对路径；对于readme，写入绝对路径
-			if (file.wstring().rfind(worldPath, 0) == 0) {
-				ofs << filesystem::relative(file, worldPath).wstring() << endl;
-			}
-			else {
-				ofs << file.wstring() << endl;
-			}
-		}
-		ofs.close();
-
-		// 构建并执行 7z 命令
-		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(tempConfig.zipLevel) +
-			L" \"" + outputPath + L"\"" + L" @" + filelist_path;
-
-		// 工作目录应为原始世界路径，以确保压缩包内路径正确
-		if (RunCommandInBackground(command, console, tempConfig.useLowPriority, worldPath)) {
-			console.AddLog(L("LOG_EXPORT_SUCCESS"), wstring_to_utf8(outputPath).c_str());
-			wstring cmd = L"/select,\"" + outputPath + L"\"";
-			ShellExecuteW(NULL, L"open", L"explorer.exe", cmd.c_str(), NULL, SW_SHOWNORMAL);
-		}
-		else {
-			console.AddLog(L("LOG_EXPORT_FAILED"));
-		}
-
-	}
-	catch (const exception& e) {
-		console.AddLog("[Error] An exception occurred during export: %s", e.what());
-	}
-
-	// 清理临时目录
-	filesystem::remove_all(temp_export_dir);
-}
-
-
-
-void TriggerHotkeyBackup() {
-	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
-
-	for (const auto& config_pair : g_appState.configs) {
-		int config_idx = config_pair.first;
-		const Config& cfg = config_pair.second;
-
-		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
-			const auto& world = cfg.worlds[world_idx];
-			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
-			if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
-				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
-				if (!filesystem::exists(temp))
-					continue;
-				for (const auto& entry : filesystem::directory_iterator(temp)) {
-					if (IsFileLocked(entry.path())) {
-						levelDatPath = entry.path();
-						break;
-					}
-				}
-			}
-
-			if (IsFileLocked(levelDatPath)) {
-				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
-
-				console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
-
-
-				Config hotkeyConfig = cfg;
-				hotkeyConfig.hotBackup = true;
-
-				thread backup_thread(DoBackup, hotkeyConfig, world, ref(console), L"Hotkey");
-				backup_thread.detach();
-				return;
-			}
-		}
-	}
-
-	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
-}
-
-void TriggerHotkeyRestore() {
-
-	HotRestoreState expected_idle = HotRestoreState::IDLE;
-	// 使用CAS操作确保线程安全地从IDLE转换到WAITING_FOR_MOD
-	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
-		console.AddLog(L("[Hotkey] A restore operation is already in progress. Ignoring request."));
-		return;
-	}
-
-	g_appState.isRespond = false;
-	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
-
-	for (const auto& config_pair : g_appState.configs) {
-		int config_idx = config_pair.first;
-		const Config& cfg = config_pair.second;
-
-		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
-			const auto& world = cfg.worlds[world_idx];
-			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
-			if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
-				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
-				if (!filesystem::exists(temp))
-					continue;
-				for (const auto& entry : filesystem::directory_iterator(temp)) {
-					if (IsFileLocked(entry.path())) {
-						levelDatPath = entry.path();
-						break;
-					}
-				}
-			}
-
-			if (IsFileLocked(levelDatPath)) {
-
-
-				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
-				// KnotLink 通知
-				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-
-
-
-				// 4. 启动后台等待线程
-				thread([=]() {
-					using namespace std::chrono;
-					auto startTime = steady_clock::now();
-					const auto timeout = seconds(15);
-
-					// 等待响应或超时
-					while (steady_clock::now() - startTime < timeout) {
-						if (g_appState.isRespond) {
-							break; // 收到响应
-						}
-						this_thread::sleep_for(milliseconds(100));
-					}
-
-					// 检查是收到了响应还是超时了
-					if (!g_appState.isRespond) {
-						console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
-						BroadcastEvent("event=restore_cancelled;reason=timeout");
-						g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
-						return;
-					}
-
-					// --- 收到响应，开始还原 ---
-					g_appState.isRespond = false; // 重置标志位
-					g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
-					console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
-
-					// 查找最新备份文件 (这部分逻辑保持不变)
-					wstring backupDir = cfg.backupPath + L"\\" + world.first;
-					filesystem::path latestBackup;
-					auto latest_time = filesystem::file_time_type{};
-					bool found = false;
-
-					if (filesystem::exists(backupDir)) {
-						for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-							if (entry.is_regular_file()) {
-								if (entry.last_write_time() > latest_time) {
-									latest_time = entry.last_write_time();
-									latestBackup = entry.path();
-									found = true;
-								}
-							}
-						}
-					}
-
-					if (!found) {
-						console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-						BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
-						g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-						return;
-					}
-
-					console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
-
-					DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
-
-					// 假设成功，广播完成事件
-					BroadcastEvent("event=restore_finished;status=success;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-					console.AddLog(L("[Hotkey] Restore completed successfully."));
-
-					// 最终，重置状态
-					g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-					g_appState.isRespond = false;
-
-
-				}).detach(); // 分离线程，让它在后台运行
-				return;
-			}
-		}
-	}
-	g_appState.isRespond = false;
-	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
-	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
+int ImGuiKeyToVK(ImGuiKey key) {
+	if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+		return 'A' + (key - ImGuiKey_A);
+	if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+		return '0' + (key - ImGuiKey_0);
+	return 0;
 }

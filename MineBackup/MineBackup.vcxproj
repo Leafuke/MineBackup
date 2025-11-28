@@ -128,7 +128,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>.\imgui\lib-vc2010-64;C:\Users\zhuol\source\repos\MineBackup\MineBackup\imgui;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>.\imgui\lib-vc2022-64</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -138,10 +138,10 @@
     <ClCompile Include="Broadcast.cpp" />
     <ClCompile Include="ConfigManager.cpp" />
     <ClCompile Include="Console.cpp" />
+    <ClCompile Include="GameSessionManager.cpp" />
     <ClCompile Include="HistoryManager.cpp" />
     <ClCompile Include="i18n.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
-    <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
     <ClCompile Include="imgui\imgui_impl_glfw.cpp" />
     <ClCompile Include="imgui\imgui_impl_opengl3.cpp" />
@@ -173,6 +173,7 @@
     <ClInclude Include="imgui\imstb_rectpack.h" />
     <ClInclude Include="imgui\imstb_textedit.h" />
     <ClInclude Include="imgui\imstb_truetype.h" />
+    <ClInclude Include="imgui_style.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="KnotLink\OpenSocketResponser.hpp" />
     <ClInclude Include="KnotLink\SignalSender.hpp" />
@@ -197,6 +198,9 @@
   </ItemGroup>
   <ItemGroup>
     <Font Include="..\fontawesome-sp.otf" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CustomTheme.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
