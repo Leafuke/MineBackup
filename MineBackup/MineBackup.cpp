@@ -22,7 +22,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.10.3";
+string CURRENT_VERSION = "1.11.0";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -222,6 +222,15 @@ int main(int argc, char** argv)
 
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
+	bool errorShow = false;
+	bool isFirstRun = !filesystem::exists("config.ini");
+	static bool showConfigWizard = isFirstRun;
+	g_appState.showMainApp = !isFirstRun;
+	if (isFirstRun) {
+		g_windowWidth *= main_scale, g_windowHeight *= main_scale;
+		g_uiScale = main_scale;
+	}
+
 	wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
 	if (wc == nullptr)
 		return 1;
@@ -258,19 +267,6 @@ int main(int argc, char** argv)
 	// Setup Dear ImGui context
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
-
-
-
-	bool errorShow = false;
-	bool isFirstRun = !filesystem::exists("config.ini");
-	static bool showConfigWizard = isFirstRun;
-	g_appState.showMainApp = !isFirstRun;
-	if (isFirstRun) {
-		ImGuiTheme::ApplyNord(false);
-		g_uiScale = main_scale;
-	}
-
-
 
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 	io.FontGlobalScale = g_uiScale;
@@ -400,6 +396,10 @@ int main(int argc, char** argv)
 		}
 	}
 
+	if (isFirstRun)
+	{
+		ImGuiTheme::ApplyNord(false);
+	}
 
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))

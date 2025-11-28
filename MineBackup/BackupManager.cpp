@@ -566,6 +566,8 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 	wstring backupTypeStr; // 用于历史记录
 	wstring basedOnBackupFile; // 用于元数据记录智能备份基于的完整备份文件
+	filesystem::path latestBackupPath;
+
 
 	if (config.backupMode == 1 || forceFullBackup) // 普通备份
 	{
@@ -606,7 +608,6 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 	{
 		backupTypeStr = L"Overwrite";
 		console.AddLog(L("LOG_OVERWRITE"));
-		filesystem::path latestBackupPath;
 		auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
 		bool found = false;
 
@@ -660,14 +661,42 @@ void DoBackup(const Config config, const pair<wstring, wstring> world, Console& 
 
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
-		if (g_appState.realConfigIndex != -1)
+		if (g_appState.realConfigIndex != -1 && config.backupMode != 3)
 			AddHistoryEntry(g_appState.realConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
-		else
+		else if (config.backupMode != 3)
 			AddHistoryEntry(g_appState.currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
 		g_appState.realConfigIndex = -1; // 重置
 		// 广播一个成功事件
 		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
 		BroadcastEvent(payload);
+
+
+		if (config.backupMode == 3) { // 如果是覆写模式，修改一下文件名
+			wstring oldName = latestBackupPath.filename().wstring();
+			size_t leftBracket = oldName.find(L"["); // 第一个对应Full Smart
+			leftBracket = oldName.find(L"[", leftBracket + 1);
+			size_t rightBracket = oldName.find(L"]");
+			rightBracket = oldName.find(L"]", rightBracket + 1);
+			wstring newName = oldName;
+			if (leftBracket != wstring::npos && rightBracket != wstring::npos && rightBracket > leftBracket) {
+				// 构造新的时间戳
+				wchar_t timeBuf[160];
+				time_t now = time(0);
+				tm ltm;
+				localtime_s(&ltm, &now);
+				wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+				// 替换时间戳部分
+				newName.replace(leftBracket + 1, rightBracket - leftBracket - 1, timeBuf);
+				filesystem::path newPath = latestBackupPath.parent_path() / newName;
+				filesystem::rename(latestBackupPath, newPath);
+				latestBackupPath = newPath;
+			}
+			if (g_appState.realConfigIndex != -1)
+				AddHistoryEntry(g_appState.realConfigIndex, world.first, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+			else
+				AddHistoryEntry(g_appState.currentConfigIndex, world.first, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+		}
+
 
 		// 云同步逻辑
 		if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
