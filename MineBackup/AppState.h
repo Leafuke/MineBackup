@@ -89,6 +89,14 @@ struct DisplayWorld { // 一个新的结构体，让 UI 不再直接读取 configs[currentConfi
 	int baseWorldIndex = -1;  // 来源配置中世界索引
 	Config effectiveConfig;   // 合并后的配置（拷贝）
 };
+struct Folder {
+	std::wstring path;		// 世界文件夹路径
+	std::wstring name;		// 世界名（文件夹名）
+	std::wstring desc;		// 描述
+	Config config;			// 所属配置
+	int configIndex = -1;	// 所属配置索引
+	int worldIndex = -1;	// 世界索引
+};
 
 enum class HotRestoreState {
 	IDLE,              // 空闲状态

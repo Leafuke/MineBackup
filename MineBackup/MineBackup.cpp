@@ -827,6 +827,9 @@ int main(int argc, char** argv)
 					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
 						OpenLinkInBrowser(L"https://docs.qq.com/doc/DUUp4UVZOYmZWcm5M");
 					}
+					if (ImGui::MenuItem(L("SPONSOR_ME"))) {
+						OpenLinkInBrowser(L"https://afdian.com/a/MineBackup");
+					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
 						showAboutWindow = true;
 						ImGui::OpenPopup(L("MENU_ABOUT"));

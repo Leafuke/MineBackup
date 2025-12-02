@@ -112,14 +112,84 @@ void GameSessionWatcherThread() {
 }
 
 
+void DoHotRestore(const Config& cfg, const Folder& world, Console& console, bool deleteBackup) {
 
-void TriggerHotkeyBackup() {
-	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
+	// KnotLink 通知
+	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.first));
 
+	// 4. 启动后台等待线程
+	thread([=]() {
+		using namespace std::chrono;
+		auto startTime = steady_clock::now();
+		const auto timeout = seconds(15);
+
+		// 等待响应或超时
+		while (steady_clock::now() - startTime < timeout) {
+			if (g_appState.isRespond) {
+				break; // 收到响应
+			}
+			this_thread::sleep_for(milliseconds(100));
+		}
+
+		// 检查是收到了响应还是超时了
+		if (!g_appState.isRespond) {
+			console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
+			BroadcastEvent("event=restore_cancelled;reason=timeout");
+			g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
+			return;
+		}
+
+		// --- 收到响应，开始还原 ---
+		g_appState.isRespond = false; // 重置标志位
+		g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+		console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
+
+		// 查找最新备份文件 (这部分逻辑保持不变)
+		wstring backupDir = cfg.backupPath + L"\\" + world.first;
+		filesystem::path latestBackup;
+		auto latest_time = filesystem::file_time_type{};
+		bool found = false;
+
+		if (filesystem::exists(backupDir)) {
+			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+				if (entry.is_regular_file()) {
+					if (entry.last_write_time() > latest_time) {
+						latest_time = entry.last_write_time();
+						latestBackup = entry.path();
+						found = true;
+					}
+				}
+			}
+		}
+
+		if (!found) {
+			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
+			BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
+			g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+			return;
+		}
+
+		console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
+
+		DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
+
+		// 假设成功，广播完成事件
+		BroadcastEvent("event=restore_finished;status=success;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
+		console.AddLog(L("[Hotkey] Restore completed successfully."));
+
+		// 最终，重置状态
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
+
+
+		}).detach(); // 分离线程，让它在后台运行
+}
+
+Folder GetOccupiedWorld() {
+	lock_guard<mutex> lock(g_appState.configsMutex);
 	for (const auto& config_pair : g_appState.configs) {
 		int config_idx = config_pair.first;
 		const Config& cfg = config_pair.second;
-
 		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
 			const auto& world = cfg.worlds[world_idx];
 			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
@@ -134,22 +204,30 @@ void TriggerHotkeyBackup() {
 					}
 				}
 			}
-
 			if (IsFileLocked(levelDatPath)) {
-				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
-
-				console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
-
-
-				Config hotkeyConfig = cfg;
-				hotkeyConfig.hotBackup = true;
-
-				thread backup_thread(DoBackup, hotkeyConfig, world, ref(console), L"Hotkey");
-				backup_thread.detach();
-				return;
+				return Folder{ cfg.saveRoot + L"\\" + world.first, world.first, world.second, cfg, config_idx, world_idx};
 			}
 		}
 	}
+	return Folder{};
+}
+
+void TriggerHotkeyBackup() {
+	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
+
+	Folder world = GetOccupiedWorld();
+	if (!world.path.empty()) {
+		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
+		console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), world.config.name.c_str(), wstring_to_utf8(world.name).c_str());
+
+		world.config.hotBackup = true;
+
+		thread backup_thread(DoBackup, world.config, world, ref(console), L"Hotkey");
+		backup_thread.detach();
+		return;
+	}
+
+	
 
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
 }
@@ -186,80 +264,11 @@ void TriggerHotkeyRestore() {
 			}
 
 			if (IsFileLocked(levelDatPath)) {
-
-
 				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
-				// KnotLink 通知
-				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
 
+				DoHotRestore(cfg, world.first, ref(console), false);
 
-
-				// 4. 启动后台等待线程
-				thread([=]() {
-					using namespace std::chrono;
-					auto startTime = steady_clock::now();
-					const auto timeout = seconds(15);
-
-					// 等待响应或超时
-					while (steady_clock::now() - startTime < timeout) {
-						if (g_appState.isRespond) {
-							break; // 收到响应
-						}
-						this_thread::sleep_for(milliseconds(100));
-					}
-
-					// 检查是收到了响应还是超时了
-					if (!g_appState.isRespond) {
-						console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
-						BroadcastEvent("event=restore_cancelled;reason=timeout");
-						g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
-						return;
-					}
-
-					// --- 收到响应，开始还原 ---
-					g_appState.isRespond = false; // 重置标志位
-					g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
-					console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
-
-					// 查找最新备份文件 (这部分逻辑保持不变)
-					wstring backupDir = cfg.backupPath + L"\\" + world.first;
-					filesystem::path latestBackup;
-					auto latest_time = filesystem::file_time_type{};
-					bool found = false;
-
-					if (filesystem::exists(backupDir)) {
-						for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-							if (entry.is_regular_file()) {
-								if (entry.last_write_time() > latest_time) {
-									latest_time = entry.last_write_time();
-									latestBackup = entry.path();
-									found = true;
-								}
-							}
-						}
-					}
-
-					if (!found) {
-						console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-						BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
-						g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-						return;
-					}
-
-					console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
-
-					DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
-
-					// 假设成功，广播完成事件
-					BroadcastEvent("event=restore_finished;status=success;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-					console.AddLog(L("[Hotkey] Restore completed successfully."));
-
-					// 最终，重置状态
-					g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-					g_appState.isRespond = false;
-
-
-					}).detach(); // 分离线程，让它在后台运行
+				
 				return;
 			}
 		}

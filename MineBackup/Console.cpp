@@ -312,13 +312,16 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		BroadcastEvent("event=we_snapshot_completed;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
 		return "OK:Snapshot completed for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
 	}
+	else if (command == "RESTORE_CURRENT_LATEST") {
+		TriggerHotkeyRestore();
+	}
 	else if (command == "SEND") {
 
 		string comment_part;
 		getline(ss, comment_part); // 获取剩余部分
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
 		console->AddLog("send: %s", comment_part);
-		BroadcastEvent("event=" + comment_part);
+		BroadcastEvent(comment_part);
 		return "OK:Event Sent";
 	}
 
