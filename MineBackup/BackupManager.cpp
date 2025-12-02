@@ -353,374 +353,335 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 
 
 // 执行单个世界的备份操作。
-// 参数:
-//   - config: 当前使用的配置。
-//   - world:  要备份的世界（名称+描述）。
-//   - console: 监控台对象的引用，用于输出日志信息。
-   //- commend: 用户注释
-void DoBackup(const Config config, const pair<wstring, wstring> world, Console& console, const wstring& comment) {
-	console.AddLog(L("LOG_BACKUP_START_HEADER"));
-	console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(world.first).c_str());
+// 参数: folder: 世界信息结构体, console: 日志输出对象, comment: 用户注释
+void DoBackup(const Folder& folder, Console& console, const wstring& comment) {
+    const Config& config = folder.config;
+    console.AddLog(L("LOG_BACKUP_START_HEADER"));
+    console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
 
-	if (!filesystem::exists(config.zipPath)) {
-		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
-		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
-		return;
-	}
+    if (!filesystem::exists(config.zipPath)) {
+        console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
+        console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
+        return;
+    }
 
-	// 准备路径
-	wstring originalSourcePath = config.saveRoot + L"\\" + world.first;
-	wstring sourcePath = originalSourcePath; // 默认使用原始路径
-	wstring destinationFolder = config.backupPath + L"\\" + world.first;
-	wstring metadataFolder = config.backupPath + L"\\_metadata\\" + world.first; // 元数据文件夹
-	wstring command;
-	wstring archivePath;
-	wstring archiveNameBase = world.second.empty() ? world.first : world.second;
+    wstring originalSourcePath = folder.path;
+    wstring sourcePath = originalSourcePath;
+    wstring destinationFolder = config.backupPath + L"\\" + folder.name;
+    wstring metadataFolder = config.backupPath + L"\\_metadata\\" + folder.name;
+    wstring command;
+    wstring archivePath;
+    wstring archiveNameBase = folder.desc.empty() ? folder.name : folder.desc;
 
-	if (!comment.empty()) {
-		archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
-	}
+    if (!comment.empty()) {
+        archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
+    }
 
+    // 生成带时间戳的文件名
+    time_t now = time(0);
+    tm ltm;
+    localtime_s(&ltm, &now);
+    wchar_t timeBuf[160];
+    wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+    archivePath = destinationFolder + L"\\[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
-	// 生成带时间戳的文件名
-	time_t now = time(0);
-	tm ltm;
-	localtime_s(&ltm, &now);
-	wchar_t timeBuf[160];
-	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-	archivePath = destinationFolder + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+    try {
+        filesystem::create_directories(destinationFolder);
+        filesystem::create_directories(metadataFolder);
+        console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder).c_str());
+    } catch (const filesystem::filesystem_error& e) {
+        console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
+        return;
+    }
 
-	// 创建备份目标文件夹（如果不存在）
-	try {
-		filesystem::create_directories(destinationFolder);
-		filesystem::create_directories(metadataFolder); // 确保元数据文件夹存在
-		console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder).c_str());
-	}
-	catch (const filesystem::filesystem_error& e) {
-		console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
-		return;
-	}
+    if (config.hotBackup) {
+        BroadcastEvent("event=pre_hot_backup;");
+        wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
+        if (!snapshotPath.empty()) {
+            sourcePath = snapshotPath;
+            this_thread::sleep_for(chrono::milliseconds(200));
+        } else {
+            console.AddLog(L("LOG_ERROR_SNAPSHOT"));
+            return;
+        }
+    }
 
-	// 如果打开了热备份
-	if (config.hotBackup) {
-		BroadcastEvent("event=pre_hot_backup;");
-		wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
-		if (!snapshotPath.empty()) {
-			sourcePath = snapshotPath; // 如果快照成功，则后续所有操作都基于快照路径
-			this_thread::sleep_for(chrono::milliseconds(200));//在创建快照后加入短暂延时，给文件系统反应时间
-			//originalSourcePath = snapshotPath;
-		}
-		else {
-			console.AddLog(L("LOG_ERROR_SNAPSHOT"));
-			return;
-		}
-	}
+    bool forceFullBackup = true;
+    if (filesystem::exists(destinationFolder)) {
+        for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+            if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
+                forceFullBackup = false;
+                break;
+            }
+        }
+    }
+    if (forceFullBackup)
+        console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
 
-	bool forceFullBackup = true;
-	if (filesystem::exists(destinationFolder)) {
-		for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
-				forceFullBackup = false;
-				break;
-			}
-		}
-	}
-	if (forceFullBackup)
-		console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
+    bool forceFullBackupDueToLimit = false;
+    if (config.backupMode == 2 && config.maxSmartBackupsPerFull > 0 && !forceFullBackup) {
+        vector<filesystem::path> worldBackups;
+        try {
+            for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+                if (entry.is_regular_file()) {
+                    worldBackups.push_back(entry.path());
+                }
+            }
+        } catch (const filesystem::filesystem_error& e) {
+            console.AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
+        }
 
-	// 限制备份链长度
-	bool forceFullBackupDueToLimit = false;
-	if (config.backupMode == 2 && config.maxSmartBackupsPerFull > 0 && !forceFullBackup) {
-		vector<filesystem::path> worldBackups;
-		try {
-			for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-				if (entry.is_regular_file()) {
-					worldBackups.push_back(entry.path());
-				}
-			}
-		}
-		catch (const filesystem::filesystem_error& e) {
-			console.AddLog(L("LOG_ERROR_SCAN_BACKUP_DIR"), e.what());
-		}
+        if (!worldBackups.empty()) {
+            sort(worldBackups.begin(), worldBackups.end(), [](const auto& a, const auto& b) {
+                return filesystem::last_write_time(a) < filesystem::last_write_time(b);
+            });
 
-		if (!worldBackups.empty()) {
-			sort(worldBackups.begin(), worldBackups.end(), [](const auto& a, const auto& b) {
-				return filesystem::last_write_time(a) < filesystem::last_write_time(b);
-				});
+            int smartCount = 0;
+            bool fullFound = false;
+            for (auto it = worldBackups.rbegin(); it != worldBackups.rend(); ++it) {
+                wstring filename = it->filename().wstring();
+                if (filename.find(L"[Full]") != wstring::npos) {
+                    fullFound = true;
+                    break;
+                }
+                if (filename.find(L"[Smart]") != wstring::npos) {
+                    ++smartCount;
+                }
+            }
 
-			int smartCount = 0;
-			bool fullFound = false;
-			for (auto it = worldBackups.rbegin(); it != worldBackups.rend(); ++it) {
-				wstring filename = it->filename().wstring();
-				if (filename.find(L"[Full]") != wstring::npos) {
-					fullFound = true;
-					break;
-				}
-				if (filename.find(L"[Smart]") != wstring::npos) {
-					++smartCount;
-				}
-			}
+            if (fullFound && smartCount >= config.maxSmartBackupsPerFull) {
+                forceFullBackupDueToLimit = true;
+                console.AddLog(L("LOG_FORCE_FULL_BACKUP_LIMIT_REACHED"), config.maxSmartBackupsPerFull);
+            }
+        }
+    }
 
-			if (fullFound && smartCount >= config.maxSmartBackupsPerFull) {
-				forceFullBackupDueToLimit = true;
-				console.AddLog(L("LOG_FORCE_FULL_BACKUP_LIMIT_REACHED"), config.maxSmartBackupsPerFull);
-			}
-		}
-	}
+    vector<filesystem::path> candidate_files;
+    BackupCheckResult checkResult;
+    map<wstring, size_t> currentState;
+    candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
+    if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
+        console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+        return;
+    } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
+        console.AddLog(L("LOG_METADATA_INVALID"));
+    } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING && config.backupMode == 2) {
+        console.AddLog(L("LOG_BASE_BACKUP_NOT_FOUND"));
+    }
 
-	// --- 新的统一文件过滤逻辑 ---
+    forceFullBackup = (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID ||
+        checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING ||
+        forceFullBackupDueToLimit) || forceFullBackup;
 
-	vector<filesystem::path> candidate_files;
-	BackupCheckResult checkResult;
-	map<wstring, size_t> currentState;
-	candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
-	// 根据检查结果进行日志记录
-	if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
-		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		return;
-	}
-	else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
-		console.AddLog(L("LOG_METADATA_INVALID"));
-	}
-	else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING && config.backupMode == 2) {
-		console.AddLog(L("LOG_BASE_BACKUP_NOT_FOUND"));
-	}
+    if (config.backupMode == 2 && !forceFullBackup) {
+        candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
+    } else {
+        try {
+            candidate_files.clear();
+            for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
+                if (entry.is_regular_file()) {
+                    candidate_files.push_back(entry.path());
+                }
+            }
+        } catch (const filesystem::filesystem_error& e) {
+            console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
+            if (config.hotBackup) {
+                filesystem::remove_all(sourcePath);
+            }
+            return;
+        }
+    }
 
-	forceFullBackup = (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID ||
-		checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING ||
-		forceFullBackupDueToLimit) || forceFullBackup;
+    vector<filesystem::path> files_to_backup;
+    for (const auto& file : candidate_files) {
+        if (!is_blacklisted(file, sourcePath, originalSourcePath, config.blacklist)) {
+            files_to_backup.push_back(file);
+        }
+    }
 
-	// 根据备份模式确定候选文件列表
-	if (config.backupMode == 2 && !forceFullBackup) { // 智能备份模式
+    if (files_to_backup.empty()) {
+        console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+        if (config.hotBackup) {
+            filesystem::remove_all(sourcePath);
+        }
+        return;
+    }
 
-		// GetChangedFiles 返回的是已改变的文件列表
-		candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
-		// ... (处理 checkResult 的逻辑保持不变, 如 LOG_NO_CHANGE_FOUND 等)
-	}
-	else { // 普通备份或强制完整备份
-		// 候选列表是源路径下的所有文件
-		try {
-			candidate_files.clear();
-			for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
-				if (entry.is_regular_file()) {
-					candidate_files.push_back(entry.path());
-				}
-			}
-		}
-		catch (const filesystem::filesystem_error& e) {
-			console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-			if (config.hotBackup) {
-				filesystem::remove_all(sourcePath);
-			}
-			return;
-		}
-	}
+    filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
+    filesystem::create_directories(tempDir);
+    wstring filelist_path = (tempDir / (L"_filelist.txt")).wstring();
 
-	// 过滤候选文件列表，应用黑名单
-	vector<filesystem::path> files_to_backup;
-	for (const auto& file : candidate_files) {
-		if (!is_blacklisted(file, sourcePath, originalSourcePath, config.blacklist)) {
-			files_to_backup.push_back(file);
-			//console.AddLog("%s", wstring_to_utf8(file.wstring()).c_str());
-		}
-	}
+    wofstream ofs(filelist_path);
+    if (ofs.is_open()) {
+        ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+        for (const auto& file : files_to_backup) {
+            ofs << filesystem::relative(file, sourcePath).wstring() << endl;
+        }
+        ofs.close();
+        {
+            HANDLE h = CreateFileW(filelist_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h != INVALID_HANDLE_VALUE) {
+                FlushFileBuffers(h);
+                CloseHandle(h);
+            }
+        }
+    } else {
+        console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
+        if (config.hotBackup) {
+            filesystem::remove_all(sourcePath);
+        }
+        return;
+    }
 
-	// 如果过滤后没有文件需要备份，则提前结束
-	if (files_to_backup.empty()) {
-		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		if (config.hotBackup) {
-			filesystem::remove_all(sourcePath);
-		}
-		return;
-	}
+    wstring backupTypeStr;
+    wstring basedOnBackupFile;
+    filesystem::path latestBackupPath;
 
-	// 将最终文件列表写入临时文件，供7z读取
-	filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
-	filesystem::create_directories(tempDir);
-	wstring filelist_path = (tempDir / (L"_filelist.txt")).wstring();
+    if (config.backupMode == 1 || forceFullBackup) {
+        backupTypeStr = L"Full";
+        archivePath = destinationFolder + L"\\[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+        command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+            L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+        basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
+    } else if (config.backupMode == 2) {
+        backupTypeStr = L"Smart";
 
-	wofstream ofs(filelist_path);
-	if (ofs.is_open()) {
-		// 使用UTF-8编码写入文件列表
-		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-		for (const auto& file : files_to_backup) {
-			// 写入相对于备份源的相对路径
-			ofs << filesystem::relative(file, sourcePath).wstring() << endl;
-		}
-		ofs.close();
-		{
-			HANDLE h = CreateFileW(filelist_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (h != INVALID_HANDLE_VALUE) {
-				FlushFileBuffers(h); // 强制把缓冲数据写盘
-				CloseHandle(h);
-			}
-		}
-	}
-	else {
-		console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
-		if (config.hotBackup) {
-			filesystem::remove_all(sourcePath);
-		}
-		return;
-	}
+        if (files_to_backup.empty()) {
+            console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+            if (config.hotBackup) // 清理快照
+                filesystem::remove_all(sourcePath);
+            return; // 没有变化，直接返回
+        }
 
-	wstring backupTypeStr; // 用于历史记录
-	wstring basedOnBackupFile; // 用于元数据记录智能备份基于的完整备份文件
-	filesystem::path latestBackupPath;
+        console.AddLog(L("LOG_BACKUP_SMART_INFO"), files_to_backup.size());
 
+        // 智能备份需要找到它所基于的文件
+        // 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
+        nlohmann::json oldMetadata;
+        ifstream f(metadataFolder + L"\\metadata.json");
+        oldMetadata = nlohmann::json::parse(f);
+        basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
 
-	if (config.backupMode == 1 || forceFullBackup) // 普通备份
-	{
-		backupTypeStr = L"Full";
-		archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
-			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
-		// 基于自身
-		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
-	}
-	else if (config.backupMode == 2) // 智能备份
-	{
-		backupTypeStr = L"Smart";
+        // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
+        archivePath = destinationFolder + L"\\[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
-		if (files_to_backup.empty()) {
-			console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-			if (config.hotBackup) // 清理快照
-				filesystem::remove_all(sourcePath);
-			return; // 没有变化，直接返回
-		}
+        command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+            L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+    } else if (config.backupMode == 3) {
+        backupTypeStr = L"Overwrite";
+        console.AddLog(L("LOG_OVERWRITE"));
+        auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
+        bool found = false;
 
-		console.AddLog(L("LOG_BACKUP_SMART_INFO"), files_to_backup.size());
+        for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+            if (entry.is_regular_file() && entry.path().extension().wstring() == L"." + config.zipFormat) {
+                if (entry.last_write_time() > latest_time) {
+                    latest_time = entry.last_write_time();
+                    latestBackupPath = entry.path();
+                    found = true;
+                }
+            }
+        }
+        if (found) {
+            console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
+            command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
+            archivePath = latestBackupPath.wstring(); // 记录被更新的文件
+        }
+        else {
+            console.AddLog(L("LOG_NO_BACKUP_FOUND"));
+            archivePath = destinationFolder + L"\\[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+            command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
+                L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+            // -spf 强制使用完整路径，-spf2 使用相对路径
+        }
+    }
+    // 在后台线程中执行命令
+    if (RunCommandInBackground(command, console, config.useLowPriority, sourcePath)) // 工作目录不能丢！
+    {
+        console.AddLog(L("LOG_BACKUP_END_HEADER"));
 
-		// 智能备份需要找到它所基于的文件
-		// 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
-		nlohmann::json oldMetadata;
-		ifstream f(metadataFolder + L"\\metadata.json");
-		oldMetadata = nlohmann::json::parse(f);
-		basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
+        // 备份文件大小检查
+        try {
+            if (filesystem::exists(archivePath)) {
+                uintmax_t fileSize = filesystem::file_size(archivePath);
+                // 阈值设置为 10 KB
+                if (fileSize < 10240) {
+                    console.AddLog(L("BACKUP_FILE_TOO_SMALL_WARNING"), wstring_to_utf8(filesystem::path(archivePath).filename().wstring()).c_str());
+                    // 广播一个警告
+                    BroadcastEvent("event=backup_warning;type=file_too_small;");
+                }
+            }
+        }
+        catch (const filesystem::filesystem_error& e) {
+            console.AddLog("[Error] Could not check backup file size: %s", e.what());
+        }
 
-		// 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
-		archivePath = destinationFolder + L"\\" + L"[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+        if (folder.configIndex != -1)
+            LimitBackupFiles(config, folder.configIndex, destinationFolder, config.keepCount, &console);
+        else
+            LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder, config.keepCount, &console);
 
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
-			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
-	}
-	else if (config.backupMode == 3) // 覆盖备份 - v1.7.8 暂时移除覆盖模式的黑名单功能
-	{
-		backupTypeStr = L"Overwrite";
-		console.AddLog(L("LOG_OVERWRITE"));
-		auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
-		bool found = false;
-
-		for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-			if (entry.is_regular_file() && entry.path().extension().wstring() == L"." + config.zipFormat) {
-				if (entry.last_write_time() > latest_time) {
-					latest_time = entry.last_write_time();
-					latestBackupPath = entry.path();
-					found = true;
-				}
-			}
-		}
-		if (found) {
-			console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
-			archivePath = latestBackupPath.wstring(); // 记录被更新的文件
-		}
-		else {
-			console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-			archivePath = destinationFolder + L"\\" + L"[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
-			// -spf 强制使用完整路径，-spf2 使用相对路径
-		}
-	}
-	// 在后台线程中执行命令
-	if (RunCommandInBackground(command, console, config.useLowPriority, sourcePath)) // 工作目录不能丢！
-	{
-		console.AddLog(L("LOG_BACKUP_END_HEADER"));
-
-		// 备份文件大小检查
-		try {
-			if (filesystem::exists(archivePath)) {
-				uintmax_t fileSize = filesystem::file_size(archivePath);
-				// 阈值设置为 10 KB
-				if (fileSize < 10240) {
-					console.AddLog(L("BACKUP_FILE_TOO_SMALL_WARNING"), wstring_to_utf8(filesystem::path(archivePath).filename().wstring()).c_str());
-					// 广播一个警告
-					BroadcastEvent("event=backup_warning;type=file_too_small;");
-				}
-			}
-		}
-		catch (const filesystem::filesystem_error& e) {
-			console.AddLog("[Error] Could not check backup file size: %s", e.what());
-		}
-
-		if (g_appState.realConfigIndex != -1)
-			LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder, config.keepCount, &console);
-		else
-			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder, config.keepCount, &console);
-
-		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
-		// 历史记录
-		if (g_appState.realConfigIndex != -1 && config.backupMode != 3)
-			AddHistoryEntry(g_appState.realConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
-		else if (config.backupMode != 3)
-			AddHistoryEntry(g_appState.currentConfigIndex, world.first, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
-		g_appState.realConfigIndex = -1; // 重置
-		// 广播一个成功事件
-		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
-		BroadcastEvent(payload);
+        UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
+        // 历史记录
+        if (folder.configIndex != -1 && config.backupMode != 3)
+            AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+        else if (config.backupMode != 3)
+            AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+        g_appState.realConfigIndex = -1;
+        // 广播一个成功事件
+        string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
+        BroadcastEvent(payload);
 
 
-		if (config.backupMode == 3) { // 如果是覆写模式，修改一下文件名
-			wstring oldName = latestBackupPath.filename().wstring();
-			size_t leftBracket = oldName.find(L"["); // 第一个对应Full Smart
-			leftBracket = oldName.find(L"[", leftBracket + 1);
-			size_t rightBracket = oldName.find(L"]");
-			rightBracket = oldName.find(L"]", rightBracket + 1);
-			wstring newName = oldName;
-			if (leftBracket != wstring::npos && rightBracket != wstring::npos && rightBracket > leftBracket) {
-				// 构造新的时间戳
-				wchar_t timeBuf[160];
-				time_t now = time(0);
-				tm ltm;
-				localtime_s(&ltm, &now);
-				wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-				// 替换时间戳部分
-				newName.replace(leftBracket + 1, rightBracket - leftBracket - 1, timeBuf);
-				filesystem::path newPath = latestBackupPath.parent_path() / newName;
-				filesystem::rename(latestBackupPath, newPath);
-				latestBackupPath = newPath;
-			}
-			if (g_appState.realConfigIndex != -1)
-				AddHistoryEntry(g_appState.realConfigIndex, world.first, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
-			else
-				AddHistoryEntry(g_appState.currentConfigIndex, world.first, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
-		}
+        if (config.backupMode == 3) { // 如果是覆写模式，修改一下文件名
+            wstring oldName = latestBackupPath.filename().wstring();
+            size_t leftBracket = oldName.find(L"["); // 第一个对应Full Smart
+            leftBracket = oldName.find(L"[", leftBracket + 1);
+            size_t rightBracket = oldName.find(L"]");
+            rightBracket = oldName.find(L"]", rightBracket + 1);
+            wstring newName = oldName;
+            if (leftBracket != wstring::npos && rightBracket != wstring::npos && rightBracket > leftBracket) {
+                // 构造新的时间戳
+                wchar_t timeBuf[160];
+                time_t now = time(0);
+                tm ltm;
+                localtime_s(&ltm, &now);
+                wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+                // 替换时间戳部分
+                newName.replace(leftBracket + 1, rightBracket - leftBracket - 1, timeBuf);
+                filesystem::path newPath = latestBackupPath.parent_path() / newName;
+                filesystem::rename(latestBackupPath, newPath);
+                latestBackupPath = newPath;
+            }
+            if (folder.configIndex != -1)
+                AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+            else
+                AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+        }
 
 
-		// 云同步逻辑
-		if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
-			console.AddLog(L("CLOUD_SYNC_START"));
-			wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + world.first + L"\" --progress";
-			// 另起一个线程来执行云同步，避免阻塞后续操作
-			thread([rclone_command, &console, config]() {
-				RunCommandInBackground(rclone_command, console, config.useLowPriority);
-				console.AddLog(L("CLOUD_SYNC_FINISH"));
-				}).detach();
-		}
-	}
-	else {
-		BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(world.first) + ";error=command_failed");
-	}
+        // 云同步逻辑
+        if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
+            console.AddLog(L("CLOUD_SYNC_START"));
+            wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + folder.name + L"\" --progress";
+            // 另起一个线程来执行云同步，避免阻塞后续操作
+            thread([rclone_command, &console, config]() {
+                RunCommandInBackground(rclone_command, console, config.useLowPriority);
+                console.AddLog(L("CLOUD_SYNC_FINISH"));
+                }).detach();
+        }
+    }
+    else {
+        BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+    }
 
-
-	filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
-	if (config.hotBackup && sourcePath != (config.saveRoot + L"\\" + world.first)) {
-		console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
-		error_code ec;
-		filesystem::remove_all(sourcePath, ec);
-		if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
-	}
+    filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
+    if (config.hotBackup && sourcePath != folder.path) {
+        console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
+        error_code ec;
+        filesystem::remove_all(sourcePath, ec);
+        if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
+    }
 }
 void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment) {
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
@@ -777,6 +738,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 
 	console.AddLog(L("LOG_BACKUP_OTHERS_END"));
 }
+
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
@@ -809,6 +771,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
+
 // restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
@@ -1129,7 +1092,6 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 	while (true) {
 		// 等待指定的时间，但每秒检查一次是否需要停止
 		for (int i = 0; i < intervalMinutes * 60; ++i) {
-			// 【修复】直接检查传入的原子引用，无需加锁！
 			if (stop_flag) { // 或者 stop_flag.load()
 				console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
 				return; // 线程安全地退出
@@ -1148,7 +1110,15 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 		{
 			lock_guard<mutex> lock(g_appState.configsMutex);
 			if (g_appState.configs.count(configIdx) && worldIdx >= 0 && worldIdx < g_appState.configs[configIdx].worlds.size()) {
-				DoBackup(g_appState.configs[configIdx], g_appState.configs[configIdx].worlds[worldIdx], *console);
+				Folder folder = {
+					g_appState.configs[configIdx].saveRoot + L"\\" + g_appState.configs[configIdx].worlds[worldIdx].first,
+					g_appState.configs[configIdx].worlds[worldIdx].first,
+					g_appState.configs[configIdx].worlds[worldIdx].second,
+					g_appState.configs[configIdx],
+					configIdx,
+					worldIdx
+				};
+				DoBackup(folder, *console);
 			}
 			else {
 				console->AddLog(L("ERROR_INVALID_WORLD_IN_TASK"), configIdx, worldIdx);
@@ -1242,4 +1212,73 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 	// 清理临时目录
 	filesystem::remove_all(temp_export_dir);
+}
+
+void DoHotRestore(const Folder& world, Console& console, bool deleteBackup) {
+	
+	Config cfg = world.config;
+
+	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
+
+	// 启动后台等待线程
+	auto startTime = std::chrono::steady_clock::now();
+	const auto timeout = std::chrono::seconds(15);
+
+	// 等待响应或超时
+	while (std::chrono::steady_clock::now() - startTime < timeout) {
+		if (g_appState.isRespond) {
+			break; // 收到响应
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+	// 检查是收到了响应还是超时了
+	if (!g_appState.isRespond) {
+		console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
+		BroadcastEvent("event=restore_cancelled;reason=timeout");
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
+		return;
+	}
+
+	// --- 收到响应，开始还原 ---
+	g_appState.isRespond = false; // 重置标志位
+	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
+
+	// 查找最新备份文件 (这部分逻辑保持不变)
+	wstring backupDir = cfg.backupPath + L"\\" + world.name;
+	filesystem::path latestBackup;
+	auto latest_time = filesystem::file_time_type{};
+	bool found = false;
+
+	if (filesystem::exists(backupDir)) {
+		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+			if (entry.is_regular_file()) {
+				if (entry.last_write_time() > latest_time) {
+					latest_time = entry.last_write_time();
+					latestBackup = entry.path();
+					found = true;
+				}
+			}
+		}
+	}
+
+	if (!found) {
+		console.AddLog(L("LOG_NO_BACKUP_FOUND"));
+		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		return;
+	}
+
+	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
+
+	DoRestore(cfg, world.name, latestBackup.filename().wstring(), ref(console), 0, "");
+
+	// 假设成功，广播完成事件
+	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
+	console.AddLog(L("[Hotkey] Restore completed successfully."));
+
+	// 最终，重置状态
+	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+	g_appState.isRespond = false;
 }
