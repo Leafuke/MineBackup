@@ -1387,7 +1387,8 @@ int main(int argc, char** argv)
 						// -- 主要操作按钮 --
 						float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
 						if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
-							thread backup_thread(DoBackup, displayWorlds[selectedWorldIndex].effectiveConfig, make_pair(displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc), ref(console), utf8_to_wstring(backupComment));
+							MyFolder world = { displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc, displayWorlds[selectedWorldIndex].effectiveConfig, displayWorlds[selectedWorldIndex].baseConfigIndex, selectedWorldIndex };
+							thread backup_thread(DoBackup, world, ref(console), utf8_to_wstring(backupComment));
 							backup_thread.detach();
 							strcpy_s(backupComment, "");
 						}
@@ -2685,16 +2686,18 @@ void RunSpecialMode(int configId) {
 		taskConfig.useLowPriority = spCfg.useLowPriority;
 		//taskConfig.blacklist = spCfg.blacklist; 沿用普通配置的黑名单
 
+		MyFolder world = { taskConfig.saveRoot + L"\\" + worldData.first, worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
+
 		if (task.backupType == 0) { // 类型 0: 一次性备份
 			ConsoleLog(&console, L("TASK_QUEUE_ONETIME_BACKUP"), (wstring_to_utf8(worldData.first)).c_str());
 			g_appState.realConfigIndex = task.configIndex;
-			DoBackup(taskConfig, worldData, dummyConsole, L"SpecialMode");
+			DoBackup(world, dummyConsole, L"SpecialMode");
 			// 成功
 			ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(worldData.first)).c_str());
 		}
 		else { // 类型 1 (间隔) 和 2 (计划) 在后台线程运行
-			taskThreads.emplace_back([task, taskConfig, worldData, &shouldExit]() {
-				ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), (wstring_to_utf8(worldData.first)).c_str());
+			taskThreads.emplace_back([task, world, &shouldExit]() {
+				ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), (wstring_to_utf8(world.name)).c_str());
 
 				while (!shouldExit) {
 					// 计算下次运行时间
@@ -2733,7 +2736,7 @@ void RunSpecialMode(int configId) {
 						char time_buf[26];
 						ctime_s(time_buf, sizeof(time_buf), &next_run_t);
 						time_buf[strlen(time_buf) - 1] = '\0';
-						ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), (wstring_to_utf8(worldData.first).c_str()), time_buf);
+						ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), (wstring_to_utf8(world.name).c_str()), time_buf);
 
 						// 等待直到目标时间，同时检查退出信号
 						while (time(nullptr) < next_run_t && !shouldExit) {
@@ -2743,12 +2746,12 @@ void RunSpecialMode(int configId) {
 
 					if (shouldExit) break;
 
-					ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), (wstring_to_utf8(worldData.first).c_str()));
+					ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), (wstring_to_utf8(world.name).c_str()));
 					g_appState.realConfigIndex = task.configIndex;
-					DoBackup(taskConfig, worldData, console, L"SpecialMode");
-					ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(worldData.first)).c_str());
+					DoBackup(world, console, L"SpecialMode");
+					ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(world.name)).c_str());
 				}
-				ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), (wstring_to_utf8(worldData.first).c_str()));
+				ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), (wstring_to_utf8(world.name).c_str()));
 				});
 		}
 	}
@@ -3051,7 +3054,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
 				if (cfg.backupBefore) {
-					DoBackup(cfg, { selected_entry->worldName, L"" }, ref(console), L"Auto");
+					MyFolder world = { cfg.saveRoot + L"\\" + selected_entry->worldName, selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
+					DoBackup(world, ref(console), L"BeforeRestore");
 				}
 				// 传递 customRestoreBuf, 只有在 mode 3 时它才可能有内容
 				thread restore_thread(DoRestore, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console), restore_method, customRestoreBuf);

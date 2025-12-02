@@ -9,7 +9,7 @@ map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Valu
 
 bool IsFileLocked(const wstring& path);
 
-Folder GetOccupiedWorld() {
+MyFolder GetOccupiedWorld() {
 	//lock_guard<mutex> lock(g_appState.configsMutex);
 	for (const auto& config_pair : g_appState.configs) {
 		int config_idx = config_pair.first;
@@ -29,11 +29,11 @@ Folder GetOccupiedWorld() {
 				}
 			}
 			if (IsFileLocked(levelDatPath)) {
-				return Folder{ cfg.saveRoot + L"\\" + world.first, world.first, world.second, cfg, config_idx, world_idx };
+				return MyFolder{ cfg.saveRoot + L"\\" + world.first, world.first, world.second, cfg, config_idx, world_idx };
 			}
 		}
 	}
-	return Folder{};
+	return MyFolder{};
 }
 
 void GameSessionWatcherThread() {
@@ -42,47 +42,45 @@ void GameSessionWatcherThread() {
 	while (!g_stopExitWatcher) {
 		map<pair<int, int>, wstring> currently_locked_worlds;
 
-		Folder occupied_world = GetOccupiedWorld();
+		MyFolder occupied_world = GetOccupiedWorld();
 
 		if (!occupied_world.path.empty()) {
 			currently_locked_worlds[{occupied_world.configIndex, occupied_world.worldIndex}] = occupied_world.name;
 		}
 
-		{
-			vector<pair<int, int>> worlds_to_backup;
+		vector<pair<int, int>> worlds_to_backup;
 
-			// 检查新启动的世界
-			for (const auto& locked_pair : currently_locked_worlds) {
-				if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
-					console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
-					string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
-					BroadcastEvent(payload);
-					worlds_to_backup.push_back(locked_pair.first);
-				}
+		// 检查新启动的世界
+		for (const auto& locked_pair : currently_locked_worlds) {
+			if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
+				console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
+				string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
+				BroadcastEvent(payload);
+				worlds_to_backup.push_back(locked_pair.first);
 			}
+		}
 
-			for (const auto& active_pair : g_activeWorlds) {
-				if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
-					console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
-					string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
-					BroadcastEvent(payload);
-				}
+		for (const auto& active_pair : g_activeWorlds) {
+			if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
+				console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
+				string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
+				BroadcastEvent(payload);
 			}
+		}
 
-			// 更新当前活动的世界列表
-			g_activeWorlds = currently_locked_worlds;
+		// 更新当前活动的世界列表
+		g_activeWorlds = currently_locked_worlds;
 
-			if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
-				lock_guard<mutex> config_lock(g_appState.configsMutex);
-				for (const auto& backup_target : worlds_to_backup) {
-					int config_idx = backup_target.first;
-					int world_idx = backup_target.second;
-					if (g_appState.configs.count(config_idx) && world_idx < g_appState.configs[config_idx].worlds.size()) {
-						Config backupConfig = g_appState.configs[config_idx];
-						backupConfig.hotBackup = true; // 必须热备份
-						thread backup_thread(DoBackup, backupConfig, backupConfig.worlds[world_idx], ref(console), L"OnStart");
-						backup_thread.detach();
-					}
+		if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
+			lock_guard<mutex> config_lock(g_appState.configsMutex);
+			for (const auto& backup_target : worlds_to_backup) {
+				int config_idx = backup_target.first;
+				int world_idx = backup_target.second;
+				if (g_appState.configs.count(config_idx) && world_idx < g_appState.configs[config_idx].worlds.size()) {
+					Config backupConfig = g_appState.configs[config_idx];
+					backupConfig.hotBackup = true; // 必须热备份
+					thread backup_thread(DoBackup, occupied_world, ref(console), L"OnStart");
+					backup_thread.detach();
 				}
 			}
 		}
@@ -93,10 +91,10 @@ void GameSessionWatcherThread() {
 }
 
 
-void TriggerHotkeyBackup(string comment = "Hotkey") {
+void TriggerHotkeyBackup(string comment) {
 	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
 
-	Folder world = GetOccupiedWorld();
+	MyFolder world = GetOccupiedWorld();
 	if (!world.path.empty()) {
 		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
 		console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), world.config.name.c_str(), wstring_to_utf8(world.name).c_str());
@@ -123,7 +121,7 @@ void TriggerHotkeyRestore() {
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
 
-	Folder world = GetOccupiedWorld();
+	MyFolder world = GetOccupiedWorld();
 	if (!world.path.empty()) {
 		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
 		DoHotRestore(world, ref(console), false);

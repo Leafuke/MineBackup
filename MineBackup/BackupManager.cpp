@@ -354,7 +354,7 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 
 // 执行单个世界的备份操作。
 // 参数: folder: 世界信息结构体, console: 日志输出对象, comment: 用户注释
-void DoBackup(const Folder& folder, Console& console, const wstring& comment) {
+void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
     const Config& config = folder.config;
     console.AddLog(L("LOG_BACKUP_START_HEADER"));
     console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
@@ -1110,7 +1110,7 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 		{
 			lock_guard<mutex> lock(g_appState.configsMutex);
 			if (g_appState.configs.count(configIdx) && worldIdx >= 0 && worldIdx < g_appState.configs[configIdx].worlds.size()) {
-				Folder folder = {
+				MyFolder folder = {
 					g_appState.configs[configIdx].saveRoot + L"\\" + g_appState.configs[configIdx].worlds[worldIdx].first,
 					g_appState.configs[configIdx].worlds[worldIdx].first,
 					g_appState.configs[configIdx].worlds[worldIdx].second,
@@ -1214,7 +1214,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 	filesystem::remove_all(temp_export_dir);
 }
 
-void DoHotRestore(const Folder& world, Console& console, bool deleteBackup) {
+void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	
 	Config cfg = world.config;
 

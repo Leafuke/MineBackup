@@ -18,6 +18,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 	stringstream ss(commandStr);
 	string command;
 	ss >> command;
+	
 
 	auto error_response = [&](const string& msg) {
 		BroadcastEvent(L("KNOTLINK_COMMAND_ERROR") + msg);
@@ -120,6 +121,8 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		getline(ss, comment_part); // 获取剩余部分作为注释
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1); // 去除前导空格
 
+		MyFolder world = { g_appState.configs[config_idx].saveRoot + L"\\" + g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].second, g_appState.configs[config_idx], config_idx, world_idx };
+
 		// 先广播消息，通知模组先保存世界
 		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
 
@@ -128,7 +131,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			// 在新线程中再次加锁，因为 g_appState.configs 可能在主线程中被修改
 			lock_guard<mutex> thread_lock(g_appState.configsMutex);
 			if (g_appState.configs.count(config_idx)) // 确保配置仍然存在
-				DoBackup(g_appState.configs[config_idx], g_appState.configs[config_idx].worlds[world_idx], *console, utf8_to_wstring(comment_part));
+				DoBackup(world, *console, utf8_to_wstring(comment_part));
 			}).detach();
 		return "OK:Backup started for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
 	}
@@ -185,7 +188,14 @@ string ProcessCommand(const string& commandStr, Console* console) {
 	}
 	else if (command == "BACKUP_CURRENT") { // 直接调用备份正在运行的世界的函数
 		BroadcastEvent("event=pre_hot_backup");
-		TriggerHotkeyBackup();
+		if (ss.rdbuf()->in_avail() > 0) {
+			string comment_part;
+			getline(ss, comment_part);
+			if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
+			TriggerHotkeyBackup(comment_part);
+		}
+		else
+			TriggerHotkeyBackup();
 		return "OK:Backup Started";
 	}
 	else if (command == "AUTO_BACKUP") {
