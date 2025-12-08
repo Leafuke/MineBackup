@@ -19,6 +19,7 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <wchar.h>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
@@ -62,7 +63,7 @@ void SetFileAttributesWin(const wstring& path, bool isHidden) {
 	if(isHidden)
 		SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_HIDDEN);
 	else
-		SetFileAttributes(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+		SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
 }
 
 void ExecuteCmd(const string &cmd) {
@@ -104,8 +105,22 @@ void GetUserDefaultUILanguageWin() {
 	return;
 }
 
-void MessageBoxWin(const string& title, const string& message) {
-	MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONERROR);
+// iconType: 2 = error, 0 = info, 1 = warning
+void MessageBoxWin(const string& title, const string& message, int iconType) {
+	switch (iconType)
+	{
+	case 0:
+		MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONINFORMATION);
+		break;
+	case 1:
+		MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONWARNING);
+		break;
+	case 2:
+		MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONERROR);
+		break;
+	default:
+		break;
+	}
 	return;
 }
 
@@ -175,8 +190,8 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		}
 		else if (lParam == WM_RBUTTONUP) {
 			HMENU hMenu = CreatePopupMenu();
-			AppendMenu(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
-			AppendMenu(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
+			AppendMenuW(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
+			AppendMenuW(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
 
 			// 获取鼠标位置（菜单显示在鼠标右键点击的位置）
 			POINT pt;
@@ -576,13 +591,13 @@ bool Extract7zToTempFile(wstring& extractedPath) {
 	}
 
 	// 用主模块句柄
-	HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_EXE1), L"EXE");
+	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDR_EXE1), L"EXE");
 	if (!hRes) return false;
 
-	HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
+	HGLOBAL hData = LoadResource(GetModuleHandleW(NULL), hRes);
 	if (!hData) return false;
 
-	DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
+	DWORD dataSize = SizeofResource(GetModuleHandleW(NULL), hRes);
 	if (dataSize == 0) return false;
 
 	LPVOID pData = LockResource(hData);
@@ -623,13 +638,13 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
 		return true;
 	}
 
-	HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_FONTS1), L"FONTS");
+	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDR_FONTS1), L"FONTS");
 	if (!hRes) return false;
 
-	HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
+	HGLOBAL hData = LoadResource(GetModuleHandleW(NULL), hRes);
 	if (!hData) return false;
 
-	DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
+	DWORD dataSize = SizeofResource(GetModuleHandleW(NULL), hRes);
 	if (dataSize == 0) return false;
 
 	LPVOID pData = LockResource(hData);

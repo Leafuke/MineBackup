@@ -1,4 +1,4 @@
-#include "KnotLink/SignalSender.hpp"
+#include "SignalSender.hpp"
 SignalSender::SignalSender() {
 	init();
 }

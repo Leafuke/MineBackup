@@ -11,7 +11,7 @@
 using namespace std;
 
 
-extern enum class BackupCheckResult {
+enum class BackupCheckResult {
 	NO_CHANGE,
 	CHANGES_DETECTED,
 	FORCE_FULL_BACKUP_METADATA_INVALID,
@@ -34,7 +34,7 @@ wstring GetDocumentsPath();
 void AddBackupToWESnapshots(const Config config, const wstring& worldName, const wstring& backupFile, Console& console) {
 	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
 
-	// ´´½¨¿ìÕÕÂ·¾¶
+	// åˆ›å»ºå¿«ç…§è·¯å¾„
 	filesystem::path we_base_path = config.weSnapshotPath;
 	if (we_base_path.empty()) {
 		we_base_path = GetDocumentsPath();
@@ -64,10 +64,10 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 	}
 	console.AddLog(L("LOG_WE_INTEGRATION_PATH_OK"), wstring_to_utf8(final_snapshot_path.wstring()).c_str());
 
-	// WorldEdit ¿ìÕÕĞèÒªµÄºËĞÄÎÄ¼ş/ÎÄ¼ş¼Ğ
+	// WorldEdit å¿«ç…§éœ€è¦çš„æ ¸å¿ƒæ–‡ä»¶/æ–‡ä»¶å¤¹
 	const vector<wstring> essential_parts = { L"region", L"poi", L"entities", L"level.dat" };
 
-	// »¹Ô­Á´´¦Àí
+	// è¿˜åŸé“¾å¤„ç†
 	wstring sourceDir = config.backupPath + L"\\" + worldName;
 	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
 
@@ -76,11 +76,11 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 		return;
 	}
 
-	// ÊÕ¼¯ËùÓĞÏà¹ØµÄ±¸·İÎÄ¼ş
+	// æ”¶é›†æ‰€æœ‰ç›¸å…³çš„å¤‡ä»½æ–‡ä»¶
 	vector<filesystem::path> backupsToApply;
 
 	if (backupFile.find(L"[Smart]") != wstring::npos) {
-		// Ñ°ÕÒ»ù´¡µÄÍêÕû±¸·İ
+		// å¯»æ‰¾åŸºç¡€çš„å®Œæ•´å¤‡ä»½
 		filesystem::path baseFullBackup;
 		auto baseFullTime = filesystem::file_time_type{};
 
@@ -101,7 +101,7 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 		console.AddLog(L("LOG_BACKUP_SMART_FOUND"), wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
 		backupsToApply.push_back(baseFullBackup);
 
-		// ÊÕ¼¯´Ó»ù´¡±¸·İµ½Ä¿±ê±¸·İÖ®¼äµÄËùÓĞÔöÁ¿±¸·İ
+		// æ”¶é›†ä»åŸºç¡€å¤‡ä»½åˆ°ç›®æ ‡å¤‡ä»½ä¹‹é—´çš„æ‰€æœ‰å¢é‡å¤‡ä»½
 		for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
 			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
 				if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= filesystem::last_write_time(targetBackupPath)) {
@@ -109,7 +109,7 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 				}
 			}
 		}
-		// °´Ê±¼äË³ĞòÅÅĞò
+		// æŒ‰æ—¶é—´é¡ºåºæ’åº
 		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
 			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
 			});
@@ -118,7 +118,7 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 		backupsToApply.push_back(targetBackupPath);
 	}
 
-	// ÒÀ´Î½âÑ¹ºËĞÄÎÄ¼ş/ÎÄ¼ş¼Ğ
+	// ä¾æ¬¡è§£å‹æ ¸å¿ƒæ–‡ä»¶/æ–‡ä»¶å¤¹
 	wstring files_to_extract_str;
 	for (const auto& part : essential_parts) {
 		files_to_extract_str += L" \"" + part + L"\"";
@@ -134,7 +134,7 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 		}
 	}
 
-	// ĞŞ¸Ä WorldEdit ÅäÖÃÎÄ¼ş£¨ÓëÔ­ÓĞÊµÏÖÒ»ÖÂ£©
+	// ä¿®æ”¹ WorldEdit é…ç½®æ–‡ä»¶ï¼ˆä¸åŸæœ‰å®ç°ä¸€è‡´ï¼‰
 	console.AddLog(L("LOG_WE_INTEGRATION_CONFIG_UPDATE_START"));
 	filesystem::path save_root(config.saveRoot);
 	filesystem::path we_config_path;
@@ -193,10 +193,10 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
 }
 
-// ´´½¨¿ìÕÕ£¬ÓÃÓÚÈÈ±¸·İ
+// åˆ›å»ºå¿«ç…§ï¼Œç”¨äºçƒ­å¤‡ä»½
 wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& snapshotPath, Console& console) {
 	try {
-		// ´´½¨Ò»¸öÎ¨Ò»µÄÁÙÊ±Ä¿Â¼
+		// åˆ›å»ºä¸€ä¸ªå”¯ä¸€çš„ä¸´æ—¶ç›®å½•
 		filesystem::path tempDir;
 		if (snapshotPath.size() >= 2 && filesystem::exists(snapshotPath)) {
 			tempDir = snapshotPath + L"\\MineBackup_Snapshot\\" + worldPath.filename().wstring();
@@ -205,25 +205,25 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& sn
 			tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
 		}
 
-		// Èç¹û¾ÉµÄÁÙÊ±Ä¿Â¼´æÔÚ£¬ÏÈÇåÀíµô
+		// å¦‚æœæ—§çš„ä¸´æ—¶ç›®å½•å­˜åœ¨ï¼Œå…ˆæ¸…ç†æ‰
 		if (filesystem::exists(tempDir)) {
 			error_code ec_remove;
 			filesystem::remove_all(tempDir, ec_remove);
 			if (ec_remove) {
 				console.AddLog("[Error] Failed to clean up old snapshot directory: %s", ec_remove.message().c_str());
-				// ¼´Ê¹ÇåÀíÊ§°ÜÒ²³¢ÊÔ¼ÌĞø£¬ºóĞøµÄ´´½¨¿ÉÄÜ»áÊ§°Ü²¢±»²¶»ñ
+				// å³ä½¿æ¸…ç†å¤±è´¥ä¹Ÿå°è¯•ç»§ç»­ï¼Œåç»­çš„åˆ›å»ºå¯èƒ½ä¼šå¤±è´¥å¹¶è¢«æ•è·
 			}
 		}
 		filesystem::create_directories(tempDir);
 		console.AddLog(L("LOG_BACKUP_HOT_INFO"));
 
-		// µİ¹é¸´ÖÆ£¬²¢³¢ÊÔºöÂÔµ¥¸öÎÄ¼ş´íÎó
+		// é€’å½’å¤åˆ¶ï¼Œå¹¶å°è¯•å¿½ç•¥å•ä¸ªæ–‡ä»¶é”™è¯¯
 		auto copyOptions = filesystem::copy_options::recursive | filesystem::copy_options::overwrite_existing;
 		error_code ec;
 		filesystem::copy(worldPath, tempDir, copyOptions, ec);
 
 		if (ec) {
-			// ËäÈ»·¢ÉúÁË´íÎó£¨¿ÉÄÜÊÇÄ³¸öÎÄ¼ş±»Ëø¶¨ÁË£©£¬µ«´ó²¿·ÖÎÄ¼ş¿ÉÄÜÒÑ¾­¸´ÖÆ³É¹¦
+			// è™½ç„¶å‘ç”Ÿäº†é”™è¯¯ï¼ˆå¯èƒ½æ˜¯æŸä¸ªæ–‡ä»¶è¢«é”å®šäº†ï¼‰ï¼Œä½†å¤§éƒ¨åˆ†æ–‡ä»¶å¯èƒ½å·²ç»å¤åˆ¶æˆåŠŸ
 			console.AddLog(L("LOG_BACKUP_HOT_INFO2"), ec.message().c_str());
 			wstring xcopyCmd = L"xcopy \"" + worldPath.wstring() + L"\" \"" + tempDir.wstring() + L"\" /s /e /y /c";
 			RunCommandInBackground(xcopyCmd, console, false);
@@ -231,7 +231,7 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& sn
 		else {
 			console.AddLog(L("LOG_BACKUP_HOT_INFO3"), wstring_to_utf8(tempDir.wstring()).c_str());
 		}
-		// Ôö¼Ó¶ÌÔİÑÓÊ±£¬È·±£ÎÄ¼şÏµÍ³²Ù×÷£¨ÌØ±ğÊÇ xcopy£©ÍêÈ«Íê³É
+		// å¢åŠ çŸ­æš‚å»¶æ—¶ï¼Œç¡®ä¿æ–‡ä»¶ç³»ç»Ÿæ“ä½œï¼ˆç‰¹åˆ«æ˜¯ xcopyï¼‰å®Œå…¨å®Œæˆ
 		this_thread::sleep_for(chrono::milliseconds(500));
 
 		return tempDir.wstring();
@@ -259,18 +259,18 @@ void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& new
 	metadata["fileStates"] = fileStates;
 
 	ofstream o(metadataFile, ios::trunc);
-	o << metadata.dump(2); // Á½¸ö¿Õ¸ñËõ½ø
+	o << metadata.dump(2); // ä¸¤ä¸ªç©ºæ ¼ç¼©è¿›
 }
 
 
-// ÏŞÖÆ±¸·İÎÄ¼şÊıÁ¿£¬³¬³öÔò×Ô¶¯É¾³ı×î¾ÉµÄ
+// é™åˆ¶å¤‡ä»½æ–‡ä»¶æ•°é‡ï¼Œè¶…å‡ºåˆ™è‡ªåŠ¨åˆ é™¤æœ€æ—§çš„
 void LimitBackupFiles(const Config& config, const int& configIndex, const wstring& folderPath, int limit, Console* console)
 {
 	if (limit <= 0) return;
 	namespace fs = filesystem;
 	vector<fs::directory_entry> files;
 
-	// ÊÕ¼¯ËùÓĞ³£¹æÎÄ¼ş
+	// æ”¶é›†æ‰€æœ‰å¸¸è§„æ–‡ä»¶
 	try {
 		if (!fs::exists(folderPath) || !fs::is_directory(folderPath))
 			return;
@@ -284,13 +284,13 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 		return;
 	}
 
-	// Èç¹ûÎ´³¬³öÏŞÖÆ£¬ÎŞĞè´¦Àí
+	// å¦‚æœæœªè¶…å‡ºé™åˆ¶ï¼Œæ— éœ€å¤„ç†
 	if ((int)files.size() <= limit) return;
 
 	const auto& history_it = g_appState.g_history.find(configIndex);
 	bool history_available = (history_it != g_appState.g_history.end());
 
-	// °´×îºóĞ´ÈëÊ±¼äÉıĞòÅÅĞò£¨×î¾ÉµÄÔÚÇ°£©
+	// æŒ‰æœ€åå†™å…¥æ—¶é—´å‡åºæ’åºï¼ˆæœ€æ—§çš„åœ¨å‰ï¼‰
 	sort(files.begin(), files.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
 		return fs::last_write_time(a) < fs::last_write_time(b);
 		});
@@ -314,7 +314,7 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 		}
 	}
 
-	// Èç¹û¿ÉÉ¾³ıµÄÎÄ¼şÊıÁ¿²»×ã£¬¾Í²»½øĞĞÉ¾³ı
+	// å¦‚æœå¯åˆ é™¤çš„æ–‡ä»¶æ•°é‡ä¸è¶³ï¼Œå°±ä¸è¿›è¡Œåˆ é™¤
 	if ((int)files.size() - (int)deletable_files.size() >= limit) {
 		if (console) console->AddLog("[Info] Cannot delete more files; remaining backups are marked as important.");
 		return;
@@ -324,13 +324,13 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 	for (int i = 0; i < to_delete_count && i < deletable_files.size(); ++i) {
 		const auto& file_to_delete = deletable_files[i];
 		try {
-			if (files[i].path().filename().wstring().find(L"[Smart]") == 0 || files[i + 1].path().filename().wstring().find(L"[Smart]") == 0) // Èç¹ûÊÇÖÇÄÜ±¸·İ£¬²»ÄÜÉ¾³ı£¡Èç¹ûÊÇÍêÕû±¸·İ£¬²»ÄÜÊÇ»ùµ×
+			if (files[i].path().filename().wstring().find(L"[Smart]") == 0 || files[i + 1].path().filename().wstring().find(L"[Smart]") == 0) // å¦‚æœæ˜¯æ™ºèƒ½å¤‡ä»½ï¼Œä¸èƒ½åˆ é™¤ï¼å¦‚æœæ˜¯å®Œæ•´å¤‡ä»½ï¼Œä¸èƒ½æ˜¯åŸºåº•
 			{
 				if (console) console->AddLog(L("LOG_WARNING_DELETE_SMART_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 			}
 
 			if (isSafeDelete) {
-				// ÔÚ history ÖĞÕÒµ½ÕâÒ»Ïî²¢°²È«É¾³ı
+				// åœ¨ history ä¸­æ‰¾åˆ°è¿™ä¸€é¡¹å¹¶å®‰å…¨åˆ é™¤
 				if (history_available) {
 					for (const auto& entry : history_it->second) {
 						if (entry.worldName == file_to_delete.path().parent_path().filename().wstring() && entry.backupFile == file_to_delete.path().filename().wstring()) {
@@ -352,8 +352,8 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 }
 
 
-// Ö´ĞĞµ¥¸öÊÀ½çµÄ±¸·İ²Ù×÷¡£
-// ²ÎÊı: folder: ÊÀ½çĞÅÏ¢½á¹¹Ìå, console: ÈÕÖ¾Êä³ö¶ÔÏó, comment: ÓÃ»§×¢ÊÍ
+// æ‰§è¡Œå•ä¸ªä¸–ç•Œçš„å¤‡ä»½æ“ä½œã€‚
+// å‚æ•°: folder: ä¸–ç•Œä¿¡æ¯ç»“æ„ä½“, console: æ—¥å¿—è¾“å‡ºå¯¹è±¡, comment: ç”¨æˆ·æ³¨é‡Š
 void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
     const Config& config = folder.config;
     console.AddLog(L("LOG_BACKUP_START_HEADER"));
@@ -377,7 +377,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
     }
 
-    // Éú³É´øÊ±¼ä´ÁµÄÎÄ¼şÃû
+    // ç”Ÿæˆå¸¦æ—¶é—´æˆ³çš„æ–‡ä»¶å
     time_t now = time(0);
     tm ltm;
     localtime_s(&ltm, &now);
@@ -511,7 +511,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     filesystem::create_directories(tempDir);
     wstring filelist_path = (tempDir / (L"_filelist.txt")).wstring();
 
-    wofstream ofs(filelist_path);
+    wofstream ofs(filelist_path.c_str());
     if (ofs.is_open()) {
         ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
         for (const auto& file : files_to_backup) {
@@ -548,21 +548,21 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
         if (files_to_backup.empty()) {
             console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-            if (config.hotBackup) // ÇåÀí¿ìÕÕ
+            if (config.hotBackup) // æ¸…ç†å¿«ç…§
                 filesystem::remove_all(sourcePath);
-            return; // Ã»ÓĞ±ä»¯£¬Ö±½Ó·µ»Ø
+            return; // æ²¡æœ‰å˜åŒ–ï¼Œç›´æ¥è¿”å›
         }
 
         console.AddLog(L("LOG_BACKUP_SMART_INFO"), files_to_backup.size());
 
-        // ÖÇÄÜ±¸·İĞèÒªÕÒµ½ËüËù»ùÓÚµÄÎÄ¼ş
-        // Õâ¿ÉÒÔÍ¨¹ıÔÙ´Î¶ÁÈ¡ÔªÊı¾İ»ñµÃ£¬GetChangedFiles ÄÚ²¿ÒÑ¾­ÑéÖ¤¹ıËü´æÔÚ
+        // æ™ºèƒ½å¤‡ä»½éœ€è¦æ‰¾åˆ°å®ƒæ‰€åŸºäºçš„æ–‡ä»¶
+        // è¿™å¯ä»¥é€šè¿‡å†æ¬¡è¯»å–å…ƒæ•°æ®è·å¾—ï¼ŒGetChangedFiles å†…éƒ¨å·²ç»éªŒè¯è¿‡å®ƒå­˜åœ¨
         nlohmann::json oldMetadata;
-        ifstream f(metadataFolder + L"\\metadata.json");
+        ifstream f((metadataFolder + L"\\metadata.json").c_str());
         oldMetadata = nlohmann::json::parse(f);
         basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
 
-        // 7z Ö§³ÖÓÃ @ÎÄ¼şÃû µÄ·½Ê½ÅúÁ¿Ö¸¶¨ÒªÑ¹ËõµÄÎÄ¼ş¡£°ÑËùÓĞÒª±¸·İµÄÎÄ¼şÂ·¾¶Ğ´µ½Ò»¸öÎÄ±¾ÎÄ¼ş±ÜÃâ³¬¹ıcmd 8191ÏŞ³¤
+        // 7z æ”¯æŒç”¨ @æ–‡ä»¶å çš„æ–¹å¼æ‰¹é‡æŒ‡å®šè¦å‹ç¼©çš„æ–‡ä»¶ã€‚æŠŠæ‰€æœ‰è¦å¤‡ä»½çš„æ–‡ä»¶è·¯å¾„å†™åˆ°ä¸€ä¸ªæ–‡æœ¬æ–‡ä»¶é¿å…è¶…è¿‡cmd 8191é™é•¿
         archivePath = destinationFolder + L"\\[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
         command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
@@ -570,7 +570,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     } else if (config.backupMode == 3) {
         backupTypeStr = L"Overwrite";
         console.AddLog(L("LOG_OVERWRITE"));
-        auto latest_time = filesystem::file_time_type{}; // Ä¬ÈÏ¹¹Ôì¾ÍÊÇ×îĞ¡Ê±¼äµã£¬²»ĞèÒª::min()
+        auto latest_time = filesystem::file_time_type{}; // é»˜è®¤æ„é€ å°±æ˜¯æœ€å°æ—¶é—´ç‚¹ï¼Œä¸éœ€è¦::min()
         bool found = false;
 
         for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
@@ -585,29 +585,29 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         if (found) {
             console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
             command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
-            archivePath = latestBackupPath.wstring(); // ¼ÇÂ¼±»¸üĞÂµÄÎÄ¼ş
+            archivePath = latestBackupPath.wstring(); // è®°å½•è¢«æ›´æ–°çš„æ–‡ä»¶
         }
         else {
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
             archivePath = destinationFolder + L"\\[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
             command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
                 L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
-            // -spf Ç¿ÖÆÊ¹ÓÃÍêÕûÂ·¾¶£¬-spf2 Ê¹ÓÃÏà¶ÔÂ·¾¶
+            // -spf å¼ºåˆ¶ä½¿ç”¨å®Œæ•´è·¯å¾„ï¼Œ-spf2 ä½¿ç”¨ç›¸å¯¹è·¯å¾„
         }
     }
-    // ÔÚºóÌ¨Ïß³ÌÖĞÖ´ĞĞÃüÁî
-    if (RunCommandInBackground(command, console, config.useLowPriority, sourcePath)) // ¹¤×÷Ä¿Â¼²»ÄÜ¶ª£¡
+    // åœ¨åå°çº¿ç¨‹ä¸­æ‰§è¡Œå‘½ä»¤
+    if (RunCommandInBackground(command, console, config.useLowPriority, sourcePath)) // å·¥ä½œç›®å½•ä¸èƒ½ä¸¢ï¼
     {
         console.AddLog(L("LOG_BACKUP_END_HEADER"));
 
-        // ±¸·İÎÄ¼ş´óĞ¡¼ì²é
+        // å¤‡ä»½æ–‡ä»¶å¤§å°æ£€æŸ¥
         try {
             if (filesystem::exists(archivePath)) {
                 uintmax_t fileSize = filesystem::file_size(archivePath);
-                // ãĞÖµÉèÖÃÎª 10 KB
+                // é˜ˆå€¼è®¾ç½®ä¸º 10 KB
                 if (fileSize < 10240) {
                     console.AddLog(L("BACKUP_FILE_TOO_SMALL_WARNING"), wstring_to_utf8(filesystem::path(archivePath).filename().wstring()).c_str());
-                    // ¹ã²¥Ò»¸ö¾¯¸æ
+                    // å¹¿æ’­ä¸€ä¸ªè­¦å‘Š
                     BroadcastEvent("event=backup_warning;type=file_too_small;");
                 }
             }
@@ -622,32 +622,32 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder, config.keepCount, &console);
 
         UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
-        // ÀúÊ·¼ÇÂ¼
+        // å†å²è®°å½•
         if (folder.configIndex != -1 && config.backupMode != 3)
             AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
         else if (config.backupMode != 3)
             AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
         g_appState.realConfigIndex = -1;
-        // ¹ã²¥Ò»¸ö³É¹¦ÊÂ¼ş
+        // å¹¿æ’­ä¸€ä¸ªæˆåŠŸäº‹ä»¶
         string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
         BroadcastEvent(payload);
 
 
-        if (config.backupMode == 3) { // Èç¹ûÊÇ¸²Ğ´Ä£Ê½£¬ĞŞ¸ÄÒ»ÏÂÎÄ¼şÃû
+        if (config.backupMode == 3) { // å¦‚æœæ˜¯è¦†å†™æ¨¡å¼ï¼Œä¿®æ”¹ä¸€ä¸‹æ–‡ä»¶å
             wstring oldName = latestBackupPath.filename().wstring();
-            size_t leftBracket = oldName.find(L"["); // µÚÒ»¸ö¶ÔÓ¦Full Smart
+            size_t leftBracket = oldName.find(L"["); // ç¬¬ä¸€ä¸ªå¯¹åº”Full Smart
             leftBracket = oldName.find(L"[", leftBracket + 1);
             size_t rightBracket = oldName.find(L"]");
             rightBracket = oldName.find(L"]", rightBracket + 1);
             wstring newName = oldName;
             if (leftBracket != wstring::npos && rightBracket != wstring::npos && rightBracket > leftBracket) {
-                // ¹¹ÔìĞÂµÄÊ±¼ä´Á
+                // æ„é€ æ–°çš„æ—¶é—´æˆ³
                 wchar_t timeBuf[160];
                 time_t now = time(0);
                 tm ltm;
                 localtime_s(&ltm, &now);
                 wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-                // Ìæ»»Ê±¼ä´Á²¿·Ö
+                // æ›¿æ¢æ—¶é—´æˆ³éƒ¨åˆ†
                 newName.replace(leftBracket + 1, rightBracket - leftBracket - 1, timeBuf);
                 filesystem::path newPath = latestBackupPath.parent_path() / newName;
                 filesystem::rename(latestBackupPath, newPath);
@@ -660,11 +660,11 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
 
 
-        // ÔÆÍ¬²½Âß¼­
+        // äº‘åŒæ­¥é€»è¾‘
         if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
             console.AddLog(L("CLOUD_SYNC_START"));
             wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + folder.name + L"\" --progress";
-            // ÁíÆğÒ»¸öÏß³ÌÀ´Ö´ĞĞÔÆÍ¬²½£¬±ÜÃâ×èÈûºóĞø²Ù×÷
+            // å¦èµ·ä¸€ä¸ªçº¿ç¨‹æ¥æ‰§è¡Œäº‘åŒæ­¥ï¼Œé¿å…é˜»å¡åç»­æ“ä½œ
             thread([rclone_command, &console, config]() {
                 RunCommandInBackground(rclone_command, console, config.useLowPriority);
                 console.AddLog(L("CLOUD_SYNC_FINISH"));
@@ -689,7 +689,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	filesystem::path saveRoot(config.saveRoot);
 
 	filesystem::path othersPath = backupWhat;
-	backupWhat = backupWhat.filename().wstring(); // Ö»±£Áô×îºóµÄÎÄ¼ş¼ĞÃû
+	backupWhat = backupWhat.filename().wstring(); // åªä¿ç•™æœ€åçš„æ–‡ä»¶å¤¹å
 
 	//filesystem::path modsPath = saveRoot.parent_path() / "mods";
 
@@ -732,7 +732,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
 		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
-		// ÓÃÌØÊâÃû×ÖÌí¼Óµ½ÀúÊ·
+		// ç”¨ç‰¹æ®Šåå­—æ·»åŠ åˆ°å†å²
 		AddHistoryEntry(g_appState.currentConfigIndex, backupWhat, filesystem::path(archivePath).filename().wstring(), backupWhat, comment);
 	}
 
@@ -772,32 +772,32 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 }
 
-// restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=´Ó×îĞÂµ½Ñ¡¶¨·´Ïò¸²¸Ç»¹Ô­
+// restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=ä»æœ€æ–°åˆ°é€‰å®šåå‘è¦†ç›–è¿˜åŸ
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
 
-	// ¼ì²é7z.exeÊÇ·ñ´æÔÚ
+	// æ£€æŸ¥7z.exeæ˜¯å¦å­˜åœ¨
 	if (!filesystem::exists(config.zipPath)) {
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
 		return;
 	}
 
-	// ×¼±¸Â·¾¶
+	// å‡†å¤‡è·¯å¾„
 	wstring sourceDir = config.backupPath + L"\\" + worldName;
 	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
 	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
 
-	// ¼ì²é±¸·İÎÄ¼şÊÇ·ñ´æÔÚ
+	// æ£€æŸ¥å¤‡ä»½æ–‡ä»¶æ˜¯å¦å­˜åœ¨
 	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir + L"\\" + backupFile)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return;
 	}
 
-	// »¹Ô­Ç°¼ì²éÊÀ½çÊÇ·ñÕıÔÚÔËĞĞ
-	if (IsFileLocked(destinationFolder + L"\\session.lock")) {
+	// è¿˜åŸå‰æ£€æŸ¥ä¸–ç•Œæ˜¯å¦æ­£åœ¨è¿è¡Œ
+	/*if (IsFileLocked(destinationFolder + L"\\session.lock")) {
 		int msgboxID = MessageBoxW(
 			NULL,
 			utf8_to_wstring(L("RESTORE_OVER_RUNNING_WORLD_MSG")).c_str(),
@@ -808,7 +808,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			console.AddLog("[Info] Restore cancelled by user due to active game session.");
 			return;
 		}
-	}
+	}*/
 
 	if (restoreMethod == 0) {
 		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
@@ -816,7 +816,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		if (filesystem::exists(destinationFolder)) {
 			try {
 				for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-					// Ê¹ÓÃ is_blacklisted º¯ÊıÅĞ¶ÏÊÇ·ñÔÚ°×Ãûµ¥ÖĞ
+					// ä½¿ç”¨ is_blacklisted å‡½æ•°åˆ¤æ–­æ˜¯å¦åœ¨ç™½åå•ä¸­
 					if (is_blacklisted(entry.path(), destinationFolder, destinationFolder, restoreWhitelist)) {
 						console.AddLog(L("LOG_SKIPPING_WHITELISTED_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
 						continue;
@@ -832,7 +832,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 					}
 					if (ec) {
 						console.AddLog(L("LOG_DELETION_ERROR"), wstring_to_utf8(entry.path().filename().wstring()).c_str(), ec.message().c_str());
-						deletion_ok = false; // ±ê¼ÇÉ¾³ıÊ§°Ü
+						deletion_ok = false; // æ ‡è®°åˆ é™¤å¤±è´¥
 					}
 				}
 			}
@@ -843,20 +843,20 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		}
 		if (!deletion_ok) {
 			console.AddLog(L("ERROR_CLEAN_RESTORE_FAILED"));
-			return; // ÖĞÖ¹»¹Ô­ÒÔ±£»¤Êı¾İ
+			return; // ä¸­æ­¢è¿˜åŸä»¥ä¿æŠ¤æ•°æ®
 		}
 	}
 
-	// ÊÕ¼¯ËùÓĞÏà¹ØµÄ±¸·İÎÄ¼ş
+	// æ”¶é›†æ‰€æœ‰ç›¸å…³çš„å¤‡ä»½æ–‡ä»¶
 	vector<filesystem::path> backupsToApply;
 
-	// Èç¹ûÄ¿±êÊÇÍêÕû±¸·İ£¬Ö±½Ó»¹Ô­Ëü
-	if (backupFile.find(L"[Smart]") != wstring::npos) { // Ä¿±êÊÇÔöÁ¿±¸·İ
-		// Ñ°ÕÒ»ù´¡µÄÍêÕû±¸·İ
+	// å¦‚æœç›®æ ‡æ˜¯å®Œæ•´å¤‡ä»½ï¼Œç›´æ¥è¿˜åŸå®ƒ
+	if (backupFile.find(L"[Smart]") != wstring::npos) { // ç›®æ ‡æ˜¯å¢é‡å¤‡ä»½
+		// å¯»æ‰¾åŸºç¡€çš„å®Œæ•´å¤‡ä»½
 		filesystem::path baseFullBackup;
 		auto baseFullTime = filesystem::file_time_type{};
 
-		// Èç¹ûÊÇÕıÏò»¹Ô­£¬ÏÈÕÒµ½ËüËù»ùÓÚµÄÍêÕû±¸·İ
+		// å¦‚æœæ˜¯æ­£å‘è¿˜åŸï¼Œå…ˆæ‰¾åˆ°å®ƒæ‰€åŸºäºçš„å®Œæ•´å¤‡ä»½
 		if (restoreMethod == 1 || restoreMethod == 0) {
 			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
 				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
@@ -874,7 +874,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 
 			console.AddLog(L("LOG_BACKUP_SMART_FOUND"), wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
 			backupsToApply.push_back(baseFullBackup);
-			// ÊÕ¼¯´Ó»ù´¡±¸·İµ½Ä¿±ê±¸·İÖ®¼äµÄËùÓĞÔöÁ¿±¸·İ
+			// æ”¶é›†ä»åŸºç¡€å¤‡ä»½åˆ°ç›®æ ‡å¤‡ä»½ä¹‹é—´çš„æ‰€æœ‰å¢é‡å¤‡ä»½
 			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
 				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
 					if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= filesystem::last_write_time(targetBackupPath)) {
@@ -884,9 +884,9 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			}
 		}
 		else if (restoreMethod == 2) {
-			// ·´Ïò»¹Ô­£¬´Ó×î½üµÄSmart±¸·İ¿ªÊ¼£¬Ò»Ö±µ½Ä¿±ê±¸·İ
+			// åå‘è¿˜åŸï¼Œä»æœ€è¿‘çš„Smartå¤‡ä»½å¼€å§‹ï¼Œä¸€ç›´åˆ°ç›®æ ‡å¤‡ä»½
 			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-				if (entry.is_regular_file()) { // ²»ĞèÒªÇø·ÖSmart»òFull£¬È«²¿»¹Ô­»ØÈ¥
+				if (entry.is_regular_file()) { // ä¸éœ€è¦åŒºåˆ†Smartæˆ–Fullï¼Œå…¨éƒ¨è¿˜åŸå›å»
 					if (entry.last_write_time() > filesystem::last_write_time(targetBackupPath)) {
 						backupsToApply.push_back(entry.path());
 					}
@@ -894,29 +894,29 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			}
 		}
 	}
-	else { //µ±³ÉÍêÕû±¸·İ´¦Àí
+	else { //å½“æˆå®Œæ•´å¤‡ä»½å¤„ç†
 		backupsToApply.push_back(targetBackupPath);
 	}
 
-	// ¸ñÊ½: "C:\7z.exe" x "Ô´Ñ¹Ëõ°üÂ·¾¶" -o"Ä¿±êÎÄ¼ş¼ĞÂ·¾¶" -y
-	// 'x' ±íÊ¾´øÂ·¾¶½âÑ¹, '-o' Ö¸¶¨Êä³öÄ¿Â¼, '-y' ±íÊ¾¶ÔËùÓĞÌáÊ¾»Ø´ğ¡°ÊÇ¡±£¨ÀıÈç¸²¸ÇÎÄ¼ş£©
+	// æ ¼å¼: "C:\7z.exe" x "æºå‹ç¼©åŒ…è·¯å¾„" -o"ç›®æ ‡æ–‡ä»¶å¤¹è·¯å¾„" -y
+	// 'x' è¡¨ç¤ºå¸¦è·¯å¾„è§£å‹, '-o' æŒ‡å®šè¾“å‡ºç›®å½•, '-y' è¡¨ç¤ºå¯¹æ‰€æœ‰æç¤ºå›ç­”â€œæ˜¯â€ï¼ˆä¾‹å¦‚è¦†ç›–æ–‡ä»¶ï¼‰
 
 	if (restoreMethod == 2)
 	{
-		// °´Ê±¼äÄæĞòÅÅĞòËùÓĞĞèÒªÓ¦ÓÃµÄ±¸·İ
+		// æŒ‰æ—¶é—´é€†åºæ’åºæ‰€æœ‰éœ€è¦åº”ç”¨çš„å¤‡ä»½
 		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
 			return filesystem::last_write_time(a) > filesystem::last_write_time(b);
 			});
 	}
 	else {
-		// °´Ê±¼äË³ĞòÅÅĞòËùÓĞĞèÒªÓ¦ÓÃµÄ±¸·İ
+		// æŒ‰æ—¶é—´é¡ºåºæ’åºæ‰€æœ‰éœ€è¦åº”ç”¨çš„å¤‡ä»½
 		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
 			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
 			});
 	}
 
 	wstring filesToExtractStr;
-	// ½öÔÚ×Ô¶¨Òå»¹Ô­Ä£Ê½ÏÂ¹¹½¨ÎÄ¼şÁĞ±í
+	// ä»…åœ¨è‡ªå®šä¹‰è¿˜åŸæ¨¡å¼ä¸‹æ„å»ºæ–‡ä»¶åˆ—è¡¨
 	if (restoreMethod == 3 && !customRestoreList.empty()) {
 		console.AddLog(L("LOG_CUSTOM_RESTORE_START"));
 		stringstream ss(customRestoreList);
@@ -931,7 +931,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	}
 
 
-	// ÒÀ´ÎÖ´ĞĞ»¹Ô­
+	// ä¾æ¬¡æ‰§è¡Œè¿˜åŸ
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
@@ -950,13 +950,13 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 	vector<filesystem::path> filesToDelete;
 	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
 
-	// Ö´ĞĞÉ¾³ı²Ù×÷
+	// æ‰§è¡Œåˆ é™¤æ“ä½œ
 	for (const auto& path : filesToDelete) {
 		try {
 			if (filesystem::exists(path)) {
 				filesystem::remove(path);
 				console.AddLog("  - %s OK", wstring_to_utf8(path.filename().wstring()).c_str());
-				// ´ÓÀúÊ·¼ÇÂ¼ÖĞÒÆ³ı¶ÔÓ¦ÌõÄ¿
+				// ä»å†å²è®°å½•ä¸­ç§»é™¤å¯¹åº”æ¡ç›®
 				RemoveHistoryEntry(configIndex, path.filename().wstring());
 			}
 			else {
@@ -968,7 +968,7 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 			console.AddLog(L("LOG_ERROR_DELETE_BACKUP"), wstring_to_utf8(path.filename().wstring()).c_str(), e.what());
 		}
 	}
-	SaveHistory(); // ±£´æÀúÊ·¼ÇÂ¼µÄ¸ü¸Ä
+	SaveHistory(); // ä¿å­˜å†å²è®°å½•çš„æ›´æ”¹
 }
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
@@ -1084,28 +1084,28 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 	}
 }
 
-// ±ÜÃâ½öÒÔ worldIdx ×÷Îª key µ¼ÖÂµÄ³åÍ»£¬Ê¹ÓÃ{ configIdx, worldIdx }
+// é¿å…ä»…ä»¥ worldIdx ä½œä¸º key å¯¼è‡´çš„å†²çªï¼Œä½¿ç”¨{ configIdx, worldIdx }
 void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, atomic<bool>& stop_flag) {
 	auto key = make_pair(configIdx, worldIdx);
 	console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
 
 	while (true) {
-		// µÈ´ıÖ¸¶¨µÄÊ±¼ä£¬µ«Ã¿Ãë¼ì²éÒ»´ÎÊÇ·ñĞèÒªÍ£Ö¹
+		// ç­‰å¾…æŒ‡å®šçš„æ—¶é—´ï¼Œä½†æ¯ç§’æ£€æŸ¥ä¸€æ¬¡æ˜¯å¦éœ€è¦åœæ­¢
 		for (int i = 0; i < intervalMinutes * 60; ++i) {
-			if (stop_flag) { // »òÕß stop_flag.load()
+			if (stop_flag) { // æˆ–è€… stop_flag.load()
 				console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
-				return; // Ïß³Ì°²È«µØÍË³ö
+				return; // çº¿ç¨‹å®‰å…¨åœ°é€€å‡º
 			}
 			this_thread::sleep_for(chrono::seconds(1));
 		}
 
-		// Èç¹ûÔÚ³¤Ê±¼äµÄµÈ´ıºó£¬·¢ÏÖĞèÒªÍ£Ö¹£¬Ôò²»Ö´ĞĞ±¸·İÖ±½ÓÍË³ö
+		// å¦‚æœåœ¨é•¿æ—¶é—´çš„ç­‰å¾…åï¼Œå‘ç°éœ€è¦åœæ­¢ï¼Œåˆ™ä¸æ‰§è¡Œå¤‡ä»½ç›´æ¥é€€å‡º
 		if (stop_flag) {
 			console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
 			return;
 		}
 
-		// Ê±¼äµ½ÁË£¬¿ªÊ¼±¸·İ
+		// æ—¶é—´åˆ°äº†ï¼Œå¼€å§‹å¤‡ä»½
 		console->AddLog(L("LOG_AUTOBACKUP_ROUTINE"), worldIdx);
 		{
 			lock_guard<mutex> lock(g_appState.configsMutex);
@@ -1122,7 +1122,7 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 			}
 			else {
 				console->AddLog(L("ERROR_INVALID_WORLD_IN_TASK"), configIdx, worldIdx);
-				// ÈÎÎñÎŞĞ§£¬ÍË³ö»òÒÆ³ı
+				// ä»»åŠ¡æ— æ•ˆï¼Œé€€å‡ºæˆ–ç§»é™¤
 				lock_guard<mutex> lock2(g_appState.task_mutex);
 				if (g_appState.g_active_auto_backups.count(key)) {
 					g_appState.g_active_auto_backups.erase(key);
@@ -1136,20 +1136,20 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console) {
 	console.AddLog(L("LOG_EXPORT_STARTED"), wstring_to_utf8(worldName).c_str());
 
-	// ×¼±¸ÁÙÊ±ÎÄ¼şºÍÂ·¾¶
+	// å‡†å¤‡ä¸´æ—¶æ–‡ä»¶å’Œè·¯å¾„
 	filesystem::path temp_export_dir = filesystem::temp_directory_path() / L"MineBackup_Export" / worldName;
 	filesystem::path readme_path = temp_export_dir / L"readme.txt";
 
 	try {
-		// ÇåÀí²¢´´½¨ÁÙÊ±¹¤×÷Ä¿Â¼
+		// æ¸…ç†å¹¶åˆ›å»ºä¸´æ—¶å·¥ä½œç›®å½•
 		if (filesystem::exists(temp_export_dir)) {
 			filesystem::remove_all(temp_export_dir);
 		}
 		filesystem::create_directories(temp_export_dir);
 
-		// Èç¹ûÓĞÃèÊö£¬´´½¨ readme.txt
+		// å¦‚æœæœ‰æè¿°ï¼Œåˆ›å»º readme.txt
 		if (!description.empty()) {
-			wofstream readme_file(readme_path);
+			wofstream readme_file(readme_path.c_str());
 			readme_file.imbue(locale(readme_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
 			readme_file << L"[Name]\n" << worldName << L"\n\n";
 			readme_file << L"[Description]\n" << description << L"\n\n";
@@ -1157,7 +1157,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 			readme_file.close();
 		}
 
-		// ÊÕ¼¯²¢¹ıÂËÎÄ¼ş
+		// æ”¶é›†å¹¶è¿‡æ»¤æ–‡ä»¶
 		vector<filesystem::path> files_to_export;
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (!is_blacklisted(entry.path(), worldPath, worldPath, tempConfig.blacklist)) {
@@ -1165,7 +1165,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 			}
 		}
 
-		// ½« readme.txt Ò²¼ÓÈë´ıÑ¹ËõÁĞ±í
+		// å°† readme.txt ä¹ŸåŠ å…¥å¾…å‹ç¼©åˆ—è¡¨
 		if (!description.empty()) {
 			files_to_export.push_back(readme_path);
 		}
@@ -1176,12 +1176,12 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 			return;
 		}
 
-		// ´´½¨ÎÄ¼şÁĞ±í¹© 7z Ê¹ÓÃ
+		// åˆ›å»ºæ–‡ä»¶åˆ—è¡¨ä¾› 7z ä½¿ç”¨
 		wstring filelist_path = (temp_export_dir / L"filelist.txt").wstring();
-		wofstream ofs(filelist_path);
+		wofstream ofs(filelist_path.c_str());
 		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
 		for (const auto& file : files_to_export) {
-			// ¶ÔÓÚÊÀ½çÎÄ¼ş£¬Ğ´ÈëÏà¶ÔÂ·¾¶£»¶ÔÓÚreadme£¬Ğ´Èë¾ø¶ÔÂ·¾¶
+			// å¯¹äºä¸–ç•Œæ–‡ä»¶ï¼Œå†™å…¥ç›¸å¯¹è·¯å¾„ï¼›å¯¹äºreadmeï¼Œå†™å…¥ç»å¯¹è·¯å¾„
 			if (file.wstring().rfind(worldPath, 0) == 0) {
 				ofs << filesystem::relative(file, worldPath).wstring() << endl;
 			}
@@ -1191,11 +1191,11 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		}
 		ofs.close();
 
-		// ¹¹½¨²¢Ö´ĞĞ 7z ÃüÁî
+		// æ„å»ºå¹¶æ‰§è¡Œ 7z å‘½ä»¤
 		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(tempConfig.zipLevel) +
 			L" \"" + outputPath + L"\"" + L" @" + filelist_path;
 
-		// ¹¤×÷Ä¿Â¼Ó¦ÎªÔ­Ê¼ÊÀ½çÂ·¾¶£¬ÒÔÈ·±£Ñ¹Ëõ°üÄÚÂ·¾¶ÕıÈ·
+		// å·¥ä½œç›®å½•åº”ä¸ºåŸå§‹ä¸–ç•Œè·¯å¾„ï¼Œä»¥ç¡®ä¿å‹ç¼©åŒ…å†…è·¯å¾„æ­£ç¡®
 		if (RunCommandInBackground(command, console, tempConfig.useLowPriority, worldPath)) {
 			console.AddLog(L("LOG_EXPORT_SUCCESS"), wstring_to_utf8(outputPath).c_str());
 			wstring cmd = L"/select,\"" + outputPath + L"\"";
@@ -1210,7 +1210,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		console.AddLog("[Error] An exception occurred during export: %s", e.what());
 	}
 
-	// ÇåÀíÁÙÊ±Ä¿Â¼
+	// æ¸…ç†ä¸´æ—¶ç›®å½•
 	filesystem::remove_all(temp_export_dir);
 }
 
@@ -1220,32 +1220,32 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 
 	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
 
-	// Æô¶¯ºóÌ¨µÈ´ıÏß³Ì
+	// å¯åŠ¨åå°ç­‰å¾…çº¿ç¨‹
 	auto startTime = std::chrono::steady_clock::now();
 	const auto timeout = std::chrono::seconds(15);
 
-	// µÈ´ıÏìÓ¦»ò³¬Ê±
+	// ç­‰å¾…å“åº”æˆ–è¶…æ—¶
 	while (std::chrono::steady_clock::now() - startTime < timeout) {
 		if (g_appState.isRespond) {
-			break; // ÊÕµ½ÏìÓ¦
+			break; // æ”¶åˆ°å“åº”
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
-	// ¼ì²éÊÇÊÕµ½ÁËÏìÓ¦»¹ÊÇ³¬Ê±ÁË
+	// æ£€æŸ¥æ˜¯æ”¶åˆ°äº†å“åº”è¿˜æ˜¯è¶…æ—¶äº†
 	if (!g_appState.isRespond) {
 		console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
 		BroadcastEvent("event=restore_cancelled;reason=timeout");
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // ÖØÖÃ×´Ì¬
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // é‡ç½®çŠ¶æ€
 		return;
 	}
 
-	// --- ÊÕµ½ÏìÓ¦£¬¿ªÊ¼»¹Ô­ ---
-	g_appState.isRespond = false; // ÖØÖÃ±êÖ¾Î»
+	// --- æ”¶åˆ°å“åº”ï¼Œå¼€å§‹è¿˜åŸ ---
+	g_appState.isRespond = false; // é‡ç½®æ ‡å¿—ä½
 	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
 	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
 
-	// ²éÕÒ×îĞÂ±¸·İÎÄ¼ş (Õâ²¿·ÖÂß¼­±£³Ö²»±ä)
+	// æŸ¥æ‰¾æœ€æ–°å¤‡ä»½æ–‡ä»¶ (è¿™éƒ¨åˆ†é€»è¾‘ä¿æŒä¸å˜)
 	wstring backupDir = cfg.backupPath + L"\\" + world.name;
 	filesystem::path latestBackup;
 	auto latest_time = filesystem::file_time_type{};
@@ -1274,11 +1274,11 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 
 	DoRestore(cfg, world.name, latestBackup.filename().wstring(), ref(console), 0, "");
 
-	// ¼ÙÉè³É¹¦£¬¹ã²¥Íê³ÉÊÂ¼ş
+	// å‡è®¾æˆåŠŸï¼Œå¹¿æ’­å®Œæˆäº‹ä»¶
 	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
 	console.AddLog(L("[Hotkey] Restore completed successfully."));
 
-	// ×îÖÕ£¬ÖØÖÃ×´Ì¬
+	// æœ€ç»ˆï¼Œé‡ç½®çŠ¶æ€
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 	g_appState.isRespond = false;
 }

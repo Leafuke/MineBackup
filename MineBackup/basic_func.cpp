@@ -16,7 +16,7 @@ bool IsPureASCII(const wstring& s) {
 	return true;
 }
 
-// ¼ÆËãÎÄ¼şµÄ¹şÏ£Öµ£¨ÕâÊÇÒ»¸ö¼òµ¥µÄÊµÏÖ£¬ºÜ²»ÑÏ¸ñßÕ£©
+// è®¡ç®—æ–‡ä»¶çš„å“ˆå¸Œå€¼ï¼ˆè¿™æ˜¯ä¸€ä¸ªç®€å•çš„å®ç°ï¼Œå¾ˆä¸ä¸¥æ ¼å“’ï¼‰
 size_t CalculateFileHash(const filesystem::path& filepath) {
 	ifstream file(filepath, ios::binary);
 	if (!file) return 0;
@@ -25,10 +25,10 @@ size_t CalculateFileHash(const filesystem::path& filepath) {
 	hash<string> hasher;
 	return hasher(content);
 }
-// ×÷ÎªÈ«¾Ö±äÁ¿£¬·½±ã¶şÕßĞŞ¸Ä
+// ä½œä¸ºå…¨å±€å˜é‡ï¼Œæ–¹ä¾¿äºŒè€…ä¿®æ”¹
 map<wstring, size_t> currentState;
 
-// ¶¨Òå¼ì²é½á¹ûµÄÃ¶¾ÙÀàĞÍ
+// å®šä¹‰æ£€æŸ¥ç»“æœçš„æšä¸¾ç±»å‹
 enum class BackupCheckResult {
 	NO_CHANGE,
 	CHANGES_DETECTED,
@@ -36,15 +36,15 @@ enum class BackupCheckResult {
 	FORCE_FULL_BACKUP_BASE_MISSING
 };
 
-// È«¾Ö±äÁ¿ currentState ²»ÔÙĞèÒª£¬×÷ÓÃÓòÒÆÖÁº¯ÊıÄÚ²¿
+// å…¨å±€å˜é‡ currentState ä¸å†éœ€è¦ï¼Œä½œç”¨åŸŸç§»è‡³å‡½æ•°å†…éƒ¨
 
-// Î»ÓÚ basic_func.cpp
+// ä½äº basic_func.cpp
 vector<filesystem::path> GetChangedFiles(
 	const filesystem::path& worldPath,
 	const filesystem::path& metadataPath,
-	const filesystem::path& backupPath, // ĞèÒª´«Èë±¸·İÂ·¾¶ÒÔ¹©ÑéÖ¤
+	const filesystem::path& backupPath, // éœ€è¦ä¼ å…¥å¤‡ä»½è·¯å¾„ä»¥ä¾›éªŒè¯
 	BackupCheckResult& out_result,
-	map<wstring, size_t>& out_currentState // ½«µ±Ç°×´Ì¬´«³ö£¬¹©ºóĞø±£´æ
+	map<wstring, size_t>& out_currentState // å°†å½“å‰çŠ¶æ€ä¼ å‡ºï¼Œä¾›åç»­ä¿å­˜
 ) {
 	out_result = BackupCheckResult::NO_CHANGE;
 	out_currentState.clear();
@@ -52,22 +52,22 @@ vector<filesystem::path> GetChangedFiles(
 	map<wstring, size_t> lastState;
 	filesystem::path metadataFile = metadataPath / L"metadata.json";
 
-	// 1. ¶ÁÈ¡²¢ÑéÖ¤ÔªÊı¾İ
+	// 1. è¯»å–å¹¶éªŒè¯å…ƒæ•°æ®
 	if (!filesystem::exists(metadataFile)) {
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
-		// ÔªÊı¾İ²»´æÔÚ£¬É¨ÃèËùÓĞÎÄ¼ş²¢·µ»Ø£¬ÒÔ±ã½øĞĞÊ×´ÎÍêÕû±¸·İ
+		// å…ƒæ•°æ®ä¸å­˜åœ¨ï¼Œæ‰«ææ‰€æœ‰æ–‡ä»¶å¹¶è¿”å›ï¼Œä»¥ä¾¿è¿›è¡Œé¦–æ¬¡å®Œæ•´å¤‡ä»½
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
 				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
 			}
 		}
-		return {}; // ·µ»Ø¿ÕÁĞ±í£¬ÒòÎªËùÓĞÎÄ¼ş×´Ì¬¶¼¼ÇÂ¼ÔÚ out_currentState ÖĞÁË
+		return {}; // è¿”å›ç©ºåˆ—è¡¨ï¼Œå› ä¸ºæ‰€æœ‰æ–‡ä»¶çŠ¶æ€éƒ½è®°å½•åœ¨ out_currentState ä¸­äº†
 	}
 
 	nlohmann::json metadata;
 	wstring basedOnBackupFile;
 	try {
-		ifstream f(metadataFile);
+		ifstream f(metadataFile.c_str());
 		metadata = nlohmann::json::parse(f);
 		basedOnBackupFile = utf8_to_wstring(metadata.at("basedOnBackupFile"));
 		for (auto& [key, val] : metadata.at("fileStates").items()) {
@@ -75,9 +75,9 @@ vector<filesystem::path> GetChangedFiles(
 		}
 	}
 	catch (const nlohmann::json::exception& e) {
-		// ÔªÊı¾İÎÄ¼şËğ»µ»ò¸ñÊ½´íÎó
+		// å…ƒæ•°æ®æ–‡ä»¶æŸåæˆ–æ ¼å¼é”™è¯¯
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
-		// Í¬ÑùĞèÒªÉ¨ÃèËùÓĞÎÄ¼ş
+		// åŒæ ·éœ€è¦æ‰«ææ‰€æœ‰æ–‡ä»¶
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
 				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
@@ -86,10 +86,10 @@ vector<filesystem::path> GetChangedFiles(
 		return {};
 	}
 
-	// 2. ºËĞÄÑéÖ¤£º¼ì²éÔªÊı¾İÒÀÀµµÄ»ù×¼±¸·İÎÄ¼şÊÇ·ñ´æÔÚ
+	// 2. æ ¸å¿ƒéªŒè¯ï¼šæ£€æŸ¥å…ƒæ•°æ®ä¾èµ–çš„åŸºå‡†å¤‡ä»½æ–‡ä»¶æ˜¯å¦å­˜åœ¨
 	if (!filesystem::exists(backupPath / basedOnBackupFile)) {
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
-		// »ù×¼ÎÄ¼ş±»ÓÃ»§É¾³ı£¬ÔªÊı¾İÊ§Ğ§£¬É¨ÃèËùÓĞÎÄ¼şÒÔ½øĞĞĞÂµÄÍêÕû±¸·İ
+		// åŸºå‡†æ–‡ä»¶è¢«ç”¨æˆ·åˆ é™¤ï¼Œå…ƒæ•°æ®å¤±æ•ˆï¼Œæ‰«ææ‰€æœ‰æ–‡ä»¶ä»¥è¿›è¡Œæ–°çš„å®Œæ•´å¤‡ä»½
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
 				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
@@ -98,7 +98,7 @@ vector<filesystem::path> GetChangedFiles(
 		return {};
 	}
 
-	// 3. ¼ÆËãµ±Ç°×´Ì¬²¢ÓëÉÏ´Î×´Ì¬±È½Ï
+	// 3. è®¡ç®—å½“å‰çŠ¶æ€å¹¶ä¸ä¸Šæ¬¡çŠ¶æ€æ¯”è¾ƒ
 	if (filesystem::exists(worldPath)) {
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
@@ -107,11 +107,11 @@ vector<filesystem::path> GetChangedFiles(
 				size_t currentHash = CalculateFileHash(entry.path());
 				out_currentState[relativePath.wstring()] = currentHash;
 
-				//// ½«filenameºÍhash¶¼Êä³öÒ»ÏÂ£¬ÓÃÀ´¼ì²éÎÊÌâ£¬Êä³öµ½debug.txtÎÄ¼ş
+				//// å°†filenameå’Œhashéƒ½è¾“å‡ºä¸€ä¸‹ï¼Œç”¨æ¥æ£€æŸ¥é—®é¢˜ï¼Œè¾“å‡ºåˆ°debug.txtæ–‡ä»¶
 				/*ofstream debugFile("debug.txt", ios::app);
 				debugFile << wstring_to_utf8(fileName.wstring()) << " " << currentHash << endl;*/
 
-				// Èç¹ûÎÄ¼şÊÇĞÂµÄ£¬»òÕß¹şÏ£Öµ²»Í¬£¬ÔòÅĞ¶¨ÎªÒÑ¸ü¸Ä
+				// å¦‚æœæ–‡ä»¶æ˜¯æ–°çš„ï¼Œæˆ–è€…å“ˆå¸Œå€¼ä¸åŒï¼Œåˆ™åˆ¤å®šä¸ºå·²æ›´æ”¹
 				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
 					changedFiles.push_back(entry.path());
 				}
@@ -129,16 +129,16 @@ vector<filesystem::path> GetChangedFiles(
 
 
 
-// »ñÈ¡ÒÑ¸ü¸ÄµÄÎÄ¼şÁĞ±í£¬²¢¸üĞÂ×´Ì¬ÎÄ¼ş
+// è·å–å·²æ›´æ”¹çš„æ–‡ä»¶åˆ—è¡¨ï¼Œå¹¶æ›´æ–°çŠ¶æ€æ–‡ä»¶
 //wstring utf8_to_wstring(const string& str);
 //vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath) {
 //	vector<filesystem::path> changedFiles;
 //	map<wstring, size_t> lastState;
 //	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
-//	// 1. ¶ÁÈ¡ÉÏÒ»´ÎµÄ×´Ì¬
+//	// 1. è¯»å–ä¸Šä¸€æ¬¡çš„çŠ¶æ€
 //	ifstream stateFileIn(stateFilePath);
 //	if (stateFileIn.is_open()) {
-//		string path; // txtÀïÇ§Íò²»ÄÜÓĞ¿Õ¸ñ£¡
+//		string path; // txté‡Œåƒä¸‡ä¸èƒ½æœ‰ç©ºæ ¼ï¼
 //		size_t hash;
 //		while (stateFileIn >> path >> hash) {
 //			lastState[utf8_to_wstring(path)] = hash;
@@ -146,7 +146,7 @@ vector<filesystem::path> GetChangedFiles(
 //		stateFileIn.close();
 //	}
 //
-//	// 2. ¼ÆËãµ±Ç°×´Ì¬²¢ÓëÉÏ´Î×´Ì¬±È½Ï
+//	// 2. è®¡ç®—å½“å‰çŠ¶æ€å¹¶ä¸ä¸Šæ¬¡çŠ¶æ€æ¯”è¾ƒ
 //	if (filesystem::exists(worldPath)) {
 //		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 //			if (entry.is_regular_file()) {
@@ -154,7 +154,7 @@ vector<filesystem::path> GetChangedFiles(
 //				size_t currentHash = CalculateFileHash(entry.path());
 //				currentState[relativePath.wstring()] = currentHash;
 //
-//				// Èç¹ûÎÄ¼şÊÇĞÂµÄ£¬»òÕß¹şÏ£Öµ²»Í¬£¬ÔòÅĞ¶¨ÎªÒÑ¸ü¸Ä
+//				// å¦‚æœæ–‡ä»¶æ˜¯æ–°çš„ï¼Œæˆ–è€…å“ˆå¸Œå€¼ä¸åŒï¼Œåˆ™åˆ¤å®šä¸ºå·²æ›´æ”¹
 //				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
 //					changedFiles.push_back(entry.path());
 //				}
@@ -163,7 +163,7 @@ vector<filesystem::path> GetChangedFiles(
 //	}
 //	return changedFiles;
 //}
-// ĞÂµÄº¯Êı£¬×¨ÃÅÓÃÓÚ±£´æ×´Ì¬ÎÄ¼ş ´Ófilesystem°æ±¾ĞŞ¸ÄÎªwofstreamÊÔÍ¼½â¾öÖĞÎÄÎÊÌâ
+// æ–°çš„å‡½æ•°ï¼Œä¸“é—¨ç”¨äºä¿å­˜çŠ¶æ€æ–‡ä»¶ ä»filesystemç‰ˆæœ¬ä¿®æ”¹ä¸ºwofstreamè¯•å›¾è§£å†³ä¸­æ–‡é—®é¢˜
 //void SaveStateFile(const filesystem::path& metadataPath) {
 //	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
 //	wofstream stateFileOut(stateFilePath, ios::trunc);
@@ -189,30 +189,30 @@ wstring SanitizeFileName(const wstring& input) {
 	const wstring invalid_chars = L"\\/:*?\"<>|";
 	for (wchar_t& c : output) {
 		if (invalid_chars.find(c) != wstring::npos) {
-			c = L'_'; // ½«·Ç·¨×Ö·ûÌæ»»ÎªÏÂ»®Ïß
+			c = L'_'; // å°†éæ³•å­—ç¬¦æ›¿æ¢ä¸ºä¸‹åˆ’çº¿
 		}
 	}
 	return output;
 }
 
-// Ò»¸ö¼òµ¥µÄ¡¢²»ÒÀÀµ¿âµÄJSONÖµ²éÕÒÆ÷
+// ä¸€ä¸ªç®€å•çš„ã€ä¸ä¾èµ–åº“çš„JSONå€¼æŸ¥æ‰¾å™¨
 string find_json_value(const string& json, const string& key) {
 	string search_key = "\"" + key + "\":\"";
 	size_t start_pos = json.find(search_key);
 	if (start_pos == string::npos) {
-		// ³¢ÊÔ²éÕÒ·Ç×Ö·û´®Öµ (Èç "key": true)
+		// å°è¯•æŸ¥æ‰¾éå­—ç¬¦ä¸²å€¼ (å¦‚ "key": true)
 		search_key = "\"" + key + "\":";
 		start_pos = json.find(search_key);
 		if (start_pos == string::npos) return "";
 
 		start_pos += search_key.length();
-		while (start_pos < json.length() && isspace(json[start_pos])) start_pos++; // Ìø¹ı¿Õ¸ñ
+		while (start_pos < json.length() && isspace(json[start_pos])) start_pos++; // è·³è¿‡ç©ºæ ¼
 
 		size_t end_pos = start_pos;
 		while (end_pos < json.length() && json[end_pos] != ',' && json[end_pos] != '}') end_pos++;
 
 		string val = json.substr(start_pos, end_pos - start_pos);
-		// È¥µôÄ©Î²µÄ¿Õ¸ñ
+		// å»æ‰æœ«å°¾çš„ç©ºæ ¼
 		val.erase(val.find_last_not_of(" \n\r\t") + 1);
 		return val;
 	}
@@ -225,13 +225,13 @@ string find_json_value(const string& json, const string& key) {
 }
 
 /**
- * @brief ¼ì²éÎÄ¼şÂ·¾¶ÊÇ·ñ·ûºÏºÚÃûµ¥¹æÔò£¨Ö§³ÖÆÕÍ¨×Ö·û´®ºÍÕıÔò±í´ïÊ½£©
- * @param file_to_check ´ı¼ì²éµÄÎÄ¼şµÄÍêÕûÂ·¾¶
- * @param backup_source_root µ±Ç°±¸·İ²Ù×÷µÄ¸ùÄ¿Â¼£¨¿ÉÄÜÊÇÔ­Ê¼´æµµÂ·¾¶£¬Ò²¿ÉÄÜÊÇÈÈ±¸·İ¿ìÕÕÂ·¾¶£©
- * @param original_world_root Ô­Ê¼µÄ¡¢ÔÚconfigÖĞÅäÖÃµÄ´æµµ¸ùÄ¿Â¼
- * @param blacklist ºÚÃûµ¥¹æÔòÁĞ±í
- * @param console ÓÃÓÚÈÕÖ¾Êä³öµÄ¿ØÖÆÌ¨¶ÔÏó
- * @return Èç¹ûÎÄ¼ş±»ÃüÖĞºÚÃûµ¥£¬Ôò·µ»Ø true
+ * @brief æ£€æŸ¥æ–‡ä»¶è·¯å¾„æ˜¯å¦ç¬¦åˆé»‘åå•è§„åˆ™ï¼ˆæ”¯æŒæ™®é€šå­—ç¬¦ä¸²å’Œæ­£åˆ™è¡¨è¾¾å¼ï¼‰
+ * @param file_to_check å¾…æ£€æŸ¥çš„æ–‡ä»¶çš„å®Œæ•´è·¯å¾„
+ * @param backup_source_root å½“å‰å¤‡ä»½æ“ä½œçš„æ ¹ç›®å½•ï¼ˆå¯èƒ½æ˜¯åŸå§‹å­˜æ¡£è·¯å¾„ï¼Œä¹Ÿå¯èƒ½æ˜¯çƒ­å¤‡ä»½å¿«ç…§è·¯å¾„ï¼‰
+ * @param original_world_root åŸå§‹çš„ã€åœ¨configä¸­é…ç½®çš„å­˜æ¡£æ ¹ç›®å½•
+ * @param blacklist é»‘åå•è§„åˆ™åˆ—è¡¨
+ * @param console ç”¨äºæ—¥å¿—è¾“å‡ºçš„æ§åˆ¶å°å¯¹è±¡
+ * @return å¦‚æœæ–‡ä»¶è¢«å‘½ä¸­é»‘åå•ï¼Œåˆ™è¿”å› true
  */
 bool is_blacklisted(
 	const filesystem::path& file_to_check,
@@ -239,11 +239,11 @@ bool is_blacklisted(
 	const filesystem::path& original_world_root,
 	const vector<wstring>& blacklist)
 {
-	// ½«Â·¾¶×ª»»ÎªĞ¡Ğ´ÒÔ½øĞĞ²»Çø·Ö´óĞ¡Ğ´µÄ×Ö·û´®±È½Ï
+	// å°†è·¯å¾„è½¬æ¢ä¸ºå°å†™ä»¥è¿›è¡Œä¸åŒºåˆ†å¤§å°å†™çš„å­—ç¬¦ä¸²æ¯”è¾ƒ
 	wstring file_path_lower = file_to_check.wstring();
 	transform(file_path_lower.begin(), file_path_lower.end(), file_path_lower.begin(), ::towlower);
 
-	// »ñÈ¡Ïà¶ÔÓÚµ±Ç°±¸·İÔ´µÄÏà¶ÔÂ·¾¶
+	// è·å–ç›¸å¯¹äºå½“å‰å¤‡ä»½æºçš„ç›¸å¯¹è·¯å¾„
 	error_code ec;
 	filesystem::path relative_path_obj = filesystem::relative(file_to_check, backup_source_root, ec);
 	wstring relative_path_lower = ec ? L"" : relative_path_obj.wstring();
@@ -254,12 +254,12 @@ bool is_blacklisted(
 		wstring rule = rule_orig;
 		transform(rule.begin(), rule.end(), rule.begin(), ::towlower);
 
-		if (rule.rfind(L"regex:", 0) == 0) { // ÕıÔò±í´ïÊ½¹æÔò
+		if (rule.rfind(L"regex:", 0) == 0) { // æ­£åˆ™è¡¨è¾¾å¼è§„åˆ™
 			try {
-				wstring pattern_str = rule_orig.substr(6); // Ê¹ÓÃÔ­Ê¼´óĞ¡Ğ´µÄ¹æÔò½øĞĞÕıÔòÆ¥Åä
+				wstring pattern_str = rule_orig.substr(6); // ä½¿ç”¨åŸå§‹å¤§å°å†™çš„è§„åˆ™è¿›è¡Œæ­£åˆ™åŒ¹é…
 				wregex pattern(pattern_str, regex_constants::icase | regex_constants::ECMAScript);
 
-				// ÕıÔò±í´ïÊ½Í¬Ê±Æ¥Åä¾ø¶ÔÂ·¾¶ºÍÏà¶ÔÂ·¾¶
+				// æ­£åˆ™è¡¨è¾¾å¼åŒæ—¶åŒ¹é…ç»å¯¹è·¯å¾„å’Œç›¸å¯¹è·¯å¾„
 				if (regex_search(file_to_check.wstring(), pattern) ||
 					(!relative_path_obj.empty() && regex_search(relative_path_obj.wstring(), pattern))) {
 					return true;
@@ -269,20 +269,20 @@ bool is_blacklisted(
 				//console.AddLog("[Error] Invalid regex in blacklist: %s. Error: %s", wstring_to_utf8(rule_orig).c_str(), e.what());
 			}
 		}
-		else { // ÆÕÍ¨×Ö·û´®¹æÔò
-			// ¹æÔò¿ÉÄÜÊÇ¾ø¶ÔÂ·¾¶»òÏà¶ÔÂ·¾¶Æ¬¶Î
-			// 1. ¼ì²éÊÇ·ñÖ±½ÓÆ¥ÅäÍêÕûÂ·¾¶
+		else { // æ™®é€šå­—ç¬¦ä¸²è§„åˆ™
+			// è§„åˆ™å¯èƒ½æ˜¯ç»å¯¹è·¯å¾„æˆ–ç›¸å¯¹è·¯å¾„ç‰‡æ®µ
+			// 1. æ£€æŸ¥æ˜¯å¦ç›´æ¥åŒ¹é…å®Œæ•´è·¯å¾„
 			if (file_path_lower.find(rule) != wstring::npos) {
 				return true;
 			}
 
-			// 2. ÎªÁË´¦ÀíÈÈ±¸·İ£¬Èç¹û¹æÔòÊÇ¾ø¶ÔÂ·¾¶£¬ÎÒÃÇĞèÒª½«Æä¶¯Ì¬Ó³Éäµ½¿ìÕÕÂ·¾¶
+			// 2. ä¸ºäº†å¤„ç†çƒ­å¤‡ä»½ï¼Œå¦‚æœè§„åˆ™æ˜¯ç»å¯¹è·¯å¾„ï¼Œæˆ‘ä»¬éœ€è¦å°†å…¶åŠ¨æ€æ˜ å°„åˆ°å¿«ç…§è·¯å¾„
 			filesystem::path rule_path(rule_orig);
 			if (rule_path.is_absolute()) {
-				// ¼ì²é¹æÔòÂ·¾¶ÊÇ·ñÔÚÔ­Ê¼ÊÀ½çÂ·¾¶Ö®ÏÂ
+				// æ£€æŸ¥è§„åˆ™è·¯å¾„æ˜¯å¦åœ¨åŸå§‹ä¸–ç•Œè·¯å¾„ä¹‹ä¸‹
 				auto res = mismatch(original_world_root.begin(), original_world_root.end(), rule_path.begin());
 				if (res.first == original_world_root.end()) {
-					// ÊÇµÄ£¬¹æÔòÊÇÔ­Ê¼ÊÀ½çµÄÒ»¸ö×ÓÂ·¾¶¡£ÏÖÔÚÎÒÃÇ¹¹½¨ËüÔÚ¿ìÕÕÖĞµÄ¶ÔÓ¦Â·¾¶¡£
+					// æ˜¯çš„ï¼Œè§„åˆ™æ˜¯åŸå§‹ä¸–ç•Œçš„ä¸€ä¸ªå­è·¯å¾„ã€‚ç°åœ¨æˆ‘ä»¬æ„å»ºå®ƒåœ¨å¿«ç…§ä¸­çš„å¯¹åº”è·¯å¾„ã€‚
 					error_code rel_ec;
 					filesystem::path rule_relative_to_world = filesystem::relative(rule_path, original_world_root, rel_ec);
 					if (!rel_ec) {
@@ -290,7 +290,7 @@ bool is_blacklisted(
 						wstring remapped_rule_lower = remapped_rule_path.wstring();
 						transform(remapped_rule_lower.begin(), remapped_rule_lower.end(), remapped_rule_lower.begin(), ::towlower);
 
-						// ¼ì²éÎÄ¼şÊÇ·ñÎ»ÓÚÖØÓ³ÉäºóµÄºÚÃûµ¥Â·¾¶ÏÂ
+						// æ£€æŸ¥æ–‡ä»¶æ˜¯å¦ä½äºé‡æ˜ å°„åçš„é»‘åå•è·¯å¾„ä¸‹
 						if (file_path_lower.rfind(remapped_rule_lower, 0) == 0) {
 							return true;
 						}

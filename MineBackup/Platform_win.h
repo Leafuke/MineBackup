@@ -21,7 +21,7 @@ void RemoveTrayIcon();
 void TriggerHotkeyBackup(std::string comment = "Hotkey");
 void TriggerHotkeyRestore();
 void GetUserDefaultUILanguageWin();
-void MessageBoxWin(const std::string& title, const std::string& message);
+void MessageBoxWin(const std::string& title, const std::string& message, int iconType);
 HWND CreateHiddenWindow(HINSTANCE hInstance);
 void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);

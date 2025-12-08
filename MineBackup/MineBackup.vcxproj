@@ -148,10 +148,10 @@
     <ClCompile Include="imgui\imgui_tables.cpp" />
     <ClCompile Include="imgui\imgui_widgets.cpp" />
     <ClCompile Include="KnotLink\main.cpp" />
+    <ClCompile Include="KnotLink\OpenSocketResponser.cpp" />
+    <ClCompile Include="KnotLink\SignalSender.cpp" />
     <ClCompile Include="MineBackup.cpp" />
-    <ClCompile Include="OpenSocketResponser.cpp" />
     <ClCompile Include="Platform_win.cpp" />
-    <ClCompile Include="SignalSender.cpp" />
     <ClCompile Include="text_to_text.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -170,10 +170,10 @@
     <ClInclude Include="imgui\imgui_impl_opengl3.h" />
     <ClInclude Include="imgui\imgui_impl_opengl3_loader.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
+    <ClInclude Include="imgui\imgui_style.h" />
     <ClInclude Include="imgui\imstb_rectpack.h" />
     <ClInclude Include="imgui\imstb_textedit.h" />
     <ClInclude Include="imgui\imstb_truetype.h" />
-    <ClInclude Include="imgui_style.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="KnotLink\OpenSocketResponser.hpp" />
     <ClInclude Include="KnotLink\SignalSender.hpp" />
