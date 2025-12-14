@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _BACKUP_MANAGER_H
 #define _BACKUP_MANAGER_H
 #include <iostream>

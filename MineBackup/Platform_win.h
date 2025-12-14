@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _PLATFORM_WIN_H
 #define _PLATFORM_WIN_H
 #include <iostream>

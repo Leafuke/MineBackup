@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _HISTORY_MANAGER_H
 #define _HISTORY_MANAGER_H
 #include <iostream>

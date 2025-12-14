@@ -1,4 +1,4 @@
-#include <string>
+ï»¿#include <string>
 #ifdef _WIN32
 #include "Platform_win.h"
 #else
@@ -6,7 +6,7 @@
 #endif
 using namespace std;
 
-// ¸¨Öúº¯Êı£ºwstring <-> utf8 string£¨Ê¹ÓÃWinAPI£¬¼æÈİC++17+£©±¾µØ¶à×Ö½Ú±àÂë£¨GBK£©×ªUTF-8
+// è¾…åŠ©å‡½æ•°ï¼šwstring <-> utf8 stringï¼ˆä½¿ç”¨WinAPIï¼Œå…¼å®¹C++17+ï¼‰æœ¬åœ°å¤šå­—èŠ‚ç¼–ç ï¼ˆGBKï¼‰è½¬UTF-8
 string wstring_to_utf8(const wstring& wstr) {
     if (wstr.empty()) return string();
     int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), NULL, 0, NULL, NULL);
@@ -31,7 +31,7 @@ string gbk_to_utf8(const string& gbk)
     string u8str(lenU8, 0);
     WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &u8str[0], lenU8, nullptr, nullptr);
 
-    // È¥µôÄ©Î²µÄ\0
+    // å»æ‰æœ«å°¾çš„\0
     if (!u8str.empty() && u8str.back() == '\0') u8str.pop_back();
     return u8str;
 }
@@ -40,10 +40,10 @@ string utf8_to_gbk(const string& utf8)
     if (utf8.empty())
         return string();
 
-    // 1. ÏÈ°Ñ UTF-8 ×ª³É¿í×Ö·û (UTF-16)
+    // 1. å…ˆæŠŠ UTF-8 è½¬æˆå®½å­—ç¬¦ (UTF-16)
     int wide_len = ::MultiByteToWideChar(
-        CP_UTF8,            // Ô´ÊÇ UTF-8
-        0,                  // Ä¬ÈÏ×ª»»·½Ê½
+        CP_UTF8,            // æºæ˜¯ UTF-8
+        0,                  // é»˜è®¤è½¬æ¢æ–¹å¼
         utf8.c_str(),
         (int)utf8.length(),
         nullptr,
@@ -63,7 +63,7 @@ string utf8_to_gbk(const string& utf8)
         wide_len
     );
 
-    // 2. ÔÙ°Ñ¿í×Ö·û×ª»»³É ANSI (¼´ GBK)
+    // 2. å†æŠŠå®½å­—ç¬¦è½¬æ¢æˆ ANSI (å³ GBK)
     int gbk_len = ::WideCharToMultiByte(
         CP_ACP,             // ANSI code page (GBK)
         0,

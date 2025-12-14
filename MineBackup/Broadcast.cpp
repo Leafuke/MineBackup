@@ -1,4 +1,4 @@
-#include "Broadcast.h"
+﻿#include "Broadcast.h"
 SignalSender* g_signalSender = nullptr;
 OpenSocketResponser* g_commandResponser = nullptr;
 void BroadcastEvent(const std::string& eventPayload) {

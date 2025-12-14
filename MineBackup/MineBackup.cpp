@@ -1,4 +1,4 @@
-#define STB_IMAGE_IMPLEMENTATION
+﻿#define STB_IMAGE_IMPLEMENTATION
 #include "Broadcast.h"
 #include "imgui-all.h"
 #include "imgui_style.h"
@@ -201,20 +201,6 @@ int main(int argc, char** argv)
 		}
 		Sleep(3000);
 		return 0;
-	}
-
-	
-	{ // 检查 VC++2015-2022 运行时
-		HKEY hKey;
-		const wchar_t* registryPath = L"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x86";
-		long result = RegOpenKeyExW(HKEY_LOCAL_MACHINE, registryPath, 0, KEY_READ, &hKey);
-		if (result == ERROR_SUCCESS) {
-			MessageBoxWin(L("NO_RUNNINGTIME"), "ERROR", 2);
-			return -1;
-		}
-		else {
-			RegCloseKey(hKey);
-		}
 	}
 
 	glfwSetErrorCallback(glfw_error_callback);

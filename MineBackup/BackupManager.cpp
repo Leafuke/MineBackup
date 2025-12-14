@@ -1,4 +1,4 @@
-#include "Broadcast.h"
+﻿#include "Broadcast.h"
 #include "BackupManager.h"
 #include "AppState.h"
 #include "text_to_text.h"

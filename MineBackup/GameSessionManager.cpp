@@ -1,4 +1,4 @@
-#include "Broadcast.h"
+ï»¿#include "Broadcast.h"
 #include "BackupManager.h"
 #include "Console.h"
 #include "text_to_text.h"
@@ -17,7 +17,7 @@ MyFolder GetOccupiedWorld() {
 		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
 			const auto& world = cfg.worlds[world_idx];
 			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
-			if (!filesystem::exists(levelDatPath)) { // Ã»ÓĞ session.lock ÎÄ¼ş£¬¿ÉÄÜÊÇ»ùÑÒ°æ´æµµ£¬ĞèÒª±éÀúdbÎÄ¼ş¼ĞÏÂµÄËùÓĞÎÄ¼ş¿´¿´ÓĞÃ»ÓĞ±»Ëø¶¨µÄ
+			if (!filesystem::exists(levelDatPath)) { // æ²¡æœ‰ session.lock æ–‡ä»¶ï¼Œå¯èƒ½æ˜¯åŸºå²©ç‰ˆå­˜æ¡£ï¼Œéœ€è¦éå†dbæ–‡ä»¶å¤¹ä¸‹çš„æ‰€æœ‰æ–‡ä»¶çœ‹çœ‹æœ‰æ²¡æœ‰è¢«é”å®šçš„
 				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
 				if (!filesystem::exists(temp))
 					continue;
@@ -50,7 +50,7 @@ void GameSessionWatcherThread() {
 
 		vector<pair<int, int>> worlds_to_backup;
 
-		// ¼ì²éĞÂÆô¶¯µÄÊÀ½ç
+		// æ£€æŸ¥æ–°å¯åŠ¨çš„ä¸–ç•Œ
 		for (const auto& locked_pair : currently_locked_worlds) {
 			if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
 				console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
@@ -68,7 +68,7 @@ void GameSessionWatcherThread() {
 			}
 		}
 
-		// ¸üĞÂµ±Ç°»î¶¯µÄÊÀ½çÁĞ±í
+		// æ›´æ–°å½“å‰æ´»åŠ¨çš„ä¸–ç•Œåˆ—è¡¨
 		g_activeWorlds = currently_locked_worlds;
 
 		if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
@@ -78,7 +78,7 @@ void GameSessionWatcherThread() {
 				int world_idx = backup_target.second;
 				if (g_appState.configs.count(config_idx) && world_idx < g_appState.configs[config_idx].worlds.size()) {
 					Config backupConfig = g_appState.configs[config_idx];
-					backupConfig.hotBackup = true; // ±ØĞëÈÈ±¸·İ
+					backupConfig.hotBackup = true; // å¿…é¡»çƒ­å¤‡ä»½
 					thread backup_thread(DoBackup, occupied_world, ref(console), L"OnStart");
 					backup_thread.detach();
 				}
@@ -112,7 +112,7 @@ void TriggerHotkeyBackup(string comment) {
 void TriggerHotkeyRestore() {
 
 	HotRestoreState expected_idle = HotRestoreState::IDLE;
-	// Ê¹ÓÃCAS²Ù×÷È·±£Ïß³Ì°²È«µØ´ÓIDLE×ª»»µ½WAITING_FOR_MOD
+	// ä½¿ç”¨CASæ“ä½œç¡®ä¿çº¿ç¨‹å®‰å…¨åœ°ä»IDLEè½¬æ¢åˆ°WAITING_FOR_MOD
 	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
 		console.AddLog(L("[Hotkey] A restore operation is already in progress. Ignoring request."));
 		return;
@@ -130,5 +130,5 @@ void TriggerHotkeyRestore() {
 	
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
-	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // ÖØÖÃ×´Ì¬
+	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // é‡ç½®çŠ¶æ€
 }

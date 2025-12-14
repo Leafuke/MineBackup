@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _BROADCAST_H
 #define _BROADCAST_H
 #include "KnotLink/SignalSender.hpp"

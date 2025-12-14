@@ -1,4 +1,4 @@
-#include "ConfigManager.h"
+﻿#include "ConfigManager.h"
 #include "AppState.h"
 #include "text_to_text.h"
 #include "i18n.h"

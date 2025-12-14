@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _PLATFORM_LINUX_H
 #define _PLATFORM_LINUX_H
 #include <iostream>

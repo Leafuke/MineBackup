@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef TEXT_TO_TEXT_H
 #define TEXT_TO_TEXT_H
 #include <iostream>
