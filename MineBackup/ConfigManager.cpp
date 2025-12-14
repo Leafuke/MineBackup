@@ -56,7 +56,7 @@ void LoadConfigs(const string& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
-	ifstream in(filename, ios::binary);
+	ifstream in(filename.c_str(), ios::binary);
 	if (!in.is_open()) return;
 	string line1;
 	wstring line, section;

@@ -638,7 +638,7 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
 		return true;
 	}
 
-	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDR_FONTS1), L"FONTS");
+	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDR_FONTS1), L"FONTS");
 	if (!hRes) return false;
 
 	HGLOBAL hData = LoadResource(GetModuleHandleW(NULL), hRes);

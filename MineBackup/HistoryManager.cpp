@@ -42,7 +42,7 @@ void SaveHistory() {
 void LoadHistory() {
 	const wstring filename = L"history.dat";
 	g_appState.g_history.clear();
-	ifstream in(filename, ios::binary);
+	ifstream in(filename.c_str(), ios::binary);
 	if (!in.is_open()) return;
 
 	string line_utf8;
