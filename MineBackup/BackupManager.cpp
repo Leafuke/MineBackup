@@ -1245,6 +1245,8 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
 	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
 
+	Sleep(3000); // 等待3秒，确保文件写入完成
+
 	// 查找最新备份文件 (这部分逻辑保持不变)
 	wstring backupDir = cfg.backupPath + L"\\" + world.name;
 	filesystem::path latestBackup;

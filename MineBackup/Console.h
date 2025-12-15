@@ -4,8 +4,13 @@
 
 #include "imgui/imgui.h"
 #include "AppState.h"
+#ifdef _WIN32
 #include "Platform_win.h"
+#else
+#include "Platform_linux.h"
+#endif
 #include "i18n.h"
+
 #include <mutex>
 #include <fstream>
 #include <filesystem>

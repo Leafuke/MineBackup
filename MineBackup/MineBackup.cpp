@@ -14,7 +14,9 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
+
 #include <conio.h>
+#include <fstream>
 
 using namespace std;
 
@@ -31,7 +33,6 @@ int g_windowWidth = 1280, g_windowHeight = 800;
 float g_uiScale = 1.0f;
 
 int last_interval = 15;
-
 
 // 设置项变量（全局）
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
@@ -136,6 +137,7 @@ int main(int argc, char** argv)
 	g_exitWatcherThread = thread(GameSessionWatcherThread);
 	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
 
+#ifdef _WIN32
 	if (g_enableKnotLink) {
 		// 初始化信号发送器 （异步进行避免卡顿）
 		thread linkLoaderThread([]() {
@@ -159,6 +161,7 @@ int main(int argc, char** argv)
 		});
 		linkLoaderThread.detach();
 	}
+#endif
 
 
 	if (g_appState.specialConfigMode)
@@ -425,7 +428,7 @@ int main(int argc, char** argv)
 		}
 		else {
 			glfwPollEvents();
-			Sleep(0.1);
+			this_thread::sleep_for(std::chrono::milliseconds(16)); // 60FPS
 		}
 
 		// Start the Dear ImGui frame
