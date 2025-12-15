@@ -1,12 +1,18 @@
 cmake_minimum_required(VERSION 3.15)
 project(MineBackup)
 
+# For single-config generators (e.g. MinGW Makefiles/Ninja), default to Release.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/MineBackup)
 set(IMGUI_DIR ${SOURCE_DIR}/imgui)
 set(KNOTLINK_DIR ${SOURCE_DIR}/KnotLink)
+set(GLFW_DIR ${SOURCE_DIR}/imgui/GLFW)
 
 set(SOURCES
     ${SOURCE_DIR}/MineBackup.cpp
@@ -53,6 +59,8 @@ set(HEADERS
     ${IMGUI_DIR}/imgui_impl_opengl3.h
     ${IMGUI_DIR}/imgui_impl_opengl3_loader.h
     ${IMGUI_DIR}/imgui_style.h
+    ${GLFW_DIR}/glfw3.h
+    ${GLFW_DIR}/glfw3native.h
     ${KNOTLINK_DIR}/SignalSender.hpp
     ${KNOTLINK_DIR}/TcpClient.hpp
     ${KNOTLINK_DIR}/OpenSocketResponser.hpp
@@ -68,6 +76,7 @@ find_package(OpenGL REQUIRED)
 # find_package(glfw3 REQUIRED)
 find_package(Threads REQUIRED)
 
+# 若使用 MinGW 需要链接 libglfw3.a 而不是 glfw3.lib
 target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenGL::GL
     glfw
@@ -82,8 +91,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 if(WIN32)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/MineBackup.rc)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
+    target_link_libraries(${PROJECT_NAME} PRIVATE dwmapi)
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+
 )
