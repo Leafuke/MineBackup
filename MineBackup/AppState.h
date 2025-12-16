@@ -77,7 +77,6 @@ struct HistoryEntry {
 	std::wstring backupType;
 	std::wstring comment;
 	bool isImportant = false;
-	bool isAutoImportant = false;
 };
 struct AutoBackupTask {
 	std::thread worker;

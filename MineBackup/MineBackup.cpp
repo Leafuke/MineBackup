@@ -38,7 +38,7 @@ int last_interval = 15;
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 wstring Fontss;
 bool showSettings = false;
-bool isSilence = false, isSafeDelete = false;
+bool isSilence = false, isSafeDelete = true;
 bool specialSetting = false;
 bool g_CheckForUpdates = true, g_RunOnStartup = false, g_AutoScanForWorlds = false, g_autoLogEnabled = true;
 bool showHistoryWindow = false;
@@ -126,7 +126,6 @@ int main(int argc, char** argv)
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
 	}
 
-	LoadConfigs("config.ini");
 	CheckForConfigConflicts();
 	LoadHistory();
 	if (g_CheckForUpdates) {
@@ -2393,6 +2392,11 @@ void ShowSettingsWindow() {
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("IS_SAFE_DELETE_TIP"));
 			ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
+
+			if (!isSafeDelete && cfg.keepCount <= cfg.maxSmartBackupsPerFull) {
+				cfg.keepCount = cfg.maxSmartBackupsPerFull + 1;
+			}
+
 			ImGui::SeparatorText(L("BLACKLIST_HEADER"));
 			if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
 				wstring sel = SelectFileDialog();
@@ -3084,7 +3088,6 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine();
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 			selected_entry->isImportant = !selected_entry->isImportant;
-			selected_entry->isAutoImportant = false;
 			SaveHistory();
 		}
 		// -----------

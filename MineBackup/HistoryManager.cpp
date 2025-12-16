@@ -28,14 +28,10 @@ void SaveHistory() {
 				<< entry.worldName << L"|"
 				<< entry.backupFile << L"|"
 				<< entry.backupType << L"|"
-				<< entry.comment;
-			if (entry.isImportant) {
-				out << L"|important";
-				if (entry.isAutoImportant) {
-					out << L":auto";
-				}
-			}
-			out << L"\n";
+				<< entry.comment
+				<< entry.comment
+				<< (entry.isImportant ? L"|important" : L"")
+				<< L"\n";
 		}
 	}
 	out.close();
@@ -43,29 +39,30 @@ void SaveHistory() {
 	SetFileAttributesWin(filename, 1);
 }
 
-void UpdateAutoPinnedFullBackup(int configIndex, const wstring& worldName, const wstring& latestFullBackupFile) {
-	if (!g_appState.g_history.count(configIndex)) return;
-	bool changed = false;
-	auto& history_vec = g_appState.g_history[configIndex];
-	for (auto& entry : history_vec) {
-		if (entry.worldName != worldName) continue;
-		if (entry.backupFile == latestFullBackupFile) {
-			if (!entry.isImportant || !entry.isAutoImportant) {
-				entry.isImportant = true;
-				entry.isAutoImportant = true;
-				changed = true;
-			}
-		}
-		else if (entry.isAutoImportant) {
-			entry.isAutoImportant = false;
-			entry.isImportant = false;
-			changed = true;
-		}
-	}
-	if (changed) {
-		SaveHistory();
-	}
-}
+// 暂时不使用自动标记的方案
+//void UpdateAutoPinnedFullBackup(int configIndex, const wstring& worldName, const wstring& latestFullBackupFile) {
+//	if (!g_appState.g_history.count(configIndex)) return;
+//	bool changed = false;
+//	auto& history_vec = g_appState.g_history[configIndex];
+//	for (auto& entry : history_vec) {
+//		if (entry.worldName != worldName) continue;
+//		if (entry.backupFile == latestFullBackupFile) {
+//			if (!entry.isImportant || !entry.isAutoImportant) {
+//				entry.isImportant = true;
+//				entry.isAutoImportant = true;
+//				changed = true;
+//			}
+//		}
+//		else if (entry.isAutoImportant) {
+//			entry.isAutoImportant = false;
+//			entry.isImportant = false;
+//			changed = true;
+//		}
+//	}
+//	if (changed) {
+//		SaveHistory();
+//	}
+//}
 
 // 从文件加载历史记录
 void LoadHistory() {
@@ -106,16 +103,7 @@ void LoadHistory() {
 						entry.backupFile = segments[2];
 						entry.backupType = segments[3];
 						entry.comment = segments[4];
-						if (segments.size() >= 6) {
-							const wstring& flagSegment = segments[5];
-							const wstring importantFlag = L"important";
-							if (flagSegment.compare(0, importantFlag.size(), importantFlag) == 0) {
-								entry.isImportant = true;
-								if (flagSegment.size() > importantFlag.size() && flagSegment.substr(importantFlag.size()) == L":auto") {
-									entry.isAutoImportant = true;
-								}
-							}
-						}
+						entry.isImportant = (segments.size() >= 6 && segments[5] == L"important");
 						g_appState.g_history[current_config_id].push_back(entry);
 					}
 					else if (segments.size() == 4) { // 没有设置注释

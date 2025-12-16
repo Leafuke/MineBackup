@@ -624,14 +624,11 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
-		if (config.backupMode != 3) {
-			const int historyConfigIndex = (folder.configIndex != -1) ? folder.configIndex : g_appState.currentConfigIndex;
-			const wstring backupFilename = filesystem::path(archivePath).filename().wstring();
-			AddHistoryEntry(historyConfigIndex, folder.name, backupFilename, backupTypeStr, comment);
-			if (config.backupMode == 2 && backupTypeStr == L"Full") {
-				UpdateAutoPinnedFullBackup(historyConfigIndex, folder.name, backupFilename);
-			}
-		}
+		if (folder.configIndex != -1 && config.backupMode != 3)
+			AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+		else if (config.backupMode != 3)
+			AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+
         g_appState.realConfigIndex = -1;
         // 广播一个成功事件
         string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
