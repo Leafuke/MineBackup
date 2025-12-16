@@ -264,6 +264,10 @@ void LoadConfigs(const string& filename) {
 	}
 	if (!restoreWhiteList) {
 		restoreWhitelist.push_back(L"fake_player.gca.json");
+		restoreWhitelist.push_back(L"xaeromap.txt");
+		restoreWhitelist.push_back(L"soul_archive.json");
+		restoreWhitelist.push_back(L"level.dat");
+		restoreWhitelist.push_back(L"level.dat_old");
 	}
 }
 
