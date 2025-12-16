@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _CONFIG_MANAGER_H
 #define _CONFIG_MANAGER_H
 #include <iostream>

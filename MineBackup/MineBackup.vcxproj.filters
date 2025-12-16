@@ -48,9 +48,6 @@
     <ClCompile Include="HistoryManager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="KnotLink\main.cpp">
-      <Filter>KnotLink</Filter>
-    </ClCompile>
     <ClCompile Include="MineBackup.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -81,14 +78,14 @@
     <ClCompile Include="Broadcast.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="OpenSocketResponser.cpp">
-      <Filter>KnotLink</Filter>
-    </ClCompile>
-    <ClCompile Include="SignalSender.cpp">
-      <Filter>KnotLink</Filter>
-    </ClCompile>
     <ClCompile Include="GameSessionManager.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="KnotLink\OpenSocketResponser.cpp">
+      <Filter>KnotLink</Filter>
+    </ClCompile>
+    <ClCompile Include="KnotLink\SignalSender.cpp">
+      <Filter>KnotLink</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -173,7 +170,7 @@
     <ClInclude Include="Platform_linux.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="imgui_style.h">
+    <ClInclude Include="imgui\imgui_style.h">
       <Filter>imgui</Filter>
     </ClInclude>
   </ItemGroup>

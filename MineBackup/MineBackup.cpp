@@ -1,4 +1,4 @@
-#define STB_IMAGE_IMPLEMENTATION
+ï»¿#define STB_IMAGE_IMPLEMENTATION
 #include "Broadcast.h"
 #include "imgui-all.h"
 #include "imgui_style.h"
@@ -14,7 +14,9 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
+
 #include <conio.h>
+#include <fstream>
 
 using namespace std;
 
@@ -22,7 +24,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.11.0";
+string CURRENT_VERSION = "1.11.1";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -32,8 +34,7 @@ float g_uiScale = 1.0f;
 
 int last_interval = 15;
 
-
-// ÉèÖÃÏî±äÁ¿£¨È«¾Ö£©
+// è®¾ç½®é¡¹å˜é‡ï¼ˆå…¨å±€ï¼‰
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 wstring Fontss;
 bool showSettings = false;
@@ -50,7 +51,7 @@ thread g_exitWatcherThread;
 atomic<bool> g_stopExitWatcher(false);
 wstring g_worldToFocusInHistory = L"";
 vector<wstring> restoreWhitelist;
-extern enum class BackupCheckResult {
+enum class BackupCheckResult {
 	NO_CHANGE,
 	CHANGES_DETECTED,
 	FORCE_FULL_BACKUP_METADATA_INVALID,
@@ -90,7 +91,7 @@ void ConsoleLog(Console* console, const char* format, ...);
 #ifdef _WIN32
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
-	// ÉèÖÃµ±Ç°¹¤×÷Ä¿Â¼Îª¿ÉÖ´ĞĞÎÄ¼şËùÔÚÄ¿Â¼£¬±ÜÃâ¿ª»ú×ÔÆôÑ°ÕÒconfig´íÎó
+	// è®¾ç½®å½“å‰å·¥ä½œç›®å½•ä¸ºå¯æ‰§è¡Œæ–‡ä»¶æ‰€åœ¨ç›®å½•ï¼Œé¿å…å¼€æœºè‡ªå¯å¯»æ‰¾configé”™è¯¯
 	wchar_t exePath[MAX_PATH];
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
 	SetCurrentDirectoryW(filesystem::path(exePath).parent_path().c_str());
@@ -122,7 +123,7 @@ int main(int argc, char** argv)
 	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
 
 	if (!sevenZipExtracted || !fontExtracted) {
-		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"));
+		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
 	}
 
 	LoadConfigs("config.ini");
@@ -136,16 +137,17 @@ int main(int argc, char** argv)
 	g_exitWatcherThread = thread(GameSessionWatcherThread);
 	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
 
+#ifdef _WIN32
 	if (g_enableKnotLink) {
-		// ³õÊ¼»¯ĞÅºÅ·¢ËÍÆ÷ £¨Òì²½½øĞĞ±ÜÃâ¿¨¶Ù£©
+		// åˆå§‹åŒ–ä¿¡å·å‘é€å™¨ ï¼ˆå¼‚æ­¥è¿›è¡Œé¿å…å¡é¡¿ï¼‰
 		thread linkLoaderThread([]() {
 			g_signalSender = new SignalSender("0x00000020", "0x00000020");
-			// ³õÊ¼»¯ÃüÁîÏìÓ¦Æ÷£¬²¢½« ProcessCommand ÉèÎª»Øµ÷
+			// åˆå§‹åŒ–å‘½ä»¤å“åº”å™¨ï¼Œå¹¶å°† ProcessCommand è®¾ä¸ºå›è°ƒ
 			try {
 				g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
 				g_commandResponser->setQuestionHandler(
 					[](const string& q) {
-						// ½«ÊÕµ½µÄÎÊÌâ½»¸øÃüÁî´¦ÀíÆ÷
+						// å°†æ”¶åˆ°çš„é—®é¢˜äº¤ç»™å‘½ä»¤å¤„ç†å™¨
 						console.AddLog("[KnotLink] Received: %s", q.c_str());
 						string response = ProcessCommand(q, &console);
 						console.AddLog("[KnotLink] Responded: %s", response.c_str());
@@ -159,6 +161,7 @@ int main(int argc, char** argv)
 		});
 		linkLoaderThread.detach();
 	}
+#endif
 
 
 	if (g_appState.specialConfigMode)
@@ -175,13 +178,13 @@ int main(int argc, char** argv)
 			freopen_s(&pCout, "CONOUT$", "w", stdout);
 			freopen_s(&pCerr, "CONOUT$", "w", stderr);
 			freopen_s(&pCin, "CONIN$", "r", stdin);
-			// ½« stdout ºÍ stderr ÉèÖÃÎª UTF-8 ±àÂë
+			// å°† stdout å’Œ stderr è®¾ç½®ä¸º UTF-8 ç¼–ç 
 			SetConsoleOutputCP(CP_UTF8);
 		}
 
 		RunSpecialMode(g_appState.currentConfigIndex);
 
-		// ½«²¶»ñµ½µÄËùÓĞÈÕÖ¾Ğ´ÈëÎÄ¼ş
+		// å°†æ•è·åˆ°çš„æ‰€æœ‰æ—¥å¿—å†™å…¥æ–‡ä»¶
 		ofstream log_file("special_mode_log.txt", ios::app);
 		if (log_file.is_open()) {
 			log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
@@ -201,20 +204,6 @@ int main(int argc, char** argv)
 		}
 		Sleep(3000);
 		return 0;
-	}
-
-	
-	{ // ¼ì²é VC++2015-2022 ÔËĞĞÊ±
-		HKEY hKey;
-		const wchar_t* registryPath = L"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x86";
-		long result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, registryPath, 0, KEY_READ, &hKey);
-		if (result == ERROR_SUCCESS) {
-			MessageBox(NULL, utf8_to_wstring(gbk_to_utf8(L("NO_RUNNINGTIME"))).c_str(), L"ERROR", MB_ICONERROR);
-			return -1;
-		}
-		else {
-			RegCloseKey(hKey);
-		}
 	}
 
 	glfwSetErrorCallback(glfw_error_callback);
@@ -268,18 +257,18 @@ int main(int argc, char** argv)
 
 #ifdef _WIN32
 	int width, height, channels;
-	// ÎªÁË¿çÆ½Ì¨£¬¸üºÃµÄ·½Ê½ÊÇÖ±½Ó¼ÓÔØÒ»¸öpngÎÄ¼ş - Ğ´cmakeµÄÊ±ºòÔÙÌæ»»°É
+	// ä¸ºäº†è·¨å¹³å°ï¼Œæ›´å¥½çš„æ–¹å¼æ˜¯ç›´æ¥åŠ è½½ä¸€ä¸ªpngæ–‡ä»¶ - å†™cmakeçš„æ—¶å€™å†æ›¿æ¢å§
 	// unsigned char* pixels = stbi_load("icon.png", &width, &height, 0, 4); 
-	HRSRC hRes = FindResource(hInstance, MAKEINTRESOURCE(IDI_ICON3), RT_GROUP_ICON);
+	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(IDI_ICON3), RT_GROUP_ICON);
 	HGLOBAL hMem = LoadResource(hInstance, hRes);
 	void* pMem = LockResource(hMem);
 	int nId = LookupIconIdFromDirectoryEx((PBYTE)pMem, TRUE, 0, 0, LR_DEFAULTCOLOR);
-	hRes = FindResource(hInstance, MAKEINTRESOURCE(nId), RT_ICON);
+	hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(nId), RT_ICON);
 	hMem = LoadResource(hInstance, hRes);
 	pMem = LockResource(hMem);
 #endif
 
-	// ´ÓÄÚ´æÖĞµÄÍ¼±êÊı¾İ¼ÓÔØ
+	// ä»å†…å­˜ä¸­çš„å›¾æ ‡æ•°æ®åŠ è½½
 	unsigned char* pixels = stbi_load_from_memory((const stbi_uc*)pMem, SizeofResource(hInstance, hRes), &width, &height, &channels, 4);
 
 	if (pixels) {
@@ -298,15 +287,15 @@ int main(int argc, char** argv)
 
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 	io.FontGlobalScale = g_uiScale;
-	// ÆôÓÃDocking
+	// å¯ç”¨Docking
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // ¼ÓÉÏ¾ÍÊ§È¥Ô²½ÇÁË£¬²»ÖªµÀÔõÃ´½â¾ö
-	io.ConfigViewportsNoAutoMerge = true; // ²»×Ô¶¯ºÏ²¢ÊÓ¿Ú
+	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // åŠ ä¸Šå°±å¤±å»åœ†è§’äº†ï¼Œä¸çŸ¥é“æ€ä¹ˆè§£å†³
+	io.ConfigViewportsNoAutoMerge = true; // ä¸è‡ªåŠ¨åˆå¹¶è§†å£
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
 	ImGuiStyle& style = ImGui::GetStyle();
-	// ÉèÖÃ×ÖÌåºÍÈ«¾ÖËõ·Å
+	// è®¾ç½®å­—ä½“å’Œå…¨å±€ç¼©æ”¾
 	style.ScaleAllSizes(g_uiScale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
 	io.ConfigDpiScaleFonts = true;
 	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
@@ -342,7 +331,7 @@ int main(int argc, char** argv)
 	//float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
 
 	if (g_appState.configs.count(g_appState.currentConfigIndex))
-		ApplyTheme(g_appState.configs[g_appState.currentConfigIndex].theme); // °ÑÖ÷Ìâ¼ÓÔØ·ÅÔÚÕâÀïÁË
+		ApplyTheme(g_appState.configs[g_appState.currentConfigIndex].theme); // æŠŠä¸»é¢˜åŠ è½½æ”¾åœ¨è¿™é‡Œäº†
 	else if (g_appState.specialConfigs.count(g_appState.currentConfigIndex))
 		ApplyTheme(g_appState.specialConfigs[g_appState.currentConfigIndex].theme);
 
@@ -369,7 +358,7 @@ int main(int argc, char** argv)
 		else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
 			Fontss = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
 		else
-			Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"; // Ó¢ÎÄ/Í¨ÓÃ
+			Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"; // è‹±æ–‡/é€šç”¨
 #endif
 	}
 	if (g_CurrentLang == "zh_CN")
@@ -377,33 +366,33 @@ int main(int argc, char** argv)
 	else
 		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
 
-	// ×¼±¸ºÏ²¢Í¼±ê×ÖÌå
+	// å‡†å¤‡åˆå¹¶å›¾æ ‡å­—ä½“
 	ImFontConfig config2;
 	config2.MergeMode = true;
 	config2.PixelSnapH = true;
-	config2.GlyphMinAdvanceX = 20.0f; // Í¼±êµÄ¿í¶È
-	// ¶¨ÒåÒª´ÓÍ¼±ê×ÖÌåÖĞ¼ÓÔØµÄÍ¼±ê·¶Î§
+	config2.GlyphMinAdvanceX = 20.0f; // å›¾æ ‡çš„å®½åº¦
+	// å®šä¹‰è¦ä»å›¾æ ‡å­—ä½“ä¸­åŠ è½½çš„å›¾æ ‡èŒƒå›´
 	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
-	// ¼ÓÔØ²¢ºÏ²¢
+	// åŠ è½½å¹¶åˆå¹¶
 	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
 
-	// ¹¹½¨×ÖÌåÍ¼Æ×
+	// æ„å»ºå­—ä½“å›¾è°±
 	io.Fonts->Build();
 
 	console.AddLog(L("CONSOLE_WELCOME"));
 
-	// ¼ÇÂ¼×¢ÊÍ
+	// è®°å½•æ³¨é‡Š
 	static char backupComment[CONSTANT1] = "";
 
 
-	// Èç¹û¿ªÁË×Ô¶¯É¨Ãè£¬ÄÇÃ´¾Í¼ì²éÒ»ÏÂ£¬È»ºóÌí¼Ó
+	// å¦‚æœå¼€äº†è‡ªåŠ¨æ‰«æï¼Œé‚£ä¹ˆå°±æ£€æŸ¥ä¸€ä¸‹ï¼Œç„¶åæ·»åŠ 
 	if (g_AutoScanForWorlds) {
 		for (auto& [idx, config] : g_appState.configs) {
 			for (auto& entry : filesystem::directory_iterator(filesystem::path(config.saveRoot).parent_path().parent_path())) {
 				if (!entry.is_directory() || !(filesystem::exists(entry.path() / "saves")) || filesystem::path(config.saveRoot).parent_path().parent_path() == "")
 					continue;
-				// ¼ì²éÊÇ·ñÒÑ¾­ÔÚÅäÖÃÖĞÁË
+				// æ£€æŸ¥æ˜¯å¦å·²ç»åœ¨é…ç½®ä¸­äº†
 				bool alreadyExists = false;
 				for (auto& [i, c] : g_appState.configs) {
 					if (c.saveRoot == (entry.path() / "saves").wstring()) {
@@ -414,7 +403,7 @@ int main(int argc, char** argv)
 				if (alreadyExists)
 					continue;
 
-				// Ã»ÓĞµÄ»°Ìí¼ÓÎªĞÂµÄÅäÖÃ
+				// æ²¡æœ‰çš„è¯æ·»åŠ ä¸ºæ–°çš„é…ç½®
 				int index = CreateNewNormalConfig();
 				g_appState.configs[index] = config;
 				g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
@@ -439,7 +428,7 @@ int main(int argc, char** argv)
 		}
 		else {
 			glfwPollEvents();
-			Sleep(0.1);
+			this_thread::sleep_for(std::chrono::milliseconds(16)); // 60FPS
 		}
 
 		// Start the Dear ImGui frame
@@ -448,7 +437,7 @@ int main(int argc, char** argv)
 		ImGui::NewFrame();
 
 		if (showConfigWizard) {
-			// Ê×´ÎÆô¶¯Ïòµ¼Ê¹ÓÃµÄ¾²Ì¬±äÁ¿
+			// é¦–æ¬¡å¯åŠ¨å‘å¯¼ä½¿ç”¨çš„é™æ€å˜é‡
 			static int page = 0, themeId = 5;
 			static bool isWizardOpen = true;
 			static char saveRootPath[CONSTANT1] = "";
@@ -472,9 +461,9 @@ int main(int argc, char** argv)
 				const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 				if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
 					if (themeId == 7 && !filesystem::exists("custom_theme.json")) {
-						// ´ò¿ª×Ô¶¨ÒåÖ÷Ìâ±à¼­Æ÷
+						// æ‰“å¼€è‡ªå®šä¹‰ä¸»é¢˜ç¼–è¾‘å™¨
 						ImGuiTheme::WriteDefaultCustomTheme();
-						// ´ò¿ª custom_theme.json ÎÄ¼ş¹©ÓÃ»§±à¼­
+						// æ‰“å¼€ custom_theme.json æ–‡ä»¶ä¾›ç”¨æˆ·ç¼–è¾‘
 						OpenFolder(L"custom_theme.json");
 					}
 					else {
@@ -500,11 +489,11 @@ int main(int argc, char** argv)
 				ImGui::TextWrapped(L("WIZARD_STEP1_DESC2"));
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-				// ÕÒÂ·¾¶
+				// æ‰¾è·¯å¾„
 				string pathTemp;
 				if (ImGui::Button(L("BUTTON_AUTO_JAVA"))) {
 					char* buffer_env_appdata = nullptr;
-					// ½«getenv»»³É_dupenv_s
+					// å°†getenvæ¢æˆ_dupenv_s
 					_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
 					if (filesystem::exists((string)buffer_env_appdata + "\\.minecraft\\saves")) {
 						pathTemp = (string)buffer_env_appdata + "\\.minecraft\\saves";
@@ -518,7 +507,7 @@ int main(int argc, char** argv)
 					_dupenv_s(&buffer_env_username, nullptr, "USERNAME");
 					if (filesystem::exists((string)buffer_env_appdata + "\\Minecraft Bedrock\\Users")) {
 						pathTemp = (string)buffer_env_appdata + "\\Minecraft Bedrock\\Users";
-						// Õâ¸öÎÄ¼ş¼ĞÏÂÓĞ¶à¸öÓÃ»§ÎÄ¼ş¼Ğ£¬Ä¬ÈÏÑ¡µÚÒ»¸ö
+						// è¿™ä¸ªæ–‡ä»¶å¤¹ä¸‹æœ‰å¤šä¸ªç”¨æˆ·æ–‡ä»¶å¤¹ï¼Œé»˜è®¤é€‰ç¬¬ä¸€ä¸ª
 						for (const auto& entry : filesystem::directory_iterator(pathTemp)) {
 							if (entry.is_directory() && (entry.path().filename().string()[0] - '0') < 10 && (entry.path().filename().string()[0] - '0') >= 0) {
 								pathTemp = pathTemp + entry.path().filename().string() + "games" + "com.mojang" + "minecraftWorlds";
@@ -572,7 +561,7 @@ int main(int argc, char** argv)
 				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
-					// ´æÔÚÖĞÎÄÂ·¾¶£¬Òªgbk
+					// å­˜åœ¨ä¸­æ–‡è·¯å¾„ï¼Œè¦gbk
 					if (strlen(backupPath) > 0 && filesystem::exists(utf8_to_wstring(backupPath))) {
 						page++;
 						errorShow = false;
@@ -588,14 +577,14 @@ int main(int argc, char** argv)
 				ImGui::Text(L("WIZARD_STEP3_TITLE"));
 				ImGui::TextWrapped(L("WIZARD_STEP3_DESC"));
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
-				// ¼ì²éÄÚÇ¶µÄ7zÊÇ·ñÒÑÊÍ·Å³É¹¦
+				// æ£€æŸ¥å†…åµŒçš„7zæ˜¯å¦å·²é‡Šæ”¾æˆåŠŸ
 				if (sevenZipExtracted) {
 					string extracted_path_utf8 = wstring_to_utf8(g_7zTempPath);
 					strncpy_s(zipPath, extracted_path_utf8.c_str(), sizeof(zipPath));
 					ImGui::TextColored(ImVec4(0.4f, 0.7f, 0.4f, 1.0f), L("WIZARD_USING_EMBEDDED_7Z"));
 				}
 				else {
-					// Èç¹ûÊÍ·ÅÊ§°Ü£¬Ö´ĞĞÔ­À´µÄ×Ô¶¯¼ì²âÂß¼­
+					// å¦‚æœé‡Šæ”¾å¤±è´¥ï¼Œæ‰§è¡ŒåŸæ¥çš„è‡ªåŠ¨æ£€æµ‹é€»è¾‘
 					if (filesystem::exists("7z.exe"))
 					{
 						strncpy_s(zipPath, "7z.exe", sizeof(zipPath));
@@ -628,13 +617,13 @@ int main(int argc, char** argv)
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_FINISH_CONFIG"), ImVec2(120, 0))) {
 					if (strlen(saveRootPath) > 0 && strlen(backupPath) > 0 && strlen(zipPath) > 0) {
-						// ´´½¨²¢Ìî³äµÚÒ»¸öÅäÖÃ
+						// åˆ›å»ºå¹¶å¡«å……ç¬¬ä¸€ä¸ªé…ç½®
 						g_appState.currentConfigIndex = 1;
 						Config& initialConfig = g_appState.configs[g_appState.currentConfigIndex];
 
-						// 1. ±£´æÏòµ¼ÖĞÊÕ¼¯µÄÂ·¾¶
+						// 1. ä¿å­˜å‘å¯¼ä¸­æ”¶é›†çš„è·¯å¾„
 						initialConfig.name = "First";
-						// wstring_to_utf8(filesystem::path(saveRootPath).filename().wstring()) filename»á´íÎóµØ½«ÖĞÎÄºÍÁ¬ĞøÓ¢ÎÄ»ìÏı
+						// wstring_to_utf8(filesystem::path(saveRootPath).filename().wstring()) filenameä¼šé”™è¯¯åœ°å°†ä¸­æ–‡å’Œè¿ç»­è‹±æ–‡æ··æ·†
 						initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
 						initialConfig.backupPath = utf8_to_wstring(backupPath);
 						initialConfig.zipPath = utf8_to_wstring(zipPath);
@@ -651,11 +640,11 @@ int main(int argc, char** argv)
 							}
 						}
 
-						// 2. ×Ô¶¯É¨Ãè´æµµÄ¿Â¼£¬Ìî³äÊÀ½çÁĞ±í
+						// 2. è‡ªåŠ¨æ‰«æå­˜æ¡£ç›®å½•ï¼Œå¡«å……ä¸–ç•Œåˆ—è¡¨
 						if (filesystem::exists(initialConfig.saveRoot)) {
 							for (auto& entry : filesystem::directory_iterator(initialConfig.saveRoot)) {
 								if (entry.is_directory()) {
-									// Õë¶Ô»ùÑÒ°æµÄÌØÊâ´¦Àí£º°Ñ levelname.txt ÀïµÄÄÚÈİµ±×öÎÄ¼şÃèÊö
+									// é’ˆå¯¹åŸºå²©ç‰ˆçš„ç‰¹æ®Šå¤„ç†ï¼šæŠŠ levelname.txt é‡Œçš„å†…å®¹å½“åšæ–‡ä»¶æè¿°
 									
 									if (filesystem::exists(entry.path() / "levelname.txt")) {
 										ifstream levelNameFile(entry.path() / "levelname.txt");
@@ -665,13 +654,13 @@ int main(int argc, char** argv)
 										initialConfig.worlds.push_back({ entry.path().filename().wstring(), utf8_to_wstring(levelName) });
 									}
 									else {
-										initialConfig.worlds.push_back({ entry.path().filename().wstring(), L"" }); // Ãû³ÆÎªÎÄ¼ş¼ĞÃû£¬ÃèÊöÎª¿Õ
+										initialConfig.worlds.push_back({ entry.path().filename().wstring(), L"" }); // åç§°ä¸ºæ–‡ä»¶å¤¹åï¼Œæè¿°ä¸ºç©º
 									}
 								}
 							}
 						}
 
-						// 3. ÉèÖÃºÏÀíµÄÄ¬ÈÏÖµ
+						// 3. è®¾ç½®åˆç†çš„é»˜è®¤å€¼
 						initialConfig.zipFormat = L"7z";
 						initialConfig.zipLevel = 5;
 						initialConfig.keepCount = 0;
@@ -706,7 +695,7 @@ int main(int argc, char** argv)
 #endif
 						g_appState.specialConfigs.clear();
 
-						// 4. ±£´æµ½ÎÄ¼ş²¢ÇĞ»»µ½Ö÷Ó¦ÓÃ½çÃæ
+						// 4. ä¿å­˜åˆ°æ–‡ä»¶å¹¶åˆ‡æ¢åˆ°ä¸»åº”ç”¨ç•Œé¢
 						SaveConfigs();
 						showConfigWizard = false;
 						g_appState.showMainApp = true;
@@ -736,7 +725,7 @@ int main(int argc, char** argv)
 			ImGui::PopStyleVar(3);
 
 			static bool showAboutWindow = false;
-			// --- ¶¥²¿²Ëµ¥À¸ ---
+			// --- é¡¶éƒ¨èœå•æ  ---
 			if (ImGui::BeginMenuBar()) {
 
 				if (ImGui::BeginMenu(L("MENU_FILE"))) {
@@ -759,7 +748,7 @@ int main(int argc, char** argv)
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Separator();
-					// ÈÈ¼üÉèÖÃÓÒÀ­À¸£¨Êó±ê·ÅÉÏÈ¥»áÏòÓÒÕ¹¿ªÁ½¸ö£©
+					// çƒ­é”®è®¾ç½®å³æ‹‰æ ï¼ˆé¼ æ ‡æ”¾ä¸Šå»ä¼šå‘å³å±•å¼€ä¸¤ä¸ªï¼‰
 #ifdef _WIN32
 					static bool waitingForHotkey = false;
 					static int whichFunc = 0;
@@ -827,6 +816,9 @@ int main(int argc, char** argv)
 					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
 						OpenLinkInBrowser(L"https://docs.qq.com/doc/DUUp4UVZOYmZWcm5M");
 					}
+					if (ImGui::MenuItem(L("SPONSOR_ME"))) {
+						OpenLinkInBrowser(L"https://afdian.com/a/MineBackup");
+					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
 						showAboutWindow = true;
 						ImGui::OpenPopup(L("MENU_ABOUT"));
@@ -835,7 +827,7 @@ int main(int argc, char** argv)
 				}
 			
 
-				// ÔÚ²Ëµ¥À¸ÓÒ²àÏÔÊ¾¸üĞÂ°´Å¥
+				// åœ¨èœå•æ å³ä¾§æ˜¾ç¤ºæ›´æ–°æŒ‰é’®
 				if (g_NewVersionAvailable) {
 					ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(L("UPDATE_AVAILABLE_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2 - 100);
 					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.902f, 0.6f, 1.0f));
@@ -890,7 +882,7 @@ int main(int argc, char** argv)
 
 				{
 					float buttonSize = ImGui::GetFrameHeight();
-					// ½«°´Å¥ÍÆµ½²Ëµ¥À¸µÄ×îÓÒ±ß
+					// å°†æŒ‰é’®æ¨åˆ°èœå•æ çš„æœ€å³è¾¹
 					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonSize * 3);
 
 					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -946,7 +938,7 @@ int main(int argc, char** argv)
 				ImGui::Text("%s", L("ABOUT_LICENSE_TEXT"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
-				if (ImGui::Button(L("BUTTON_OK"), ImVec2(250, 0))) // ¸ø°´Å¥Ò»¸ö¹Ì¶¨¿í¶ÈÒÔ»ñµÃ¸üºÃµÄ¹Û¸Ğ
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(250, 0))) // ç»™æŒ‰é’®ä¸€ä¸ªå›ºå®šå®½åº¦ä»¥è·å¾—æ›´å¥½çš„è§‚æ„Ÿ
 				{
 					showAboutWindow = false;
 					ImGui::CloseCurrentPopup();
@@ -979,10 +971,10 @@ int main(int argc, char** argv)
 
 			ImGui::End(); // End of MainDockSpaceHost
 
-			static int selectedWorldIndex = -1;       // ¸ú×ÙÓÃ»§ÔÚÁĞ±íÖĞÑ¡ÔñµÄÊÀ½ç
-			static char backupComment[CONSTANT1] = "";// ±¸·İ×¢ÊÍÊäÈë¿òµÄÄÚÈİ
-			// »ñÈ¡µ±Ç°ÅäÖÃ
-			if (!g_appState.configs.count(g_appState.currentConfigIndex)) { // ÕÒ²»µ½£¬ËµÃ÷Ó¦¸Ã¶ÔÓ¦µÄÊÇÌØÊâÅäÖÃ
+			static int selectedWorldIndex = -1;       // è·Ÿè¸ªç”¨æˆ·åœ¨åˆ—è¡¨ä¸­é€‰æ‹©çš„ä¸–ç•Œ
+			static char backupComment[CONSTANT1] = "";// å¤‡ä»½æ³¨é‡Šè¾“å…¥æ¡†çš„å†…å®¹
+			// è·å–å½“å‰é…ç½®
+			if (!g_appState.configs.count(g_appState.currentConfigIndex)) { // æ‰¾ä¸åˆ°ï¼Œè¯´æ˜åº”è¯¥å¯¹åº”çš„æ˜¯ç‰¹æ®Šé…ç½®
 				specialSetting = true;
 			}
 
@@ -990,7 +982,7 @@ int main(int argc, char** argv)
 			float leftW = totalW * 0.32f;
 			float midW = totalW * 0.25f;
 			float rightW = totalW * 0.42f;
-			// --- ¶¯Ì¬µ÷ÕûÊÀ½çÍ¼±êÎÆÀíºÍ³ß´çÏòÁ¿µÄ´óĞ¡ ---
+			// --- åŠ¨æ€è°ƒæ•´ä¸–ç•Œå›¾æ ‡çº¹ç†å’Œå°ºå¯¸å‘é‡çš„å¤§å° ---
 			vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
 			int worldCount = (int)displayWorlds.size();
 
@@ -1009,7 +1001,7 @@ int main(int argc, char** argv)
 				static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
 
 				if (ImGui::BeginCombo("##ConfigSwitcher", current_config_label.c_str())) {
-					// ÆÕÍ¨ÅäÖÃ
+					// æ™®é€šé…ç½®
 					for (auto const& [idx, val] : g_appState.configs) {
 						const bool is_selected = (g_appState.currentConfigIndex == idx);
 						string label = "[No." + to_string(idx) + "] " + val.name;
@@ -1023,7 +1015,7 @@ int main(int argc, char** argv)
 						}
 					}
 					ImGui::Separator();
-					// ÌØÊâÅäÖÃ
+					// ç‰¹æ®Šé…ç½®
 					for (auto const& [idx, val] : g_appState.specialConfigs) {
 						const bool is_selected = (g_appState.currentConfigIndex == (idx));
 						string label = "[Sp." + to_string((idx)) + "] " + val.name;
@@ -1040,7 +1032,7 @@ int main(int argc, char** argv)
 					}
 
 					if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
-						if ((!specialSetting && g_appState.configs.size() > 1) || (specialSetting && !g_appState.specialConfigs.empty())) { // ÖÁÉÙ±£ÁôÒ»¸ö
+						if ((!specialSetting && g_appState.configs.size() > 1) || (specialSetting && !g_appState.specialConfigs.empty())) { // è‡³å°‘ä¿ç•™ä¸€ä¸ª
 							showDeleteConfigPopup = true;
 						}
 					}
@@ -1049,7 +1041,7 @@ int main(int argc, char** argv)
 					ImGui::EndCombo();
 				}
 
-				// É¾³ıÅäÖÃµ¯´°
+				// åˆ é™¤é…ç½®å¼¹çª—
 				if (showDeleteConfigPopup)
 					ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
 				if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1081,7 +1073,7 @@ int main(int argc, char** argv)
 					}
 					ImGui::EndPopup();
 				}
-				// Ìí¼ÓĞÂÅäÖÃµ¯´°
+				// æ·»åŠ æ–°é…ç½®å¼¹çª—
 				if (showAddConfigPopup)
 					ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
 				if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
@@ -1108,9 +1100,9 @@ int main(int argc, char** argv)
 						if (strlen(new_config_name) > 0) {
 							if (config_type == 0) {
 								//int new_index = g_appState.configs.empty() ? 1 : g_appState.configs.rbegin()->first + 1;
-								// Ô­±¾ÊÇ g_appState.configs.rbegin()->first + 1£¬ÕâÑù²»Ì«ºÃ£¬ÏÖÔÚÍ³Ò»³ÉnextConfigId
+								// åŸæœ¬æ˜¯ g_appState.configs.rbegin()->first + 1ï¼Œè¿™æ ·ä¸å¤ªå¥½ï¼Œç°åœ¨ç»Ÿä¸€æˆnextConfigId
 								int new_index = CreateNewNormalConfig(new_config_name);
-								// ¼Ì³Ğµ±Ç°ÅäÖÃ£¨Èç¹ûÓĞ£©£¬µ«±£ÁôÂ·¾¶Îª¿Õ
+								// ç»§æ‰¿å½“å‰é…ç½®ï¼ˆå¦‚æœæœ‰ï¼‰ï¼Œä½†ä¿ç•™è·¯å¾„ä¸ºç©º
 								if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 									g_appState.configs[new_index] = g_appState.configs[g_appState.currentConfigIndex];
 									g_appState.configs[new_index].name = new_config_name;
@@ -1139,11 +1131,11 @@ int main(int argc, char** argv)
 
 				ImGui::SeparatorText(L("WORLD_LIST"));
 
-				// ĞÂµÄ×Ô¶¨Òå¿¨Æ¬
-				//ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // Ô¤Áôµ×²¿°´Å¥¿Õ¼ä
+				// æ–°çš„è‡ªå®šä¹‰å¡ç‰‡
+				//ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // é¢„ç•™åº•éƒ¨æŒ‰é’®ç©ºé—´
 				ImGui::BeginChild("WorldListChild", ImVec2(0, 0), true);
 
-				// selectedWorldIndex µÄÓïÒåÏÖÔÚ¸Ä±äÁË¡ª¡ªËüÏÖÔÚÊÇ displayWorlds µÄË÷Òı£¨¶ø²»ÊÇ cfg.worlds µÄË÷Òı£©
+				// selectedWorldIndex çš„è¯­ä¹‰ç°åœ¨æ”¹å˜äº†â€”â€”å®ƒç°åœ¨æ˜¯ displayWorlds çš„ç´¢å¼•ï¼ˆè€Œä¸æ˜¯ cfg.worlds çš„ç´¢å¼•ï¼‰
 
 
 				for (int i = 0; i < worldCount; ++i) {
@@ -1151,18 +1143,18 @@ int main(int argc, char** argv)
 					ImGui::PushID(i);
 					bool is_selected = (selectedWorldIndex == i);
 
-					// worldFolder / backupFolder »ùÓÚ effectiveConfig
+					// worldFolder / backupFolder åŸºäº effectiveConfig
 					wstring worldFolder = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
 					wstring backupFolder = dw.effectiveConfig.backupPath + L"\\" + dw.name;
 
-					// --- ×ó²àÍ¼±êÇø ---
+					// --- å·¦ä¾§å›¾æ ‡åŒº ---
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
 					float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
 					ImVec2 icon_pos = ImGui::GetCursorScreenPos();
 					ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
 
-					// »æÖÆÕ¼Î»·ûºÍ±ß¿ò
+					// ç»˜åˆ¶å ä½ç¬¦å’Œè¾¹æ¡†
 					draw_list->AddRectFilled(icon_pos, icon_end_pos, IM_COL32(50, 50, 50, 200), 4.0f);
 					draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
 
@@ -1170,10 +1162,10 @@ int main(int argc, char** argv)
 					string iconKey_utf8 = wstring_to_utf8(worldFolder);
 					wstring iconKey = worldFolder;
 
-					// ³Ù¼ÓÔØÂß¼­
+					// è¿ŸåŠ è½½é€»è¾‘
 					if (g_worldIconTextures.find(iconKey) == g_worldIconTextures.end()) {
-						// ±ê¼ÇÎªÕıÔÚ¼ÓÔØ»òÊ§°Ü£¬±ÜÃâÖØ¸´³¢ÊÔ
-						g_worldIconTextures[iconKey] = 0; // 0 ±íÊ¾ÎŞĞ§ÎÆÀí
+						// æ ‡è®°ä¸ºæ­£åœ¨åŠ è½½æˆ–å¤±è´¥ï¼Œé¿å…é‡å¤å°è¯•
+						g_worldIconTextures[iconKey] = 0; // 0 è¡¨ç¤ºæ— æ•ˆçº¹ç†
 
 						string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
 						string bedrockIconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg"));
@@ -1194,7 +1186,7 @@ int main(int argc, char** argv)
 						}
 					}
 
-					// äÖÈ¾Âß¼­
+					// æ¸²æŸ“é€»è¾‘
 					GLuint current_texture = g_worldIconTextures[iconKey];
 					if (current_texture > 0) {
 						ImGui::Image((void*)(intptr_t)current_texture, ImVec2(iconSz, iconSz));
@@ -1207,18 +1199,18 @@ int main(int argc, char** argv)
 					}
 
 
-					// ½«¹â±êÒÆ¹ıÍ¼±êÇøÓò
+					// å°†å…‰æ ‡ç§»è¿‡å›¾æ ‡åŒºåŸŸ
 					ImGui::Dummy(ImVec2(iconSz, iconSz));
 
 					ImGui::SetCursorScreenPos(icon_pos);
 					ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
-					// µã»÷¸ü»»Í¼±ê
+					// ç‚¹å‡»æ›´æ¢å›¾æ ‡
 					if (ImGui::IsItemClicked()) {
 						wstring sel = SelectFileDialog();
 						if (!sel.empty()) {
-							// ¸²¸ÇÔ­ icon.png
+							// è¦†ç›–åŸ icon.png
 							CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
-							// ÊÍ·Å¾ÉÎÆÀí²¢ÖØĞÂ¼ÓÔØ
+							// é‡Šæ”¾æ—§çº¹ç†å¹¶é‡æ–°åŠ è½½
 							if (current_texture) {
 								glDeleteTextures(1, &current_texture);
 							}
@@ -1231,15 +1223,15 @@ int main(int argc, char** argv)
 					}
 
 					ImGui::SameLine();
-					// --- ×´Ì¬Âß¼­ (ÎªÍ¼±ê×ö×¼±¸) ---
-					lock_guard<mutex> lock(g_appState.task_mutex); // ·ÃÎÊ g_appState.g_active_auto_backups ĞèÒª¼ÓËø
+					// --- çŠ¶æ€é€»è¾‘ (ä¸ºå›¾æ ‡åšå‡†å¤‡) ---
+					lock_guard<mutex> lock(g_appState.task_mutex); // è®¿é—® g_appState.g_active_auto_backups éœ€è¦åŠ é”
 					bool is_task_running = g_appState.g_active_auto_backups.count(make_pair(displayWorlds[i].baseConfigIndex, i)) > 0;
-					// Èç¹û×îºó´ò¿ªÊ±¼ä±È×îºó±¸·İÊ±¼äĞÂ£¬ÔòÈÏÎªĞèÒª±¸·İ
+					// å¦‚æœæœ€åæ‰“å¼€æ—¶é—´æ¯”æœ€åå¤‡ä»½æ—¶é—´æ–°ï¼Œåˆ™è®¤ä¸ºéœ€è¦å¤‡ä»½
 					//wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
 					bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
 
-					// Õû¸öÇøÓò×÷ÎªÒ»¸ö¿ÉÑ¡Ïî
-					// ImGuiSelectableFlags_AllowItemOverlap ÔÊĞíÎÒÃÇÔÚ¿ÉÑ¡ÏîÉÏÃæ»æÖÆÆäËû¿Ø¼ş
+					// æ•´ä¸ªåŒºåŸŸä½œä¸ºä¸€ä¸ªå¯é€‰é¡¹
+					// ImGuiSelectableFlags_AllowItemOverlap å…è®¸æˆ‘ä»¬åœ¨å¯é€‰é¡¹ä¸Šé¢ç»˜åˆ¶å…¶ä»–æ§ä»¶
 					if (ImGui::Selectable("##world_selectable", is_selected, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2.5f))) {
 						selectedWorldIndex = i;
 					}
@@ -1247,7 +1239,7 @@ int main(int argc, char** argv)
 					ImVec2 p_min = ImGui::GetItemRectMin();
 					ImVec2 p_max = ImGui::GetItemRectMax();
 
-					// --- ¿¨Æ¬±³¾°ºÍ¸ßÁÁ ---
+					// --- å¡ç‰‡èƒŒæ™¯å’Œé«˜äº® ---
 					if (ImGui::IsItemHovered()) {
 						draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBg), 4.0f);
 					}
@@ -1259,20 +1251,20 @@ int main(int argc, char** argv)
 						draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f, 0, 2.0f);
 					}
 
-					// ÎÒÃÇÔÚ¿ÉÑ¡ÏîµÄÏàÍ¬Î»ÖÃ¿ªÊ¼»æÖÆÎÒÃÇµÄ×Ô¶¨ÒåÄÚÈİ
+					// æˆ‘ä»¬åœ¨å¯é€‰é¡¹çš„ç›¸åŒä½ç½®å¼€å§‹ç»˜åˆ¶æˆ‘ä»¬çš„è‡ªå®šä¹‰å†…å®¹
 					ImGui::SameLine();
-					ImGui::BeginGroup(); // ½«ËùÓĞÄÚÈİ×éºÏÔÚÒ»Æğ
+					ImGui::BeginGroup(); // å°†æ‰€æœ‰å†…å®¹ç»„åˆåœ¨ä¸€èµ·
 
-					// --- µÚÒ»ĞĞ£ºÊÀ½çÃûºÍÃèÊö (×Ô¶¯»»ĞĞ) ---
+					// --- ç¬¬ä¸€è¡Œï¼šä¸–ç•Œåå’Œæè¿° (è‡ªåŠ¨æ¢è¡Œ) ---
 					string name_utf8 = wstring_to_utf8(dw.name);
 					string desc_utf8 = wstring_to_utf8(dw.desc);
 					ImGui::TextWrapped("%s", name_utf8.c_str());
 
-					//// --- µÚ¶şĞĞ£ºÊ±¼äºÍ×´Ì¬ ---
+					//// --- ç¬¬äºŒè¡Œï¼šæ—¶é—´å’ŒçŠ¶æ€ ---
 					//wstring openTime = GetLastOpenTime(worldFolder);
 					//wstring backupTime = GetLastBackupTime(backupFolder);
 
-					//// ½«´ÎÒªĞÅÏ¢ÑÕÉ«±ä»Ò£¬¸ü¾ß²ã´Î¸Ğ
+					//// å°†æ¬¡è¦ä¿¡æ¯é¢œè‰²å˜ç°ï¼Œæ›´å…·å±‚æ¬¡æ„Ÿ
 					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 					if (desc_utf8.empty()) {
 						ImGui::TextWrapped(L("CARD_WORLD_NO_DESC"));
@@ -1284,26 +1276,26 @@ int main(int argc, char** argv)
 
 					ImGui::EndGroup();
 
-					// --- ÓÒ²àµÄ×´Ì¬Í¼±ê ---
+					// --- å³ä¾§çš„çŠ¶æ€å›¾æ ‡ ---
 					float icon_pane_width = 40.0f;
 					ImGui::SameLine(ImGui::GetContentRegionAvail().x - icon_pane_width);
 					ImGui::BeginGroup();
-					ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 0.25f)); // ´¹Ö±¾ÓÖĞÒ»µã
+					ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 0.25f)); // å‚ç›´å±…ä¸­ä¸€ç‚¹
 					if (is_task_running) {
-						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); // À¶É«
-						ImGui::Text(ICON_FA_ROTATE); // Ğı×ªÍ¼±ê£¬±íÊ¾ÕıÔÚÔËĞĞ
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); // è“è‰²
+						ImGui::Text(ICON_FA_ROTATE); // æ—‹è½¬å›¾æ ‡ï¼Œè¡¨ç¤ºæ­£åœ¨è¿è¡Œ
 						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_AUTOBACKUP_RUNNING"));
 						ImGui::PopStyleColor();
 					}
 					else if (needs_backup) {
-						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f)); // »ÆÉ«
-						ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION); // ¾¯¸æÍ¼±ê
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f)); // é»„è‰²
+						ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION); // è­¦å‘Šå›¾æ ‡
 						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_NEEDS_BACKUP"));
 						ImGui::PopStyleColor();
 					}
 					else {
-						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.6f, 1.0f)); // ÂÌÉ«
-						ImGui::Text(ICON_FA_CIRCLE_CHECK); // ¶Ô¹´Í¼±ê
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.6f, 1.0f)); // ç»¿è‰²
+						ImGui::Text(ICON_FA_CIRCLE_CHECK); // å¯¹å‹¾å›¾æ ‡
 						if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_UP_TO_DATE"));
 						ImGui::PopStyleColor();
 					}
@@ -1314,7 +1306,7 @@ int main(int argc, char** argv)
 					ImGui::Separator();
 				}
 
-				ImGui::EndChild(); // ½áÊø WorldListChild
+				ImGui::EndChild(); // ç»“æŸ WorldListChild
 
 			}
 			ImGui::End();			
@@ -1336,7 +1328,7 @@ int main(int argc, char** argv)
 						ImGui::PopTextWrapPos();
 						ImGui::Separator();
 
-						// -- ÏêÏ¸ĞÅÏ¢ --
+						// -- è¯¦ç»†ä¿¡æ¯ --
 						wstring worldFolder = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
 						wstring backupFolder = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
 						ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(GetLastOpenTime(worldFolder)).c_str());
@@ -1344,11 +1336,11 @@ int main(int argc, char** argv)
 
 						ImGui::Separator();
 
-						// -- ×¢ÊÍÊäÈë¿ò --if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
+						// -- æ³¨é‡Šè¾“å…¥æ¡† --if (ImGui::InputText(L("WORLD_DESC"), desc, CONSTANT2))
 						//cfg.worlds[i].second = utf8_to_wstring(desc);
 						//ImGui::InputTextMultiline(L("COMMENT_HINT"), backupComment, IM_ARRAYSIZE(backupComment), ImVec2(-1, ImGui::GetTextLineHeight() * 3));
 						char buffer[CONSTANT1] = "";
-						// Ôö¼Ó¼ì²é£¬È·±£ selectedWorldIndex ÈÔÈ»ÓĞĞ§
+						// å¢åŠ æ£€æŸ¥ï¼Œç¡®ä¿ selectedWorldIndex ä»ç„¶æœ‰æ•ˆ
 						if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
 							const auto& dw = displayWorlds[selectedWorldIndex];
 							wstring desc = dw.desc;
@@ -1356,7 +1348,7 @@ int main(int argc, char** argv)
 							ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
 							ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer), ImGuiInputTextFlags_EnterReturnsTrue);
 
-							// ÔÚĞ´ÈëÇ°£¬ÔÙ´Î½øĞĞÍêÕûµÄ¼ì²é
+							// åœ¨å†™å…¥å‰ï¼Œå†æ¬¡è¿›è¡Œå®Œæ•´çš„æ£€æŸ¥
 							if (g_appState.configs.count(dw.baseConfigIndex)) {
 								Config& cfg = g_appState.configs.at(dw.baseConfigIndex);
 								if (dw.baseWorldIndex >= 0 && dw.baseWorldIndex < cfg.worlds.size()) {
@@ -1371,7 +1363,7 @@ int main(int argc, char** argv)
 							}
 						}
 						else {
-							// Èç¹ûË÷ÒıÎŞĞ§£¬ÏÔÊ¾Ò»¸ö½ûÓÃµÄÕ¼Î»ÊäÈë¿ò
+							// å¦‚æœç´¢å¼•æ— æ•ˆï¼Œæ˜¾ç¤ºä¸€ä¸ªç¦ç”¨çš„å ä½è¾“å…¥æ¡†
 							strcpy_s(buffer, "N/A");
 							ImGui::BeginDisabled();
 							ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer));
@@ -1381,10 +1373,11 @@ int main(int argc, char** argv)
 						ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
 						ImGui::InputTextWithHint("##backup_comment", L("HINT_BACKUP_COMMENT"), backupComment, IM_ARRAYSIZE(backupComment), ImGuiInputTextFlags_EnterReturnsTrue);
 
-						// -- Ö÷Òª²Ù×÷°´Å¥ --
+						// -- ä¸»è¦æ“ä½œæŒ‰é’® --
 						float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
 						if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
-							thread backup_thread(DoBackup, displayWorlds[selectedWorldIndex].effectiveConfig, make_pair(displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc), ref(console), utf8_to_wstring(backupComment));
+							MyFolder world = { displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc, displayWorlds[selectedWorldIndex].effectiveConfig, displayWorlds[selectedWorldIndex].baseConfigIndex, selectedWorldIndex };
+							thread backup_thread(DoBackup, world, ref(console), utf8_to_wstring(backupComment));
 							backup_thread.detach();
 							strcpy_s(backupComment, "");
 						}
@@ -1394,17 +1387,17 @@ int main(int argc, char** argv)
 						}
 
 						if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
-							g_worldToFocusInHistory = displayWorlds[selectedWorldIndex].name; // ÉèÖÃÒª¾Û½¹µÄÊÀ½ç
-							showHistoryWindow = true; // ´ò¿ªÀúÊ·´°¿Ú
+							g_worldToFocusInHistory = displayWorlds[selectedWorldIndex].name; // è®¾ç½®è¦èšç„¦çš„ä¸–ç•Œ
+							showHistoryWindow = true; // æ‰“å¼€å†å²çª—å£
 						}
 						if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
-							// ÏÈ×ö×îĞ¡·¶Î§µÄ±¾µØ¼ì²é²¢¿½±´Òª²Ù×÷µÄ DisplayWorld£¨displayWorlds ÊÇ±¾µØ±äÁ¿£©
+							// å…ˆåšæœ€å°èŒƒå›´çš„æœ¬åœ°æ£€æŸ¥å¹¶æ‹·è´è¦æ“ä½œçš„ DisplayWorldï¼ˆdisplayWorlds æ˜¯æœ¬åœ°å˜é‡ï¼‰
 							if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
-								DisplayWorld dw_copy = displayWorlds[selectedWorldIndex]; // ×öÒ»¸öÖµ¿½±´£¬Ö®ºóÔÚËøÄÚÓÃË÷ÒıÈ¥¸Ä g_appState.configs
+								DisplayWorld dw_copy = displayWorlds[selectedWorldIndex]; // åšä¸€ä¸ªå€¼æ‹·è´ï¼Œä¹‹ååœ¨é”å†…ç”¨ç´¢å¼•å»æ”¹ g_appState.configs
 
 								bool did_change = false;
 
-								// ÔÚĞŞ¸ÄÈ«¾Ö g_appState.configs Ç°¼ÓËø£¬·ÀÖ¹ÆäËüÏß³Ì²¢·¢¶Á/Ğ´µ¼ÖÂ±ÀÀ£
+								// åœ¨ä¿®æ”¹å…¨å±€ g_appState.configs å‰åŠ é”ï¼Œé˜²æ­¢å…¶å®ƒçº¿ç¨‹å¹¶å‘è¯»/å†™å¯¼è‡´å´©æºƒ
 								{
 									lock_guard<mutex> cfg_lock(g_appState.configsMutex);
 
@@ -1416,31 +1409,31 @@ int main(int argc, char** argv)
 											did_change = true;
 										}
 									}
-								} // ½âËø g_appState.configsMutex 
+								} // è§£é” g_appState.configsMutex 
 							}
 						}
 
 						if (ImGui::Button(L("BUTTON_PIN_WORLD"), ImVec2(-1, 0))) {
-							// ¼ì²éË÷ÒıÊÇ·ñÓĞĞ§ÇÒ²»ÊÇµÚÒ»¸ö
+							// æ£€æŸ¥ç´¢å¼•æ˜¯å¦æœ‰æ•ˆä¸”ä¸æ˜¯ç¬¬ä¸€ä¸ª
 							if (selectedWorldIndex > 0 && selectedWorldIndex < displayWorlds.size()) {
 								DisplayWorld& dw = displayWorlds[selectedWorldIndex];
 								int configIdx = dw.baseConfigIndex;
 								int worldIdx = dw.baseWorldIndex;
 
-								// È·±£ÎÒÃÇ²Ù×÷µÄÊÇÆÕÍ¨ÅäÖÃÖĞµÄÊÀ½çÁĞ±í
+								// ç¡®ä¿æˆ‘ä»¬æ“ä½œçš„æ˜¯æ™®é€šé…ç½®ä¸­çš„ä¸–ç•Œåˆ—è¡¨
 								if (!specialSetting && g_appState.configs.count(configIdx)) {
 									Config& cfg = g_appState.configs[configIdx];
 									if (worldIdx < cfg.worlds.size()) {
-										// ´æ´¢ÒªÒÆ¶¯µÄÊÀ½ç
+										// å­˜å‚¨è¦ç§»åŠ¨çš„ä¸–ç•Œ
 										pair<wstring, wstring> worldToMove = cfg.worlds[worldIdx];
 
-										// ´ÓÔ­Î»ÖÃÉ¾³ı
+										// ä»åŸä½ç½®åˆ é™¤
 										cfg.worlds.erase(cfg.worlds.begin() + worldIdx);
 
-										// ²åÈëµ½ÁĞ±í¶¥²¿
+										// æ’å…¥åˆ°åˆ—è¡¨é¡¶éƒ¨
 										cfg.worlds.insert(cfg.worlds.begin(), worldToMove);
 
-										// ¸üĞÂÑ¡ÖĞÏîÎªĞÂµÄ¶¥²¿Ïî
+										// æ›´æ–°é€‰ä¸­é¡¹ä¸ºæ–°çš„é¡¶éƒ¨é¡¹
 										selectedWorldIndex = 0;
 									}
 								}
@@ -1460,7 +1453,7 @@ int main(int argc, char** argv)
 							OpenFolder(path);
 						}
 
-						// Ä£×é±¸·İ
+						// æ¨¡ç»„å¤‡ä»½
 						if (ImGui::Button(L("BUTTON_BACKUP_MODS"), ImVec2(-1, 0))) {
 							if (selectedWorldIndex != -1) {
 								ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE"));
@@ -1477,7 +1470,7 @@ int main(int argc, char** argv)
 								if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 									filesystem::path tempPath = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot;
 									filesystem::path modsPath = tempPath.parent_path() / "mods";
-									if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // ·şÎñÆ÷µÄÄ£×é¿ÉÄÜ·ÅÔÚworldÍ¬¼¶ÎÄ¼ş¼ĞÏÂ
+									if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // æœåŠ¡å™¨çš„æ¨¡ç»„å¯èƒ½æ”¾åœ¨worldåŒçº§æ–‡ä»¶å¤¹ä¸‹
 										modsPath = tempPath / "mods";
 									}
 									thread backup_thread(DoOthersBackup, g_appState.configs[g_appState.currentConfigIndex], modsPath, utf8_to_wstring(mods_comment));
@@ -1494,7 +1487,7 @@ int main(int argc, char** argv)
 							ImGui::EndPopup();
 						}
 
-						// ÆäËû±¸·İ
+						// å…¶ä»–å¤‡ä»½
 						float availWidth = ImGui::GetContentRegionAvail().x;
 						float btnWidth = ImGui::CalcTextSize(L("BUTTON_BACKUP_OTHERS")).x + ImGui::GetStyle().FramePadding.x * 2;
 						if (ImGui::Button(L("BUTTON_BACKUP_OTHERS"), ImVec2(btnWidth, 0))) {
@@ -1504,7 +1497,7 @@ int main(int argc, char** argv)
 						}
 						ImGui::SameLine();
 						ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97f);
-						// ¿ÉÒÔÊäÈëĞèÒª±¸·İµÄÆäËûÄÚÈİµÄÂ·¾¶£¬±ÈÈç D:\Games\g_appState.configs
+						// å¯ä»¥è¾“å…¥éœ€è¦å¤‡ä»½çš„å…¶ä»–å†…å®¹çš„è·¯å¾„ï¼Œæ¯”å¦‚ D:\Games\g_appState.configs
 						static char buf[CONSTANT1] = "";
 						strcpy_s(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
 						if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
@@ -1522,7 +1515,7 @@ int main(int argc, char** argv)
 								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment));
 								backup_thread.detach();
 								strcpy_s(others_comment, "");
-								SaveConfigs(); // ±£´æÒ»ÏÂÂ·¾¶
+								SaveConfigs(); // ä¿å­˜ä¸€ä¸‹è·¯å¾„
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
@@ -1535,12 +1528,12 @@ int main(int argc, char** argv)
 
 
 						if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
-							// ÔÆÍ¬²½Âß¼­
+							// äº‘åŒæ­¥é€»è¾‘
 							const Config& config = g_appState.configs[displayWorlds[selectedWorldIndex].baseConfigIndex];
 							if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
 								console.AddLog(L("CLOUD_SYNC_START"));
 								wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
-								// ÁíÆğÒ»¸öÏß³ÌÀ´Ö´ĞĞÔÆÍ¬²½£¬±ÜÃâ×èÈûºóĞø²Ù×÷
+								// å¦èµ·ä¸€ä¸ªçº¿ç¨‹æ¥æ‰§è¡Œäº‘åŒæ­¥ï¼Œé¿å…é˜»å¡åç»­æ“ä½œ
 								thread([rclone_command, config]() {
 									RunCommandInBackground(rclone_command, console, config.useLowPriority);
 									console.AddLog(L("CLOUD_SYNC_FINISH"));
@@ -1551,14 +1544,14 @@ int main(int argc, char** argv)
 							}
 						}
 
-						// µ¼³ö·ÖÏí
+						// å¯¼å‡ºåˆ†äº«
 						if (ImGui::Button(L("BUTTON_EXPORT_FOR_SHARING"), ImVec2(-1, 0))) {
 							if (selectedWorldIndex != -1) {
 								ImGui::OpenPopup(L("EXPORT_WINDOW_TITLE"));
 							}
 						}
 						if (ImGui::BeginPopupModal(L("EXPORT_WINDOW_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-							// Ê¹ÓÃ static ±äÁ¿À´³ÖÓĞÒ»´ÎĞÔÅäÖÃ£¬ËüÃÇÖ»ÔÚµ¯´°Ê×´Î´ò¿ªÊ±±»³õÊ¼»¯
+							// ä½¿ç”¨ static å˜é‡æ¥æŒæœ‰ä¸€æ¬¡æ€§é…ç½®ï¼Œå®ƒä»¬åªåœ¨å¼¹çª—é¦–æ¬¡æ‰“å¼€æ—¶è¢«åˆå§‹åŒ–
 							static Config tempExportConfig;
 							static char outputPathBuf[MAX_PATH];
 							static char descBuf[CONSTANT2];
@@ -1566,19 +1559,19 @@ int main(int argc, char** argv)
 							static int selectedBlacklistItem = -1;
 							static int selectedFormat = 0;
 
-							// µ¯´°Ê×´Î´ò¿ªÊ±£¬½øĞĞ³õÊ¼»¯
+							// å¼¹çª—é¦–æ¬¡æ‰“å¼€æ—¶ï¼Œè¿›è¡Œåˆå§‹åŒ–
 							if (ImGui::IsWindowAppearing()) {
 								const auto& dw = displayWorlds[selectedWorldIndex];
-								tempExportConfig = dw.effectiveConfig; // ¸´ÖÆµ±Ç°ÅäÖÃ×÷Îª»ù´¡
+								tempExportConfig = dw.effectiveConfig; // å¤åˆ¶å½“å‰é…ç½®ä½œä¸ºåŸºç¡€
 
-								// ÖÇÄÜÉèÖÃÄ¬ÈÏÊä³öÂ·¾¶ÎªMineBackupµ±Ç°Î»ÖÃ
+								// æ™ºèƒ½è®¾ç½®é»˜è®¤è¾“å‡ºè·¯å¾„ä¸ºMineBackupå½“å‰ä½ç½®
 								wchar_t currentPath[MAX_PATH];
 								GetCurrentDirectoryW(MAX_PATH, currentPath);
 								wstring cleanWorldName = SanitizeFileName(dw.name);
 								wstring finalPath = wstring(currentPath) + L"\\" + cleanWorldName + L"_shared." + tempExportConfig.zipFormat;
 								strncpy_s(outputPathBuf, wstring_to_utf8(finalPath).c_str(), sizeof(outputPathBuf));
 
-								// Ô¤ÉèÄ¬ÈÏºÚÃûµ¥
+								// é¢„è®¾é»˜è®¤é»‘åå•
 								tempExportConfig.blacklist.clear();
 								tempExportConfig.blacklist.push_back(L"playerdata");
 								tempExportConfig.blacklist.push_back(L"stats");
@@ -1587,13 +1580,13 @@ int main(int argc, char** argv)
 								tempExportConfig.blacklist.push_back(L"level.dat_old");
 
 
-								// Çå¿ÕÉÏ´ÎµÄÊäÈë
+								// æ¸…ç©ºä¸Šæ¬¡çš„è¾“å…¥
 								memset(descBuf, 0, sizeof(descBuf));
 								memset(blacklistAddItemBuf, 0, sizeof(blacklistAddItemBuf));
 								selectedBlacklistItem = -1;
 							}
 
-							// Èç¹ûÈ¡Ïû¹´Ñ¡ "°üº¬Êı¾İ°ü"£¬Ôò¶¯Ì¬Ìí¼Ó/ÒÆ³ı datapacks
+							// å¦‚æœå–æ¶ˆå‹¾é€‰ "åŒ…å«æ•°æ®åŒ…"ï¼Œåˆ™åŠ¨æ€æ·»åŠ /ç§»é™¤ datapacks
 							/*bool datapacksInBlacklist = find(tempBlacklist.begin(), tempBlacklist.end(), L"datapacks") != tempBlacklist.end();
 							if (includeDatapacks && datapacksInBlacklist) {
 								tempBlacklist.erase(remove(tempBlacklist.begin(), tempBlacklist.end(), L"datapacks"), tempBlacklist.end());
@@ -1602,7 +1595,7 @@ int main(int argc, char** argv)
 								tempBlacklist.push_back(L"datapacks");
 							}*/
 
-							// --- UI äÖÈ¾ ---
+							// --- UI æ¸²æŸ“ ---
 							ImGui::SeparatorText(L("GROUP_EXPORT_OPTIONS"));
 							ImGui::InputText(L("LABEL_EXPORT_PATH"), outputPathBuf, sizeof(outputPathBuf));
 							ImGui::SameLine();
@@ -1659,15 +1652,15 @@ int main(int argc, char** argv)
 
 					}
 
-					// ×Ô¶¯±¸·İµ¯´°
+					// è‡ªåŠ¨å¤‡ä»½å¼¹çª—
 					if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 						bool is_task_running = false;
 						pair<int, int> taskKey = { -1,-1 };
-						vector<DisplayWorld> localDisplayWorlds; // ¹©ÏÔÊ¾Ê¹ÓÃ
+						vector<DisplayWorld> localDisplayWorlds; // ä¾›æ˜¾ç¤ºä½¿ç”¨
 						{
 							lock_guard<mutex> lock(g_appState.task_mutex);
 							if (selectedWorldIndex >= 0) {
-								// Èç¹ûÊ¹ÓÃ displayWorlds£º
+								// å¦‚æœä½¿ç”¨ displayWorldsï¼š
 								localDisplayWorlds = BuildDisplayWorldsForSelection();
 								if (selectedWorldIndex < (int)localDisplayWorlds.size()) {
 									taskKey = { localDisplayWorlds[selectedWorldIndex].baseConfigIndex, localDisplayWorlds[selectedWorldIndex].baseWorldIndex };
@@ -1681,12 +1674,12 @@ int main(int argc, char** argv)
 							ImGui::Separator();
 							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(240, 0))) {
 								if (g_appState.g_active_auto_backups.count(taskKey)) {
-									// 1. ÉèÖÃÍ£Ö¹±êÖ¾
+									// 1. è®¾ç½®åœæ­¢æ ‡å¿—
 									g_appState.g_active_auto_backups.at(taskKey).stop_flag = true;
-									// 2. µÈ´ıÏß³Ì½áÊø
+									// 2. ç­‰å¾…çº¿ç¨‹ç»“æŸ
 									if (g_appState.g_active_auto_backups.at(taskKey).worker.joinable())
 										g_appState.g_active_auto_backups.at(taskKey).worker.join();
-									// 3. ´Ó¹ÜÀíÆ÷ÖĞÒÆ³ı
+									// 3. ä»ç®¡ç†å™¨ä¸­ç§»é™¤
 									g_appState.g_active_auto_backups.erase(taskKey);
 								}
 								ImGui::CloseCurrentPopup();
@@ -1702,7 +1695,7 @@ int main(int argc, char** argv)
 							ImGui::InputInt(L("INTERVAL_MINUTES"), &last_interval);
 							if (last_interval < 1) last_interval = 1;
 							if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
-								// ×¢²á²¢Æô¶¯Ïß³Ì
+								// æ³¨å†Œå¹¶å¯åŠ¨çº¿ç¨‹
 								lock_guard<mutex> lock(g_appState.task_mutex);
 								if (taskKey.first >= 0) {
 									AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
@@ -1739,7 +1732,7 @@ int main(int argc, char** argv)
 			
 
 			if (showSettings) {
-				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // Ç¿ÖÆ´°¿Ú²»²ÎÓëÍ£¿¿
+				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // å¼ºåˆ¶çª—å£ä¸å‚ä¸åœé 
 				ShowSettingsWindow();
 			}
 			if (showHistoryWindow) {
@@ -1776,13 +1769,13 @@ int main(int argc, char** argv)
 		glfwSwapBuffers(wc);
 	}
 
-	// ÇåÀí
+	// æ¸…ç†
 	BroadcastEvent("event=app_shutdown");
 	lock_guard<mutex> lock(g_appState.task_mutex);
 	for (auto& pair : g_appState.g_active_auto_backups) {
-		pair.second.stop_flag = true; // Í¨ÖªÏß³ÌÍ£Ö¹
+		pair.second.stop_flag = true; // é€šçŸ¥çº¿ç¨‹åœæ­¢
 		if (pair.second.worker.joinable()) {
-			pair.second.worker.join(); // µÈ´ıÏß³ÌÖ´ĞĞÍê±Ï
+			pair.second.worker.join(); // ç­‰å¾…çº¿ç¨‹æ‰§è¡Œå®Œæ¯•
 		}
 	}
 	for (auto const& [key, val] : g_worldIconTextures) {
@@ -1796,7 +1789,7 @@ int main(int argc, char** argv)
 	if (filesystem::exists("config.ini"))
 		SaveConfigs();
 
-	// ½«²¶»ñµ½µÄËùÓĞÈÕÖ¾Ğ´ÈëÎÄ¼ş
+	// å°†æ•è·åˆ°çš„æ‰€æœ‰æ—¥å¿—å†™å…¥æ–‡ä»¶
 	ofstream log_file("auto_log.txt", ios::app);
 	if (log_file.is_open()) {
 		log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
@@ -1851,18 +1844,18 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 	if (image_data == NULL)
 		return false;
 
-	// ´´½¨Ò»¸ö OpenGL ÎÆÀí
+	// åˆ›å»ºä¸€ä¸ª OpenGL çº¹ç†
 	GLuint image_texture;
 	glGenTextures(1, &image_texture);
 	glBindTexture(GL_TEXTURE_2D, image_texture);
 
-	// ÉèÖÃÎÆÀí²ÎÊı
+	// è®¾ç½®çº¹ç†å‚æ•°
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // ±ÜÃâ±ßÔµÎ±Ó°
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // é¿å…è¾¹ç¼˜ä¼ªå½±
 	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-	// ÉÏ´«ÎÆÀíÊı¾İ
+	// ä¸Šä¼ çº¹ç†æ•°æ®
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
 	stbi_image_free(image_data);
 
@@ -1909,7 +1902,7 @@ void ShowSettingsWindow() {
 	//string(L("CONFIG_N")) + to_string(g_appState.currentConfigIndex)
 	static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
 	if (ImGui::BeginCombo(L("CURRENT_CONFIG"), current_config_label.c_str())) {
-		// ÆÕÍ¨ÅäÖÃ
+		// æ™®é€šé…ç½®
 		for (auto const& [idx, val] : g_appState.configs) {
 			const bool is_selected = (g_appState.currentConfigIndex == idx);
 			string label = "[No." + to_string(idx) + "] " + val.name;
@@ -1923,7 +1916,7 @@ void ShowSettingsWindow() {
 			}
 		}
 		ImGui::Separator();
-		// ÌØÊâÅäÖÃ
+		// ç‰¹æ®Šé…ç½®
 		for (auto const& [idx, val] : g_appState.specialConfigs) {
 			const bool is_selected = (g_appState.currentConfigIndex == (idx));
 			string label = "[Sp." + to_string((idx)) + "] " + val.name;
@@ -1940,14 +1933,14 @@ void ShowSettingsWindow() {
 		}
 
 		if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
-			if ((!specialSetting && g_appState.configs.size() > 1) || (specialSetting && !g_appState.specialConfigs.empty())) { // ÖÁÉÙ±£ÁôÒ»¸ö
+			if ((!specialSetting && g_appState.configs.size() > 1) || (specialSetting && !g_appState.specialConfigs.empty())) { // è‡³å°‘ä¿ç•™ä¸€ä¸ª
 				showDeleteConfigPopup = true;
 			}
 		}
 		ImGui::EndCombo();
 	}
 
-	// É¾³ıÅäÖÃµ¯´°
+	// åˆ é™¤é…ç½®å¼¹çª—
 	if (showDeleteConfigPopup) {
 		ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
 	}
@@ -1980,7 +1973,7 @@ void ShowSettingsWindow() {
 		}
 		ImGui::EndPopup();
 	}
-	// Ìí¼ÓĞÂÅäÖÃµ¯´°
+	// æ·»åŠ æ–°é…ç½®å¼¹çª—
 	if (showAddConfigPopup) {
 		ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
 	}
@@ -2001,7 +1994,7 @@ void ShowSettingsWindow() {
 			if (strlen(new_config_name) > 0) {
 				if (config_type == 0) {
 					int new_index = CreateNewNormalConfig(new_config_name);
-					// ¼Ì³Ğµ±Ç°ÅäÖÃ£¨Èç¹ûÓĞ£©£¬µ«±£ÁôÂ·¾¶Îª¿Õ
+					// ç»§æ‰¿å½“å‰é…ç½®ï¼ˆå¦‚æœæœ‰ï¼‰ï¼Œä½†ä¿ç•™è·¯å¾„ä¸ºç©º
 					if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 						g_appState.configs[new_index] = g_appState.configs[g_appState.currentConfigIndex];
 						g_appState.configs[new_index].name = new_config_name;
@@ -2086,9 +2079,9 @@ void ShowSettingsWindow() {
 			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 			if (ImGui::Combo("##Theme", &spCfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 				if (spCfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
-					// ´ò¿ª×Ô¶¨ÒåÖ÷Ìâ±à¼­Æ÷
+					// æ‰“å¼€è‡ªå®šä¹‰ä¸»é¢˜ç¼–è¾‘å™¨
 					ImGuiTheme::WriteDefaultCustomTheme();
-					// ´ò¿ª custom_theme.json ÎÄ¼ş¹©ÓÃ»§±à¼­
+					// æ‰“å¼€ custom_theme.json æ–‡ä»¶ä¾›ç”¨æˆ·ç¼–è¾‘
 					OpenFolder(L"custom_theme.json");
 				}
 				else {
@@ -2132,7 +2125,7 @@ void ShowSettingsWindow() {
 			ImGui::SeparatorText(L("AUTOMATED_TASKS"));
 			if (ImGui::Button(L("ADD_BACKUP_TASK"))) spCfg.tasks.push_back(AutomatedTask());
 			ImGui::SameLine();
-			static int sel_task_item = -1; // ×·×Ù±»É¾³ıµÄitem
+			static int sel_task_item = -1; // è¿½è¸ªè¢«åˆ é™¤çš„item
 			if (ImGui::Button(L("BUTTON_REMOVE_TASK")) && sel_task_item != -1 && sel_task_item < spCfg.tasks.size()) {
 				spCfg.tasks.erase(spCfg.tasks.begin() + sel_task_item);
 				sel_task_item = -1;
@@ -2155,7 +2148,7 @@ void ShowSettingsWindow() {
 					for (auto const& [idx, val] : g_appState.configs) {
 						if (ImGui::Selectable((string(L("CONFIG_N")) + to_string(idx)).c_str(), task.configIndex == idx)) {
 							task.configIndex = idx;
-							task.worldIndex = val.worlds.empty() ? -1 : 0; // ÖØÖÃÊÀ½çidx
+							task.worldIndex = val.worlds.empty() ? -1 : 0; // é‡ç½®ä¸–ç•Œidx
 						}
 					}
 					ImGui::EndCombo();
@@ -2180,11 +2173,11 @@ void ShowSettingsWindow() {
 				const char* modeList[] = { L("SCHED_MODES_ONCE"), L("SCHED_MODES_INTERVAL"), L("SCHED_MODES_SCHED") };
 				ImGui::Combo(L("TASK_BACKUP_TYPE"), &task.backupType, modeList, IM_ARRAYSIZE(modeList));
 
-				if (task.backupType == 1) { // ¼ä¸ô
+				if (task.backupType == 1) { // é—´éš”
 					ImGui::InputInt(L("INTERVAL_MINUTES"), &task.intervalMinutes);
 					if (task.intervalMinutes < 1) task.intervalMinutes = 1;
 				}
-				else if (task.backupType == 2) { // ¼Æ»®
+				else if (task.backupType == 2) { // è®¡åˆ’
 					ImGui::Text("At:"); ImGui::SameLine();
 					ImGui::SetNextItemWidth(100); ImGui::InputInt(L("SCHED_HOUR"), &task.schedHour);
 					ImGui::SameLine(); ImGui::Text(":"); ImGui::SameLine();
@@ -2206,8 +2199,8 @@ void ShowSettingsWindow() {
 	}
 	else {
 		if (!g_appState.configs.count(g_appState.currentConfigIndex)) {
-			// Èç¹ûÅäÖÃ±»É¾³ı
-			if (g_appState.configs.empty()) g_appState.configs[1] = Config(); // Èç¹û1±»É¾£¬ĞÂ½¨
+			// å¦‚æœé…ç½®è¢«åˆ é™¤
+			if (g_appState.configs.empty()) g_appState.configs[1] = Config(); // å¦‚æœ1è¢«åˆ ï¼Œæ–°å»º
 			g_appState.currentConfigIndex = g_appState.configs.begin()->first;
 		}
 		Config& cfg = g_appState.configs[g_appState.currentConfigIndex];
@@ -2317,7 +2310,7 @@ void ShowSettingsWindow() {
 			}
 		}
 
-		// ±¸·İĞĞÎª
+		// å¤‡ä»½è¡Œä¸º
 		if (ImGui::CollapsingHeader(L("GROUP_BACKUP_BEHAVIOR"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			static int format_choice = (cfg.zipFormat == L"zip") ? 1 : 0;
 			ImGui::Text(L("COMPRESSION_FORMAT")); ImGui::SameLine();
@@ -2349,7 +2342,7 @@ void ShowSettingsWindow() {
 			}
 			ImGui::Checkbox(L("BACKUP_ON_START"), &cfg.backupOnGameStart);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BACKUP_ON_START"));
-			// µÍÓÅÏÈ¼¶
+			// ä½ä¼˜å…ˆçº§
 			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &cfg.useLowPriority);
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(L("TIP_LOW_PRIORITY"));
@@ -2368,7 +2361,7 @@ void ShowSettingsWindow() {
 					break;
 				}
 			}
-			// ÔÚÑ¹Ëõ¸ñÊ½Îª zip Ê±Ä¬ÈÏÊ¹ÓÃ Deflate
+			// åœ¨å‹ç¼©æ ¼å¼ä¸º zip æ—¶é»˜è®¤ä½¿ç”¨ Deflate
 			if (cfg.zipFormat == L"zip" && method_idx == 0) {
 				method_idx = 1;
 				cfg.zipMethod = L"Deflate";
@@ -2387,7 +2380,7 @@ void ShowSettingsWindow() {
 			
 			
 
-			// CPU Ïß³Ì
+			// CPU çº¿ç¨‹
 			int max_threads = thread::hardware_concurrency();
 			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &cfg.cpuThreads, 0, max_threads);
 			if (ImGui::IsItemHovered()) {
@@ -2403,7 +2396,7 @@ void ShowSettingsWindow() {
 			ImGui::SeparatorText(L("BLACKLIST_HEADER"));
 			if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
 				wstring sel = SelectFileDialog();
-				if (!sel.empty()) cfg.blacklist.push_back(sel); // »ò spCfg.blacklist
+				if (!sel.empty()) cfg.blacklist.push_back(sel); // æˆ– spCfg.blacklist
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
@@ -2423,14 +2416,14 @@ void ShowSettingsWindow() {
 				cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item); sel_bl_item = -1;
 			}
 
-			// Ìí¼ÓÕıÔò±í´ïÊ½¹æÔòµÄµ¯´°
+			// æ·»åŠ æ­£åˆ™è¡¨è¾¾å¼è§„åˆ™çš„å¼¹çª—
 			if (ImGui::BeginPopupModal("Add Regex Rule", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 				static char regex_buf[256] = "regex:";
 				ImGui::InputText("Regex Pattern", regex_buf, IM_ARRAYSIZE(regex_buf));
 				ImGui::Separator();
 				if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
-					if (strlen(regex_buf) > 6) { // È·±£ "regex:" ºóÃæÓĞÄÚÈİ
-						// ¸ù¾İµ±Ç°ÊÇÆÕÍ¨ÅäÖÃ»¹ÊÇÌØÊâÅäÖÃ£¬Ìí¼Óµ½¶ÔÓ¦µÄºÚÃûµ¥
+					if (strlen(regex_buf) > 6) { // ç¡®ä¿ "regex:" åé¢æœ‰å†…å®¹
+						// æ ¹æ®å½“å‰æ˜¯æ™®é€šé…ç½®è¿˜æ˜¯ç‰¹æ®Šé…ç½®ï¼Œæ·»åŠ åˆ°å¯¹åº”çš„é»‘åå•
 						if (specialSetting) {
 							g_appState.specialConfigs[g_appState.currentConfigIndex].blacklist.push_back(utf8_to_wstring(regex_buf));
 						}
@@ -2448,19 +2441,19 @@ void ShowSettingsWindow() {
 			}
 
 			if (ImGui::BeginListBox("##blacklist", ImVec2(ImGui::GetContentRegionAvail().x, 2 * ImGui::GetTextLineHeightWithSpacing()))) {
-				// ¼ì²é blacklist ÊÇ·ñÎª¿Õ
+				// æ£€æŸ¥ blacklist æ˜¯å¦ä¸ºç©º
 				if (cfg.blacklist.empty()) {
-					ImGui::Text(L("No items in blacklist")); // ÏÔÊ¾¿ÕÁĞ±íÌáÊ¾
+					ImGui::Text(L("No items in blacklist")); // æ˜¾ç¤ºç©ºåˆ—è¡¨æç¤º
 				}
 				else {
-					// ±éÀúÏÔÊ¾ºÚÃûµ¥Ïî
+					// éå†æ˜¾ç¤ºé»‘åå•é¡¹
 					for (int n = 0; n < cfg.blacklist.size(); n++) {
 						string label = wstring_to_utf8(cfg.blacklist[n]);
 						if (ImGui::Selectable(label.c_str(), sel_bl_item == n)) {
 							sel_bl_item = n;
 						}
 						if (ImGui::IsItemHovered()) {
-							// Èç¹ûÊó±êĞüÍ££¬ÔòÉèÖÃÒ»¸öTooltipÏÔÊ¾ÍêÕûÄÚÈİ
+							// å¦‚æœé¼ æ ‡æ‚¬åœï¼Œåˆ™è®¾ç½®ä¸€ä¸ªTooltipæ˜¾ç¤ºå®Œæ•´å†…å®¹
 							ImGui::SetTooltip("%s", label.c_str());
 						}
 					}
@@ -2469,14 +2462,14 @@ void ShowSettingsWindow() {
 			}
 		}
 
-		// »¹Ô­ĞĞÎª
+		// è¿˜åŸè¡Œä¸º
 		if (ImGui::CollapsingHeader(L("GROUP_RESTORE_BEHAVIOR"))) {
 			ImGui::Checkbox(L("BACKUP_BEFORE_RESTORE"), &cfg.backupBefore);
 
 			ImGui::SeparatorText(L("RESTORE_WHITELIST_HEADER"));
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_WHITELIST"));
 
-			// Ìí¼ÓĞÂÏîµÄÊäÈë¿ò
+			// æ·»åŠ æ–°é¡¹çš„è¾“å…¥æ¡†
 			static char whitelist_add_buf[256] = "";
 			ImGui::InputTextWithHint("##whitelist_add", "file_or_folder_name", whitelist_add_buf, IM_ARRAYSIZE(whitelist_add_buf));
 			ImGui::SameLine();
@@ -2485,7 +2478,7 @@ void ShowSettingsWindow() {
 				strcpy_s(whitelist_add_buf, "");
 			}
 
-			// °×Ãûµ¥ÁĞ±í
+			// ç™½åå•åˆ—è¡¨
 			static int sel_wl_item = -1;
 			ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_REMOVE_WHITELIST")) && sel_wl_item != -1) {
@@ -2537,7 +2530,7 @@ void ShowSettingsWindow() {
 			ImGui::EndDisabled();
 		}
 
-		// ÔÆÍ¬²½ÉèÖÃ
+		// äº‘åŒæ­¥è®¾ç½®
 		if (ImGui::CollapsingHeader(L("GROUP_CLOUD_SYNC")))
 		{
 			ImGui::Checkbox(L("ENABLE_CLOUD_SYNC"), &cfg.cloudSyncEnabled);
@@ -2561,7 +2554,7 @@ void ShowSettingsWindow() {
 
 
 		if (ImGui::CollapsingHeader(L("GROUP_APPEARANCE"))) {
-			// ÓïÑÔÑ¡Ôñ
+			// è¯­è¨€é€‰æ‹©
 			static int lang_idx = 0;
 			for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
 				if (g_CurrentLang == lang_codes[i]) {
@@ -2577,9 +2570,9 @@ void ShowSettingsWindow() {
 			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 			if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 				if (cfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
-					// ´ò¿ª×Ô¶¨ÒåÖ÷Ìâ±à¼­Æ÷
+					// æ‰“å¼€è‡ªå®šä¹‰ä¸»é¢˜ç¼–è¾‘å™¨
 					ImGuiTheme::WriteDefaultCustomTheme();
-					// ´ò¿ª custom_theme.json ÎÄ¼ş¹©ÓÃ»§±à¼­
+					// æ‰“å¼€ custom_theme.json æ–‡ä»¶ä¾›ç”¨æˆ·ç¼–è¾‘
 					OpenFolder(L"custom_theme.json");
 				}
 				else {
@@ -2631,7 +2624,7 @@ void RunSpecialMode(int configId) {
 		return;
 	}
 #ifdef _WIN32
-	// Òş²Ø¿ØÖÆÌ¨´°¿Ú£¨Èç¹ûÅäÖÃÒªÇó£©
+	// éšè—æ§åˆ¶å°çª—å£ï¼ˆå¦‚æœé…ç½®è¦æ±‚ï¼‰
 	if (spCfg.hideWindow) {
 		ShowWindow(GetConsoleWindow(), SW_HIDE);
 	}
@@ -2642,7 +2635,7 @@ void RunSpecialMode(int configId) {
 	ctime_s(time_buf, sizeof(time_buf), &now);
 	ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
 
-	// ÉèÖÃ¿ØÖÆÌ¨±êÌâºÍÍ·²¿ĞÅÏ¢
+	// è®¾ç½®æ§åˆ¶å°æ ‡é¢˜å’Œå¤´éƒ¨ä¿¡æ¯
 	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
 	ConsoleLog(&console, L("AUTOMATED_TASK_RUNNER_HEADER"));
 	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), (spCfg.name.c_str()));
@@ -2654,15 +2647,15 @@ void RunSpecialMode(int configId) {
 
 	atomic<bool> shouldExit = false;
 	vector<thread> taskThreads;
-	static Console dummyConsole; // ÓÃÓÚ´«µİ¸ø DoBackup
+	static Console dummyConsole; // ç”¨äºä¼ é€’ç»™ DoBackup
 
-	// --- 1. Ö´ĞĞÒ»´ÎĞÔÃüÁî ---
+	// --- 1. æ‰§è¡Œä¸€æ¬¡æ€§å‘½ä»¤ ---
 	for (const auto& cmd : spCfg.commands) {
 		ConsoleLog(&console, L("LOG_CMD_EXECUTING"), wstring_to_utf8(cmd).c_str());
-		system(utf8_to_gbk(wstring_to_utf8(cmd)).c_str()); // Ê¹ÓÃ system ¼ò»¯ÊµÏÖ
+		system(utf8_to_gbk(wstring_to_utf8(cmd)).c_str()); // ä½¿ç”¨ system ç®€åŒ–å®ç°
 	}
 
-	// --- 2. ´¦Àí²¢Æô¶¯ËùÓĞ×Ô¶¯±¸·İÈÎÎñ ---
+	// --- 2. å¤„ç†å¹¶å¯åŠ¨æ‰€æœ‰è‡ªåŠ¨å¤‡ä»½ä»»åŠ¡ ---
 	for (const auto& task : spCfg.tasks) {
 		if (!g_appState.configs.count(task.configIndex) ||
 			task.worldIndex < 0 ||
@@ -2672,7 +2665,7 @@ void RunSpecialMode(int configId) {
 			continue;
 		}
 
-		// ´´½¨ÈÎÎñ×¨ÓÃÅäÖÃ£¨ºÏ²¢»ù´¡ÅäÖÃºÍÌØÊâÉèÖÃ£©
+		// åˆ›å»ºä»»åŠ¡ä¸“ç”¨é…ç½®ï¼ˆåˆå¹¶åŸºç¡€é…ç½®å’Œç‰¹æ®Šè®¾ç½®ï¼‰
 		Config taskConfig = g_appState.configs[task.configIndex];
 		const auto& worldData = taskConfig.worlds[task.worldIndex];
 		taskConfig.hotBackup = spCfg.hotBackup;
@@ -2680,32 +2673,34 @@ void RunSpecialMode(int configId) {
 		taskConfig.keepCount = spCfg.keepCount;
 		taskConfig.cpuThreads = spCfg.cpuThreads;
 		taskConfig.useLowPriority = spCfg.useLowPriority;
-		//taskConfig.blacklist = spCfg.blacklist; ÑØÓÃÆÕÍ¨ÅäÖÃµÄºÚÃûµ¥
+		//taskConfig.blacklist = spCfg.blacklist; æ²¿ç”¨æ™®é€šé…ç½®çš„é»‘åå•
 
-		if (task.backupType == 0) { // ÀàĞÍ 0: Ò»´ÎĞÔ±¸·İ
+		MyFolder world = { taskConfig.saveRoot + L"\\" + worldData.first, worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
+
+		if (task.backupType == 0) { // ç±»å‹ 0: ä¸€æ¬¡æ€§å¤‡ä»½
 			ConsoleLog(&console, L("TASK_QUEUE_ONETIME_BACKUP"), (wstring_to_utf8(worldData.first)).c_str());
 			g_appState.realConfigIndex = task.configIndex;
-			DoBackup(taskConfig, worldData, dummyConsole, L"SpecialMode");
-			// ³É¹¦
+			DoBackup(world, dummyConsole, L"SpecialMode");
+			// æˆåŠŸ
 			ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(worldData.first)).c_str());
 		}
-		else { // ÀàĞÍ 1 (¼ä¸ô) ºÍ 2 (¼Æ»®) ÔÚºóÌ¨Ïß³ÌÔËĞĞ
-			taskThreads.emplace_back([task, taskConfig, worldData, &shouldExit]() {
-				ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), (wstring_to_utf8(worldData.first)).c_str());
+		else { // ç±»å‹ 1 (é—´éš”) å’Œ 2 (è®¡åˆ’) åœ¨åå°çº¿ç¨‹è¿è¡Œ
+			taskThreads.emplace_back([task, world, &shouldExit]() {
+				ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), (wstring_to_utf8(world.name)).c_str());
 
 				while (!shouldExit) {
-					// ¼ÆËãÏÂ´ÎÔËĞĞÊ±¼ä
+					// è®¡ç®—ä¸‹æ¬¡è¿è¡Œæ—¶é—´
 					time_t next_run_t = 0;
-					if (task.backupType == 1) { // ¼ä¸ô±¸·İ
+					if (task.backupType == 1) { // é—´éš”å¤‡ä»½
 						this_thread::sleep_for(chrono::minutes(task.intervalMinutes));
 					}
-					else { // ¼Æ»®±¸·İ
+					else { // è®¡åˆ’å¤‡ä»½
 						while (true) {
 							time_t now_t = time(nullptr);
 							tm local_tm;
 							localtime_s(&local_tm, &now_t);
 
-							// ÉèÖÃÄ¿±êÊ±¼äÎª½ñÌì£¬Èç¹ûÒÑ¹ıÊ±Ôòµ÷Õû
+							// è®¾ç½®ç›®æ ‡æ—¶é—´ä¸ºä»Šå¤©ï¼Œå¦‚æœå·²è¿‡æ—¶åˆ™è°ƒæ•´
 							tm target_tm = local_tm;
 							target_tm.tm_hour = task.schedHour;
 							target_tm.tm_min = task.schedMinute;
@@ -2730,9 +2725,9 @@ void RunSpecialMode(int configId) {
 						char time_buf[26];
 						ctime_s(time_buf, sizeof(time_buf), &next_run_t);
 						time_buf[strlen(time_buf) - 1] = '\0';
-						ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), (wstring_to_utf8(worldData.first).c_str()), time_buf);
+						ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), (wstring_to_utf8(world.name).c_str()), time_buf);
 
-						// µÈ´ıÖ±µ½Ä¿±êÊ±¼ä£¬Í¬Ê±¼ì²éÍË³öĞÅºÅ
+						// ç­‰å¾…ç›´åˆ°ç›®æ ‡æ—¶é—´ï¼ŒåŒæ—¶æ£€æŸ¥é€€å‡ºä¿¡å·
 						while (time(nullptr) < next_run_t && !shouldExit) {
 							this_thread::sleep_for(chrono::seconds(1));
 						}
@@ -2740,19 +2735,19 @@ void RunSpecialMode(int configId) {
 
 					if (shouldExit) break;
 
-					ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), (wstring_to_utf8(worldData.first).c_str()));
+					ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), (wstring_to_utf8(world.name).c_str()));
 					g_appState.realConfigIndex = task.configIndex;
-					DoBackup(taskConfig, worldData, console, L"SpecialMode");
-					ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(worldData.first)).c_str());
+					DoBackup(world, console, L"SpecialMode");
+					ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), (wstring_to_utf8(world.name)).c_str());
 				}
-				ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), (wstring_to_utf8(worldData.first).c_str()));
+				ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), (wstring_to_utf8(world.name).c_str()));
 				});
 		}
 	}
 
 	ConsoleLog(&console, L("INFO_TASKS_INITIATED"));
 
-	// --- 3. ÓÃ»§ÊäÈëÖ÷Ñ­»·£¨Èç¹û¿ØÖÆÌ¨¿É¼û£©---
+	// --- 3. ç”¨æˆ·è¾“å…¥ä¸»å¾ªç¯ï¼ˆå¦‚æœæ§åˆ¶å°å¯è§ï¼‰---
 	while (!shouldExit) {
 		if (!spCfg.hideWindow && _kbhit()) {
 			char c = tolower(_getch());
@@ -2775,13 +2770,13 @@ void RunSpecialMode(int configId) {
 				ConsoleLog(&console, L("INFO_SWITCHING_TO_GUI_MODE"));
 #ifdef _WIN32
 				wchar_t selfPath[MAX_PATH];
-				GetModuleFileNameW(NULL, selfPath, MAX_PATH); // »ñµÃ³ÌĞòÂ·¾¶
-				ShellExecuteW(NULL, L"open", selfPath, NULL, NULL, SW_SHOWNORMAL); // ¿ªÆô
+				GetModuleFileNameW(NULL, selfPath, MAX_PATH); // è·å¾—ç¨‹åºè·¯å¾„
+				ShellExecuteW(NULL, L"open", selfPath, NULL, NULL, SW_SHOWNORMAL); // å¼€å¯
 #endif
 			}
 		}
 
-		// Èç¹ûÆôÓÃ×Ô¶¯ÍË³öÇÒÃ»ÓĞºóÌ¨Ïß³Ì£¬Ôò¿ÉÒÔÍË³ö
+		// å¦‚æœå¯ç”¨è‡ªåŠ¨é€€å‡ºä¸”æ²¡æœ‰åå°çº¿ç¨‹ï¼Œåˆ™å¯ä»¥é€€å‡º
 		if (spCfg.exitAfterExecution && taskThreads.empty()) {
 			shouldExit = true;
 		}
@@ -2789,14 +2784,14 @@ void RunSpecialMode(int configId) {
 		this_thread::sleep_for(chrono::milliseconds(200));
 	}
 
-	// --- 4. ÇåÀí ---
+	// --- 4. æ¸…ç† ---
 	for (auto& t : taskThreads) {
 		if (t.joinable()) {
 			t.join();
 		}
 	}
 
-	// Í£Ö¹ËùÓĞÆô¶¯µÄÈÎÎñ
+	// åœæ­¢æ‰€æœ‰å¯åŠ¨çš„ä»»åŠ¡
 	{
 		lock_guard<mutex> lock(g_appState.task_mutex);
 		for (auto& kv : g_appState.g_active_auto_backups) {
@@ -2815,12 +2810,12 @@ void RunSpecialMode(int configId) {
 }
 
 void ShowHistoryWindow(int& tempCurrentConfigIndex) {
-	// Ê¹ÓÃstatic±äÁ¿À´³Ö¾Ã»¯UI×´Ì¬
+	// ä½¿ç”¨staticå˜é‡æ¥æŒä¹…åŒ–UIçŠ¶æ€
 	static HistoryEntry* selected_entry = nullptr;
 	static ImGuiTextFilter filter;
 	static char rename_buf[MAX_PATH];
 	static char comment_buf[512];
-	static string original_comment; // ÓÃÓÚÖ§³Ö¡°È¡Ïû¡±±à¼­
+	static string original_comment; // ç”¨äºæ”¯æŒâ€œå–æ¶ˆâ€ç¼–è¾‘
 	static bool is_comment_editing = false;
 	static HistoryEntry* entry_to_delete = nullptr;
 	Config& cfg = g_appState.configs[tempCurrentConfigIndex];
@@ -2832,20 +2827,20 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		return;
 	}
 
-	// µ±´°¿Ú¹Ø±Õ»òÅäÖÃ¸Ä±äÊ±£¬ÖØÖÃÑ¡ÖĞÏî
+	// å½“çª—å£å…³é—­æˆ–é…ç½®æ”¹å˜æ—¶ï¼Œé‡ç½®é€‰ä¸­é¡¹
 	if (!showHistoryWindow || (selected_entry && g_appState.g_history.find(tempCurrentConfigIndex) == g_appState.g_history.end())) {
 		selected_entry = nullptr;
 		is_comment_editing = false;
 	}
 
-	// --- ¶¥²¿¹¤¾ßÀ¸ ---
+	// --- é¡¶éƒ¨å·¥å…·æ  ---
 	filter.Draw(L("HISTORY_SEARCH_HINT"), ImGui::GetContentRegionAvail().x * 0.5f);
 	ImGui::SameLine();
 	if (ImGui::Button(L("HISTORY_CLEAN_INVALID"))) {
 		ImGui::OpenPopup(L("HISTORY_CONFIRM_CLEAN_TITLE"));
 	}
 
-	// ÇåÀíÈ·ÈÏµ¯´°
+	// æ¸…ç†ç¡®è®¤å¼¹çª—
 	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextUnformatted(L("HISTORY_CONFIRM_CLEAN_MSG"));
 		ImGui::Separator();
@@ -2860,7 +2855,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					history_vec.end()
 				);
 				SaveHistory();
-				//selected_entry = nullptr; // ÇåÀíºóÖØÖÃÑ¡Ôñ
+				//selected_entry = nullptr; // æ¸…ç†åé‡ç½®é€‰æ‹©
 				is_comment_editing = false;
 			}
 			ImGui::CloseCurrentPopup();
@@ -2872,7 +2867,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 	ImGui::Separator();
 
-	// --- Ö÷Ìå²¼¾Ö£º×óÓÒ·ÖÀ¸ ---
+	// --- ä¸»ä½“å¸ƒå±€ï¼šå·¦å³åˆ†æ  ---
 	float list_width = ImGui::GetContentRegionAvail().x * 0.45f;
 	ImGui::BeginChild("HistoryListPane", ImVec2(list_width, 0), true);
 
@@ -2890,7 +2885,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		for (auto& pair : world_history_map) {
 			ImGuiWindowFlags treeNodeFlags = ImGuiTreeNodeFlags_None;
 			ImGui::SetNextItemOpen(false, ImGuiCond_Appearing);
-			// Ä¬ÈÏÕ¹¿ªÊÀ½ç
+			// é»˜è®¤å±•å¼€ä¸–ç•Œ
 			if (!g_worldToFocusInHistory.empty() && pair.first == g_worldToFocusInHistory) {
 				treeNodeFlags = ImGuiTreeNodeFlags_Leaf;
 			}
@@ -2910,11 +2905,11 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					bool file_exists = filesystem::exists(backup_path);
 					bool is_small = file_exists && filesystem::file_size(backup_path) < 10240;
 
-					// --- ×Ô¶¨ÒåÁĞ±íÏî¿¨Æ¬ ---
+					// --- è‡ªå®šä¹‰åˆ—è¡¨é¡¹å¡ç‰‡ ---
 					ImGui::PushID(entry);
 					if (ImGui::Selectable("##entry_selectable", selected_entry == entry, 0, ImVec2(0, ImGui::GetTextLineHeight() * 2.5f))) {
 						selected_entry = entry;
-						is_comment_editing = false; // ÇĞ»»Ñ¡ÔñÊ±ÍË³ö±à¼­Ä£Ê½
+						is_comment_editing = false; // åˆ‡æ¢é€‰æ‹©æ—¶é€€å‡ºç¼–è¾‘æ¨¡å¼
 					}
 
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -2927,13 +2922,13 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 						draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgHovered), 4.0f, 0, 2.0f);
 					}
 
-					// Í¼±ê
+					// å›¾æ ‡
 					const char* icon = file_exists ? (is_small ? ICON_FA_TRIANGLE_EXCLAMATION : ICON_FA_FILE) : ICON_FA_GHOST;
 					ImVec4 icon_color = file_exists ? (is_small ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) : ImVec4(0.6f, 0.9f, 0.6f, 1.0f)) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
 					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 5, p_min.y + (p_max.y - p_min.y) / 2 - ImGui::GetTextLineHeight() / 2));
 					ImGui::TextColored(icon_color, "%s", icon);
 
-					// ÎÄ±¾ÄÚÈİ
+					// æ–‡æœ¬å†…å®¹
 					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 30, p_min.y + 5));
 					ImGui::TextUnformatted(entry_label_utf8.c_str());
 					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 30, p_min.y + 5 + ImGui::GetTextLineHeightWithSpacing()));
@@ -2959,7 +2954,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	ImGui::EndChild();
 	ImGui::SameLine();
 
-	// --- ÓÒ²àÏêÇéÓë²Ù×÷Ãæ°å ---
+	// --- å³ä¾§è¯¦æƒ…ä¸æ“ä½œé¢æ¿ ---
 	ImGui::BeginChild("DetailsPane", ImVec2(0, 0), true);
 	if (selected_entry) {
 		ImGui::SeparatorText(L("HISTORY_DETAILS_PANE_TITLE"));
@@ -2967,7 +2962,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		filesystem::path backup_path = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / selected_entry->worldName / selected_entry->backupFile;
 		bool file_exists = filesystem::exists(backup_path);
 
-		// ÏêÏ¸ĞÅÏ¢±í¸ñ
+		// è¯¦ç»†ä¿¡æ¯è¡¨æ ¼
 		if (ImGui::BeginTable("DetailsTable", 2, ImGuiTableFlags_SizingFixedFit)) {
 			ImGui::TableNextColumn(); ImGui::TextUnformatted(L("HISTORY_LABEL_WORLD"));
 			ImGui::TableNextColumn(); ImGui::Text("%s", wstring_to_utf8(selected_entry->worldName).c_str());
@@ -3027,7 +3022,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::RadioButton(L("RESTORE_METHOD_CUSTOM"), &restore_method, 3);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_METHOD_CUSTOM"));
 
-			// ½öÔÚÑ¡Ôñ×Ô¶¨Òå»¹Ô­Ê±ÏÔÊ¾ÊäÈë¿ò
+			// ä»…åœ¨é€‰æ‹©è‡ªå®šä¹‰è¿˜åŸæ—¶æ˜¾ç¤ºè¾“å…¥æ¡†
 			if (restore_method == 3) {
 				ImGui::Indent();
 				ImGui::SetNextItemWidth(-1);
@@ -3038,7 +3033,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				ImGui::Unindent();
 			}
 			else {
-				// È·±£ÔÚÇĞ»»µ½ÆäËûÄ£Ê½Ê±Çå¿ÕÊäÈë£¬±ÜÃâ»ìÏı
+				// ç¡®ä¿åœ¨åˆ‡æ¢åˆ°å…¶ä»–æ¨¡å¼æ—¶æ¸…ç©ºè¾“å…¥ï¼Œé¿å…æ··æ·†
 				if (strlen(customRestoreBuf) > 0) {
 					strcpy_s(customRestoreBuf, "");
 				}
@@ -3048,9 +3043,10 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
 				if (cfg.backupBefore) {
-					DoBackup(cfg, { selected_entry->worldName, L"" }, ref(console), L"Auto");
+					MyFolder world = { cfg.saveRoot + L"\\" + selected_entry->worldName, selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
+					DoBackup(world, ref(console), L"BeforeRestore");
 				}
-				// ´«µİ customRestoreBuf, Ö»ÓĞÔÚ mode 3 Ê±Ëü²Å¿ÉÄÜÓĞÄÚÈİ
+				// ä¼ é€’ customRestoreBuf, åªæœ‰åœ¨ mode 3 æ—¶å®ƒæ‰å¯èƒ½æœ‰å†…å®¹
 				thread restore_thread(DoRestore, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console), restore_method, customRestoreBuf);
 				restore_thread.detach();
 				ImGui::CloseCurrentPopup();
@@ -3088,6 +3084,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine();
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 			selected_entry->isImportant = !selected_entry->isImportant;
+			selected_entry->isAutoImportant = false;
+			SaveHistory();
 		}
 		// -----------
 		if (!cfg.enableWEIntegration) ImGui::BeginDisabled();
@@ -3112,7 +3110,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::PopStyleColor(2);
 
 
-		// --- ÖØÃüÃûµ¯´° ---
+		// --- é‡å‘½åå¼¹çª— ---
 		if (ImGui::BeginPopupModal(L("HISTORY_RENAME_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextUnformatted(L("HISTORY_RENAME_POPUP_MSG"));
 			ImGui::InputText("##renameedit", rename_buf, sizeof(rename_buf));
@@ -3126,7 +3124,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					if (!ec) {
 						filesystem::rename(old_path, new_path, ec);
 						if (!ec) {
-							filesystem::last_write_time(new_path, last_write, ec); // »Ö¸´ĞŞ¸ÄÊ±¼ä
+							filesystem::last_write_time(new_path, last_write, ec); // æ¢å¤ä¿®æ”¹æ—¶é—´
 							selected_entry->backupFile = new_path.filename().wstring();
 							SaveHistory();
 						}
@@ -3139,7 +3137,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::EndPopup();
 		}
 
-		// --- É¾³ıÈ·ÈÏµ¯´° ---
+		// --- åˆ é™¤ç¡®è®¤å¼¹çª— ---
 		if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextWrapped(L("HISTORY_DELETE_POPUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
 			ImGui::Separator();
@@ -3156,7 +3154,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					safe_delete_thread.detach();
 				}
 				else {
-					MessageBoxWin("Error", "Not a [Smart] Backup");
+					MessageBoxWin("Error", "Not a [Smart] Backup", 2);
 				}
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();
@@ -3203,28 +3201,28 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 }
 
 
-// ¹¹½¨µ±Ç°Ñ¡Ôñ£¨ÆÕÍ¨ / ÌØÊâ£©ÏÂÓÃÓÚÏÔÊ¾µÄÊÀ½çÁĞ±í
-static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
+// æ„å»ºå½“å‰é€‰æ‹©ï¼ˆæ™®é€š / ç‰¹æ®Šï¼‰ä¸‹ç”¨äºæ˜¾ç¤ºçš„ä¸–ç•Œåˆ—è¡¨
+vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	vector<DisplayWorld> out;
-	// ÆÕÍ¨ÅäÖÃÊÓÍ¼
+	// æ™®é€šé…ç½®è§†å›¾
 	if (!specialSetting) {
 		if (!g_appState.configs.count(g_appState.currentConfigIndex)) return out;
 		const Config& src = g_appState.configs[g_appState.currentConfigIndex];
 		for (int i = 0; i < (int)src.worlds.size(); ++i) {
-			if (src.worlds[i].second == L"#") continue; // Òş²Ø±ê¼Ç
+			if (src.worlds[i].second == L"#") continue; // éšè—æ ‡è®°
 			DisplayWorld dw;
 			dw.name = src.worlds[i].first;
 			dw.desc = src.worlds[i].second;
 			dw.baseConfigIndex = g_appState.currentConfigIndex;
 			dw.baseWorldIndex = i;
-			dw.effectiveConfig = src; // Ä¬ÈÏÊ¹ÓÃ»ù´¡ÅäÖÃ
+			dw.effectiveConfig = src; // é»˜è®¤ä½¿ç”¨åŸºç¡€é…ç½®
 			out.push_back(dw);
 		}
 		return out;
 	}
 
-	// ÌØÊâÅäÖÃÊÓÍ¼£º°Ñ SpecialConfig.tasks Ó³ÉäÎª DisplayWorld ÁĞ±í
+	// ç‰¹æ®Šé…ç½®è§†å›¾ï¼šæŠŠ SpecialConfig.tasks æ˜ å°„ä¸º DisplayWorld åˆ—è¡¨
 	if (!g_appState.specialConfigs.count(g_appState.currentConfigIndex)) return out;
 	const SpecialConfig& sp = g_appState.specialConfigs[g_appState.currentConfigIndex];
 	for (const auto& task : sp.tasks) {
@@ -3238,7 +3236,7 @@ static vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 		dw.baseConfigIndex = task.configIndex;
 		dw.baseWorldIndex = task.worldIndex;
 
-		// ºÏ²¢ÅäÖÃ£ºÒÔ baseCfg ÎªÖ÷£¬ÌØÊâÅäÖÃ¸²¸Ç³£ÓÃ×Ö¶Î
+		// åˆå¹¶é…ç½®ï¼šä»¥ baseCfg ä¸ºä¸»ï¼Œç‰¹æ®Šé…ç½®è¦†ç›–å¸¸ç”¨å­—æ®µ
 		dw.effectiveConfig = baseCfg;
 		dw.effectiveConfig.zipLevel = sp.zipLevel;
 		if (sp.keepCount > 0) dw.effectiveConfig.keepCount = sp.keepCount;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _PLATFORM_WIN_H
 #define _PLATFORM_WIN_H
 #include <iostream>
@@ -18,10 +18,10 @@ std::wstring GetLastOpenTime(const std::wstring& worldPath);
 std::wstring GetLastBackupTime(const std::wstring& backupDir);
 void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance);
 void RemoveTrayIcon();
-void TriggerHotkeyBackup();
+void TriggerHotkeyBackup(std::string comment = "Hotkey");
 void TriggerHotkeyRestore();
 void GetUserDefaultUILanguageWin();
-void MessageBoxWin(const std::string& title, const std::string& message);
+void MessageBoxWin(const std::string& title, const std::string& message, int iconType);
 HWND CreateHiddenWindow(HINSTANCE hInstance);
 void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);

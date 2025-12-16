@@ -1,11 +1,16 @@
-#pragma once
+ï»¿#pragma once
 #ifndef _CONSOLE_
 #define _CONSOLE_
 
 #include "imgui/imgui.h"
 #include "AppState.h"
+#ifdef _WIN32
 #include "Platform_win.h"
+#else
+#include "Platform_linux.h"
+#endif
 #include "i18n.h"
+
 #include <mutex>
 #include <fstream>
 #include <filesystem>
@@ -20,7 +25,7 @@ struct Console
 	ImGuiTextFilter       Filter;
 	bool                  AutoScroll;
 	bool                  ScrollToBottom;
-	std::mutex				  logMutex; //ÓÃÓÚ±£»¤ÈÕÖ¾ÄÚÈİµÄ»¥³âËø 
+	std::mutex				  logMutex; //ç”¨äºä¿æŠ¤æ—¥å¿—å†…å®¹çš„äº’æ–¥é” 
 
 	Console()
 	{
@@ -40,8 +45,8 @@ struct Console
 		Commands.push_back("LIST_BACKUPS");
 		Commands.push_back("LIST_WORLDS");
 		Commands.push_back("LIST_CONFIGS");
-		AutoScroll = true;                  //×Ô¶¯¹ö¶¯ºÃÑ½
-		ScrollToBottom = false;             //²»ÓÃ¹ö¶¯Ìõ£¬µ«¿ÉÒÔÊó±ê¹ö
+		AutoScroll = true;                  //è‡ªåŠ¨æ»šåŠ¨å¥½å‘€
+		ScrollToBottom = false;             //ä¸ç”¨æ»šåŠ¨æ¡ï¼Œä½†å¯ä»¥é¼ æ ‡æ»š
 	}
 	~Console()
 	{
@@ -58,13 +63,13 @@ struct Console
 
 	void    ClearLog()
 	{
-		std::lock_guard<std::mutex> lock(logMutex);//¼ÓËø
+		std::lock_guard<std::mutex> lock(logMutex);//åŠ é”
 		for (int i = 0; i < Items.Size; i++)
 			ImGui::MemFree(Items[i]);
 		Items.clear();
 	}
 
-	//ÏÔÊ¾ÏûÏ¢
+	//æ˜¾ç¤ºæ¶ˆæ¯
 	void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
 	{
 		if (isSilence) return;
@@ -90,10 +95,10 @@ struct Console
 
 		// As a specific feature guaranteed by the library, after calling Begin() the last Item represent the title bar.
 		// So e.g. IsItemHovered() will return true when hovering the title bar.
-		// Here we create a context menu only available from the title bar.(ÔİÊ±ÎŞÓÃ
+		// Here we create a context menu only available from the title bar.(æš‚æ—¶æ— ç”¨
 		/*if (ImGui::BeginPopupContextItem())
 		{
-			if (ImGui::MenuItem(u8"¹Ø±Õ"))
+			if (ImGui::MenuItem(u8"å…³é—­"))
 				*p_open = false;
 			ImGui::EndPopup();
 		}*/
@@ -137,7 +142,7 @@ struct Console
 				bool has_color = false;
 				if (strstr(item, "[Error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
 				else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[Info] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
-				else if (strncmp(item, u8"[ÌáÊ¾] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+				else if (strncmp(item, u8"[æç¤º] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
 				if (has_color)
 					ImGui::PushStyleColor(ImGuiCol_Text, color);
 				ImGui::TextUnformatted(item);
@@ -204,7 +209,7 @@ struct Console
 				out << Items[i] << std::endl;
 			}
 			out.close();
-			// ×Ô¶¯´ò¿ªÈÕÖ¾ËùÔÚÄ¿Â¼ ²¢Ñ¡ÖĞ¸ÃÎÄ¼ş
+			// è‡ªåŠ¨æ‰“å¼€æ—¥å¿—æ‰€åœ¨ç›®å½• å¹¶é€‰ä¸­è¯¥æ–‡ä»¶
 			OpenFolderWithFocus(std::filesystem::current_path().wstring(), L"/select,\"console_log.txt\"");
 		}
 		ImGui::Separator();
@@ -241,7 +246,7 @@ struct Console
 				bool has_color = false;
 				if (strstr(item, "[Error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
 				else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[Info] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
-				else if (strncmp(item, u8"[ÌáÊ¾] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+				else if (strncmp(item, u8"[æç¤º] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
 				if (has_color)
 					ImGui::PushStyleColor(ImGuiCol_Text, color);
 				ImGui::TextUnformatted(item);
@@ -271,7 +276,7 @@ struct Console
 			Strtrim(s);
 			if (s[0])
 				ExecCommand(s);
-			strcpy_s(s, strlen(s) + 1, "");//±»ÒªÇó´Óstrcpy¸Ä³Éstrcpy_s£¬ÕâÑùÖĞ¼äÒª¼Ó¸ö³¤¶È²ÎÊı²Å²»±¨´í¡­¡­
+			strcpy_s(s, strlen(s) + 1, "");//è¢«è¦æ±‚ä»strcpyæ”¹æˆstrcpy_sï¼Œè¿™æ ·ä¸­é—´è¦åŠ ä¸ªé•¿åº¦å‚æ•°æ‰ä¸æŠ¥é”™â€¦â€¦
 			reclaim_focus = true;
 		}
 
@@ -326,7 +331,7 @@ struct Console
 			}
 			else
 			{
-				// °´Tab×Ô¶¯É¸Ñ¡
+				// æŒ‰Tabè‡ªåŠ¨ç­›é€‰
 				int match_len = (int)(word_end - word_start);
 				for (;;)
 				{

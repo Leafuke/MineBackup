@@ -1,4 +1,4 @@
-#define GLFW_EXPOSE_NATIVE_WIN32
+ï»¿#define GLFW_EXPOSE_NATIVE_WIN32
 #include <dwmapi.h>
 #include "Platform_win.h"
 #include "text_to_text.h"
@@ -19,6 +19,7 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <wchar.h>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
@@ -62,7 +63,7 @@ void SetFileAttributesWin(const wstring& path, bool isHidden) {
 	if(isHidden)
 		SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_HIDDEN);
 	else
-		SetFileAttributes(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+		SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
 }
 
 void ExecuteCmd(const string &cmd) {
@@ -98,14 +99,28 @@ void GetUserDefaultUILanguageWin() {
 		g_CurrentLang = "en_US";
 		break;
 	default:
-		g_CurrentLang = "en_US"; // Ä¬ÈÏÓ¢Óï
+		g_CurrentLang = "en_US"; // é»˜è®¤è‹±è¯­
 		break;
 	}
 	return;
 }
 
-void MessageBoxWin(const string& title, const string& message) {
-	MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONERROR);
+// iconType: 2 = error, 0 = info, 1 = warning
+void MessageBoxWin(const string& title, const string& message, int iconType) {
+	switch (iconType)
+	{
+	case 0:
+		MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONINFORMATION);
+		break;
+	case 1:
+		MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONWARNING);
+		break;
+	case 2:
+		MessageBoxW(nullptr, utf8_to_wstring(L(message.c_str())).c_str(), utf8_to_wstring(L(title.c_str())).c_str(), MB_OK | MB_ICONERROR);
+		break;
+	default:
+		break;
+	}
 	return;
 }
 
@@ -120,7 +135,7 @@ HWND CreateHiddenWindow(HINSTANCE hInstance) {
 	HWND hwnd_hidden = CreateWindowExW(0, HIDDEN_CLASS_NAME, L"MineBackup Hidden Window", 0,
 		0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
 	if (hwnd_hidden == NULL)
-		return NULL; // ´´½¨Ê§°Ü
+		return NULL; // åˆ›å»ºå¤±è´¥
 	return hwnd_hidden;
 }
 
@@ -131,7 +146,7 @@ void UnregisterHotkeys(HWND hwnd, int hotKeyId) {
 	::UnregisterHotKey(hwnd, hotKeyId);
 }
 void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance) {
-	// ³õÊ¼»¯ÍĞÅÌÍ¼±ê (nid)
+	// åˆå§‹åŒ–æ‰˜ç›˜å›¾æ ‡ (nid)
 	nid.cbSize = sizeof(NOTIFYICONDATA);
 	nid.hWnd = hwnd;
 	nid.uID = 1;
@@ -168,33 +183,33 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	switch (msg)
 	{
-	case WM_USER + 1: // ÍĞÅÌÍ¼±êÏûÏ¢
+	case WM_USER + 1: // æ‰˜ç›˜å›¾æ ‡æ¶ˆæ¯
 		if (lParam == WM_LBUTTONUP) {
 			g_appState.showMainApp = true;
 			glfwShowWindow(wc);
 		}
 		else if (lParam == WM_RBUTTONUP) {
 			HMENU hMenu = CreatePopupMenu();
-			AppendMenu(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
-			AppendMenu(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
+			AppendMenuW(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
+			AppendMenuW(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
 
-			// »ñÈ¡Êó±êÎ»ÖÃ£¨²Ëµ¥ÏÔÊ¾ÔÚÊó±êÓÒ¼üµã»÷µÄÎ»ÖÃ£©
+			// è·å–é¼ æ ‡ä½ç½®ï¼ˆèœå•æ˜¾ç¤ºåœ¨é¼ æ ‡å³é”®ç‚¹å‡»çš„ä½ç½®ï¼‰
 			POINT pt;
 			GetCursorPos(&pt);
 
-			// ÏÔÊ¾²Ëµ¥£¨TPM_BOTTOMALIGN£º²Ëµ¥µ×²¿¶ÔÆëÊó±êÎ»ÖÃ£©
+			// æ˜¾ç¤ºèœå•ï¼ˆTPM_BOTTOMALIGNï¼šèœå•åº•éƒ¨å¯¹é½é¼ æ ‡ä½ç½®ï¼‰
 			TrackPopupMenu(
 				hMenu,
-				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // ²Ëµ¥ÑùÊ½
+				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // èœå•æ ·å¼
 				pt.x, pt.y,
 				0,
 				hWnd,
 				NULL
 			);
 
-			// ±ØĞëµ÷ÓÃ´Ëº¯Êı£¬·ñÔò²Ëµ¥¿ÉÄÜÎŞ·¨Õı³£¹Ø±Õ
+			// å¿…é¡»è°ƒç”¨æ­¤å‡½æ•°ï¼Œå¦åˆ™èœå•å¯èƒ½æ— æ³•æ­£å¸¸å…³é—­
 			SetForegroundWindow(hWnd);
-			// Ïú»Ù²Ëµ¥£¨±ÜÃâÄÚ´æĞ¹Â©£©
+			// é”€æ¯èœå•ï¼ˆé¿å…å†…å­˜æ³„æ¼ï¼‰
 			DestroyMenu(hMenu);
 			break;
 		}
@@ -209,13 +224,13 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		return 0;
 	case WM_COMMAND: {
 		switch (LOWORD(wParam)) {
-		case 1001:  // µã»÷¡°´ò¿ª½çÃæ¡±
+		case 1001:  // ç‚¹å‡»â€œæ‰“å¼€ç•Œé¢â€
 			g_appState.showMainApp = true;
 			glfwShowWindow(wc);
 			SetForegroundWindow(hWnd);
 			break;
-		case 1002:  // µã»÷¡°¹Ø±Õ¡±
-			// ÏÈÒÆ³ıÍĞÅÌÍ¼±ê£¬ÔÙÍË³ö³ÌĞò
+		case 1002:  // ç‚¹å‡»â€œå…³é—­â€
+			// å…ˆç§»é™¤æ‰˜ç›˜å›¾æ ‡ï¼Œå†é€€å‡ºç¨‹åº
 			SaveConfigs();
 			g_appState.done = true;
 			Shell_NotifyIcon(NIM_DELETE, &nid);
@@ -229,7 +244,7 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			return 0;
 		break;
 	case WM_DESTROY:
-		Shell_NotifyIcon(NIM_DELETE, &nid);  // ÇåÀíÍĞÅÌÍ¼±ê
+		Shell_NotifyIcon(NIM_DELETE, &nid);  // æ¸…ç†æ‰˜ç›˜å›¾æ ‡
 		g_appState.done = true;
 		::PostQuitMessage(0);
 		return 0;
@@ -277,9 +292,9 @@ void CheckForUpdatesThread() {
 
 	try {
 		//string latestVersion = find_json_value(responseBody, "tag_name");
-		// Ê¹ÓÃ¸ü¿É¿¿µÄ JSON ½âÎö¿â
+		// ä½¿ç”¨æ›´å¯é çš„ JSON è§£æåº“
 		string latestVersion = nlohmann::json::parse(responseBody)["tag_name"].get<std::string>();
-		// ÒÆ³ı°æ±¾ºÅÇ°µÄ 'v'
+		// ç§»é™¤ç‰ˆæœ¬å·å‰çš„ 'v'
 		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
 			latestVersion = latestVersion.substr(1);
 		}
@@ -290,12 +305,12 @@ void CheckForUpdatesThread() {
 		size_t pos22 = CURRENT_VERSION.find('.', pos1 + 1);
 		size_t pos33 = CURRENT_VERSION.find('-');
 		bool isNew = false;
-		// °ÑËùÓĞÊıÖµ¶¼¸³Öµ
+		// æŠŠæ‰€æœ‰æ•°å€¼éƒ½èµ‹å€¼
 		size_t curMajor = stoi(CURRENT_VERSION.substr(0, pos11)), curMinor1 = stoi(CURRENT_VERSION.substr(pos11 + 1, pos22)), newMajor = stoi(latestVersion.substr(0, pos1)), newMinor1 = stoi(latestVersion.substr(pos1 + 1, pos2));
 		size_t curMinor2 = pos33 == string::npos ? stoi(CURRENT_VERSION.substr(pos22 + 1)) : stoi(CURRENT_VERSION.substr(pos22 + 1, pos33)), newMinor2 = pos3 == string::npos ? stoi(latestVersion.substr(pos2 + 1)) : stoi(latestVersion.substr(pos2 + 1, pos3));
 		size_t curSp = pos33 == string::npos ? 0 : stoi(CURRENT_VERSION.substr(pos33 + 3)), newSp = pos3 == string::npos ? 0 : stoi(latestVersion.substr(pos3 + 3));
-		// ÓĞÕâ¼¸ÖÖ°æ±¾ºÅ v1.7.9 v1.7.10 v1.7.9-sp1
-		// ÕâÒ»¶ÎÎÒĞ´µÃ·Ç³£·Ç³£²»ÂúÒâ£¬µ«ÊÇ¡­¡­½«¾Í×Å°É
+		// æœ‰è¿™å‡ ç§ç‰ˆæœ¬å· v1.7.9 v1.7.10 v1.7.9-sp1
+		// è¿™ä¸€æ®µæˆ‘å†™å¾—éå¸¸éå¸¸ä¸æ»¡æ„ï¼Œä½†æ˜¯â€¦â€¦å°†å°±ç€å§
 
 
 		if (newMajor > curMajor) {
@@ -317,7 +332,7 @@ void CheckForUpdatesThread() {
 			}
 		}
 
-		// ¼òµ¥°æ±¾±È½Ï (ÀıÈç "1.7.0" > "1.6.7")
+		// ç®€å•ç‰ˆæœ¬æ¯”è¾ƒ (ä¾‹å¦‚ "1.7.0" > "1.6.7")
 		if (!latestVersion.empty() && isNew) {
 			g_LatestVersionStr = "v" + latestVersion;
 			g_NewVersionAvailable = true;
@@ -331,7 +346,7 @@ void CheckForUpdatesThread() {
 				else if (g_ReleaseNotes[i] == '\\')
 					g_ReleaseNotes[i] = ' ', g_ReleaseNotes[i + 1] = ' ';
 			}
-			// ²éÕÒ .exe ÏÂÔØÁ´½Ó  -- Ö±½ÓÊÖ¶¯Æ´½Ó¾ÍĞĞ
+			// æŸ¥æ‰¾ .exe ä¸‹è½½é“¾æ¥  -- ç›´æ¥æ‰‹åŠ¨æ‹¼æ¥å°±è¡Œ
 			//string assets_key = "\"assets\": [";
 			//size_t assets_start = responseBody.find(assets_key);
 			//if (assets_start != string::npos) {
@@ -347,7 +362,7 @@ void CheckForUpdatesThread() {
 
 			//		if (asset_name.size() > 4 && asset_name.substr(asset_name.size() - 4) == ".exe") {
 			//			g_AssetDownloadURL = find_json_value(asset_json, "browser_download_url");
-			//			break; // ÕÒµ½¼´ÍË³ö
+			//			break; // æ‰¾åˆ°å³é€€å‡º
 			//		}
 			//		search_pos = asset_obj_end;
 			//	}
@@ -355,7 +370,7 @@ void CheckForUpdatesThread() {
 		}
 	}
 	catch (...) {
-		// ½âÎöÊ§°Ü£¬¾²Ä¬´¦Àí
+		// è§£æå¤±è´¥ï¼Œé™é»˜å¤„ç†
 	}
 
 cleanup:
@@ -365,7 +380,7 @@ cleanup:
 	g_UpdateCheckDone = true;
 }
 
-// ×¢²á±í²éÑ¯
+// æ³¨å†Œè¡¨æŸ¥è¯¢
 string GetRegistryValue(const string & keyPath, const string & valueName)
 {
 	HKEY hKey;
@@ -386,7 +401,7 @@ string GetRegistryValue(const string & keyPath, const string & valueName)
 wstring GetLastOpenTime(const wstring& worldPath) {
 	try {
 		auto ftime = filesystem::last_write_time(worldPath);
-		// ×ª»»Îª system_clock::time_point
+		// è½¬æ¢ä¸º system_clock::time_point
 		auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
 			ftime - filesystem::file_time_type::clock::now()
 			+ chrono::system_clock::now()
@@ -394,7 +409,7 @@ wstring GetLastOpenTime(const wstring& worldPath) {
 		time_t cftime = chrono::system_clock::to_time_t(sctp);
 		wchar_t buf[64];
 		struct tm timeinfo;
-		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtimeÒª»»³É¸ü°²È«µÄlocaltime
+		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtimeè¦æ¢æˆæ›´å®‰å…¨çš„localtime
 		if (localtime_s(&timeinfo, &cftime) == 0) {
 			wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
 			return buf;
@@ -415,7 +430,7 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
 				if (entry.is_regular_file()) {
 					auto ftime = entry.last_write_time();
-					// ×ª»»Îª system_clock::time_point
+					// è½¬æ¢ä¸º system_clock::time_point
 					auto sctp = chrono::time_point_cast<chrono::system_clock::duration>(
 						ftime - filesystem::file_time_type::clock::now()
 						+ chrono::system_clock::now()
@@ -428,7 +443,7 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 		if (latest == 0) return L"/";
 		wchar_t buf[64];
 		struct tm timeinfo;
-		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtimeÒª»»³É¸ü°²È«µÄlocaltime
+		//wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", localtime(&cftime));//localtimeè¦æ¢æˆæ›´å®‰å…¨çš„localtime
 		if (localtime_s(&timeinfo, &latest) == 0) {
 			wcsftime(buf, sizeof(buf) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
 			return buf;
@@ -442,23 +457,23 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 	}
 }
 
-// configType: 1 ÌØÊâÅäÖÃ
+// configType: 1 ç‰¹æ®Šé…ç½®
 void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable) {
 	HKEY hKey;
 	const wstring keyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-	// LSTATUSÊÇWindows APIÖĞ±ê×¼·µ»ØÀàĞÍ
+	// LSTATUSæ˜¯Windows APIä¸­æ ‡å‡†è¿”å›ç±»å‹
 	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_WRITE, &hKey);
 
 	if (status == ERROR_SUCCESS) {
 		if (enable) {
 			wstring command;
-			if (configType) // ÌØÊâÅäÖÃ
+			if (configType) // ç‰¹æ®Šé…ç½®
 				command = L"\"" + appPath + L"\" -specialcfg " + to_wstring(configId);
-			else // ÆÕÍ¨ÅäÖÃ
+			else // æ™®é€šé…ç½®
 				command = L"\"" + appPath + L"\" -cfg " + to_wstring(configId);
 
-			// RegSetValueExW ĞèÒª6¸ö²ÎÊı: HKEY, LPCWSTR, DWORD, DWORD, const BYTE*, DWORD
+			// RegSetValueExW éœ€è¦6ä¸ªå‚æ•°: HKEY, LPCWSTR, DWORD, DWORD, const BYTE*, DWORD
 			RegSetValueExW(
 				hKey,
 				utf8_to_wstring(appName).c_str(),
@@ -469,7 +484,7 @@ void SetAutoStart(const string& appName, const wstring& appPath, bool configType
 			);
 		}
 		else {
-			// RegDeleteValueW ĞèÒª2¸ö²ÎÊı: HKEY, LPCWSTR
+			// RegDeleteValueW éœ€è¦2ä¸ªå‚æ•°: HKEY, LPCWSTR
 			RegDeleteValueW(hKey, utf8_to_wstring(appName).c_str());
 		}
 		RegCloseKey(hKey);
@@ -506,7 +521,7 @@ void WriteLogEntry(const std::string& message, LogLevel level) {
     log_file.close();
 }
 
-//Ñ¡ÔñÎÄ¼ş
+//é€‰æ‹©æ–‡ä»¶
 wstring SelectFileDialog() {
 	HWND hwndOwner = NULL;
 	IFileDialog* pfd;
@@ -532,7 +547,7 @@ wstring SelectFileDialog() {
 	return L"";
 }
 
-//Ñ¡ÔñÎÄ¼ş¼Ğ
+//é€‰æ‹©æ–‡ä»¶å¤¹
 wstring SelectFolderDialog() {
 	HWND hwndOwner = NULL;
 	IFileDialog* pfd;
@@ -542,7 +557,7 @@ wstring SelectFolderDialog() {
 	if (SUCCEEDED(hr)) {
 		DWORD options;
 		pfd->GetOptions(&options);
-		pfd->SetOptions(options | FOS_PICKFOLDERS); // ÉèÖÃÎªÑ¡ÔñÎÄ¼ş¼Ğ
+		pfd->SetOptions(options | FOS_PICKFOLDERS); // è®¾ç½®ä¸ºé€‰æ‹©æ–‡ä»¶å¤¹
 		hr = pfd->Show(hwndOwner);
 		if (SUCCEEDED(hr)) {
 			IShellItem* psi;
@@ -564,7 +579,7 @@ wstring SelectFolderDialog() {
 bool Extract7zToTempFile(wstring& extractedPath) {
 
 
-	// ¹¹ÔìÄ¿±êÂ·¾¶£ºÎÄµµ\7z.exe
+	// æ„é€ ç›®æ ‡è·¯å¾„ï¼šæ–‡æ¡£\7z.exe
 	wstring finalPath = GetDocumentsPath();
 
 	if (finalPath.back() != L'\\') finalPath += L'\\';
@@ -575,14 +590,14 @@ bool Extract7zToTempFile(wstring& extractedPath) {
 		return true;
 	}
 
-	// ÓÃÖ÷Ä£¿é¾ä±ú
-	HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_EXE1), L"EXE");
+	// ç”¨ä¸»æ¨¡å—å¥æŸ„
+	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDR_EXE1), L"EXE");
 	if (!hRes) return false;
 
-	HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
+	HGLOBAL hData = LoadResource(GetModuleHandleW(NULL), hRes);
 	if (!hData) return false;
 
-	DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
+	DWORD dataSize = SizeofResource(GetModuleHandleW(NULL), hRes);
 	if (dataSize == 0) return false;
 
 	LPVOID pData = LockResource(hData);
@@ -605,7 +620,7 @@ bool Extract7zToTempFile(wstring& extractedPath) {
 	/*wchar_t tempFile[MAX_PATH];
 	if (!GetTempFileNameW(tempPath, L"7z", 0, tempFile)) return false;
 
-	// Ëæ»úÃû³Æ£¬ÆäÊµÃ»±ØÒª
+	// éšæœºåç§°ï¼Œå…¶å®æ²¡å¿…è¦
 	std::wstring finalPath = tempFile;
 	finalPath += L".exe";
 	MoveFileW(tempFile, finalPath.c_str());*/
@@ -623,13 +638,13 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
 		return true;
 	}
 
-	HRSRC hRes = FindResource(GetModuleHandle(NULL), MAKEINTRESOURCE(IDR_FONTS1), L"FONTS");
+	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDR_FONTS1), L"FONTS");
 	if (!hRes) return false;
 
-	HGLOBAL hData = LoadResource(GetModuleHandle(NULL), hRes);
+	HGLOBAL hData = LoadResource(GetModuleHandleW(NULL), hRes);
 	if (!hData) return false;
 
-	DWORD dataSize = SizeofResource(GetModuleHandle(NULL), hRes);
+	DWORD dataSize = SizeofResource(GetModuleHandleW(NULL), hRes);
 	if (dataSize == 0) return false;
 
 	LPVOID pData = LockResource(hData);
@@ -650,28 +665,28 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
 	return true;
 }
 
-//ÔÚºóÌ¨¾²Ä¬Ö´ĞĞÒ»¸öÃüÁîĞĞ³ÌĞò£¨Èç7z.exe£©£¬²¢µÈ´ıÆäÍê³É¡£
-//ÕâÊÇÊµÏÖ±¸·İºÍ»¹Ô­¹¦ÄÜµÄºËĞÄ£¬±ÜÃâÁËGUI¿¨¶ÙºÍºÚ´°¿Úµ¯³ö¡£
-// ²ÎÊı:
-//   - command: ÒªÖ´ĞĞµÄÍêÕûÃüÁîĞĞ£¨¿í×Ö·û£©¡£
-//   - console: ¼à¿ØÌ¨¶ÔÏóµÄÒıÓÃ£¬ÓÃÓÚÊä³öÈÕÖ¾ĞÅÏ¢¡£
+//åœ¨åå°é™é»˜æ‰§è¡Œä¸€ä¸ªå‘½ä»¤è¡Œç¨‹åºï¼ˆå¦‚7z.exeï¼‰ï¼Œå¹¶ç­‰å¾…å…¶å®Œæˆã€‚
+//è¿™æ˜¯å®ç°å¤‡ä»½å’Œè¿˜åŸåŠŸèƒ½çš„æ ¸å¿ƒï¼Œé¿å…äº†GUIå¡é¡¿å’Œé»‘çª—å£å¼¹å‡ºã€‚
+// å‚æ•°:
+//   - command: è¦æ‰§è¡Œçš„å®Œæ•´å‘½ä»¤è¡Œï¼ˆå®½å­—ç¬¦ï¼‰ã€‚
+//   - console: ç›‘æ§å°å¯¹è±¡çš„å¼•ç”¨ï¼Œç”¨äºè¾“å‡ºæ—¥å¿—ä¿¡æ¯ã€‚
 bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory) {
-	// CreateProcessWĞèÒªÒ»¸ö¿ÉĞ´µÄC-style×Ö·û´®£¬ËùÒÔÎÒÃÇ½«wstring¸´ÖÆµ½vector<wchar_t>
+	// CreateProcessWéœ€è¦ä¸€ä¸ªå¯å†™çš„C-styleå­—ç¬¦ä¸²ï¼Œæ‰€ä»¥æˆ‘ä»¬å°†wstringå¤åˆ¶åˆ°vector<wchar_t>
 	vector<wchar_t> cmd_line(command.begin(), command.end());
-	cmd_line.push_back(L'\0'); // Ìí¼Ó×Ö·û´®½áÊø·û
+	cmd_line.push_back(L'\0'); // æ·»åŠ å­—ç¬¦ä¸²ç»“æŸç¬¦
 
 	STARTUPINFOW si = {};
 	PROCESS_INFORMATION pi = {};
 	si.cb = sizeof(si);
 	si.dwFlags |= STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE; // Òş²Ø×Ó½ø³ÌµÄ´°¿Ú
+	si.wShowWindow = SW_HIDE; // éšè—å­è¿›ç¨‹çš„çª—å£
 
 	DWORD creationFlags = CREATE_NO_WINDOW;
 	if (useLowPriority) {
 		creationFlags |= BELOW_NORMAL_PRIORITY_CLASS;
 	}
 
-	// ¿ªÊ¼´´½¨½ø³Ì
+	// å¼€å§‹åˆ›å»ºè¿›ç¨‹
 	const wchar_t* pWorkingDir = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
 	console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
 
@@ -680,10 +695,10 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 		return false;
 	}
 
-	// µÈ´ı×Ó½ø³ÌÖ´ĞĞÍê±Ï
+	// ç­‰å¾…å­è¿›ç¨‹æ‰§è¡Œå®Œæ¯•
 	WaitForSingleObject(pi.hProcess, INFINITE);
 
-	// ¼ì²é×Ó½ø³ÌµÄÍË³ö´úÂë
+	// æ£€æŸ¥å­è¿›ç¨‹çš„é€€å‡ºä»£ç 
 	DWORD exit_code;
 	if (GetExitCodeProcess(pi.hProcess, &exit_code)) {
 		if (exit_code == 0) {
@@ -691,9 +706,9 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 		}
 		else {
 			console.AddLog(L("LOG_ERROR_CMD_FAILED"), exit_code);
-			if (exit_code == 1) // ¾¯¸æ
+			if (exit_code == 1) // è­¦å‘Š
 				console.AddLog(L("LOG_ERROR_CMD_FAILED_HOTBACKUP_SUGGESTION"));
-			if (exit_code == 2) // ÖÂÃü´íÎó
+			if (exit_code == 2) // è‡´å‘½é”™è¯¯
 				console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
 		}
 	}
@@ -701,7 +716,7 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 		console.AddLog(L("LOG_ERROR_GET_EXIT_CODE"));
 	}
 
-	// ÇåÀí¾ä±ú
+	// æ¸…ç†å¥æŸ„
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 	return true;

@@ -1,4 +1,4 @@
-#include "Broadcast.h"
+ï»¿#include "Broadcast.h"
 #include "Console.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -11,13 +11,14 @@
 using namespace std;
 Console console;
 static map<pair<int, int>, AutoBackupTask> g_active_auto_backups; // Key: {configIdx, worldIdx}
-std::mutex consoleMutex;				// ¿ØÖÆÌ¨Ä£Ê½µÄËø
+std::mutex consoleMutex;				// æ§åˆ¶å°æ¨¡å¼çš„é”
 
 
 string ProcessCommand(const string& commandStr, Console* console) {
 	stringstream ss(commandStr);
 	string command;
 	ss >> command;
+	
 
 	auto error_response = [&](const string& msg) {
 		BroadcastEvent(L("KNOTLINK_COMMAND_ERROR") + msg);
@@ -25,7 +26,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return "ERROR:" + msg;
 		};
 
-	// Ê¹ÓÃ lock_guard È·±£ÔÚº¯Êı×÷ÓÃÓòÄÚ·ÃÎÊ g_appState.configs ÊÇÏß³Ì°²È«µÄ
+	// ä½¿ç”¨ lock_guard ç¡®ä¿åœ¨å‡½æ•°ä½œç”¨åŸŸå†…è®¿é—® g_appState.configs æ˜¯çº¿ç¨‹å®‰å…¨çš„
 	lock_guard<mutex> lock(g_appState.configsMutex);
 
 	if (command == "LIST_CONFIGS") {
@@ -33,7 +34,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		for (const auto& pair : g_appState.configs) {
 			result += to_string(pair.first) + "," + pair.second.name + ";";
 		}
-		if (!result.empty()) result.pop_back(); // ÒÆ³ı×îºóµÄ';'
+		if (!result.empty()) result.pop_back(); // ç§»é™¤æœ€åçš„';'
 		BroadcastEvent("event=list_configs;data=" + result);
 		return result;
 	}
@@ -72,7 +73,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		for (const auto& world : cfg.worlds) {
 			result += wstring_to_utf8(world.first) + ";";
 		}
-		if (!result.empty()) result.pop_back(); // ÒÆ³ı×îºóµÄ';'
+		if (!result.empty()) result.pop_back(); // ç§»é™¤æœ€åçš„';'
 
 		BroadcastEvent("event=list_worlds;config=" + to_string(config_idx) + ";data=" + result);
 		return result;
@@ -105,7 +106,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		else if (key == "hot_backup") cfg.hotBackup = (value == "true");
 		else return "ERROR:Unknown key '" + key + "'.";
 
-		SaveConfigs(); // ±£´æ¸ü¸Ä
+		SaveConfigs(); // ä¿å­˜æ›´æ”¹
 		BroadcastEvent("event=config_changed;config=" + to_string(config_idx) + ";key=" + key + ";value=" + value);
 		BroadcastEvent(response_msg);
 		return response_msg;
@@ -117,18 +118,20 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			BroadcastEvent("ERROR:Invalid arguments. Usage: BACKUP <config_idx> <world_idx> [comment]");
 			return "ERROR:Invalid arguments. Usage: BACKUP <config_idx> <world_idx> [comment]";
 		}
-		getline(ss, comment_part); // »ñÈ¡Ê£Óà²¿·Ö×÷Îª×¢ÊÍ
-		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1); // È¥³ıÇ°µ¼¿Õ¸ñ
+		getline(ss, comment_part); // è·å–å‰©ä½™éƒ¨åˆ†ä½œä¸ºæ³¨é‡Š
+		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1); // å»é™¤å‰å¯¼ç©ºæ ¼
 
-		// ÏÈ¹ã²¥ÏûÏ¢£¬Í¨ÖªÄ£×éÏÈ±£´æÊÀ½ç
+		MyFolder world = { g_appState.configs[config_idx].saveRoot + L"\\" + g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].second, g_appState.configs[config_idx], config_idx, world_idx };
+
+		// å…ˆå¹¿æ’­æ¶ˆæ¯ï¼Œé€šçŸ¥æ¨¡ç»„å…ˆä¿å­˜ä¸–ç•Œ
 		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
 
-		// ÔÚºóÌ¨Ïß³ÌÖĞÖ´ĞĞ±¸·İ£¬±ÜÃâ×èÈûÃüÁî´¦ÀíÆ÷
+		// åœ¨åå°çº¿ç¨‹ä¸­æ‰§è¡Œå¤‡ä»½ï¼Œé¿å…é˜»å¡å‘½ä»¤å¤„ç†å™¨
 		thread([=]() {
-			// ÔÚĞÂÏß³ÌÖĞÔÙ´Î¼ÓËø£¬ÒòÎª g_appState.configs ¿ÉÄÜÔÚÖ÷Ïß³ÌÖĞ±»ĞŞ¸Ä
+			// åœ¨æ–°çº¿ç¨‹ä¸­å†æ¬¡åŠ é”ï¼Œå› ä¸º g_appState.configs å¯èƒ½åœ¨ä¸»çº¿ç¨‹ä¸­è¢«ä¿®æ”¹
 			lock_guard<mutex> thread_lock(g_appState.configsMutex);
-			if (g_appState.configs.count(config_idx)) // È·±£ÅäÖÃÈÔÈ»´æÔÚ
-				DoBackup(g_appState.configs[config_idx], g_appState.configs[config_idx].worlds[world_idx], *console, utf8_to_wstring(comment_part));
+			if (g_appState.configs.count(config_idx)) // ç¡®ä¿é…ç½®ä»ç„¶å­˜åœ¨
+				DoBackup(world, *console, utf8_to_wstring(comment_part));
 			}).detach();
 		return "OK:Backup started for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
 	}
@@ -183,21 +186,28 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
 		return "OK:Mods backup started.";
 	}
-	else if (command == "BACKUP_CURRENT") { // Ö±½Óµ÷ÓÃ±¸·İÕıÔÚÔËĞĞµÄÊÀ½çµÄº¯Êı
+	else if (command == "BACKUP_CURRENT") { // ç›´æ¥è°ƒç”¨å¤‡ä»½æ­£åœ¨è¿è¡Œçš„ä¸–ç•Œçš„å‡½æ•°
 		BroadcastEvent("event=pre_hot_backup");
-		TriggerHotkeyBackup();
+		if (ss.rdbuf()->in_avail() > 0) {
+			string comment_part;
+			getline(ss, comment_part);
+			if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
+			TriggerHotkeyBackup(comment_part);
+		}
+		else
+			TriggerHotkeyBackup();
 		return "OK:Backup Started";
 	}
 	else if (command == "AUTO_BACKUP") {
 		int config_idx, world_idx, interval_minutes;
-		// ½âÎö²¢ÑéÖ¤´«ÈëµÄ²ÎÊı
+		// è§£æå¹¶éªŒè¯ä¼ å…¥çš„å‚æ•°
 		if (!(ss >> config_idx >> world_idx >> interval_minutes) || g_appState.configs.find(config_idx) == g_appState.configs.end() || world_idx < 0 || world_idx >= g_appState.configs[config_idx].worlds.size()) {
 			std::string error_msg = "ERROR:Invalid arguments. Usage: AUTO_BACKUP <config_idx> <world_idx> <interval_minutes>";
 			BroadcastEvent(error_msg);
 			return error_msg;
 		}
 
-		// ÑéÖ¤¼ä¸ôÊ±¼äµÄÓĞĞ§ĞÔ
+		// éªŒè¯é—´éš”æ—¶é—´çš„æœ‰æ•ˆæ€§
 		if (interval_minutes < 1) {
 			std::string error_msg = "ERROR:Interval must be at least 1 minute.";
 			BroadcastEvent(error_msg);
@@ -207,27 +217,27 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		const auto& world_name = g_appState.configs[config_idx].worlds[world_idx].first;
 		auto taskKey = std::make_pair(config_idx, world_idx);
 
-		// ¼ì²éÊÇ·ñÒÑÓĞÈÎÎñÕıÔÚÔËĞĞ£¬±ÜÃâÖØ¸´Æô¶¯
+		// æ£€æŸ¥æ˜¯å¦å·²æœ‰ä»»åŠ¡æ­£åœ¨è¿è¡Œï¼Œé¿å…é‡å¤å¯åŠ¨
 		if (g_active_auto_backups.count(taskKey)) {
 			string error_msg = "ERROR:An auto-backup task is already running for this world.";
 			BroadcastEvent(error_msg);
 			return error_msg;
 		}
 
-		// ´´½¨²¢Æô¶¯ĞÂµÄ×Ô¶¯±¸·İÈÎÎñ
+		// åˆ›å»ºå¹¶å¯åŠ¨æ–°çš„è‡ªåŠ¨å¤‡ä»½ä»»åŠ¡
 		console->AddLog("[KnotLink] Received command to start auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
 
-		// ´ÓÈ«¾ÖMapÖĞ»ñÈ¡»ò´´½¨Ò»¸öĞÂµÄÈÎÎñÊµÀı
+		// ä»å…¨å±€Mapä¸­è·å–æˆ–åˆ›å»ºä¸€ä¸ªæ–°çš„ä»»åŠ¡å®ä¾‹
 		AutoBackupTask& task = g_active_auto_backups[taskKey];
-		task.stop_flag = false; // ÖØÖÃÍ£Ö¹±ê¼Ç
+		task.stop_flag = false; // é‡ç½®åœæ­¢æ ‡è®°
 
-		// ´´½¨ĞÂÏß³Ì£¬²¢´«ÈëËùÓĞ±ØÒªµÄ²ÎÊı¡£
-		// Ê¹ÓÃ std::ref ½« stop_flag µÄÒıÓÃ´«µİ¸øÏß³Ì£¬ÒÔ±ãÄÜÔ¶³Ì¿ØÖÆÆäÍ£Ö¹¡£
+		// åˆ›å»ºæ–°çº¿ç¨‹ï¼Œå¹¶ä¼ å…¥æ‰€æœ‰å¿…è¦çš„å‚æ•°ã€‚
+		// ä½¿ç”¨ std::ref å°† stop_flag çš„å¼•ç”¨ä¼ é€’ç»™çº¿ç¨‹ï¼Œä»¥ä¾¿èƒ½è¿œç¨‹æ§åˆ¶å…¶åœæ­¢ã€‚
 		task.worker = thread(AutoBackupThreadFunction, config_idx, world_idx, interval_minutes, console, ref(task.stop_flag));
-		// ·ÖÀëÏß³Ì£¬Ê¹ÆäÔÚºóÌ¨¶ÀÁ¢ÔËĞĞ£¬ÕâÑùÖ¸Áî¿ÉÒÔÁ¢¿Ì·µ»Ø³É¹¦ĞÅÏ¢¡£
+		// åˆ†ç¦»çº¿ç¨‹ï¼Œä½¿å…¶åœ¨åå°ç‹¬ç«‹è¿è¡Œï¼Œè¿™æ ·æŒ‡ä»¤å¯ä»¥ç«‹åˆ»è¿”å›æˆåŠŸä¿¡æ¯ã€‚
 		task.worker.detach();
 
-		// ¹¹Ôì³É¹¦ĞÅÏ¢²¢¹ã²¥ÊÂ¼ş
+		// æ„é€ æˆåŠŸä¿¡æ¯å¹¶å¹¿æ’­äº‹ä»¶
 		std::string success_msg = "OK:Auto-backup started for world '" + wstring_to_utf8(world_name) + "' with an interval of " + std::to_string(interval_minutes) + " minutes.";
 		BroadcastEvent("event=auto_backup_started;config=" + std::to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + ";interval=" + std::to_string(interval_minutes));
 		console->AddLog("[KnotLink] %s", success_msg.c_str());
@@ -237,7 +247,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 
 	else if (command == "STOP_AUTO_BACKUP") {
 		int config_idx, world_idx;
-		// ½âÎö²¢ÑéÖ¤²ÎÊı
+		// è§£æå¹¶éªŒè¯å‚æ•°
 		if (!(ss >> config_idx >> world_idx) || g_appState.configs.find(config_idx) == g_appState.configs.end() || world_idx < 0 || world_idx >= g_appState.configs[config_idx].worlds.size()) {
 			std::string error_msg = "ERROR:Invalid arguments. Usage: STOP_AUTO_BACKUP <config_idx> <world_idx>";
 			BroadcastEvent(error_msg);
@@ -247,10 +257,10 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		const auto& world_name = g_appState.configs[config_idx].worlds[world_idx].first;
 		auto taskKey = std::make_pair(config_idx, world_idx);
 
-		// Ê¹ÓÃ»¥³âËø±£»¤·ÃÎÊ
+		// ä½¿ç”¨äº’æ–¥é”ä¿æŠ¤è®¿é—®
 		std::lock_guard<std::mutex> lock(g_appState.task_mutex);
 
-		// ²éÕÒÖ¸¶¨µÄÈÎÎñ
+		// æŸ¥æ‰¾æŒ‡å®šçš„ä»»åŠ¡
 		auto it = g_active_auto_backups.find(taskKey);
 		if (it == g_active_auto_backups.end()) {
 			std::string error_msg = "ERROR:No active auto-backup task found for this world.";
@@ -258,20 +268,20 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			return error_msg;
 		}
 
-		// ·¢ËÍÍ£Ö¹ĞÅºÅ²¢µÈ´ıÏß³Ì½áÊø
+		// å‘é€åœæ­¢ä¿¡å·å¹¶ç­‰å¾…çº¿ç¨‹ç»“æŸ
 		console->AddLog("[KnotLink] Received command to stop auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
 
-		// a. ÉèÖÃÔ­×ÓÍ£Ö¹±ê¼ÇÎªtrue£¬Í¨ÖªÏß³ÌÓ¦¸ÃÍË³öÁË
+		// a. è®¾ç½®åŸå­åœæ­¢æ ‡è®°ä¸ºtrueï¼Œé€šçŸ¥çº¿ç¨‹åº”è¯¥é€€å‡ºäº†
 		it->second.stop_flag = true;
 
-		// b. µÈ´ıÏß³ÌÖ´ĞĞÍê±Ï¡£ÒòÎªÏß³Ì¿ÉÄÜÕıÔÚÖ´ĞĞ±¸·İ»ò´¦ÓÚĞİÃßÆÚ£¬
-		//    ËùÒÔÕâÀï²»Ê¹ÓÃjoin()À´×èÈû£¬AutoBackupThreadFunctionÄÚ²¿µÄÑ­»·»á¼ì²âµ½stop_flag²¢×ÔĞĞÍË³ö¡£
-		//    ÔÚMineBackupÖ÷³ÌĞòÍË³öÊ±£¬ÓĞÍ³Ò»µÄjoinÂß¼­È·±£ËùÓĞÏß³Ì¶¼ÒÑ½áÊø¡£
+		// b. ç­‰å¾…çº¿ç¨‹æ‰§è¡Œå®Œæ¯•ã€‚å› ä¸ºçº¿ç¨‹å¯èƒ½æ­£åœ¨æ‰§è¡Œå¤‡ä»½æˆ–å¤„äºä¼‘çœ æœŸï¼Œ
+		//    æ‰€ä»¥è¿™é‡Œä¸ä½¿ç”¨join()æ¥é˜»å¡ï¼ŒAutoBackupThreadFunctionå†…éƒ¨çš„å¾ªç¯ä¼šæ£€æµ‹åˆ°stop_flagå¹¶è‡ªè¡Œé€€å‡ºã€‚
+		//    åœ¨MineBackupä¸»ç¨‹åºé€€å‡ºæ—¶ï¼Œæœ‰ç»Ÿä¸€çš„joiné€»è¾‘ç¡®ä¿æ‰€æœ‰çº¿ç¨‹éƒ½å·²ç»“æŸã€‚
 
-		// c. ´ÓÈÎÎñÁĞ±íÖĞÒÆ³ı¸ÃÈÎÎñ
+		// c. ä»ä»»åŠ¡åˆ—è¡¨ä¸­ç§»é™¤è¯¥ä»»åŠ¡
 		g_active_auto_backups.erase(it);
 
-		// ¹¹Ôì³É¹¦ĞÅÏ¢²¢¹ã²¥ÊÂ¼ş
+		// æ„é€ æˆåŠŸä¿¡æ¯å¹¶å¹¿æ’­äº‹ä»¶
 		std::string success_msg = "OK:Auto-backup task for world '" + wstring_to_utf8(world_name) + "' has been stopped.";
 		BroadcastEvent("event=auto_backup_stopped;config=" + std::to_string(config_idx) + ";world_idx=" + std::to_string(world_idx));
 		console->AddLog("[KnotLink] %s", success_msg.c_str());
@@ -312,13 +322,16 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		BroadcastEvent("event=we_snapshot_completed;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
 		return "OK:Snapshot completed for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
 	}
+	else if (command == "RESTORE_CURRENT_LATEST") {
+		TriggerHotkeyRestore();
+	}
 	else if (command == "SEND") {
 
 		string comment_part;
-		getline(ss, comment_part); // »ñÈ¡Ê£Óà²¿·Ö
+		getline(ss, comment_part); // è·å–å‰©ä½™éƒ¨åˆ†
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
 		console->AddLog("send: %s", comment_part);
-		BroadcastEvent("event=" + comment_part);
+		BroadcastEvent(comment_part);
 		return "OK:Event Sent";
 	}
 
@@ -335,12 +348,12 @@ void ConsoleLog(Console* console, const char* format, ...) {
 	buf[IM_ARRAYSIZE(buf) - 1] = 0;
 	va_end(args);
 
-	// Èç¹ûÌá¹©ÁË Console ¶ÔÏó£¬Ôò½«ÈÕÖ¾Ìí¼Óµ½Æä Items ÖĞ
+	// å¦‚æœæä¾›äº† Console å¯¹è±¡ï¼Œåˆ™å°†æ—¥å¿—æ·»åŠ åˆ°å…¶ Items ä¸­
 	if (console) {
 		console->AddLog("%s", buf);
 	}
 
-	// Ê¼ÖÕ´òÓ¡µ½±ê×¼Êä³ö
+	// å§‹ç»ˆæ‰“å°åˆ°æ ‡å‡†è¾“å‡º
 	printf("%s\n", buf);
 }
 

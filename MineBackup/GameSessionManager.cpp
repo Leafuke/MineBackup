@@ -1,4 +1,4 @@
-#include "Broadcast.h"
+Ôªø#include "Broadcast.h"
 #include "BackupManager.h"
 #include "Console.h"
 #include "text_to_text.h"
@@ -9,99 +9,78 @@ map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Valu
 
 bool IsFileLocked(const wstring& path);
 
+MyFolder GetOccupiedWorld() {
+	//lock_guard<mutex> lock(g_appState.configsMutex);
+	for (const auto& config_pair : g_appState.configs) {
+		int config_idx = config_pair.first;
+		const Config& cfg = config_pair.second;
+		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
+			const auto& world = cfg.worlds[world_idx];
+			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
+			if (!filesystem::exists(levelDatPath)) { // Ê≤°Êúâ session.lock Êñá‰ª∂ÔºåÂèØËÉΩÊòØÂü∫Â≤©ÁâàÂ≠òÊ°£ÔºåÈúÄË¶ÅÈÅçÂéÜdbÊñá‰ª∂Â§π‰∏ãÁöÑÊâÄÊúâÊñá‰ª∂ÁúãÁúãÊúâÊ≤°ÊúâË¢´ÈîÅÂÆöÁöÑ
+				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
+				if (!filesystem::exists(temp))
+					continue;
+				for (const auto& entry : filesystem::directory_iterator(temp)) {
+					if (IsFileLocked(entry.path())) {
+						levelDatPath = entry.path();
+						break;
+					}
+				}
+			}
+			if (IsFileLocked(levelDatPath)) {
+				return MyFolder{ cfg.saveRoot + L"\\" + world.first, world.first, world.second, cfg, config_idx, world_idx };
+			}
+		}
+	}
+	return MyFolder{};
+}
+
 void GameSessionWatcherThread() {
 	console.AddLog(L("LOG_START_WATCHER_START"));
 
 	while (!g_stopExitWatcher) {
 		map<pair<int, int>, wstring> currently_locked_worlds;
 
-		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
+		MyFolder occupied_world = GetOccupiedWorld();
 
-			for (const auto& config_pair : g_appState.configs) {
-				const Config& cfg = config_pair.second;
-				if (!cfg.backupOnGameStart) continue;
-				for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
-					wstring levelDatPath = cfg.saveRoot + L"\\" + cfg.worlds[world_idx].first + L"\\session.lock";
-					if (!filesystem::exists(levelDatPath)) { // √ª”– session.lock Œƒº˛£¨ø…ƒ‹ «ª˘—“∞Ê¥Êµµ£¨–Ë“™±È¿˙dbŒƒº˛º–œ¬µƒÀ˘”–Œƒº˛ø¥ø¥”–√ª”–±ªÀ¯∂®µƒ
-						wstring temp = cfg.saveRoot + L"\\" + cfg.worlds[world_idx].first + L"\\db";
-						if (!filesystem::exists(temp))
-							continue;
-						for (const auto& entry : filesystem::directory_iterator(temp)) {
-							if (IsFileLocked(entry.path())) {
-								levelDatPath = entry.path();
-								break;
-							}
-						}
-					}
-					if (IsFileLocked(levelDatPath)) {
-						currently_locked_worlds[{config_pair.first, world_idx}] = cfg.worlds[world_idx].first;
-					}
-				}
-			}
+		if (!occupied_world.path.empty()) {
+			currently_locked_worlds[{occupied_world.configIndex, occupied_world.worldIndex}] = occupied_world.name;
+		}
 
-			for (const auto& sp_config_pair : g_appState.specialConfigs) {
-				const SpecialConfig& sp_cfg = sp_config_pair.second;
-				if (!sp_cfg.backupOnGameStart) continue;
-				for (const auto& task : sp_cfg.tasks) {
-					if (g_appState.configs.count(task.configIndex) && task.worldIndex < g_appState.configs[task.configIndex].worlds.size()) {
-						const Config& base_cfg = g_appState.configs[task.configIndex];
-						const auto& world = base_cfg.worlds[task.worldIndex];
-						wstring levelDatPath = base_cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
-						if (!filesystem::exists(levelDatPath)) { // √ª”– session.lock Œƒº˛£¨ø…ƒ‹ «ª˘—“∞Ê¥Êµµ£¨–Ë“™±È¿˙dbŒƒº˛º–œ¬µƒÀ˘”–Œƒº˛ø¥ø¥”–√ª”–±ªÀ¯∂®µƒ
-							wstring temp = base_cfg.saveRoot + L"\\" + world.first + L"\\db";
-							if (!filesystem::exists(temp))
-								continue;
-							for (const auto& entry : filesystem::directory_iterator(temp)) {
-								if (IsFileLocked(entry.path())) {
-									levelDatPath = entry.path();
-									break;
-								}
-							}
-						}
-						if (IsFileLocked(levelDatPath)) {
-							currently_locked_worlds[{task.configIndex, task.worldIndex}] = world.first;
-						}
-					}
-				}
+		vector<pair<int, int>> worlds_to_backup;
+
+		// Ê£ÄÊü•Êñ∞ÂêØÂä®ÁöÑ‰∏ñÁïå
+		for (const auto& locked_pair : currently_locked_worlds) {
+			if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
+				console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
+				string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
+				BroadcastEvent(payload);
+				worlds_to_backup.push_back(locked_pair.first);
 			}
 		}
 
-		{
-			vector<pair<int, int>> worlds_to_backup;
-
-			// ºÏ≤È–¬∆Ù∂Øµƒ ¿ΩÁ
-			for (const auto& locked_pair : currently_locked_worlds) {
-				if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
-					console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
-					string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
-					BroadcastEvent(payload);
-					worlds_to_backup.push_back(locked_pair.first);
-				}
+		for (const auto& active_pair : g_activeWorlds) {
+			if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
+				console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
+				string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
+				BroadcastEvent(payload);
 			}
+		}
 
-			for (const auto& active_pair : g_activeWorlds) {
-				if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
-					console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
-					string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
-					BroadcastEvent(payload);
-				}
-			}
+		// Êõ¥Êñ∞ÂΩìÂâçÊ¥ªÂä®ÁöÑ‰∏ñÁïåÂàóË°®
+		g_activeWorlds = currently_locked_worlds;
 
-			// ∏¸–¬µ±«∞ªÓ∂Øµƒ ¿ΩÁ¡–±Ì
-			g_activeWorlds = currently_locked_worlds;
-
-			if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
-				lock_guard<mutex> config_lock(g_appState.configsMutex);
-				for (const auto& backup_target : worlds_to_backup) {
-					int config_idx = backup_target.first;
-					int world_idx = backup_target.second;
-					if (g_appState.configs.count(config_idx) && world_idx < g_appState.configs[config_idx].worlds.size()) {
-						Config backupConfig = g_appState.configs[config_idx];
-						backupConfig.hotBackup = true; // ±ÿ–Î»»±∏∑›
-						thread backup_thread(DoBackup, backupConfig, backupConfig.worlds[world_idx], ref(console), L"OnStart");
-						backup_thread.detach();
-					}
+		if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
+			lock_guard<mutex> config_lock(g_appState.configsMutex);
+			for (const auto& backup_target : worlds_to_backup) {
+				int config_idx = backup_target.first;
+				int world_idx = backup_target.second;
+				if (g_appState.configs.count(config_idx) && world_idx < g_appState.configs[config_idx].worlds.size()) {
+					Config backupConfig = g_appState.configs[config_idx];
+					backupConfig.hotBackup = true; // ÂøÖÈ°ªÁÉ≠Â§á‰ªΩ
+					thread backup_thread(DoBackup, occupied_world, ref(console), L"OnStart");
+					backup_thread.detach();
 				}
 			}
 		}
@@ -112,43 +91,19 @@ void GameSessionWatcherThread() {
 }
 
 
-
-void TriggerHotkeyBackup() {
+void TriggerHotkeyBackup(string comment) {
 	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
 
-	for (const auto& config_pair : g_appState.configs) {
-		int config_idx = config_pair.first;
-		const Config& cfg = config_pair.second;
+	MyFolder world = GetOccupiedWorld();
+	if (!world.path.empty()) {
+		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
+		console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), world.config.name.c_str(), wstring_to_utf8(world.name).c_str());
 
-		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
-			const auto& world = cfg.worlds[world_idx];
-			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
-			if (!filesystem::exists(levelDatPath)) { // √ª”– session.lock Œƒº˛£¨ø…ƒ‹ «ª˘—“∞Ê¥Êµµ£¨–Ë“™±È¿˙dbŒƒº˛º–œ¬µƒÀ˘”–Œƒº˛ø¥ø¥”–√ª”–±ªÀ¯∂®µƒ
-				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
-				if (!filesystem::exists(temp))
-					continue;
-				for (const auto& entry : filesystem::directory_iterator(temp)) {
-					if (IsFileLocked(entry.path())) {
-						levelDatPath = entry.path();
-						break;
-					}
-				}
-			}
+		world.config.hotBackup = true;
 
-			if (IsFileLocked(levelDatPath)) {
-				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
-
-				console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), cfg.name.c_str(), wstring_to_utf8(world.first).c_str());
-
-
-				Config hotkeyConfig = cfg;
-				hotkeyConfig.hotBackup = true;
-
-				thread backup_thread(DoBackup, hotkeyConfig, world, ref(console), L"Hotkey");
-				backup_thread.detach();
-				return;
-			}
-		}
+		thread backup_thread(DoBackup, world, ref(console), utf8_to_wstring(comment));
+		backup_thread.detach();
+		return;
 	}
 
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
@@ -157,7 +112,7 @@ void TriggerHotkeyBackup() {
 void TriggerHotkeyRestore() {
 
 	HotRestoreState expected_idle = HotRestoreState::IDLE;
-	//  π”√CAS≤Ÿ◊˜»∑±£œﬂ≥Ã∞≤»´µÿ¥”IDLE◊™ªªµΩWAITING_FOR_MOD
+	// ‰ΩøÁî®CASÊìç‰ΩúÁ°Æ‰øùÁ∫øÁ®ãÂÆâÂÖ®Âú∞‰ªéIDLEËΩ¨Êç¢Âà∞WAITING_FOR_MOD
 	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
 		console.AddLog(L("[Hotkey] A restore operation is already in progress. Ignoring request."));
 		return;
@@ -166,105 +121,14 @@ void TriggerHotkeyRestore() {
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
 
-	for (const auto& config_pair : g_appState.configs) {
-		int config_idx = config_pair.first;
-		const Config& cfg = config_pair.second;
-
-		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
-			const auto& world = cfg.worlds[world_idx];
-			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
-			if (!filesystem::exists(levelDatPath)) { // √ª”– session.lock Œƒº˛£¨ø…ƒ‹ «ª˘—“∞Ê¥Êµµ£¨–Ë“™±È¿˙dbŒƒº˛º–œ¬µƒÀ˘”–Œƒº˛ø¥ø¥”–√ª”–±ªÀ¯∂®µƒ
-				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
-				if (!filesystem::exists(temp))
-					continue;
-				for (const auto& entry : filesystem::directory_iterator(temp)) {
-					if (IsFileLocked(entry.path())) {
-						levelDatPath = entry.path();
-						break;
-					}
-				}
-			}
-
-			if (IsFileLocked(levelDatPath)) {
-
-
-				console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.first).c_str(), cfg.name.c_str());
-				// KnotLink Õ®÷™
-				BroadcastEvent("event=pre_hot_restore;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-
-
-
-				// 4. ∆Ù∂Ø∫ÛÃ®µ»¥˝œﬂ≥Ã
-				thread([=]() {
-					using namespace std::chrono;
-					auto startTime = steady_clock::now();
-					const auto timeout = seconds(15);
-
-					// µ»¥˝œÏ”¶ªÚ≥¨ ±
-					while (steady_clock::now() - startTime < timeout) {
-						if (g_appState.isRespond) {
-							break; //  ’µΩœÏ”¶
-						}
-						this_thread::sleep_for(milliseconds(100));
-					}
-
-					// ºÏ≤È « ’µΩ¡ÀœÏ”¶ªπ «≥¨ ±¡À
-					if (!g_appState.isRespond) {
-						console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
-						BroadcastEvent("event=restore_cancelled;reason=timeout");
-						g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // ÷ÿ÷√◊¥Ã¨
-						return;
-					}
-
-					// ---  ’µΩœÏ”¶£¨ø™ ºªπ‘≠ ---
-					g_appState.isRespond = false; // ÷ÿ÷√±Í÷æŒª
-					g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
-					console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
-
-					// ≤È’“◊Ó–¬±∏∑›Œƒº˛ (’‚≤ø∑÷¬ﬂº≠±£≥÷≤ª±‰)
-					wstring backupDir = cfg.backupPath + L"\\" + world.first;
-					filesystem::path latestBackup;
-					auto latest_time = filesystem::file_time_type{};
-					bool found = false;
-
-					if (filesystem::exists(backupDir)) {
-						for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-							if (entry.is_regular_file()) {
-								if (entry.last_write_time() > latest_time) {
-									latest_time = entry.last_write_time();
-									latestBackup = entry.path();
-									found = true;
-								}
-							}
-						}
-					}
-
-					if (!found) {
-						console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-						BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
-						g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-						return;
-					}
-
-					console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
-
-					DoRestore(cfg, world.first, latestBackup.filename().wstring(), ref(console), 0, "");
-
-					// ºŸ…Ë≥…π¶£¨π„≤•ÕÍ≥… ¬º˛
-					BroadcastEvent("event=restore_finished;status=success;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(world.first));
-					console.AddLog(L("[Hotkey] Restore completed successfully."));
-
-					// ◊Ó÷’£¨÷ÿ÷√◊¥Ã¨
-					g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-					g_appState.isRespond = false;
-
-
-					}).detach(); // ∑÷¿Îœﬂ≥Ã£¨»√À¸‘⁄∫ÛÃ®‘À––
-				return;
-			}
-		}
+	MyFolder world = GetOccupiedWorld();
+	if (!world.path.empty()) {
+		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
+		DoHotRestore(world, ref(console), false);
+		return;
 	}
+	
 	g_appState.isRespond = false;
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
-	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // ÷ÿ÷√◊¥Ã¨
+	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // ÈáçÁΩÆÁä∂ÊÄÅ
 }

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _PLATFORM_LINUX_H
 #define _PLATFORM_LINUX_H
 #include <iostream>
@@ -8,7 +8,7 @@ std::wstring SelectFolderDialog();
 std::wstring GetLastOpenTime(const std::wstring& worldPath);
 std::wstring GetLastBackupTime(const std::wstring& backupDir);
 void RemoveTrayIcon();
-void TriggerHotkeyBackup();
+void TriggerHotkeyBackup(std::string comment = "Hotkey");
 void TriggerHotkeyRestore();
 void GetUserDefaultUILanguageWin();
 void MessageBoxWin(const std::string& title, const std::string& message);

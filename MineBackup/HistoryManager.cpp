@@ -1,20 +1,21 @@
-#include <map>
+ï»¿#include <map>
 #include <vector>
 #include <fstream>
 #include <sstream>
 #include "AppState.h"
 #include "text_to_text.h"
+#include <algorithm>
 using namespace std;
 
 void SetFileAttributesWin(const wstring& path, bool isHidden);
-// ½«ÀúÊ·¼ÇÂ¼±£´æµ½Òş²ØµÄ history.dat ÎÄ¼ş
-// ÎÄ¼ş½á¹¹£º
+// å°†å†å²è®°å½•ä¿å­˜åˆ°éšè—çš„ history.dat æ–‡ä»¶
+// æ–‡ä»¶ç»“æ„ï¼š
 // [Config<id>]
 // Entry=<timestamp>|<worldName>|<backupFile>|<backupType>|<comment>
 void SaveHistory() {
-	const wstring filename = L"history.dat"; // Ê¹ÓÃ .dat ²¢ÉèÎªÒş²Ø£¬±ÜÃâÓÃ»§Îó²Ù×÷
+	const wstring filename = L"history.dat"; // ä½¿ç”¨ .dat å¹¶è®¾ä¸ºéšè—ï¼Œé¿å…ç”¨æˆ·è¯¯æ“ä½œ
 	SetFileAttributesWin(filename, 0);
-	wofstream out(filename, ios::binary);
+	wofstream out(filename.c_str(), ios::binary);
 	out.clear();
 	if (!out.is_open()) return;
 	out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
@@ -22,26 +23,55 @@ void SaveHistory() {
 	for (const auto& config_pair : g_appState.g_history) {
 		out << L"[Config" << config_pair.first << L"]\n";
 		for (const auto& entry : config_pair.second) {
-			// Ê¹ÓÃ | ×÷Îª·Ö¸ô·û
+			// ä½¿ç”¨ | ä½œä¸ºåˆ†éš”ç¬¦
 			out << L"Entry=" << entry.timestamp_str << L"|"
 				<< entry.worldName << L"|"
 				<< entry.backupFile << L"|"
 				<< entry.backupType << L"|"
-				<< entry.comment 
-				<< (entry.isImportant ? L"|important" : L"")
-				<< L"\n";
+				<< entry.comment;
+			if (entry.isImportant) {
+				out << L"|important";
+				if (entry.isAutoImportant) {
+					out << L":auto";
+				}
+			}
+			out << L"\n";
 		}
 	}
 	out.close();
-	// ÉèÖÃÎÄ¼şÎªÒş²ØÊôĞÔ
+	// è®¾ç½®æ–‡ä»¶ä¸ºéšè—å±æ€§
 	SetFileAttributesWin(filename, 1);
 }
 
-// ´ÓÎÄ¼ş¼ÓÔØÀúÊ·¼ÇÂ¼
+void UpdateAutoPinnedFullBackup(int configIndex, const wstring& worldName, const wstring& latestFullBackupFile) {
+	if (!g_appState.g_history.count(configIndex)) return;
+	bool changed = false;
+	auto& history_vec = g_appState.g_history[configIndex];
+	for (auto& entry : history_vec) {
+		if (entry.worldName != worldName) continue;
+		if (entry.backupFile == latestFullBackupFile) {
+			if (!entry.isImportant || !entry.isAutoImportant) {
+				entry.isImportant = true;
+				entry.isAutoImportant = true;
+				changed = true;
+			}
+		}
+		else if (entry.isAutoImportant) {
+			entry.isAutoImportant = false;
+			entry.isImportant = false;
+			changed = true;
+		}
+	}
+	if (changed) {
+		SaveHistory();
+	}
+}
+
+// ä»æ–‡ä»¶åŠ è½½å†å²è®°å½•
 void LoadHistory() {
 	const wstring filename = L"history.dat";
 	g_appState.g_history.clear();
-	ifstream in(filename, ios::binary);
+	ifstream in(filename.c_str(), ios::binary);
 	if (!in.is_open()) return;
 
 	string line_utf8;
@@ -76,10 +106,19 @@ void LoadHistory() {
 						entry.backupFile = segments[2];
 						entry.backupType = segments[3];
 						entry.comment = segments[4];
-						entry.isImportant = (segments.size() >= 6 && segments[5] == L"important");
+						if (segments.size() >= 6) {
+							const wstring& flagSegment = segments[5];
+							const wstring importantFlag = L"important";
+							if (flagSegment.compare(0, importantFlag.size(), importantFlag) == 0) {
+								entry.isImportant = true;
+								if (flagSegment.size() > importantFlag.size() && flagSegment.substr(importantFlag.size()) == L":auto") {
+									entry.isAutoImportant = true;
+								}
+							}
+						}
 						g_appState.g_history[current_config_id].push_back(entry);
 					}
-					else if (segments.size() == 4) { // Ã»ÓĞÉèÖÃ×¢ÊÍ
+					else if (segments.size() == 4) { // æ²¡æœ‰è®¾ç½®æ³¨é‡Š
 						HistoryEntry entry;
 						entry.timestamp_str = segments[0];
 						entry.worldName = segments[1];
@@ -95,7 +134,7 @@ void LoadHistory() {
 }
 
 
-// Ìí¼ÓÒ»ÌõÀúÊ·¼ÇÂ¼ÌõÄ¿
+// æ·»åŠ ä¸€æ¡å†å²è®°å½•æ¡ç›®
 void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment) {
 	time_t now = time(0);
 	tm ltm;
@@ -114,7 +153,7 @@ void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& b
 	SaveHistory();
 }
 
-// É¾³ıÖ¸¶¨µÄÀúÊ·¼ÇÂ¼ÌõÄ¿£¨Í¨¹ı±¸·İÎÄ¼şÃûÆ¥Åä£©
+// åˆ é™¤æŒ‡å®šçš„å†å²è®°å½•æ¡ç›®ï¼ˆé€šè¿‡å¤‡ä»½æ–‡ä»¶ååŒ¹é…ï¼‰
 void RemoveHistoryEntry(int configIndex, const wstring& backupFileToRemove) {
 	if (g_appState.g_history.count(configIndex)) {
 		auto& history_vec = g_appState.g_history[configIndex];

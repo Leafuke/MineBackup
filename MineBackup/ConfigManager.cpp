@@ -1,4 +1,4 @@
-#include "ConfigManager.h"
+ï»¿#include "ConfigManager.h"
 #include "AppState.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -12,7 +12,7 @@
 #include <sstream>
 using namespace std;
 
-static int nextConfigId = 2; // ´Ó 2 ¿ªÊ¼£¬ÒòÎª 1 ±»Ïòµ¼Õ¼ÓÃ
+static int nextConfigId = 2; // ä» 2 å¼€å§‹ï¼Œå› ä¸º 1 è¢«å‘å¯¼å ç”¨
 extern int g_hotKeyBackupId , g_hotKeyRestoreId;
 
 extern bool g_RunOnStartup;
@@ -43,11 +43,11 @@ int CreateNewNormalConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	Config new_cfg;
 	new_cfg.name = name_hint;
-	// Ä¬ÈÏ¿ÕµÄÂ·¾¶/ÊÀ½ç
+	// é»˜è®¤ç©ºçš„è·¯å¾„/ä¸–ç•Œ
 	new_cfg.saveRoot.clear();
 	new_cfg.backupPath.clear();
 	new_cfg.worlds.clear();
-	// ÆäËûÄ¬ÈÏÖµ¿ÉÔÚ´ËÉèÖÃ
+	// å…¶ä»–é»˜è®¤å€¼å¯åœ¨æ­¤è®¾ç½®
 	g_appState.configs[newId] = new_cfg;
 	return newId;
 }
@@ -56,11 +56,11 @@ void LoadConfigs(const string& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
-	ifstream in(filename, ios::binary);
+	ifstream in(filename.c_str(), ios::binary);
 	if (!in.is_open()) return;
 	string line1;
 	wstring line, section;
-	// cur×÷ÎªÒ»¸öÖ¸Õë£¬Ö¸Ïò g_appState.configs Õâ¸öÈ«¾Ö map<int, Config> ÖĞµÄÔªËØ Config
+	// curä½œä¸ºä¸€ä¸ªæŒ‡é’ˆï¼ŒæŒ‡å‘ g_appState.configs è¿™ä¸ªå…¨å±€ map<int, Config> ä¸­çš„å…ƒç´  Config
 	Config* cur = nullptr;
 	SpecialConfig* spCur = nullptr;
 	bool restoreWhiteList = false;
@@ -137,13 +137,13 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
-					//ApplyTheme(cur->theme); Õâ¸öÒª×ªÒÆÖÁÓĞguiÖ®ºó£¬·ñÔò»áÖ±½Óµ¼ÖÂ±ÀÀ£
+					//ApplyTheme(cur->theme); è¿™ä¸ªè¦è½¬ç§»è‡³æœ‰guiä¹‹åï¼Œå¦åˆ™ä¼šç›´æ¥å¯¼è‡´å´©æºƒ
 				}
 				else if (key == L"Font") {
 					cur->fontPath = val;
 					Fontss = val;
-					if (val.size() < 3 || !filesystem::exists(val)) { // ×ÖÌåÃ»ÓĞ»áµ¼ÖÂ±ÀÀ££¬ËùÒÔÕâÀï×ö¸ö¶µµ×
-						MessageBoxWin("Warning", "Invalid font path!\nPlease check and reload.");
+					if (val.size() < 3 || !filesystem::exists(val)) { // å­—ä½“æ²¡æœ‰ä¼šå¯¼è‡´å´©æºƒï¼Œæ‰€ä»¥è¿™é‡Œåšä¸ªå…œåº•
+						MessageBoxWin("Warning", "Invalid font path!\nPlease check and reload.", 1);
 						GetUserDefaultUILanguageWin();
 #ifdef _WIN32
 						if (g_CurrentLang == "zh_CN") {
@@ -264,19 +264,23 @@ void LoadConfigs(const string& filename) {
 	}
 	if (!restoreWhiteList) {
 		restoreWhitelist.push_back(L"fake_player.gca.json");
+		restoreWhitelist.push_back(L"xaeromap.txt");
+		restoreWhitelist.push_back(L"soul_archive.json");
+		restoreWhitelist.push_back(L"level.dat");
+		restoreWhitelist.push_back(L"level.dat_old");
 	}
 }
 
 void SaveConfigs(const wstring& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
-	wofstream out(filename, ios::binary);
+	wofstream out(filename.c_str(), ios::binary);
 	if (!out.is_open()) {
-		MessageBoxW(nullptr, utf8_to_wstring(L("ERROR_CONFIG_WRITE_FAIL")).c_str(), utf8_to_wstring(L("ERROR_TITLE")).c_str(), MB_OK | MB_ICONERROR);
+		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
 		return;
 	}
-	//out.imbue(locale("chs"));//²»ÄÜÓÃÕâ¸ö£¬±äANSIÀ²
+	//out.imbue(locale("chs"));//ä¸èƒ½ç”¨è¿™ä¸ªï¼Œå˜ANSIå•¦
 	out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-	//out.imbue(locale(out.getloc(), new codecvt_utf8<wchar_t>));//½«UTF8×ªÎªUTF£¬ÏÖÔÚC++17Ò²²»¶ÔÁË¡­¡­µ«ÊÇÎÒÃÇÓĞdefine£¡
+	//out.imbue(locale(out.getloc(), new codecvt_utf8<wchar_t>));//å°†UTF8è½¬ä¸ºUTFï¼Œç°åœ¨C++17ä¹Ÿä¸å¯¹äº†â€¦â€¦ä½†æ˜¯æˆ‘ä»¬æœ‰defineï¼
 	out << L"[General]\n";
 	out << L"CurrentConfig=" << g_appState.currentConfigIndex << L"\n";
 	out << L"NextConfigId=" << nextConfigId << L"\n";
@@ -348,7 +352,7 @@ void SaveConfigs(const wstring& filename) {
 		out << L"Name=" << utf8_to_wstring(sc.name) << L"\n";
 		out << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
 		for (const auto& cmd : sc.commands) out << L"Command=" << cmd << L"\n";
-		// ĞÂµÄÈÎÎñ½á¹¹
+		// æ–°çš„ä»»åŠ¡ç»“æ„
 		for (const auto& task : sc.tasks) {
 			out << L"AutoBackupTask=" << task.configIndex << L"," << task.worldIndex << L"," << task.backupType
 				<< L"," << task.intervalMinutes << L"," << task.schedMonth << L"," << task.schedDay
@@ -371,8 +375,8 @@ void SaveConfigs(const wstring& filename) {
 	}
 }
 
-// ÔÚ LoadConfigs/SaveConfigs/CheckForConfigConflicts µÈº¯Êı¹Ø¼ü´¦µ÷ÓÃÈÕÖ¾½Ó¿Ú
-// ÀıÈç£º
+// åœ¨ LoadConfigs/SaveConfigs/CheckForConfigConflicts ç­‰å‡½æ•°å…³é”®å¤„è°ƒç”¨æ—¥å¿—æ¥å£
+// ä¾‹å¦‚ï¼š
 // WriteLogEntry("Configs loaded from " + filename, LogLevel::Info);
 // WriteLogEntry("Configs saved to " + wstring_to_utf8(filename), LogLevel::Info);
 // WriteLogEntry("Config conflict detected: " + wstring_to_utf8(conflictDetails), LogLevel::Warning);
@@ -395,13 +399,13 @@ void CheckForConfigConflicts() {
 
 	for (const auto& map_pair : worldMap) {
 		const vector<pair<int, wstring>>& entries = map_pair.second;
-		if (entries.size() > 1) { // Èç¹ûÓĞ¶à¸öÅäÖÃÊ¹ÓÃÍ¬Ò»¸öÊÀ½çÃû
+		if (entries.size() > 1) { // å¦‚æœæœ‰å¤šä¸ªé…ç½®ä½¿ç”¨åŒä¸€ä¸ªä¸–ç•Œå
 			for (size_t i = 0; i < entries.size(); ++i) {
-				for (size_t j = i + 1; j < entries.size(); ++j) { // ±È½ÏÃ¿¶ÔÅäÖÃ
+				for (size_t j = i + 1; j < entries.size(); ++j) { // æ¯”è¾ƒæ¯å¯¹é…ç½®
 					if (entries[i].second == entries[j].second && !entries[i].second.empty()) {
 						ifConf = true;
 						wchar_t buffer[CONSTANT2];
-						swprintf_s(buffer, CONSTANT2, L"Num:%d and Num:%d / World:%s and World:%s",
+						swprintf_s(buffer, CONSTANT2, L"\n\nConfig:%d and Config:%d \n World:%s \n Path:%s",
 							entries[i].first,
 							entries[j].first,
 							map_pair.first.c_str(),
@@ -416,10 +420,10 @@ void CheckForConfigConflicts() {
 		}
 	}
 	if (ifConf) {
-		wchar_t finalMessage[CONSTANT1];
+		string finalMessage;
 		//strncpy_s(finalMessage, L("CONFIG_CONFLICT_MESSAGE"),100);
-		swprintf_s(finalMessage, CONSTANT1, utf8_to_wstring(L("CONFIG_CONFLICT_MESSAGE")).c_str());
-		MessageBoxW(nullptr, finalMessage, utf8_to_wstring(L("CONFIG_CONFLICT_TITLE")).c_str(), MB_OK | MB_ICONWARNING);
+		finalMessage = L("CONFIG_CONFLICT_MESSAGE") + wstring_to_utf8(conflictDetails);
+		MessageBoxWin(L("CONFIG_CONFLICT_TITLE"), finalMessage, 1);
 	}
 
 }

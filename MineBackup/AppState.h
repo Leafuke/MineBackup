@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #ifndef APP_STATE_H
 #define APP_STATE_H
 #include <vector>
@@ -15,7 +15,7 @@
 #define MINERESTORE_HOTKEY_ID 2
 #endif
 
-// ½á¹¹ÌåÃÇ
+// ç»“æ„ä½“ä»¬
 struct Config {
 	std::wstring saveRoot;
 	std::vector<std::pair<std::wstring, std::wstring>> worlds; // {name, desc}
@@ -49,9 +49,9 @@ struct Config {
 struct AutomatedTask {
 	int configIndex = -1;
 	int worldIndex = -1;
-	int backupType = 0; // 0: µ¥´Î, 1: ¼ä¸ô, 2: ¼Æ»®
+	int backupType = 0; // 0: å•æ¬¡, 1: é—´éš”, 2: è®¡åˆ’
 	int intervalMinutes = 15;
-	int schedMonth = 0, schedDay = 0, schedHour = 0, schedMinute = 0; // 0 ÒâÎ¶×Å¡°Ã¿Ò»¡±
+	int schedMonth = 0, schedDay = 0, schedHour = 0, schedMinute = 0; // 0 æ„å‘³ç€â€œæ¯ä¸€â€
 };
 struct SpecialConfig {
 	bool autoExecute = false;
@@ -77,23 +77,32 @@ struct HistoryEntry {
 	std::wstring backupType;
 	std::wstring comment;
 	bool isImportant = false;
+	bool isAutoImportant = false;
 };
 struct AutoBackupTask {
 	std::thread worker;
-	std::atomic<bool> stop_flag{ false }; // Ô­×Ó²¼¶ûÖµ£¬ÓÃÓÚ°²È«µØÍ¨ÖªÏß³ÌÍ£Ö¹
+	std::atomic<bool> stop_flag{ false }; // åŸå­å¸ƒå°”å€¼ï¼Œç”¨äºå®‰å…¨åœ°é€šçŸ¥çº¿ç¨‹åœæ­¢
 };
-struct DisplayWorld { // Ò»¸öĞÂµÄ½á¹¹Ìå£¬ÈÃ UI ²»ÔÙÖ±½Ó¶ÁÈ¡ configs[currentConfigIndex].worlds£¬¶øÊ¹ÓÃ DisplayWorld
-	std::wstring name;      // ÊÀ½çÃû£¨ÎÄ¼ş¼ĞÃû£©
-	std::wstring desc;      // ÃèÊö
-	int baseConfigIndex = -1; // À´Ô´ÅäÖÃ id
-	int baseWorldIndex = -1;  // À´Ô´ÅäÖÃÖĞÊÀ½çË÷Òı
-	Config effectiveConfig;   // ºÏ²¢ºóµÄÅäÖÃ£¨¿½±´£©
+struct DisplayWorld { // ä¸€ä¸ªæ–°çš„ç»“æ„ä½“ï¼Œè®© UI ä¸å†ç›´æ¥è¯»å– configs[currentConfigIndex].worldsï¼Œè€Œä½¿ç”¨ DisplayWorld
+	std::wstring name;      // ä¸–ç•Œåï¼ˆæ–‡ä»¶å¤¹åï¼‰
+	std::wstring desc;      // æè¿°
+	int baseConfigIndex = -1; // æ¥æºé…ç½® id
+	int baseWorldIndex = -1;  // æ¥æºé…ç½®ä¸­ä¸–ç•Œç´¢å¼•
+	Config effectiveConfig;   // åˆå¹¶åçš„é…ç½®ï¼ˆæ‹·è´ï¼‰
+};
+struct MyFolder {
+	std::wstring path;		// ä¸–ç•Œæ–‡ä»¶å¤¹è·¯å¾„
+	std::wstring name;		// ä¸–ç•Œåï¼ˆæ–‡ä»¶å¤¹åï¼‰
+	std::wstring desc;		// æè¿°
+	Config config;			// æ‰€å±é…ç½®
+	int configIndex = -1;	// æ‰€å±é…ç½®ç´¢å¼•
+	int worldIndex = -1;	// ä¸–ç•Œç´¢å¼•
 };
 
 enum class HotRestoreState {
-	IDLE,              // ¿ÕÏĞ×´Ì¬
-	WAITING_FOR_MOD,   // ÒÑ·¢ËÍÇëÇó£¬ÕıÔÚµÈ´ıÄ£×éÏìÓ¦
-	RESTORING,         // Ä£×éÒÑÏìÓ¦£¬ÕıÔÚÖ´ĞĞ»¹Ô­
+	IDLE,              // ç©ºé—²çŠ¶æ€
+	WAITING_FOR_MOD,   // å·²å‘é€è¯·æ±‚ï¼Œæ­£åœ¨ç­‰å¾…æ¨¡ç»„å“åº”
+	RESTORING,         // æ¨¡ç»„å·²å“åº”ï¼Œæ­£åœ¨æ‰§è¡Œè¿˜åŸ
 };
 
 //struct WorldStateCache {
@@ -109,11 +118,11 @@ struct AppState {
 
     // UI State
     bool showMainApp = false;
-	bool specialConfigMode = false; // ÓÃÀ´¿ªÆô¼òµ¥UI
+	bool specialConfigMode = false; // ç”¨æ¥å¼€å¯ç®€å•UI
 
 
     // Data
-	int currentConfigIndex = 1, realConfigIndex = -1; // Èç¹ûrealConfigIndex²»Îª-1£¬ËµÃ÷ÊÇÌØÊâÅäÖÃ
+	int currentConfigIndex = 1, realConfigIndex = -1; // å¦‚æœrealConfigIndexä¸ä¸º-1ï¼Œè¯´æ˜æ˜¯ç‰¹æ®Šé…ç½®
 	std::map<int, Config> configs;
 	std::map<int, std::vector<HistoryEntry>> g_history;
 	std::map<int, SpecialConfig> specialConfigs;
@@ -123,8 +132,8 @@ struct AppState {
 
 
 
-	std::mutex configsMutex;			// ÓÃÓÚ±£»¤È«¾ÖÅäÖÃµÄ»¥³âËø
-	std::mutex task_mutex;		// ×¨ÃÅÓÃÓÚ±£»¤ g_active_auto_backups
+	std::mutex configsMutex;			// ç”¨äºä¿æŠ¤å…¨å±€é…ç½®çš„äº’æ–¥é”
+	std::mutex task_mutex;		// ä¸“é—¨ç”¨äºä¿æŠ¤ g_active_auto_backups
 	bool isRespond = false;
 	std::atomic<HotRestoreState> hotkeyRestoreState = HotRestoreState::IDLE;
     // Settings
