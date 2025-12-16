@@ -3084,6 +3084,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine();
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 			selected_entry->isImportant = !selected_entry->isImportant;
+			selected_entry->isAutoImportant = false;
+			SaveHistory();
 		}
 		// -----------
 		if (!cfg.enableWEIntegration) ImGui::BeginDisabled();

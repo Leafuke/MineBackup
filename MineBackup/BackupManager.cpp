@@ -303,6 +303,7 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 				if (entry.worldName == file.path().parent_path().filename().wstring() && entry.backupFile == file.path().filename().wstring()) {
 					if (entry.isImportant) {
 						is_important = true;
+						console->AddLog(L("LOG_INFO_BACKUP_MARKED_IMPORTANT"), wstring_to_utf8(file.path().filename().wstring()).c_str());
 					}
 					break;
 				}
@@ -324,7 +325,7 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 	for (int i = 0; i < to_delete_count && i < deletable_files.size(); ++i) {
 		const auto& file_to_delete = deletable_files[i];
 		try {
-			if (files[i].path().filename().wstring().find(L"[Smart]") == 0 || files[i + 1].path().filename().wstring().find(L"[Smart]") == 0) // 如果是智能备份，不能删除！如果是完整备份，不能是基底
+			if (file_to_delete.path().filename().wstring().find(L"[Smart]") == 0)
 			{
 				if (console) console->AddLog(L("LOG_WARNING_DELETE_SMART_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
 			}
@@ -343,7 +344,7 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 			else {
 				fs::remove(file_to_delete);
 			}
-			if (console) console->AddLog(L("LOG_DELETE_OLD_BACKUP"), wstring_to_utf8(files[i].path().filename().wstring()).c_str());
+			if (console) console->AddLog(L("LOG_DELETE_OLD_BACKUP"), wstring_to_utf8(file_to_delete.path().filename().wstring()).c_str());
 		}
 		catch (const fs::filesystem_error& e) {
 			if (console) console->AddLog(L("LOG_ERROR_DELETE_BACKUP"), e.what());
@@ -621,12 +622,16 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         else
             LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder, config.keepCount, &console);
 
-        UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
-        // 历史记录
-        if (folder.configIndex != -1 && config.backupMode != 3)
-            AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
-        else if (config.backupMode != 3)
-            AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
+		// 历史记录
+		if (config.backupMode != 3) {
+			const int historyConfigIndex = (folder.configIndex != -1) ? folder.configIndex : g_appState.currentConfigIndex;
+			const wstring backupFilename = filesystem::path(archivePath).filename().wstring();
+			AddHistoryEntry(historyConfigIndex, folder.name, backupFilename, backupTypeStr, comment);
+			if (config.backupMode == 2 && backupTypeStr == L"Full") {
+				UpdateAutoPinnedFullBackup(historyConfigIndex, folder.name, backupFilename);
+			}
+		}
         g_appState.realConfigIndex = -1;
         // 广播一个成功事件
         string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
@@ -810,47 +815,9 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		}
 	}*/
 
-	if (restoreMethod == 0) {
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
-		bool deletion_ok = true;
-		if (filesystem::exists(destinationFolder)) {
-			try {
-				for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-					// 使用 is_blacklisted 函数判断是否在白名单中
-					if (is_blacklisted(entry.path(), destinationFolder, destinationFolder, restoreWhitelist)) {
-						console.AddLog(L("LOG_SKIPPING_WHITELISTED_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
-						continue;
-					}
-
-					console.AddLog(L("LOG_DELETING_EXISTING_WORLD_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
-					error_code ec;
-					if (entry.is_directory()) {
-						filesystem::remove_all(entry.path(), ec);
-					}
-					else {
-						filesystem::remove(entry.path(), ec);
-					}
-					if (ec) {
-						console.AddLog(L("LOG_DELETION_ERROR"), wstring_to_utf8(entry.path().filename().wstring()).c_str(), ec.message().c_str());
-						deletion_ok = false; // 标记删除失败
-					}
-				}
-			}
-			catch (const filesystem::filesystem_error& e) {
-				console.AddLog("[Error] An exception occurred during pre-restore cleanup: %s.", e.what());
-				deletion_ok = false;
-			}
-		}
-		if (!deletion_ok) {
-			console.AddLog(L("ERROR_CLEAN_RESTORE_FAILED"));
-			return; // 中止还原以保护数据
-		}
-	}
-
 	// 收集所有相关的备份文件
 	vector<filesystem::path> backupsToApply;
 
-	// 如果目标是完整备份，直接还原它
 	if (backupFile.find(L"[Smart]") != wstring::npos) { // 目标是增量备份
 		// 寻找基础的完整备份
 		filesystem::path baseFullBackup;
@@ -927,6 +894,44 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			if (!item.empty()) {
 				filesToExtractStr += L" \"" + utf8_to_wstring(item) + L"\"";
 			}
+		}
+	}
+
+	// 1.11.1 将这个清除步骤移动到后面了，避免没成功检索就直接删档
+	if (restoreMethod == 0) {
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		bool deletion_ok = true;
+		if (filesystem::exists(destinationFolder)) {
+			try {
+				for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+					// 使用 is_blacklisted 函数判断是否在白名单中
+					if (is_blacklisted(entry.path(), destinationFolder, destinationFolder, restoreWhitelist)) {
+						console.AddLog(L("LOG_SKIPPING_WHITELISTED_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
+						continue;
+					}
+
+					console.AddLog(L("LOG_DELETING_EXISTING_WORLD_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
+					error_code ec;
+					if (entry.is_directory()) {
+						filesystem::remove_all(entry.path(), ec);
+					}
+					else {
+						filesystem::remove(entry.path(), ec);
+					}
+					if (ec) {
+						console.AddLog(L("LOG_DELETION_ERROR"), wstring_to_utf8(entry.path().filename().wstring()).c_str(), ec.message().c_str());
+						deletion_ok = false; // 标记删除失败
+					}
+				}
+			}
+			catch (const filesystem::filesystem_error& e) {
+				console.AddLog("[Error] An exception occurred during pre-restore cleanup: %s.", e.what());
+				deletion_ok = false;
+			}
+		}
+		if (!deletion_ok) {
+			console.AddLog(L("ERROR_CLEAN_RESTORE_FAILED"));
+			return; // 中止还原以保护数据
 		}
 	}
 

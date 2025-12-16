@@ -474,6 +474,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "THREAD_STOPPED_FOR_WORLD", u8"[提示] 已停止对世界 '%s' 的自动备份线程。" },
 		{ "BUTTON_AUTO_LOG", u8"自动日志记录" },
 		{"SPONSOR_ME", u8"赞助作者"},
+		{ "LOG_INFO_BACKUP_MARKED_IMPORTANT", u8"[提示] 备份 '%s' 已被标记为重要，跳过自动删除。" }
 }},
 	{ "en_US", {
 		{"SETTINGS", "Settings"},
@@ -943,7 +944,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 		{ "HOTKEY_SET_TO", "Hotkey change to Alt+Ctrl+%c successfully" },
 		{ "THREAD_STOPPED_FOR_WORLD", "[Info] Stopped automatic backup thread for world '%s'." },
 		{ "BUTTON_AUTO_LOG", "Auto Log" },
-		{"SPONSOR_ME", "Sponsor"}
+		{"SPONSOR_ME", "Sponsor"},
+		{"LOG_INFO_BACKUP_MARKED_IMPORTANT", "[Info] Backup '%s' marked as important."},
 }},
 };
 const char* L(const char* key) {

@@ -48,9 +48,6 @@
     <ClCompile Include="HistoryManager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="KnotLink\main.cpp">
-      <Filter>KnotLink</Filter>
-    </ClCompile>
     <ClCompile Include="MineBackup.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
