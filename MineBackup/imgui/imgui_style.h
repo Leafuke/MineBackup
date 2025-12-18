@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "imgui.h"
 #include "json.hpp"
 #include <fstream>
@@ -6,6 +6,9 @@
 #include <iomanip>
 
 void EnableDarkModeWin(bool enable);
+#ifndef _WIN32
+inline void EnableDarkModeWin(bool) {}
+#endif
 
 namespace ImGuiTheme {
 
@@ -16,7 +19,6 @@ namespace ImGuiTheme {
         return ImVec4(r, g, b, alpha);
     }
 
-    // ImVec4×ªHEX
     std::string ImVec4ToHex(const ImVec4& color) {
         std::stringstream ss;
         int r = static_cast<int>(std::round(color.x * 255.0f));
@@ -100,12 +102,10 @@ namespace ImGuiTheme {
         ImGui::StyleColorsClassic();
     }
 
-    // --- Windows 11 Éî¶ÈÐÞ¸´°æ£¨ÔöÇ¿¶Ô±È¶ÈÓë²ã¼¶¸Ð£© ---
     void ApplyWindows11(bool dark_mode) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 
-        // ¼¸ºÎÉè¶¨
         style.WindowRounding = 6.0f;
         style.ChildRounding = 6.0f;
         style.FrameRounding = 4.0f;
@@ -127,8 +127,7 @@ namespace ImGuiTheme {
 
         if (dark_mode) {
             EnableDarkModeWin(true);
-            // Ç¿»¯²ã¼¶£ºchild Óë tab ¸üÁÁ£¬±ß¿òÉÔÇ¿£¬focus ×´Ì¬¸üÇåÎú
-            ImVec4 bg_base = Hex(0x1E1E1E);  // ¸üÌù½ü Win11 Mica Dark
+            ImVec4 bg_base = Hex(0x1E1E1E);
             ImVec4 bg_child = Hex(0x282828);
             ImVec4 bg_popup = Hex(0x2A2A2A);
             ImVec4 border = Hex(0x4A4A4A);
@@ -149,7 +148,7 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_TitleBg] = bg_base;
             colors[ImGuiCol_TitleBgActive] = bg_base;
-            colors[ImGuiCol_MenuBarBg] = Hex(0x1B1B1B); // ±È´°¿ÚÂÔÉî£¬ÐÎ³É´øÇø·ÖµÄ¶¥À¸
+            colors[ImGuiCol_MenuBarBg] = Hex(0x1B1B1B);
 
             colors[ImGuiCol_Header] = Hex(0x383838);
             colors[ImGuiCol_HeaderHovered] = Hex(0x404040);
@@ -170,7 +169,6 @@ namespace ImGuiTheme {
             colors[ImGuiCol_SliderGrabActive] = Hex(0x76D6FF);
             colors[ImGuiCol_DragDropTarget] = accent;
 
-            // ¹ö¶¯Ìõ¸üÌù½ü Win11£ºÍ¨µÀ°ëÍ¸Ã÷£¬×¥ÊÖÂÔÁÁ
             colors[ImGuiCol_ScrollbarBg] = Hex(0x000000, 0.06f);
             colors[ImGuiCol_ScrollbarGrab] = Hex(0x3F3F3F);
             colors[ImGuiCol_ScrollbarGrabHovered] = Hex(0x4C4C4C);
@@ -200,7 +198,7 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_TitleBg] = bg_base;
             colors[ImGuiCol_TitleBgActive] = bg_base;
-            colors[ImGuiCol_MenuBarBg] = Hex(0xECECEC); // ¶¥À¸ÂÔÉî¸üÇåÎú
+            colors[ImGuiCol_MenuBarBg] = Hex(0xECECEC);
 
             colors[ImGuiCol_Header] = Hex(0xECECEC);
             colors[ImGuiCol_HeaderHovered] = Hex(0xE0E0E0);
@@ -230,7 +228,6 @@ namespace ImGuiTheme {
         }
     }
 
-    // --- VSCode Dark ·ç¸ñ---
     void ApplyVSCodeDark() {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
@@ -297,7 +294,6 @@ namespace ImGuiTheme {
         colors[ImGuiCol_NavHighlight] = Hex(0x000000, 0.0f);
     }
 
-    // --- Nord (¼«º®±±¾³) Ö÷Ìâ£º¸ß¿É¶Á¡¢µÍÆ£ÀÍ ---
     void ApplyNord(bool dark_mode) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
@@ -411,7 +407,6 @@ namespace ImGuiTheme {
         }
     }
 
-    // --- Solarized Ö÷Ìâ£¨¼õÉÙÊÓ¾õÆ£ÀÍ£© ---
     void ApplySolarized(bool dark_mode) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
@@ -429,7 +424,7 @@ namespace ImGuiTheme {
         style.FramePadding = ImVec2(8, 5);
         style.ItemSpacing = ImVec2(8, 8);
 
-        // Solarized °µ/ÁÁºËÐÄÉ«
+        // Solarized ï¿½ï¿½/ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½É«
         if (dark_mode) {
             ImVec4 base = Hex(0x002B36);
             ImVec4 child = Hex(0x073642);
@@ -519,13 +514,11 @@ namespace ImGuiTheme {
     void ApplyCustom() {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
-        // ´Ó±¾µØ JSON ÎÄ¼þ¼ÓÔØ¿ò¼ÜºÍÑÕÉ«ÅäÖÃ
         try {
             std::ifstream file("custom_theme.json");
             if (file.is_open()) {
                 nlohmann::json j;
                 file >> j;
-                // ¼¸ºÎÉè¶¨-´ÓJson¶ÁÈ¡
                 style.WindowRounding = j.value("window_rounding", 0.0f);
                 style.ChildRounding = j.value("child_rounding", 0.0f);
                 style.FrameRounding = j.value("frame_rounding", 0.0f);
@@ -554,11 +547,10 @@ namespace ImGuiTheme {
                 );
                 style.ScrollbarSize = j.value("scrollbar_size", 14.0f);
 
-                // ÑÕÉ«Éè¶¨
                 for (auto& [key, value] : j["colors"].items()) {
                     // hex: "0xRRGGBB"
                     std::string hexstr = value["hex"].get<std::string>();
-                    unsigned int hex = std::stoul(hexstr.substr(1), nullptr, 16); // Ìø¹ý"#"
+                    unsigned int hex = std::stoul(hexstr.substr(1), nullptr, 16); // ï¿½ï¿½ï¿½ï¿½"#"
                     float alpha = value.value("alpha", 1.0f);
                     ImVec4 col = Hex(hex, alpha);
                     ImGuiCol col_index = ImGuiCol_COUNT;
@@ -574,14 +566,12 @@ namespace ImGuiTheme {
             }
         }
         catch (...) {
-            // Èç¹û¼ÓÔØÊ§°Ü£¬Ó¦ÓÃÄ¬ÈÏ Solarized Ö÷Ìâ
             ApplySolarized(true);
         }
     }
 
     void WriteDefaultCustomTheme() {
         nlohmann::json j;
-        // ½«µ±Ç°Ê¹ÓÃµÄÑùÊ½Ð´Èë JSON
         ImGuiStyle& style = ImGui::GetStyle();
         j["window_rounding"] = style.WindowRounding;
         j["child_rounding"] = style.ChildRounding;
@@ -605,7 +595,6 @@ namespace ImGuiTheme {
         j["item_spacing_y"] = style.ItemSpacing.y;
         j["scrollbar_size"] = style.ScrollbarSize;
 
-        // ÑÕÉ«Éè¶¨
         for (int i = 0; i < ImGuiCol_COUNT; i++) {
             ImVec4 col = style.Colors[i];
             j["colors"][ImGui::GetStyleColorName(static_cast<ImGuiCol>(i))] = {
@@ -614,7 +603,6 @@ namespace ImGuiTheme {
             };
         }
 
-        // ½« JSON Ð´ÈëÎÄ¼þ
         std::ofstream file("custom_theme.json");
         if (file.is_open()) {
             file << j.dump(4);

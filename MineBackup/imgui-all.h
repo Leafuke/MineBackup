@@ -19,5 +19,4 @@
 #include "stb_image.h"
 #include "json.hpp"
 #include "IconsFontAwesome6.h"
-#include "resource.h"
 #endif

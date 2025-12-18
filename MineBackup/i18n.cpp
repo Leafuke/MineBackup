@@ -1,8 +1,9 @@
 ﻿#include "i18n.h"
+#include "text_to_text.h"
 std::string g_CurrentLang = "en_US";
 const char* lang_codes[2] = { "zh_CN", "en_US" };
-const char* langs[2] = { u8"简体中文", "English" };
-std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_LangTable = {
+const char* langs[2] = { as_utf8(u8"简体中文"), "English" };
+std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_LangTable = {
 	{ "zh_CN", {
 		{"SETTINGS", u8"设置"},
 		{"EXIT", u8"退出"},
@@ -951,6 +952,6 @@ std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_
 const char* L(const char* key) {
     auto it = g_LangTable[g_CurrentLang].find(key);
     if (it != g_LangTable[g_CurrentLang].end())
-        return it->second.c_str();
+		return it->second.value.c_str();
     return key;
 }

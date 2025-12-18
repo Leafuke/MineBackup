@@ -330,7 +330,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		string comment_part;
 		getline(ss, comment_part); // 获取剩余部分
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
-		console->AddLog("send: %s", comment_part);
+		console->AddLog("send: %s", comment_part.c_str());
 		BroadcastEvent(comment_part);
 		return "OK:Event Sent";
 	}

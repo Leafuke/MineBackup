@@ -8,11 +8,191 @@
 #include <iostream>
 #include <thread>
 #include <mutex>
+#include <chrono>
+#include <ctime>
+#include <cwchar>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdarg>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+#include <limits.h>
+#include <sys/stat.h>
+#include <cerrno>
+#include <filesystem>
 #ifndef CONSTANT1
 #define CONSTANT1 256
 #define CONSTANT2 512
 #define MINEBACKUP_HOTKEY_ID 1
 #define MINERESTORE_HOTKEY_ID 2
+#endif
+
+#ifndef _WIN32
+// 模仿 Windows 平台的部分函数行为
+inline int localtime_s(struct tm* _Tm, const time_t* _Time) {
+	return localtime_r(_Time, _Tm) ? 0 : -1;
+}
+inline void Sleep(unsigned long milliseconds) {
+	std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+}
+
+// 为 Linux 平台重新定义一些别名...
+using DWORD = unsigned long;
+using BOOL = int;
+using HINSTANCE = void*;
+using HWND = void*;
+using LPCWSTR = const wchar_t*;
+using LPWSTR = wchar_t*;
+using errno_t = int;
+#ifndef MAX_PATH
+#define MAX_PATH 4096
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef SW_SHOWNORMAL
+#define SW_SHOWNORMAL 1
+#endif
+
+inline errno_t strcpy_s(char* dest, size_t destsz, const char* src) {
+	if (!dest || !src || destsz == 0) return EINVAL;
+	std::strncpy(dest, src, destsz - 1);
+	dest[destsz - 1] = '\0';
+	return 0;
+}
+
+inline errno_t strncpy_s(char* dest, size_t destsz, const char* src) {
+	if (!dest || !src || destsz == 0) return EINVAL;
+	std::strncpy(dest, src, destsz - 1);
+	dest[destsz - 1] = '\0';
+	return 0;
+}
+
+inline errno_t strncpy_s(char* dest, const char* src, size_t destsz) {
+	return strncpy_s(dest, destsz, src);
+}
+
+template <size_t N>
+inline errno_t strncpy_s(char (&dest)[N], const char* src) {
+	return strncpy_s(dest, N, src);
+}
+
+template <size_t N>
+inline errno_t strcpy_s(char (&dest)[N], const char* src) {
+	return strncpy_s(dest, N, src);
+}
+
+inline errno_t strcpy_s(char* dest, const char* src) {
+	if (!dest || !src) return EINVAL;
+	std::strncpy(dest, src, std::strlen(src));
+	return 0;
+}
+
+inline errno_t sprintf_s(char* dest, size_t destsz, const char* fmt, ...) {
+	if (!dest || !fmt || destsz == 0) return EINVAL;
+	va_list args;
+	va_start(args, fmt);
+	int ret = vsnprintf(dest, destsz, fmt, args);
+	va_end(args);
+	if (ret < 0 || static_cast<size_t>(ret) >= destsz) {
+		dest[destsz - 1] = '\0';
+		return ERANGE;
+	}
+	return 0;
+}
+
+template <size_t N>
+inline errno_t sprintf_s(char (&dest)[N], const char* fmt, ...) {
+	if (!fmt) return EINVAL;
+	va_list args;
+	va_start(args, fmt);
+	int ret = vsnprintf(dest, N, fmt, args);
+	va_end(args);
+	if (ret < 0 || static_cast<size_t>(ret) >= N) {
+		dest[N - 1] = '\0';
+		return ERANGE;
+	}
+	return 0;
+}
+
+inline int swprintf_s(wchar_t* buffer, size_t bufsz, const wchar_t* fmt, ...) {
+	if (!buffer || !fmt || bufsz == 0) return EINVAL;
+	va_list args;
+	va_start(args, fmt);
+	int ret = vswprintf(buffer, bufsz, fmt, args);
+	va_end(args);
+	if (ret < 0 || static_cast<size_t>(ret) >= bufsz) {
+		buffer[bufsz - 1] = L'\0';
+		return ERANGE;
+	}
+	return ret;
+}
+
+inline errno_t ctime_s(char* buffer, size_t bufsz, const time_t* t) {
+	if (!buffer || !t || bufsz == 0) return EINVAL;
+	return ctime_r(t, buffer) ? 0 : errno;
+}
+
+inline errno_t _dupenv_s(char** buffer, size_t*, const char* name) {
+	const char* v = std::getenv(name);
+	if (!v) { if (buffer) *buffer = nullptr; return 0; }
+	size_t len = std::strlen(v);
+	char* tmp = static_cast<char*>(std::malloc(len + 1));
+	if (!tmp) return ENOMEM;
+	std::memcpy(tmp, v, len + 1);
+	if (buffer) *buffer = tmp;
+	return 0;
+}
+
+inline int _wcsicmp(const wchar_t* a, const wchar_t* b) {
+	return ::wcscasecmp(a, b);
+}
+
+inline int _kbhit() { return 0; }
+
+inline DWORD GetModuleFileNameW(HINSTANCE, wchar_t* buffer, DWORD size) {
+	if (!buffer || size == 0) return 0;
+	char path[PATH_MAX];
+	ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+	if (len == -1) return 0;
+	path[len] = '\0';
+	std::mbstate_t state{};
+	const char* src = path;
+	std::mbsrtowcs(buffer, &src, size - 1, &state);
+	buffer[size - 1] = L'\0';
+	return static_cast<DWORD>(std::wcslen(buffer));
+}
+
+inline DWORD GetCurrentDirectoryW(DWORD size, wchar_t* buffer) {
+	if (!buffer || size == 0) return 0;
+	char path[PATH_MAX];
+	if (!getcwd(path, sizeof(path))) return 0;
+	std::mbstate_t state{};
+	const char* src = path;
+	std::mbsrtowcs(buffer, &src, size - 1, &state);
+	buffer[size - 1] = L'\0';
+	return static_cast<DWORD>(std::wcslen(buffer));
+}
+
+inline BOOL CopyFileW(const wchar_t* existing, const wchar_t* newfile, BOOL) {
+	try {
+		std::filesystem::copy_file(existing, newfile, std::filesystem::copy_options::overwrite_existing);
+		return TRUE;
+	}
+	catch (...) {
+		return FALSE;
+	}
+}
+
+inline void ShellExecuteW(HWND, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, int) {
+	// No-op on Linux.
+}
+
 #endif
 
 // 结构体们
@@ -27,12 +207,12 @@ struct Config {
 	int backupMode = 1;
 	int zipLevel = 5;
 	int keepCount = 0;
-	bool hotBackup = false;
+	bool hotBackup = true; // 1.11.3 之后默认开启热备份
 	bool backupBefore = false;
 	int theme = 1;
 	int folderNameType = 0;
 	std::string name;
-	int cpuThreads = 0; // 0 for auto/default
+	int cpuThreads = 0;
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
 	int maxSmartBackupsPerFull = 5;
@@ -56,7 +236,7 @@ struct AutomatedTask {
 struct SpecialConfig {
 	bool autoExecute = false;
 	std::vector<std::wstring> commands;
-	std::vector<AutomatedTask> tasks; // REPLACED: a more capable task structure
+	std::vector<AutomatedTask> tasks;
 	bool exitAfterExecution = false;
 	std::string name;
 	int zipLevel = 5;
