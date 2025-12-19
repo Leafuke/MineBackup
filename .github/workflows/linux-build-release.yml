@@ -2,9 +2,6 @@ name: Build & Upload MineBackup (Linux)
 
 on:
   workflow_dispatch:
-  
-permissions:
-  id-token: write
 
 jobs:
   build-linux:
@@ -43,9 +40,12 @@ jobs:
           core.setOutput('upload_url', release.upload_url);
           core.setOutput('release_id', release.id);
 
-    - name: Upload artifact to latest release using gh
+    - name: Upload artifact to latest release
+      uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        latest_tag=$(gh release list --limit 1 | awk '{print $1}')
-        gh release upload "$latest_tag" MineBackup-linux.7z --clobber
+      with:
+        upload_url: ${{ steps.get_release.outputs.upload_url }}
+        asset_path: ./MineBackup-linux.7z
+        asset_name: MineBackup-linux.7z
+        asset_content_type: application/x-7z-compressed
