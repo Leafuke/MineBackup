@@ -23,7 +23,7 @@ jobs:
 
     - name: 7z Compress Executable
       run: |
-        7z a MineBackup-linux.7z MineBackup
+        7z a MineBackup-linux.7z ./bin/MineBackup
 
     - name: Get latest release
       id: get_release
