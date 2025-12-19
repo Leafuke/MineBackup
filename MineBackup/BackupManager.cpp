@@ -410,7 +410,9 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         return;
     }
 
-    if (config.hotBackup) {
+	// 检测到 level.dat 被锁定，则强制启用热备份
+
+    if (config.hotBackup || IsFileLocked(sourcePath + L"/level.dat")) {
         BroadcastEvent("event=pre_hot_backup;");
         wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
         if (!snapshotPath.empty()) {
