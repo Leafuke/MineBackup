@@ -163,17 +163,6 @@ vector<filesystem::path> GetChangedFiles(
 //	}
 //	return changedFiles;
 //}
-// 新的函数，专门用于保存状态文件 从filesystem版本修改为wofstream试图解决中文问题
-//void SaveStateFile(const filesystem::path& metadataPath) {
-//	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
-//	wofstream stateFileOut(stateFilePath, ios::trunc);
-//	stateFileOut.imbue(locale(stateFileOut.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-//	for (const auto& pair : currentState) {
-//		stateFileOut << pair.first << L" " << pair.second << endl;
-//	}
-//	stateFileOut.close();
-//}
-
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList) {
 	for (const pair<wstring, wstring>& worldLi : worldList) {
 		if (world == worldLi.first)

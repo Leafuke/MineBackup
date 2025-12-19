@@ -7,9 +7,23 @@
 #include "HistoryManager.h"
 #include "json.hpp"
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 using namespace std;
 
+#ifndef _WIN32
+static inline wstring NormalizeSeparators(const wstring& s) {
+	wstring r = s;
+	replace(r.begin(), r.end(), L'\\', L'/');
+	return r;
+}
+#else
+static inline wstring NormalizeSeparators(const wstring& s) { return s; }
+#endif
+
+static inline filesystem::path JoinPath(const wstring& a, const wstring& b) {
+	return filesystem::path(NormalizeSeparators(a)) / filesystem::path(NormalizeSeparators(b));
+}
 
 enum class BackupCheckResult {
 	NO_CHANGE,
@@ -68,8 +82,8 @@ void AddBackupToWESnapshots(const Config config, const wstring& worldName, const
 	const vector<wstring> essential_parts = { L"region", L"poi", L"entities", L"level.dat" };
 
 	// 还原链处理
-	wstring sourceDir = config.backupPath + L"\\" + worldName;
-	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
+	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
+	filesystem::path targetBackupPath = sourceDir / backupFile;
 
 	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(targetBackupPath)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
@@ -199,7 +213,7 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& sn
 		// 创建一个唯一的临时目录
 		filesystem::path tempDir;
 		if (snapshotPath.size() >= 2 && filesystem::exists(snapshotPath)) {
-			tempDir = snapshotPath + L"\\MineBackup_Snapshot\\" + worldPath.filename().wstring();
+			tempDir = filesystem::path(NormalizeSeparators(snapshotPath)) / L"MineBackup_Snapshot" / worldPath.filename();
 		}
 		else {
 			tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
@@ -366,12 +380,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         return;
     }
 
-    wstring originalSourcePath = folder.path;
-    wstring sourcePath = originalSourcePath;
-    wstring destinationFolder = config.backupPath + L"\\" + folder.name;
-    wstring metadataFolder = config.backupPath + L"\\_metadata\\" + folder.name;
+	wstring originalSourcePath = folder.path;
+	wstring sourcePath = NormalizeSeparators(originalSourcePath);
+	filesystem::path destinationFolder = JoinPath(config.backupPath, folder.name);
+	filesystem::path metadataFolder = JoinPath(config.backupPath, L"_metadata");
+	metadataFolder /= folder.name;
     wstring command;
-    wstring archivePath;
+	wstring archivePath;
     wstring archiveNameBase = folder.desc.empty() ? folder.name : folder.desc;
 
     if (!comment.empty()) {
@@ -384,18 +399,20 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     localtime_s(&ltm, &now);
     wchar_t timeBuf[160];
     wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-    archivePath = destinationFolder + L"\\[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+	archivePath = (destinationFolder / (L"[" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
-    try {
-        filesystem::create_directories(destinationFolder);
-        filesystem::create_directories(metadataFolder);
-        console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder).c_str());
+	try {
+		filesystem::create_directories(destinationFolder);
+		filesystem::create_directories(metadataFolder);
+		console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder.wstring()).c_str());
     } catch (const filesystem::filesystem_error& e) {
         console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
         return;
     }
 
-    if (config.hotBackup) {
+	// 检测到 level.dat 被锁定，则强制启用热备份
+
+    if (config.hotBackup || IsFileLocked(sourcePath + L"/level.dat")) {
         BroadcastEvent("event=pre_hot_backup;");
         wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
         if (!snapshotPath.empty()) {
@@ -510,22 +527,25 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
     filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
     filesystem::create_directories(tempDir);
-    wstring filelist_path = (tempDir / (L"_filelist.txt")).wstring();
+	wstring filelist_path = (tempDir / (L"_filelist.txt")).wstring();
 
-    wofstream ofs(filelist_path.c_str());
-    if (ofs.is_open()) {
-        ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-        for (const auto& file : files_to_backup) {
-            ofs << filesystem::relative(file, sourcePath).wstring() << endl;
-        }
-        ofs.close();
-        {
-            HANDLE h = CreateFileW(filelist_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-            if (h != INVALID_HANDLE_VALUE) {
-                FlushFileBuffers(h);
-                CloseHandle(h);
-            }
-        }
+	ofstream ofs{std::filesystem::path(filelist_path), ios::binary};
+	if (ofs.is_open()) {
+		for (const auto& file : files_to_backup) {
+			string utf8Path = wstring_to_utf8(filesystem::relative(file, sourcePath).wstring());
+			ofs.write(utf8Path.data(), static_cast<std::streamsize>(utf8Path.size()));
+			ofs.put('\n');
+		}
+		ofs.close();
+#ifdef _WIN32
+		{
+			HANDLE h = CreateFileW(filelist_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (h != INVALID_HANDLE_VALUE) {
+				FlushFileBuffers(h);
+				CloseHandle(h);
+			}
+		}
+#endif
     } else {
         console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
         if (config.hotBackup) {
@@ -538,12 +558,12 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     wstring basedOnBackupFile;
     filesystem::path latestBackupPath;
 
-    if (config.backupMode == 1 || forceFullBackup) {
-        backupTypeStr = L"Full";
-        archivePath = destinationFolder + L"\\[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-        command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
-            L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
-        basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
+	if (config.backupMode == 1 || forceFullBackup) {
+		backupTypeStr = L"Full";
+		archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
     } else if (config.backupMode == 2) {
         backupTypeStr = L"Smart";
 
@@ -558,13 +578,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
         // 智能备份需要找到它所基于的文件
         // 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
-        nlohmann::json oldMetadata;
-        ifstream f((metadataFolder + L"\\metadata.json").c_str());
+		nlohmann::json oldMetadata;
+		ifstream f(metadataFolder / L"metadata.json");
         oldMetadata = nlohmann::json::parse(f);
         basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
 
         // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
-        archivePath = destinationFolder + L"\\[Smart][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+		archivePath = (destinationFolder / (L"[Smart][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
         command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
             L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
@@ -574,7 +594,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
         bool found = false;
 
-        for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
+		for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
             if (entry.is_regular_file() && entry.path().extension().wstring() == L"." + config.zipFormat) {
                 if (entry.last_write_time() > latest_time) {
                     latest_time = entry.last_write_time();
@@ -585,14 +605,14 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
         if (found) {
             console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-            command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + sourcePath + L"\\*\" -mx=" + to_wstring(config.zipLevel);
+			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(config.zipLevel);
             archivePath = latestBackupPath.wstring(); // 记录被更新的文件
         }
         else {
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-            archivePath = destinationFolder + L"\\[Full][" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
-            command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
-                L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + sourcePath + L"\\*\"";
+			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + NormalizeSeparators(sourcePath) + L"/*\"";
             // -spf 强制使用完整路径，-spf2 使用相对路径
         }
     }
@@ -617,10 +637,10 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             console.AddLog("[Error] Could not check backup file size: %s", e.what());
         }
 
-        if (folder.configIndex != -1)
-            LimitBackupFiles(config, folder.configIndex, destinationFolder, config.keepCount, &console);
-        else
-            LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder, config.keepCount, &console);
+		if (folder.configIndex != -1)
+			LimitBackupFiles(config, folder.configIndex, destinationFolder.wstring(), config.keepCount, &console);
+		else
+			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
@@ -692,6 +712,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 
 	filesystem::path othersPath = backupWhat;
 	backupWhat = backupWhat.filename().wstring(); // 只保留最后的文件夹名
+	const std::wstring backupName = backupWhat.wstring();
 
 	//filesystem::path modsPath = saveRoot.parent_path() / "mods";
 
@@ -705,7 +726,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	wstring archiveNameBase;
 
 	destinationFolder = filesystem::path(config.backupPath) / backupWhat;
-	archiveNameBase = backupWhat;
+	archiveNameBase = backupName;
 
 	if (!comment.empty()) {
 		archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
@@ -735,7 +756,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
 		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 		// 用特殊名字添加到历史
-		AddHistoryEntry(g_appState.currentConfigIndex, backupWhat, filesystem::path(archivePath).filename().wstring(), backupWhat, comment);
+		AddHistoryEntry(g_appState.currentConfigIndex, backupName, filesystem::path(archivePath).filename().wstring(), backupName, comment);
 	}
 
 	console.AddLog(L("LOG_BACKUP_OTHERS_END"));
@@ -1151,12 +1172,22 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 		// 如果有描述，创建 readme.txt
 		if (!description.empty()) {
-			wofstream readme_file(readme_path.c_str());
-			readme_file.imbue(locale(readme_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-			readme_file << L"[Name]\n" << worldName << L"\n\n";
-			readme_file << L"[Description]\n" << description << L"\n\n";
-			readme_file << L"[Exported by MineBackup]\n";
-			readme_file.close();
+			ofstream readme_file(readme_path, ios::binary);
+			if (readme_file.is_open()) {
+				auto write_line = [&readme_file](const wstring& line) {
+					string utf8 = wstring_to_utf8(line);
+					readme_file.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
+					readme_file.put('\n');
+				};
+
+				write_line(L"[Name]");
+				write_line(worldName);
+				readme_file.put('\n');
+				write_line(L"[Description]");
+				write_line(description);
+				readme_file.put('\n');
+				write_line(L"[Exported by MineBackup]");
+			}
 		}
 
 		// 收集并过滤文件
@@ -1180,16 +1211,17 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 		// 创建文件列表供 7z 使用
 		wstring filelist_path = (temp_export_dir / L"filelist.txt").wstring();
-		wofstream ofs(filelist_path.c_str());
-		ofs.imbue(locale(ofs.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+		ofstream ofs{std::filesystem::path(filelist_path), ios::binary};
 		for (const auto& file : files_to_export) {
-			// 对于世界文件，写入相对路径；对于readme，写入绝对路径
+			string utf8Path;
 			if (file.wstring().rfind(worldPath, 0) == 0) {
-				ofs << filesystem::relative(file, worldPath).wstring() << endl;
+				utf8Path = wstring_to_utf8(filesystem::relative(file, worldPath).wstring());
 			}
 			else {
-				ofs << file.wstring() << endl;
+				utf8Path = wstring_to_utf8(file.wstring());
 			}
+			ofs.write(utf8Path.data(), static_cast<std::streamsize>(utf8Path.size()));
+			ofs.put('\n');
 		}
 		ofs.close();
 
@@ -1200,8 +1232,10 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		// 工作目录应为原始世界路径，以确保压缩包内路径正确
 		if (RunCommandInBackground(command, console, tempConfig.useLowPriority, worldPath)) {
 			console.AddLog(L("LOG_EXPORT_SUCCESS"), wstring_to_utf8(outputPath).c_str());
+#ifdef _WIN32
 			wstring cmd = L"/select,\"" + outputPath + L"\"";
 			ShellExecuteW(NULL, L"open", L"explorer.exe", cmd.c_str(), NULL, SW_SHOWNORMAL);
+#endif
 		}
 		else {
 			console.AddLog(L("LOG_EXPORT_FAILED"));

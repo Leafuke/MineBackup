@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 using namespace std;
 
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
@@ -273,106 +274,107 @@ void LoadConfigs(const string& filename) {
 
 void SaveConfigs(const wstring& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
-	wofstream out(filename.c_str(), ios::binary);
+	ofstream out{std::filesystem::path(filename), ios::binary};
 	if (!out.is_open()) {
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
 		return;
 	}
-	//out.imbue(locale("chs"));//不能用这个，变ANSI啦
-	out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-	//out.imbue(locale(out.getloc(), new codecvt_utf8<wchar_t>));//将UTF8转为UTF，现在C++17也不对了……但是我们有define！
-	out << L"[General]\n";
-	out << L"CurrentConfig=" << g_appState.currentConfigIndex << L"\n";
-	out << L"NextConfigId=" << nextConfigId << L"\n";
-	out << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
-	out << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
-	out << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
-	out << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
-	out << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
-	out << L"AutoBackupInterval=" << last_interval << L"\n";
-	out << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
-	out << L"WindowWidth=" << g_windowWidth << L"\n";
-	out << L"WindowHeight=" << g_windowHeight << L"\n";
-	out << L"UIScale=" << g_uiScale << L"\n";
-	out << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
-	out << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
-	out << L"AutoLog=" << (g_autoLogEnabled ? 1 : 0) << L"\n";
+
+	std::wostringstream buffer;
+	buffer << L"[General]\n";
+	buffer << L"CurrentConfig=" << g_appState.currentConfigIndex << L"\n";
+	buffer << L"NextConfigId=" << nextConfigId << L"\n";
+	buffer << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
+	buffer << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
+	buffer << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
+	buffer << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
+	buffer << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
+	buffer << L"AutoBackupInterval=" << last_interval << L"\n";
+	buffer << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
+	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
+	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
+	buffer << L"UIScale=" << g_uiScale << L"\n";
+	buffer << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
+	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
+	buffer << L"AutoLog=" << (g_autoLogEnabled ? 1 : 0) << L"\n";
 	for (const auto& item : restoreWhitelist) {
-		out << L"RestoreWhitelistItem=" << item << L"\n";
+		buffer << L"RestoreWhitelistItem=" << item << L"\n";
 	}
-	out << "\n";
+	buffer << L"\n";
 
 	for (auto& kv : g_appState.configs) {
 		int idx = kv.first;
 		Config& c = kv.second;
-		out << L"[Config" << idx << L"]\n";
-		out << L"ConfigName=" << utf8_to_wstring(c.name) << L"\n";
-		out << L"SavePath=" << c.saveRoot << L"\n";
-		out << L"# One line for name, one line for description, terminated by '*'\n";
-		out << L"WorldData=\n";
+		buffer << L"[Config" << idx << L"]\n";
+		buffer << L"ConfigName=" << utf8_to_wstring(c.name) << L"\n";
+		buffer << L"SavePath=" << c.saveRoot << L"\n";
+		buffer << L"# One line for name, one line for description, terminated by '*'\n";
+		buffer << L"WorldData=\n";
 		for (auto& p : c.worlds)
-			out << p.first << L"\n" << p.second << L"\n";
-		out << L"*\n";
-		out << L"BackupPath=" << c.backupPath << L"\n";
-		out << L"ZipProgram=" << c.zipPath << L"\n";
-		out << L"ZipFormat=" << c.zipFormat << L"\n";
-		out << L"ZipLevel=" << c.zipLevel << L"\n";
-		out << L"ZipMethod=" << c.zipMethod << L"\n";
-		out << L"CpuThreads=" << c.cpuThreads << L"\n";
-		out << L"UseLowPriority=" << (c.useLowPriority ? 1 : 0) << L"\n";
-		out << L"KeepCount=" << c.keepCount << L"\n";
-		out << L"SmartBackup=" << c.backupMode << L"\n";
-		out << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
-		out << L"HotBackup=" << (c.hotBackup ? 1 : 0) << L"\n";
-		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
-		out << L"Theme=" << c.theme << L"\n";
-		out << L"Font=" << c.fontPath << L"\n";
-		out << L"BackupNaming=" << c.folderNameType << L"\n";
-		out << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
-		out << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
-		out << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
-		out << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
-		out << L"CloudSyncEnabled=" << (c.cloudSyncEnabled ? 1 : 0) << L"\n";
-		out << L"RclonePath=" << c.rclonePath << L"\n";
-		out << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
-		out << L"SnapshotPath=" << c.snapshotPath << L"\n";
-		out << L"OtherPath=" << c.othersPath << L"\n";
-		out << L"EnableWEIntegration=" << (c.enableWEIntegration ? 1 : 0) << L"\n";
-		out << L"WESnapshotPath=" << c.weSnapshotPath << L"\n";
+			buffer << p.first << L"\n" << p.second << L"\n";
+		buffer << L"*\n";
+		buffer << L"BackupPath=" << c.backupPath << L"\n";
+		buffer << L"ZipProgram=" << c.zipPath << L"\n";
+		buffer << L"ZipFormat=" << c.zipFormat << L"\n";
+		buffer << L"ZipLevel=" << c.zipLevel << L"\n";
+		buffer << L"ZipMethod=" << c.zipMethod << L"\n";
+		buffer << L"CpuThreads=" << c.cpuThreads << L"\n";
+		buffer << L"UseLowPriority=" << (c.useLowPriority ? 1 : 0) << L"\n";
+		buffer << L"KeepCount=" << c.keepCount << L"\n";
+		buffer << L"SmartBackup=" << c.backupMode << L"\n";
+		buffer << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
+		buffer << L"HotBackup=" << (c.hotBackup ? 1 : 0) << L"\n";
+		buffer << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
+		buffer << L"Theme=" << c.theme << L"\n";
+		buffer << L"Font=" << c.fontPath << L"\n";
+		buffer << L"BackupNaming=" << c.folderNameType << L"\n";
+		buffer << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
+		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
+		buffer << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
+		buffer << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
+		buffer << L"CloudSyncEnabled=" << (c.cloudSyncEnabled ? 1 : 0) << L"\n";
+		buffer << L"RclonePath=" << c.rclonePath << L"\n";
+		buffer << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
+		buffer << L"SnapshotPath=" << c.snapshotPath << L"\n";
+		buffer << L"OtherPath=" << c.othersPath << L"\n";
+		buffer << L"EnableWEIntegration=" << (c.enableWEIntegration ? 1 : 0) << L"\n";
+		buffer << L"WESnapshotPath=" << c.weSnapshotPath << L"\n";
 		for (const auto& item : c.blacklist) {
-			out << L"BlacklistItem=" << item << L"\n";
+			buffer << L"BlacklistItem=" << item << L"\n";
 		}
-		out << L"\n";
+		buffer << L"\n";
 	}
 
 	for (auto& kv : g_appState.specialConfigs) {
 		int idx = kv.first;
 		SpecialConfig& sc = kv.second;
-		out << L"[SpCfg" << idx << L"]\n";
-		out << L"Name=" << utf8_to_wstring(sc.name) << L"\n";
-		out << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
-		for (const auto& cmd : sc.commands) out << L"Command=" << cmd << L"\n";
-		// 新的任务结构
+		buffer << L"[SpCfg" << idx << L"]\n";
+		buffer << L"Name=" << utf8_to_wstring(sc.name) << L"\n";
+		buffer << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
+		for (const auto& cmd : sc.commands) buffer << L"Command=" << cmd << L"\n";
 		for (const auto& task : sc.tasks) {
-			out << L"AutoBackupTask=" << task.configIndex << L"," << task.worldIndex << L"," << task.backupType
+			buffer << L"AutoBackupTask=" << task.configIndex << L"," << task.worldIndex << L"," << task.backupType
 				<< L"," << task.intervalMinutes << L"," << task.schedMonth << L"," << task.schedDay
 				<< L"," << task.schedHour << L"," << task.schedMinute << L"\n";
 		}
-		out << L"ExitAfter=" << (sc.exitAfterExecution ? 1 : 0) << L"\n";
-		out << L"HideWindow=" << (sc.hideWindow ? 1 : 0) << L"\n";
-		out << L"RunOnStartup=" << (sc.runOnStartup ? 1 : 0) << L"\n";
-		out << L"ZipLevel=" << sc.zipLevel << L"\n";
-		out << L"KeepCount=" << sc.keepCount << L"\n";
-		out << L"CpuThreads=" << sc.cpuThreads << L"\n";
-		out << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
-		out << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n";
-		out << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
-		out << L"Theme=" << sc.theme << L"\n";
+		buffer << L"ExitAfter=" << (sc.exitAfterExecution ? 1 : 0) << L"\n";
+		buffer << L"HideWindow=" << (sc.hideWindow ? 1 : 0) << L"\n";
+		buffer << L"RunOnStartup=" << (sc.runOnStartup ? 1 : 0) << L"\n";
+		buffer << L"ZipLevel=" << sc.zipLevel << L"\n";
+		buffer << L"KeepCount=" << sc.keepCount << L"\n";
+		buffer << L"CpuThreads=" << sc.cpuThreads << L"\n";
+		buffer << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
+		buffer << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n";
+		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
+		buffer << L"Theme=" << sc.theme << L"\n";
 		for (const auto& item : sc.blacklist) {
-			out << L"BlacklistItem=" << item << L"\n";
+			buffer << L"BlacklistItem=" << item << L"\n";
 		}
-		out << L"\n\n";
+		buffer << L"\n\n";
 	}
+
+	const string utf8 = wstring_to_utf8(buffer.str());
+	out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
 }
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口

@@ -10,6 +10,7 @@
 #include "Platform_linux.h"
 #endif
 #include "i18n.h"
+#include "text_to_text.h"
 
 #include <mutex>
 #include <fstream>
@@ -142,7 +143,7 @@ struct Console
 				bool has_color = false;
 				if (strstr(item, "[Error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
 				else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[Info] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
-				else if (strncmp(item, u8"[提示] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+				else if (strncmp(item, as_utf8(u8"[提示] "), 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
 				if (has_color)
 					ImGui::PushStyleColor(ImGuiCol_Text, color);
 				ImGui::TextUnformatted(item);
@@ -246,7 +247,7 @@ struct Console
 				bool has_color = false;
 				if (strstr(item, "[Error]")) { color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); has_color = true; }
 				else if (strncmp(item, "# ", 2) == 0 || strncmp(item, "[Info] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
-				else if (strncmp(item, u8"[提示] ", 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
+				else if (strncmp(item, as_utf8(u8"[提示] "), 2) == 0) { color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f); has_color = true; }
 				if (has_color)
 					ImGui::PushStyleColor(ImGuiCol_Text, color);
 				ImGui::TextUnformatted(item);

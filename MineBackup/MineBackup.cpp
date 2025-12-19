@@ -15,7 +15,13 @@
 #include "HistoryManager.h"
 #include "BackupManager.h"
 
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <cstdio>
+#include <unistd.h>
+inline int _getch() { return std::getchar(); }
+#endif
 #include <fstream>
 
 using namespace std;
@@ -24,7 +30,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.11.1";
+string CURRENT_VERSION = "1.11.3";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 string g_LatestVersionStr;
@@ -170,6 +176,7 @@ int main(int argc, char** argv)
 			hide = g_appState.specialConfigs[g_appState.currentConfigIndex].hideWindow;
 		}
 
+		#ifdef _WIN32
 		if (!hide) {
 			AllocConsole(); // Create a console window
 			// Redirect standard I/O to the new console
@@ -180,14 +187,13 @@ int main(int argc, char** argv)
 			// 将 stdout 和 stderr 设置为 UTF-8 编码
 			SetConsoleOutputCP(CP_UTF8);
 		}
+		#endif
 
 		RunSpecialMode(g_appState.currentConfigIndex);
 
 		// 将捕获到的所有日志写入文件
-		ofstream log_file("special_mode_log.txt", ios::app);
+		ofstream log_file("special_mode_log.txt", ios::app | ios::binary);
 		if (log_file.is_open()) {
-			log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-
 			for (const char* item : console.Items) {
 				log_file << (item) << endl;
 			}
@@ -198,9 +204,11 @@ int main(int argc, char** argv)
 			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
 		}
 
+		#ifdef _WIN32
 		if (!hide) {
 			FreeConsole();
 		}
+		#endif
 		Sleep(3000);
 		return 0;
 	}
@@ -258,14 +266,13 @@ int main(int argc, char** argv)
 	int width, height, channels;
 	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
 	// unsigned char* pixels = stbi_load("icon.png", &width, &height, 0, 4); 
-	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(IDI_ICON3), RT_GROUP_ICON);
+	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(104), RT_GROUP_ICON);
 	HGLOBAL hMem = LoadResource(hInstance, hRes);
 	void* pMem = LockResource(hMem);
 	int nId = LookupIconIdFromDirectoryEx((PBYTE)pMem, TRUE, 0, 0, LR_DEFAULTCOLOR);
 	hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(nId), RT_ICON);
 	hMem = LoadResource(hInstance, hRes);
 	pMem = LockResource(hMem);
-#endif
 
 	// 从内存中的图标数据加载
 	unsigned char* pixels = stbi_load_from_memory((const stbi_uc*)pMem, SizeofResource(hInstance, hRes), &width, &height, &channels, 4);
@@ -278,6 +285,7 @@ int main(int argc, char** argv)
 		glfwSetWindowIcon(wc, 1, images);
 		stbi_image_free(pixels);
 	}
+#endif
 
 
 	// Setup Dear ImGui context
@@ -335,8 +343,8 @@ int main(int argc, char** argv)
 		ApplyTheme(g_appState.specialConfigs[g_appState.currentConfigIndex].theme);
 
 	if (isFirstRun) {
-#ifdef _WIN32
 		GetUserDefaultUILanguageWin();
+#ifdef _WIN32
 		if (g_CurrentLang == "zh_CN") {
 			if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
 				Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
@@ -478,7 +486,7 @@ int main(int argc, char** argv)
 				}
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
-				if (ImGui::Button(L("BUTTON_START_CONFIG"), ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_START_CONFIG"))) {
 					page++;
 				}
 			}
@@ -491,33 +499,87 @@ int main(int argc, char** argv)
 				// 找路径
 				string pathTemp;
 				if (ImGui::Button(L("BUTTON_AUTO_JAVA"))) {
+					pathTemp.clear();
+	#ifdef _WIN32
 					char* buffer_env_appdata = nullptr;
-					// 将getenv换成_dupenv_s
 					_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
-					if (filesystem::exists((string)buffer_env_appdata + "\\.minecraft\\saves")) {
-						pathTemp = (string)buffer_env_appdata + "\\.minecraft\\saves";
-						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
+					if (buffer_env_appdata) {
+						filesystem::path candidate = filesystem::path(buffer_env_appdata) / ".minecraft" / "saves";
+						if (filesystem::exists(candidate)) {
+							pathTemp = candidate.string();
+						}
+						free(buffer_env_appdata);
 					}
-				}
-				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) {
-					char* buffer_env_appdata = nullptr, * buffer_env_username = nullptr;
-					_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
-					_dupenv_s(&buffer_env_username, nullptr, "USERNAME");
-					if (filesystem::exists((string)buffer_env_appdata + "\\Minecraft Bedrock\\Users")) {
-						pathTemp = (string)buffer_env_appdata + "\\Minecraft Bedrock\\Users";
-						// 这个文件夹下有多个用户文件夹，默认选第一个
-						for (const auto& entry : filesystem::directory_iterator(pathTemp)) {
-							if (entry.is_directory() && (entry.path().filename().string()[0] - '0') < 10 && (entry.path().filename().string()[0] - '0') >= 0) {
-								pathTemp = pathTemp + entry.path().filename().string() + "games" + "com.mojang" + "minecraftWorlds";
-								strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
+	#else
+					const char* home = std::getenv("HOME");
+					if (home) {
+						vector<filesystem::path> candidates = {
+							filesystem::path(home) / ".minecraft" / "saves",
+							filesystem::path(home) / ".var/app/com.mojang.Minecraft/.minecraft/saves",
+							filesystem::path(home) / ".local/share/minecraft/saves"
+						};
+						for (const auto& candidate : candidates) {
+							if (filesystem::exists(candidate)) {
+								pathTemp = candidate.string();
 								break;
 							}
 						}
 					}
-					else if (filesystem::exists("C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
-						pathTemp = "C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
+	#endif
+					if (!pathTemp.empty()) {
 						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
+	#ifndef _WIN32
+						for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
+	#endif
+					}
+					else {
+						MessageBoxWin("Info", "Could not auto-detect Java edition saves. Please select manually.", 1);
+					}
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) {
+					pathTemp.clear();
+	#ifdef _WIN32
+					char* buffer_env_appdata = nullptr, * buffer_env_username = nullptr;
+					_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
+					_dupenv_s(&buffer_env_username, nullptr, "USERNAME");
+					if (buffer_env_appdata && filesystem::exists(filesystem::path(buffer_env_appdata) / "Minecraft Bedrock" / "Users")) {
+						pathTemp = (filesystem::path(buffer_env_appdata) / "Minecraft Bedrock" / "Users").string();
+						for (const auto& entry : filesystem::directory_iterator(pathTemp)) {
+							if (entry.is_directory() && (entry.path().filename().string()[0] - '0') < 10 && (entry.path().filename().string()[0] - '0') >= 0) {
+								pathTemp = (filesystem::path(pathTemp) / entry.path().filename() / "games" / "com.mojang" / "minecraftWorlds").string();
+								break;
+							}
+						}
+					}
+					else if (buffer_env_username && filesystem::exists("C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
+						pathTemp = "C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
+					}
+					if (buffer_env_appdata) free(buffer_env_appdata);
+					if (buffer_env_username) free(buffer_env_username);
+	#else
+					const char* home = std::getenv("HOME");
+					if (home) {
+						vector<filesystem::path> candidates = {
+							filesystem::path(home) / ".local/share/mcpelauncher/games/com.mojang/minecraftWorlds",
+							filesystem::path(home) / ".var/app/io.mrarm.mcpelauncher/.local/share/mcpelauncher/games/com.mojang/minecraftWorlds"
+						};
+						for (const auto& candidate : candidates) {
+							if (filesystem::exists(candidate)) {
+								pathTemp = candidate.string();
+								break;
+							}
+						}
+					}
+	#endif
+					if (!pathTemp.empty()) {
+						strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
+	#ifndef _WIN32
+						for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
+	#endif
+					}
+					else {
+						MessageBoxWin("Info", "Could not auto-detect Bedrock edition saves. Please select manually.", 1);
 					}
 				}
 				if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
@@ -531,6 +593,9 @@ int main(int argc, char** argv)
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
 				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
+	#ifndef _WIN32
+					for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
+	#endif
 					if (strlen(saveRootPath) > 0 && filesystem::exists(utf8_to_wstring(saveRootPath))) {
 						page++;
 						errorShow = false;
@@ -560,7 +625,9 @@ int main(int argc, char** argv)
 				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
 				ImGui::SameLine();
 				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
-					// 存在中文路径，要gbk
+	#ifndef _WIN32
+					for (size_t i = 0; backupPath[i]; ++i) if (backupPath[i] == '\\') backupPath[i] = '/';
+	#endif
 					if (strlen(backupPath) > 0 && filesystem::exists(utf8_to_wstring(backupPath))) {
 						page++;
 						errorShow = false;
@@ -612,9 +679,14 @@ int main(int argc, char** argv)
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
-				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
+				if (ImGui::Button(L("BUTTON_PREVIOUS"))) page--;
 				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_FINISH_CONFIG"), ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_FINISH_CONFIG"))) {
+		#ifndef _WIN32
+					for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
+					for (size_t i = 0; backupPath[i]; ++i) if (backupPath[i] == '\\') backupPath[i] = '/';
+					for (size_t i = 0; zipPath[i]; ++i) if (zipPath[i] == '\\') zipPath[i] = '/';
+		#endif
 					if (strlen(saveRootPath) > 0 && strlen(backupPath) > 0 && strlen(zipPath) > 0) {
 						// 创建并填充第一个配置
 						g_appState.currentConfigIndex = 1;
@@ -626,6 +698,11 @@ int main(int argc, char** argv)
 						initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
 						initialConfig.backupPath = utf8_to_wstring(backupPath);
 						initialConfig.zipPath = utf8_to_wstring(zipPath);
+		#ifndef _WIN32
+						replace(initialConfig.saveRoot.begin(), initialConfig.saveRoot.end(), L'\\', L'/');
+						replace(initialConfig.backupPath.begin(), initialConfig.backupPath.end(), L'\\', L'/');
+						replace(initialConfig.zipPath.begin(), initialConfig.zipPath.end(), L'\\', L'/');
+		#endif
 
 						if (g_AutoScanForWorlds) {
 							for (auto& entry : filesystem::directory_iterator(filesystem::path(saveRootPath).parent_path().parent_path())) {
@@ -664,7 +741,7 @@ int main(int argc, char** argv)
 						initialConfig.zipLevel = 5;
 						initialConfig.keepCount = 0;
 						initialConfig.backupMode = 1;
-						initialConfig.hotBackup = false;
+						initialConfig.hotBackup = true;
 						initialConfig.backupBefore = false;
 						initialConfig.skipIfUnchanged = true;
 						initialConfig.theme = themeId;
@@ -1789,10 +1866,8 @@ int main(int argc, char** argv)
 		SaveConfigs();
 
 	// 将捕获到的所有日志写入文件
-	ofstream log_file("auto_log.txt", ios::app);
+	ofstream log_file("auto_log.txt", ios::app | ios::binary);
 	if (log_file.is_open()) {
-		log_file.imbue(locale(log_file.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
-
 		for (const char* item : console.Items) {
 			log_file << (item) << endl;
 		}
@@ -1822,6 +1897,7 @@ int main(int argc, char** argv)
 	}
 
 	//linkLoaderThread.join();
+#ifdef _WIN32
 	if (g_commandResponser) {
 		//delete g_commandResponser;
 		g_commandResponser = nullptr;
@@ -1830,6 +1906,7 @@ int main(int argc, char** argv)
 		//delete g_signalSender;
 		g_signalSender = nullptr;
 	}
+#endif
 
 	return 0;
 }
@@ -2610,7 +2687,7 @@ void ShowSettingsWindow() {
 	}
 	
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
-	if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(120, 0))) {
+	if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"))) {
 		SaveConfigs();
 		showSettings = false;
 	}

@@ -3,6 +3,7 @@
 #include "Console.h"
 #include "text_to_text.h"
 #include <atomic>
+#include <filesystem>
 using namespace std;
 extern atomic<bool> g_stopExitWatcher;
 map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
@@ -22,8 +23,10 @@ MyFolder GetOccupiedWorld() {
 				if (!filesystem::exists(temp))
 					continue;
 				for (const auto& entry : filesystem::directory_iterator(temp)) {
-					if (IsFileLocked(entry.path())) {
-						levelDatPath = entry.path();
+					const auto entryPath = entry.path();
+					const auto entryPathW = entryPath.wstring();
+					if (IsFileLocked(entryPathW)) {
+						levelDatPath = entryPathW;
 						break;
 					}
 				}

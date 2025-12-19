@@ -5,38 +5,44 @@
 #include "AppState.h"
 #include "text_to_text.h"
 #include <algorithm>
+#include <filesystem>
 using namespace std;
 
 void SetFileAttributesWin(const wstring& path, bool isHidden);
-// 将历史记录保存到隐藏的 history.dat 文件
+// 将历史记录保存到 history.dat 文件
 // 文件结构：
 // [Config<id>]
 // Entry=<timestamp>|<worldName>|<backupFile>|<backupType>|<comment>
 void SaveHistory() {
-	const wstring filename = L"history.dat"; // 使用 .dat 并设为隐藏，避免用户误操作
-	SetFileAttributesWin(filename, 0);
-	wofstream out(filename.c_str(), ios::binary);
-	out.clear();
+	const filesystem::path filename = L"history.dat"; // 使用 .dat 保存历史记录
+#ifdef _WIN32
+	SetFileAttributesWin(filename.wstring(), 0);
+#endif
+	ofstream out(filename, ios::binary);
 	if (!out.is_open()) return;
-	out.imbue(locale(out.getloc(), new codecvt_byname<wchar_t, char, mbstate_t>("en_US.UTF-8")));
+
+	auto write_utf8 = [&out](const wstring& line) {
+		string utf8 = wstring_to_utf8(line);
+		out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
+	};
 
 	for (const auto& config_pair : g_appState.g_history) {
-		out << L"[Config" << config_pair.first << L"]\n";
+		write_utf8(L"[Config" + to_wstring(config_pair.first) + L"]\n");
 		for (const auto& entry : config_pair.second) {
 			// 使用 | 作为分隔符
-			out << L"Entry=" << entry.timestamp_str << L"|"
-				<< entry.worldName << L"|"
-				<< entry.backupFile << L"|"
-				<< entry.backupType << L"|"
-				<< entry.comment
-				<< entry.comment
-				<< (entry.isImportant ? L"|important" : L"")
-				<< L"\n";
+			wstring line = L"Entry=" + entry.timestamp_str + L"|" + entry.worldName + L"|" + entry.backupFile + L"|" + entry.backupType + L"|" + entry.comment;
+			if (entry.isImportant) {
+				line += L"|important";
+			}
+			line += L"\n";
+			write_utf8(line);
 		}
 	}
 	out.close();
+#ifdef _WIN32
 	// 设置文件为隐藏属性
-	SetFileAttributesWin(filename, 1);
+	SetFileAttributesWin(filename.wstring(), 1);
+#endif
 }
 
 // 暂时不使用自动标记的方案
@@ -66,9 +72,9 @@ void SaveHistory() {
 
 // 从文件加载历史记录
 void LoadHistory() {
-	const wstring filename = L"history.dat";
+	const filesystem::path filename = L"history.dat";
 	g_appState.g_history.clear();
-	ifstream in(filename.c_str(), ios::binary);
+	ifstream in(filename, ios::binary);
 	if (!in.is_open()) return;
 
 	string line_utf8;
