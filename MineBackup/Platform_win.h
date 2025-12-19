@@ -4,6 +4,7 @@
 #include <iostream>
 #include <windows.h>
 #include <string>
+class Console;
 enum class LogLevel {
     Info,
     Warning,
@@ -27,4 +28,5 @@ void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);
 void ReStartApplication();
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable);
+bool RunCommandInBackground(std::wstring command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
 #endif // !_PLATFORM_WIN_H

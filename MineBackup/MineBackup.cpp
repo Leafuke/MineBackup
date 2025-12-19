@@ -88,7 +88,6 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex);
 vector<DisplayWorld> BuildDisplayWorldsForSelection();
 
 int ImGuiKeyToVK(ImGuiKey key);
-bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory = L"");
 string ProcessCommand(const string& commandStr, Console* console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
 void RunSpecialMode(int configId);
