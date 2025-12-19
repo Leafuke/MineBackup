@@ -20,6 +20,7 @@
 - 🧠 **Smart Mode** — Git-like incremental backups to save time and storage.
 - 📁 **Custom Paths** — Store backups wherever you want.
 - 🌏 **Multi-language** — Currently supports English and Chinese — more are welcome!
+- 💻 **Multi-platform** — Currently supports Windows and Linux — and MacOS in the near future!
 
 💡 **Pro tip:** It works on any folder, not just Minecraft worlds.
 
@@ -83,10 +84,10 @@ SET\_CONFIG \<config\_idx> <key> <value>
 ## ⚙️ Installation & Build
 
 **Requirements:**
-- Windows
-- C++17 compiler (Visual Studio recommended)
+- Windows/Linux
+- C++20 compiler (Visual Studio recommended)
 - ImGui library linked
-- 7-Zip executable (already bundled)
+- 7-Zip executable
 
 **Build:**
 ```bash
@@ -94,7 +95,6 @@ SET\_CONFIG \<config\_idx> <key> <value>
 git clone https://github.com/Leafuke/MineBackup.git
 cd MineBackup
 
-# Open in Visual Studio and build
 # Make sure the ImGui source is included
 ````
 
@@ -133,6 +133,7 @@ cd MineBackup
 * [**stb**](https://github.com/nothings/stb) — Image loading
 * [**KnotLink**](https://github.com/hxh230802/KnotLink) — Lightweight inter-process messaging
 * [**json**](https://github.com/nlohmann/json) — Metadata read & write
+* [**Font-Awesome**](https://github.com/FortAwesome/Font-Awesome) - Icons
 
 ---
 
