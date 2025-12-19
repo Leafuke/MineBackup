@@ -6,7 +6,7 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/MineBackup)
@@ -25,7 +25,6 @@ set(SOURCES
     ${SOURCE_DIR}/HistoryManager.cpp
     ${SOURCE_DIR}/basic_func.cpp
     ${SOURCE_DIR}/i18n.cpp
-    ${SOURCE_DIR}/Platform_win.cpp
     ${SOURCE_DIR}/text_to_text.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -33,9 +32,6 @@ set(SOURCES
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/imgui_impl_opengl3.cpp
-    ${KNOTLINK_DIR}/main.cpp
-    ${KNOTLINK_DIR}/OpenSocketResponser.cpp
-    ${KNOTLINK_DIR}/SignalSender.cpp
 )
 
 set(HEADERS
@@ -61,25 +57,75 @@ set(HEADERS
     ${IMGUI_DIR}/imgui_style.h
     ${GLFW_DIR}/glfw3.h
     ${GLFW_DIR}/glfw3native.h
-    ${KNOTLINK_DIR}/SignalSender.hpp
-    ${KNOTLINK_DIR}/TcpClient.hpp
-    ${KNOTLINK_DIR}/OpenSocketResponser.hpp
 )
 
 set(RESOURCES
     ${SOURCE_DIR}/MineBackup.rc
 )
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${RESOURCES})
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
 find_package(OpenGL REQUIRED)
-# find_package(glfw3 REQUIRED)
 find_package(Threads REQUIRED)
+set(GLFW_TARGET "")
+find_package(glfw3 QUIET)
+if(glfw3_FOUND)
+    if(TARGET glfw)
+        set(GLFW_TARGET glfw)
+    elseif(TARGET glfw3::glfw)
+        set(GLFW_TARGET glfw3::glfw)
+    endif()
+endif()
+
+if(GLFW_TARGET STREQUAL "")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(GLFW3 glfw3)
+        if(GLFW3_FOUND)
+            add_library(glfw INTERFACE)
+            target_include_directories(glfw INTERFACE ${GLFW3_INCLUDE_DIRS})
+            target_link_libraries(glfw INTERFACE ${GLFW3_LIBRARIES})
+            set(GLFW_TARGET glfw)
+        endif()
+    endif()
+endif()
+
+if(GLFW_TARGET STREQUAL "")
+    find_library(GLFW_FALLBACK glfw3)
+    if(GLFW_FALLBACK)
+        add_library(glfw INTERFACE)
+        target_link_libraries(glfw INTERFACE ${GLFW_FALLBACK})
+        target_include_directories(glfw INTERFACE /usr/include)
+        set(GLFW_TARGET glfw)
+    endif()
+endif()
+
+if(GLFW_TARGET STREQUAL "")
+    find_library(GLFW_FALLBACK glfw)
+    if(GLFW_FALLBACK)
+        add_library(glfw INTERFACE)
+        target_link_libraries(glfw INTERFACE ${GLFW_FALLBACK})
+        target_include_directories(glfw INTERFACE /usr/include)
+        set(GLFW_TARGET glfw)
+    endif()
+endif()
+
+if(WIN32)
+    list(APPEND SOURCES ${SOURCE_DIR}/Platform_win.cpp)
+    list(APPEND SOURCES
+        ${KNOTLINK_DIR}/OpenSocketResponser.cpp
+        ${KNOTLINK_DIR}/SignalSender.cpp
+    )
+    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_win.cpp)
+else()
+    list(APPEND SOURCES ${SOURCE_DIR}/Platform_linux.cpp)
+    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_linux.cpp)
+endif()
 
 # 若使用 MinGW 需要链接 libglfw3.a 而不是 glfw3.lib
 target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenGL::GL
-    glfw
+    ${GLFW_TARGET}
     Threads::Threads
 )
 
