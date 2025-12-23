@@ -31,7 +31,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.11.3";
+string CURRENT_VERSION = "1.11.4";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
@@ -269,7 +269,7 @@ int main(int argc, char** argv)
 
 #ifndef _WIN32
 	if (isFirstRun) {
-		glfwWindowHint(GLFW_FLOATING, GLFW_TRUE); // 在Linux上置顶，试图解决焦点问题
+		//glfwWindowHint(GLFW_FLOATING, GLFW_TRUE); // 在Linux上置顶，试图解决焦点问题
 #ifdef GLFW_FOCUS_ON_SHOW
 		glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
 #endif
@@ -1034,7 +1034,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("NOTICE_LATER"), ImVec2(140, 0))) {
+					if (ImGui::Button(L("NOTICE_LATER"), ImVec2(200, 0))) {
 						notice_snoozed_this_session = true;
 						notice_popup_opened = false;
 						ImGui::CloseCurrentPopup();
