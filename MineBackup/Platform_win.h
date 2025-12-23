@@ -29,4 +29,5 @@ void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus
 void ReStartApplication();
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable);
 bool RunCommandInBackground(std::wstring command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
+void CheckForNoticesThread();
 #endif // !_PLATFORM_WIN_H

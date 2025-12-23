@@ -19,8 +19,13 @@ namespace fs = std::filesystem;
 
 extern atomic<bool> g_UpdateCheckDone;
 extern atomic<bool> g_NewVersionAvailable;
+extern atomic<bool> g_NoticeCheckDone;
+extern atomic<bool> g_NewNoticeAvailable;
 extern string g_LatestVersionStr;
 extern string g_ReleaseNotes;
+extern string g_NoticeContent;
+extern string g_NoticeUpdatedAt;
+extern string g_NoticeLastSeenVersion;
 extern string CURRENT_VERSION;
 extern AppState g_appState;
 
@@ -34,6 +39,13 @@ void CheckForUpdatesThread() {
     g_LatestVersionStr.clear();
     g_ReleaseNotes.clear();
     g_UpdateCheckDone = true;
+}
+
+void CheckForNoticesThread() {
+    g_NewNoticeAvailable = false;
+    g_NoticeContent.clear();
+    g_NoticeUpdatedAt.clear();
+    g_NoticeCheckDone = true;
 }
 
 static std::wstring RunZenity(const std::string& args) {
@@ -228,7 +240,7 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
 }
 
 bool IsFileLocked(const std::wstring& path) {
-	// ¼ÙÉè Linux ÏÂÎÄ¼þÃ»Ëø¶¨¡­¡­
+	// ï¿½ï¿½ï¿½ï¿½ Linux ï¿½ï¿½ï¿½Ä¼ï¿½Ã»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     (void)path;
     return false;
 }

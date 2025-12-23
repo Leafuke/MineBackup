@@ -4,8 +4,10 @@
 #include "text_to_text.h"
 #include <atomic>
 #include <filesystem>
+#include <mutex>
 using namespace std;
 extern atomic<bool> g_stopExitWatcher;
+extern bool g_StopAutoBackupOnExit;
 map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 
 bool IsFileLocked(const wstring& path);
@@ -68,19 +70,52 @@ void GameSessionWatcherThread() {
 				console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
 				string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
 				BroadcastEvent(payload);
+
+				if (g_StopAutoBackupOnExit) {
+					unique_lock<mutex> taskLock(g_appState.task_mutex);
+					auto taskIt = g_appState.g_active_auto_backups.find(active_pair.first);
+					if (taskIt != g_appState.g_active_auto_backups.end()) {
+						taskIt->second.stop_flag = true;
+						std::thread worker = std::move(taskIt->second.worker);
+						taskLock.unlock();
+						if (worker.joinable()) {
+							worker.join();
+						}
+						taskLock.lock();
+						g_appState.g_active_auto_backups.erase(active_pair.first);
+						taskLock.unlock();
+						console.AddLog(L("LOG_AUTOBACKUP_STOPPED_ON_EXIT"), wstring_to_utf8(active_pair.second).c_str());
+					}
+				}
 			}
 		}
 
 		// 更新当前活动的世界列表
 		g_activeWorlds = currently_locked_worlds;
 
-		if (!worlds_to_backup.empty() && (g_appState.configs[g_appState.currentConfigIndex].backupOnGameStart || g_appState.specialConfigs[g_appState.currentConfigIndex].backupOnGameStart)) {
+		bool backupOnStart = false;
+		{
+			lock_guard<mutex> config_lock(g_appState.configsMutex);
+			auto cfgIt = g_appState.configs.find(g_appState.currentConfigIndex);
+			if (cfgIt != g_appState.configs.end()) {
+				backupOnStart = cfgIt->second.backupOnGameStart;
+			}
+			if (!backupOnStart) {
+				auto spIt = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
+				if (spIt != g_appState.specialConfigs.end()) {
+					backupOnStart = spIt->second.backupOnGameStart;
+				}
+			}
+		}
+
+		if (!worlds_to_backup.empty() && backupOnStart) {
 			lock_guard<mutex> config_lock(g_appState.configsMutex);
 			for (const auto& backup_target : worlds_to_backup) {
 				int config_idx = backup_target.first;
 				int world_idx = backup_target.second;
-				if (g_appState.configs.count(config_idx) && world_idx < g_appState.configs[config_idx].worlds.size()) {
-					Config backupConfig = g_appState.configs[config_idx];
+				auto cfgIt = g_appState.configs.find(config_idx);
+				if (cfgIt != g_appState.configs.end() && world_idx < cfgIt->second.worlds.size()) {
+					Config backupConfig = cfgIt->second;
 					backupConfig.hotBackup = true; // 必须热备份
 					thread backup_thread(DoBackup, occupied_world, ref(console), L"OnStart");
 					backup_thread.detach();

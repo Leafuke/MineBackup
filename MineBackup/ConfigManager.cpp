@@ -13,17 +13,54 @@
 #include <stdexcept>
 using namespace std;
 
+static wstring GetDefaultFontPath() {
+#ifdef _WIN32
+	if (g_CurrentLang == "zh_CN") {
+		const wstring cn_candidates[] = {
+			L"C:\\Windows\\Fonts\\msyh.ttc",
+			L"C:\\Windows\\Fonts\\msyh.ttf",
+			L"C:\\Windows\\Fonts\\msjh.ttc",
+			L"C:\\Windows\\Fonts\\msjh.ttf",
+			L"C:\\Windows\\Fonts\\SegoeUI.ttf"
+		};
+		for (const auto& cand : cn_candidates) {
+			if (filesystem::exists(cand)) return cand;
+		}
+	}
+	const wstring en_candidates[] = {
+		L"C:\\Windows\\Fonts\\SegoeUI.ttf"
+	};
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return en_candidates[0];
+#else
+	const wstring candidates[] = {
+		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+		L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+		L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+	};
+	for (const auto& cand : candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return candidates[sizeof(candidates) / sizeof(candidates[0]) - 1];
+#endif
+}
+
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 extern int g_hotKeyBackupId , g_hotKeyRestoreId;
 
 extern bool g_RunOnStartup;
 extern bool g_enableKnotLink;
 extern bool g_CheckForUpdates;
+extern bool g_ReceiveNotices;
+extern bool g_StopAutoBackupOnExit;
 extern bool isSilence;
 extern bool isSafeDelete;
 extern bool g_AutoScanForWorlds;
 extern bool g_autoLogEnabled;
 extern wstring Fontss;
+extern string g_NoticeLastSeenVersion;
 extern vector<wstring> restoreWhitelist;
 extern int last_interval;
 extern int g_windowHeight, g_windowWidth;
@@ -143,33 +180,17 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"Font") {
 					cur->fontPath = val;
 					Fontss = val;
-					if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
+					auto applyDefaultFont = [&]() {
+						Fontss = GetDefaultFontPath();
+						cur->fontPath = Fontss;
+					};
+					if (val.empty()) {
+						applyDefaultFont();
+					}
+					else if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
 						MessageBoxWin("Warning", "Invalid font path!\nPlease check and reload.", 1);
 						GetUserDefaultUILanguageWin();
-#ifdef _WIN32
-						if (g_CurrentLang == "zh_CN") {
-							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-								Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-								Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
-								Fontss = L"C:\\Windows\\Fonts\\msjh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
-								Fontss = L"C:\\Windows\\Fonts\\msjh.ttf";
-							else
-								Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-						}
-						else {
-							Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-						}
-#else
-						if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-							Fontss = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-						else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
-							Fontss = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
-						else
-							Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-#endif
+						applyDefaultFont();
 					}
 				}
 			}
@@ -219,6 +240,12 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"CheckForUpdates") {
 					g_CheckForUpdates = (val != L"0");
 				}
+				else if (key == L"ReceiveNotices") {
+					g_ReceiveNotices = (val != L"0");
+				}
+				else if (key == L"NoticeLastSeen") {
+					g_NoticeLastSeenVersion = wstring_to_utf8(val);
+				}
 				else if (key == L"EnableKnotLink") {
 					g_enableKnotLink = (val != L"0");
 				}
@@ -230,6 +257,9 @@ void LoadConfigs(const string& filename) {
 				}
 				else if (key == L"AutoBackupInterval") {
 					last_interval = stoi(val);
+				}
+				else if (key == L"StopAutoBackupOnExit") {
+					g_StopAutoBackupOnExit = (val != L"0");
 				}
 				else if (key == L"RestoreWhitelistItem") {
 					restoreWhiteList = true;
@@ -286,10 +316,13 @@ void SaveConfigs(const wstring& filename) {
 	buffer << L"NextConfigId=" << nextConfigId << L"\n";
 	buffer << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
 	buffer << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
+	buffer << L"ReceiveNotices=" << (g_ReceiveNotices ? 1 : 0) << L"\n";
+	buffer << L"NoticeLastSeen=" << utf8_to_wstring(g_NoticeLastSeenVersion) << L"\n";
 	buffer << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
 	buffer << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
 	buffer << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
 	buffer << L"AutoBackupInterval=" << last_interval << L"\n";
+	buffer << L"StopAutoBackupOnExit=" << (g_StopAutoBackupOnExit ? 1 : 0) << L"\n";
 	buffer << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
 	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
 	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
