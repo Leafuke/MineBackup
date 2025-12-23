@@ -477,7 +477,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "LOG_WE_INTEGRATION_SUCCESS", u8"[WE联动] 成功为 '%s' 添加快照！" },
 		{ "LOG_WE_INTEGRATION_FAILED", u8"[WE联动] [错误] 添加快照失败，详情请查看日志。" },
 		{"BUTTON_AUTO_SCAN_WORLDS", u8"自动扫描父目录"},
-		{ "TIP_BUTTON_AUTO_SCAN_WORLDS", u8"开启后将自动扫描“存档文件夹”同一个目录下的其他文件夹并添加为新的配置。可以开启" },
+		{ "TIP_BUTTON_AUTO_SCAN_WORLDS", u8"开启后将自动扫描“版本文件夹”同一个目录下的其他文件夹并添加为新的配置。可以开启" },
 		{"HOTKEY_INSTRUCTION", u8"请再次打开热键设置并点击一个0-9/A-Z的按键以完成快捷键设置"},
 		{"HOTKEY_SETTINGS", u8"热键设置"},
 		{"HOTKEY_SET_TO", u8"热键已设置为 Alt+Ctrl+%c" },
@@ -965,6 +965,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "BUTTON_AUTO_LOG", "Auto Log" },
 		{"SPONSOR_ME", "Sponsor"},
 		{"LOG_INFO_BACKUP_MARKED_IMPORTANT", "[Info] Backup '%s' marked as important."},
+		{ "BUTTON_AUTO_SCAN_WORLDS", "Auto Scan Versions" },
+		{ "TIP_BUTTON_AUTO_SCAN_WORLDS", "If enabled, it will automatically scan other folders in the same directory as the 'version folder' and add them as new configurations. You can enable it." },
 }},
 };
 const char* L(const char* key) {
