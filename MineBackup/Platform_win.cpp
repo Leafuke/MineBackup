@@ -20,6 +20,8 @@
 #include <iomanip>
 #include <sstream>
 #include <wchar.h>
+#include <functional>
+#include <vector>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
@@ -28,8 +30,13 @@ extern GLFWwindow* wc;
 
 extern atomic<bool> g_UpdateCheckDone;
 extern atomic<bool> g_NewVersionAvailable;
+extern atomic<bool> g_NoticeCheckDone;
+extern atomic<bool> g_NewNoticeAvailable;
 extern string g_LatestVersionStr;
 extern string g_ReleaseNotes;
+extern string g_NoticeContent;
+extern string g_NoticeUpdatedAt;
+extern string g_NoticeLastSeenVersion;
 extern string CURRENT_VERSION;
 extern int g_hotKeyBackupId, g_hotKeyRestoreId;
 
@@ -254,6 +261,77 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 
 
+
+
+void CheckForNoticesThread() {
+	g_NoticeCheckDone = false;
+	g_NewNoticeAvailable = false;
+	g_NoticeContent.clear();
+	g_NoticeUpdatedAt.clear();
+
+	HINTERNET hSession = nullptr, hConnect = nullptr, hRequest = nullptr;
+	DWORD dwSize = 0;
+	DWORD dwDownloaded = 0;
+	LPSTR pszOutBuffer = nullptr;
+	string responseBody;
+	bool success = false;
+
+	hSession = WinHttpOpen(L"MineBackup Notice Checker/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (!hSession) goto cleanup;
+
+	hConnect = WinHttpConnect(hSession, L"raw.githubusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+	if (!hConnect) goto cleanup;
+
+	hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/Leafuke/MineBackup/develop/notice", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+	if (!hRequest) goto cleanup;
+
+	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Notice-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+
+	if (!WinHttpReceiveResponse(hRequest, NULL)) goto cleanup;
+
+	do {
+		dwSize = 0;
+		if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
+		if (dwSize == 0) break;
+		pszOutBuffer = new char[dwSize + 1];
+		ZeroMemory(pszOutBuffer, dwSize + 1);
+		if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded)) {
+			responseBody.append(pszOutBuffer, dwDownloaded);
+		}
+		delete[] pszOutBuffer;
+	} while (dwSize > 0);
+
+	if (!responseBody.empty()) {
+		wstring lastModified;
+		dwSize = 0;
+		if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LAST_MODIFIED, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &dwSize, WINHTTP_NO_HEADER_INDEX)) {
+			if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && dwSize > 0) {
+				vector<wchar_t> headerBuf(dwSize / sizeof(wchar_t));
+				if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LAST_MODIFIED, WINHTTP_HEADER_NAME_BY_INDEX, headerBuf.data(), &dwSize, WINHTTP_NO_HEADER_INDEX)) {
+					lastModified.assign(headerBuf.data());
+				}
+			}
+		}
+
+		g_NoticeUpdatedAt = lastModified.empty() ? to_string(hash<string>{}(responseBody)) : wstring_to_utf8(lastModified);
+
+		if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
+			g_NoticeContent = responseBody;
+			g_NewNoticeAvailable = true;
+		}
+		success = true;
+	}
+
+cleanup:
+	if (hRequest) WinHttpCloseHandle(hRequest);
+	if (hConnect) WinHttpCloseHandle(hConnect);
+	if (hSession) WinHttpCloseHandle(hSession);
+
+	if (!success) {
+		g_NewNoticeAvailable = false;
+	}
+	g_NoticeCheckDone = true;
+}
 
 void CheckForUpdatesThread() {
 	DWORD dwSize = 0;

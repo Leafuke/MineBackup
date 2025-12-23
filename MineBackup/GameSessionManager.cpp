@@ -4,8 +4,10 @@
 #include "text_to_text.h"
 #include <atomic>
 #include <filesystem>
+#include <mutex>
 using namespace std;
 extern atomic<bool> g_stopExitWatcher;
+extern bool g_StopAutoBackupOnExit;
 map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 
 bool IsFileLocked(const wstring& path);
@@ -68,6 +70,23 @@ void GameSessionWatcherThread() {
 				console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
 				string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
 				BroadcastEvent(payload);
+
+				if (g_StopAutoBackupOnExit) {
+					unique_lock<mutex> taskLock(g_appState.task_mutex);
+					auto taskIt = g_appState.g_active_auto_backups.find(active_pair.first);
+					if (taskIt != g_appState.g_active_auto_backups.end()) {
+						taskIt->second.stop_flag = true;
+						std::thread worker = std::move(taskIt->second.worker);
+						taskLock.unlock();
+						if (worker.joinable()) {
+							worker.join();
+						}
+						taskLock.lock();
+						g_appState.g_active_auto_backups.erase(active_pair.first);
+						taskLock.unlock();
+						console.AddLog(L("LOG_AUTOBACKUP_STOPPED_ON_EXIT"), wstring_to_utf8(active_pair.second).c_str());
+					}
+				}
 			}
 		}
 

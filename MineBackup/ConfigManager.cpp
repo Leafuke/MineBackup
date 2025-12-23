@@ -53,11 +53,14 @@ extern int g_hotKeyBackupId , g_hotKeyRestoreId;
 extern bool g_RunOnStartup;
 extern bool g_enableKnotLink;
 extern bool g_CheckForUpdates;
+extern bool g_ReceiveNotices;
+extern bool g_StopAutoBackupOnExit;
 extern bool isSilence;
 extern bool isSafeDelete;
 extern bool g_AutoScanForWorlds;
 extern bool g_autoLogEnabled;
 extern wstring Fontss;
+extern string g_NoticeLastSeenVersion;
 extern vector<wstring> restoreWhitelist;
 extern int last_interval;
 extern int g_windowHeight, g_windowWidth;
@@ -237,6 +240,12 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"CheckForUpdates") {
 					g_CheckForUpdates = (val != L"0");
 				}
+				else if (key == L"ReceiveNotices") {
+					g_ReceiveNotices = (val != L"0");
+				}
+				else if (key == L"NoticeLastSeen") {
+					g_NoticeLastSeenVersion = wstring_to_utf8(val);
+				}
 				else if (key == L"EnableKnotLink") {
 					g_enableKnotLink = (val != L"0");
 				}
@@ -248,6 +257,9 @@ void LoadConfigs(const string& filename) {
 				}
 				else if (key == L"AutoBackupInterval") {
 					last_interval = stoi(val);
+				}
+				else if (key == L"StopAutoBackupOnExit") {
+					g_StopAutoBackupOnExit = (val != L"0");
 				}
 				else if (key == L"RestoreWhitelistItem") {
 					restoreWhiteList = true;
@@ -304,10 +316,13 @@ void SaveConfigs(const wstring& filename) {
 	buffer << L"NextConfigId=" << nextConfigId << L"\n";
 	buffer << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
 	buffer << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
+	buffer << L"ReceiveNotices=" << (g_ReceiveNotices ? 1 : 0) << L"\n";
+	buffer << L"NoticeLastSeen=" << utf8_to_wstring(g_NoticeLastSeenVersion) << L"\n";
 	buffer << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
 	buffer << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
 	buffer << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
 	buffer << L"AutoBackupInterval=" << last_interval << L"\n";
+	buffer << L"StopAutoBackupOnExit=" << (g_StopAutoBackupOnExit ? 1 : 0) << L"\n";
 	buffer << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
 	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
 	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
