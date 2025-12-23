@@ -13,6 +13,40 @@
 #include <stdexcept>
 using namespace std;
 
+static wstring GetDefaultFontPath() {
+#ifdef _WIN32
+	if (g_CurrentLang == "zh_CN") {
+		const wstring cn_candidates[] = {
+			L"C:\\Windows\\Fonts\\msyh.ttc",
+			L"C:\\Windows\\Fonts\\msyh.ttf",
+			L"C:\\Windows\\Fonts\\msjh.ttc",
+			L"C:\\Windows\\Fonts\\msjh.ttf",
+			L"C:\\Windows\\Fonts\\SegoeUI.ttf"
+		};
+		for (const auto& cand : cn_candidates) {
+			if (filesystem::exists(cand)) return cand;
+		}
+	}
+	const wstring en_candidates[] = {
+		L"C:\\Windows\\Fonts\\SegoeUI.ttf"
+	};
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return en_candidates[0];
+#else
+	const wstring candidates[] = {
+		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+		L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+		L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+	};
+	for (const auto& cand : candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return candidates[sizeof(candidates) / sizeof(candidates[0]) - 1];
+#endif
+}
+
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 extern int g_hotKeyBackupId , g_hotKeyRestoreId;
 
@@ -143,33 +177,17 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"Font") {
 					cur->fontPath = val;
 					Fontss = val;
-					if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
+					auto applyDefaultFont = [&]() {
+						Fontss = GetDefaultFontPath();
+						cur->fontPath = Fontss;
+					};
+					if (val.empty()) {
+						applyDefaultFont();
+					}
+					else if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
 						MessageBoxWin("Warning", "Invalid font path!\nPlease check and reload.", 1);
 						GetUserDefaultUILanguageWin();
-#ifdef _WIN32
-						if (g_CurrentLang == "zh_CN") {
-							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-								Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-								Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
-								Fontss = L"C:\\Windows\\Fonts\\msjh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
-								Fontss = L"C:\\Windows\\Fonts\\msjh.ttf";
-							else
-								Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-						}
-						else {
-							Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-						}
-#else
-						if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-							Fontss = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-						else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
-							Fontss = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
-						else
-							Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-#endif
+						applyDefaultFont();
 					}
 				}
 			}

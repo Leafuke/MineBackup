@@ -23,6 +23,7 @@
 inline int _getch() { return std::getchar(); }
 #endif
 #include <fstream>
+#include <system_error>
 
 using namespace std;
 
@@ -74,7 +75,7 @@ bool IsPureASCII(const wstring& s);
 wstring SanitizeFileName(const wstring& input);
 
 void OpenLinkInBrowser(const wstring& url);
-inline void ApplyTheme(int& theme);
+inline void ApplyTheme(const int& theme);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 bool ExtractFontToTempFile(wstring& extractedPath);
@@ -254,11 +255,27 @@ int main(int argc, char** argv)
 		g_uiScale = main_scale;
 	}
 
+#ifndef _WIN32
+	if (isFirstRun) {
+		glfwWindowHint(GLFW_FLOATING, GLFW_TRUE); // 在Linux上置顶，试图解决焦点问题
+#ifdef GLFW_FOCUS_ON_SHOW
+		glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
+#endif
+	}
+#endif
+
 	wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
 	if (wc == nullptr)
 		return 1;
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
+
+#ifndef _WIN32
+	if (isFirstRun) {
+		glfwShowWindow(wc);
+		glfwFocusWindow(wc);
+	}
+#endif
 
 
 #ifdef _WIN32
@@ -395,8 +412,19 @@ int main(int argc, char** argv)
 	// 如果开了自动扫描，那么就检查一下，然后添加
 	if (g_AutoScanForWorlds) {
 		for (auto& [idx, config] : g_appState.configs) {
-			for (auto& entry : filesystem::directory_iterator(filesystem::path(config.saveRoot).parent_path().parent_path())) {
-				if (!entry.is_directory() || !(filesystem::exists(entry.path() / "saves")) || filesystem::path(config.saveRoot).parent_path().parent_path() == "")
+			if (config.saveRoot.empty()) continue;
+			filesystem::path parent = filesystem::path(config.saveRoot).lexically_normal().parent_path().parent_path();
+			if (parent.empty()) continue;
+			std::error_code parent_ec;
+			if (!filesystem::exists(parent, parent_ec) || parent_ec) continue;
+
+			std::error_code iter_ec;
+			for (filesystem::directory_iterator it(parent, filesystem::directory_options::skip_permission_denied, iter_ec);
+				!iter_ec && it != filesystem::directory_iterator(); ++it) {
+				const auto& entry = *it;
+				if (!entry.is_directory()) continue;
+				std::error_code saves_ec;
+				if (!filesystem::exists(entry.path() / "saves", saves_ec) || saves_ec)
 					continue;
 				// 检查是否已经在配置中了
 				bool alreadyExists = false;
@@ -449,6 +477,11 @@ int main(int argc, char** argv)
 			static char saveRootPath[CONSTANT1] = "";
 			static char backupPath[CONSTANT1] = "";
 			static char zipPath[CONSTANT1] = "";
+
+			ImGuiViewport* wizardViewport = ImGui::GetMainViewport();
+			ImGui::SetNextWindowViewport(wizardViewport->ID);
+			ImGui::SetNextWindowPos(wizardViewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+			ImGui::SetNextWindowFocus();
 
 			if (!isWizardOpen)
 				g_appState.done = true;
@@ -704,14 +737,22 @@ int main(int argc, char** argv)
 		#endif
 
 						if (g_AutoScanForWorlds) {
-							for (auto& entry : filesystem::directory_iterator(filesystem::path(saveRootPath).parent_path().parent_path())) {
-								if (!entry.is_directory() || !(filesystem::exists(entry.path() / "save")))
-									continue;
-								int index = CreateNewNormalConfig();
-								g_appState.configs[index] = initialConfig;
-								//g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
-								g_appState.configs[index].saveRoot = (entry.path() / "save").wstring();
-								g_appState.configs[index].worlds.clear();
+							filesystem::path parent = filesystem::path(utf8_to_wstring(saveRootPath)).lexically_normal().parent_path().parent_path();
+							std::error_code parent_ec;
+							if (!parent.empty() && filesystem::exists(parent, parent_ec) && !parent_ec) {
+								std::error_code iter_ec;
+								for (filesystem::directory_iterator it(parent, filesystem::directory_options::skip_permission_denied, iter_ec);
+									!iter_ec && it != filesystem::directory_iterator(); ++it) {
+									const auto& entry = *it;
+									if (!entry.is_directory()) continue;
+									std::error_code save_ec;
+									if (!filesystem::exists(entry.path() / "save", save_ec) || save_ec) continue;
+									int index = CreateNewNormalConfig();
+									g_appState.configs[index] = initialConfig;
+									//g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
+									g_appState.configs[index].saveRoot = (entry.path() / "save").wstring();
+									g_appState.configs[index].worlds.clear();
+								}
 							}
 						}
 
@@ -1084,6 +1125,7 @@ int main(int argc, char** argv)
 						if (ImGui::Selectable(label.c_str(), is_selected)) {
 							g_appState.currentConfigIndex = idx;
 							specialSetting = false;
+							ApplyTheme(val.theme);
 						}
 						if (is_selected) {
 							ImGui::SetItemDefaultFocus();
@@ -1097,6 +1139,7 @@ int main(int argc, char** argv)
 						if (ImGui::Selectable(label.c_str(), is_selected)) {
 							g_appState.currentConfigIndex = (idx);
 							specialSetting = true;
+							ApplyTheme(val.theme);
 							//g_appState.specialConfigMode = true;
 						}
 						if (is_selected) ImGui::SetItemDefaultFocus();
@@ -1814,8 +1857,11 @@ int main(int argc, char** argv)
 				if (specialSetting) {
 					if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size())
 						ShowHistoryWindow(displayWorlds[selectedWorldIndex].baseConfigIndex);
-					else if (!g_appState.specialConfigs[g_appState.currentConfigIndex].tasks.empty())
-						ShowHistoryWindow(g_appState.specialConfigs[g_appState.currentConfigIndex].tasks[0].configIndex);
+					else {
+						auto spIt = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
+						if (spIt != g_appState.specialConfigs.end() && !spIt->second.tasks.empty())
+							ShowHistoryWindow(spIt->second.tasks[0].configIndex);
+					}
 				}
 				else {
 					ShowHistoryWindow(g_appState.currentConfigIndex);
@@ -1941,7 +1987,7 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 	return true;
 }
 
-inline void ApplyTheme(int& theme)
+inline void ApplyTheme(const int& theme)
 {
 	switch (theme) {
 		case 0: ImGuiTheme::ApplyImGuiDark();break;
@@ -1985,6 +2031,7 @@ void ShowSettingsWindow() {
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				g_appState.currentConfigIndex = idx;
 				specialSetting = false;
+				ApplyTheme(val.theme);
 			}
 			if (is_selected) {
 				ImGui::SetItemDefaultFocus();
@@ -1998,6 +2045,7 @@ void ShowSettingsWindow() {
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				g_appState.currentConfigIndex = (idx);
 				specialSetting = true;
+				ApplyTheme(val.theme);
 			}
 			if (is_selected) ImGui::SetItemDefaultFocus();
 		}
