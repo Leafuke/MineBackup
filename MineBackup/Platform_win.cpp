@@ -768,7 +768,7 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 	const wchar_t* pWorkingDir = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
 	console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
 
-	if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, pWorkingDir, &si, &pi)) {
+	if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, creationFlags, NULL, pWorkingDir, &si, &pi)) {
 		console.AddLog(L("LOG_ERROR_CREATE_PROCESS"), GetLastError());
 		return false;
 	}
