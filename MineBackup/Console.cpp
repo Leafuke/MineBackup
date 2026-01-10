@@ -187,7 +187,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return "OK:Mods backup started.";
 	}
 	else if (command == "BACKUP_CURRENT") { // 直接调用备份正在运行的世界的函数
-		BroadcastEvent("event=pre_hot_backup");
+		BroadcastEvent("event=pre_hot_backup;");
 		if (ss.rdbuf()->in_avail() > 0) {
 			string comment_part;
 			getline(ss, comment_part);

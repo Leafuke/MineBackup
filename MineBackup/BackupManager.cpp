@@ -643,10 +643,8 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
-		if (folder.configIndex != -1 && config.backupMode != 3)
+		if (config.backupMode != 3)
 			AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
-		else if (config.backupMode != 3)
-			AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
 
         g_appState.realConfigIndex = -1;
         // 广播一个成功事件
@@ -674,10 +672,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
                 filesystem::rename(latestBackupPath, newPath);
                 latestBackupPath = newPath;
             }
-            if (folder.configIndex != -1)
-                AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
-            else
-                AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+			if (latestBackupPath.empty()) {
+				AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+			}
+			else {
+				RemoveHistoryEntry(folder.configIndex, oldName);
+				AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+			}
         }
 
 
