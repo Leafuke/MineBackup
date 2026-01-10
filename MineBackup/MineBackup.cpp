@@ -469,7 +469,7 @@ int main(int argc, char** argv)
 	{
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(0.2);
-			ImGui_ImplGlfw_Sleep(10);
+			ImGui_ImplGlfw_Sleep(200);
 			continue;
 		}
 		else {
@@ -477,7 +477,6 @@ int main(int argc, char** argv)
 			this_thread::sleep_for(std::chrono::milliseconds(16)); // 60FPS
 		}
 
-		// Start the Dear ImGui frame
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
@@ -1052,10 +1051,8 @@ int main(int argc, char** argv)
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.4f));
 					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 0.5f));
 
-					
-					// Minimize Button
 					if (ImGui::Button("-", ImVec2(buttonSize, buttonSize))) {
-						g_appState.showMainApp = false;
+						//g_appState.showMainApp = false;
 						glfwHideWindow(wc);
 					}
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("MINIMIZE_TO_TRAY_TIP"));
