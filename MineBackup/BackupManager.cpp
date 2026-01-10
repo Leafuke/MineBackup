@@ -773,10 +773,10 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 		return;
 	}
 
-	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
+	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 
 	if (restoreMethod == 0) { // Clean Restore
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder.wstring()).c_str());
 		try {
 			if (filesystem::exists(destinationFolder)) {
 				filesystem::remove_all(destinationFolder);
@@ -789,7 +789,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 	// For a manually selected file, we treat it as a single restore operation.
 	// Smart Restore logic does not apply as we don't know the history.
-	wstring command = L"\"" + config.zipPath + L"\" x \"" + fullBackupPath.wstring() + L"\" -o\"" + destinationFolder + L"\" -y";
+	wstring command = L"\"" + config.zipPath + L"\" x \"" + fullBackupPath.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y";
 	RunCommandInBackground(command, console, config.useLowPriority);
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
@@ -808,13 +808,13 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		return;
 	}
 
-	// 准备路径
-	wstring sourceDir = config.backupPath + L"\\" + worldName;
-	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
-	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
+	// 准备路径 - 使用跨平台方式
+	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
+	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	filesystem::path targetBackupPath = sourceDir / backupFile;
 
 	// 检查备份文件是否存在
-	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir + L"\\" + backupFile)) {
+	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir / backupFile)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return;
 	}
@@ -917,7 +917,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 
 	// 1.11.1 将这个清除步骤移动到后面了，避免没成功检索就直接删档
 	if (restoreMethod == 0) {
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder.wstring()).c_str());
 		bool deletion_ok = true;
 		if (filesystem::exists(destinationFolder)) {
 			try {
@@ -958,7 +958,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
-		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder + L"\" -y" + filesToExtractStr;
+		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y" + filesToExtractStr;
 		RunCommandInBackground(command, console, config.useLowPriority);
 	}
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
@@ -969,7 +969,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console) {
 	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
-	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
+	filesystem::path backupDir = JoinPath(config.backupPath, entryToDelete.worldName);
 	vector<filesystem::path> filesToDelete;
 	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
 
@@ -1002,7 +1002,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		return;
 	}
 
-	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
+	filesystem::path backupDir = JoinPath(config.backupPath, entryToDelete.worldName);
 	filesystem::path pathToDelete = backupDir / entryToDelete.backupFile;
 	const HistoryEntry* nextEntryRaw = nullptr;
 

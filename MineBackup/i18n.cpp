@@ -484,7 +484,17 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "THREAD_STOPPED_FOR_WORLD", u8"[提示] 已停止对世界 '%s' 的自动备份线程。" },
 		{ "BUTTON_AUTO_LOG", u8"自动日志记录" },
 		{"SPONSOR_ME", u8"赞助作者"},
-		{ "LOG_INFO_BACKUP_MARKED_IMPORTANT", u8"[提示] 备份 '%s' 已被标记为重要，跳过自动删除。" }
+		{ "LOG_INFO_BACKUP_MARKED_IMPORTANT", u8"[提示] 备份 '%s' 已被标记为重要，跳过自动删除。" },
+		{ "CLOSE_CONFIRM_TITLE", u8"关闭确认" },
+		{ "CLOSE_CONFIRM_MSG", u8"您希望如何处理关闭操作？" },
+		{ "CLOSE_REMEMBER_CHOICE", u8"记住我的选择" },
+		{ "CLOSE_MINIMIZE_TO_TRAY", u8"最小化到托盘" },
+		{ "CLOSE_EXIT_APP", u8"退出程序" },
+		{ "GROUP_CLOSE_BEHAVIOR", u8"关闭行为" },
+		{ "CLOSE_BEHAVIOR_ASK", u8"每次询问" },
+		{ "CLOSE_BEHAVIOR_MINIMIZE", u8"最小化到托盘" },
+		{ "CLOSE_BEHAVIOR_EXIT", u8"直接退出" },
+		{ "CLOSE_BEHAVIOR_LABEL", u8"点击关闭按钮时:" }
 }},
 	{ "en_US", {
 		{"SETTINGS", "Settings"},
@@ -967,6 +977,16 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{"LOG_INFO_BACKUP_MARKED_IMPORTANT", "[Info] Backup '%s' marked as important."},
 		{ "BUTTON_AUTO_SCAN_WORLDS", "Auto Scan Versions" },
 		{ "TIP_BUTTON_AUTO_SCAN_WORLDS", "If enabled, it will automatically scan other folders in the same directory as the 'version folder' and add them as new configurations. You can enable it." },
+		{ "CLOSE_CONFIRM_TITLE", "Close Confirmation" },
+		{ "CLOSE_CONFIRM_MSG", "How would you like to handle the close action?" },
+		{ "CLOSE_REMEMBER_CHOICE", "Remember my choice" },
+		{ "CLOSE_MINIMIZE_TO_TRAY", "Minimize to Tray" },
+		{ "CLOSE_EXIT_APP", "Exit Application" },
+		{ "GROUP_CLOSE_BEHAVIOR", "Close Behavior" },
+		{ "CLOSE_BEHAVIOR_ASK", "Ask every time" },
+		{ "CLOSE_BEHAVIOR_MINIMIZE", "Minimize to tray" },
+		{ "CLOSE_BEHAVIOR_EXIT", "Exit directly" },
+		{ "CLOSE_BEHAVIOR_LABEL", "When clicking close button:" }
 }},
 };
 const char* L(const char* key) {
