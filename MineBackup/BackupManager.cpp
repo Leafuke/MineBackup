@@ -9,6 +9,9 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <mutex>
+#include <unordered_map>
+#include <cwctype>
 using namespace std;
 
 #ifndef _WIN32
@@ -24,6 +27,109 @@ static inline wstring NormalizeSeparators(const wstring& s) { return s; }
 static inline filesystem::path JoinPath(const wstring& a, const wstring& b) {
 	return filesystem::path(NormalizeSeparators(a)) / filesystem::path(NormalizeSeparators(b));
 }
+
+enum class FolderState {
+	BACKUP,
+	RESTORE,
+};
+
+static inline const char* FolderStateToI18nKey(FolderState state) {
+	switch (state) {
+	case FolderState::BACKUP: return "OP_BACKUP";
+	case FolderState::RESTORE: return "OP_RESTORE";
+	default: return "OP_BACKUP";
+	}
+}
+
+static inline void ToLowerInPlace(wstring& s) {
+#ifdef _WIN32
+	for (wchar_t& ch : s) ch = (wchar_t)towlower(ch);
+#else
+	(void)s;
+#endif
+}
+
+static inline wstring MakeWorldOperationKey(const filesystem::path& worldPath) {
+	error_code ec;
+	filesystem::path p = worldPath;
+
+	// Normalize to an absolute, lexically-normal path so the same folder maps to one key.
+	auto abs = filesystem::absolute(p, ec);
+	if (!ec) p = abs;
+	p = p.lexically_normal();
+
+	wstring key = p.wstring();
+
+#ifdef _WIN32
+	// Windows paths are case-insensitive; unify casing and separators.
+	for (wchar_t& ch : key) {
+		if (ch == L'/') ch = L'\\';
+	}
+	ToLowerInPlace(key);
+#else
+	for (wchar_t& ch : key) {
+		if (ch == L'\\') ch = L'/';
+	}
+#endif
+
+	return key;
+}
+
+static mutex g_worldOpMutex;
+static unordered_map<wstring, FolderState> g_worldOpInProgress;
+
+class WorldOperationGuard {
+public:
+	WorldOperationGuard(const filesystem::path& worldPath, FolderState requested)
+		: key_(MakeWorldOperationKey(worldPath)), requested_(requested) {
+		lock_guard<mutex> lock(g_worldOpMutex);
+		auto it = g_worldOpInProgress.find(key_);
+		if (it == g_worldOpInProgress.end()) {
+			g_worldOpInProgress.emplace(key_, requested_);
+			acquired_ = true;
+		}
+		else {
+			existing_ = it->second;
+			acquired_ = false;
+		}
+	}
+
+	WorldOperationGuard(const WorldOperationGuard&) = delete;
+	WorldOperationGuard& operator=(const WorldOperationGuard&) = delete;
+
+	WorldOperationGuard(WorldOperationGuard&& other) noexcept {
+		*this = std::move(other);
+	}
+	WorldOperationGuard& operator=(WorldOperationGuard&& other) noexcept {
+		if (this == &other) return *this;
+		Release();
+		key_ = std::move(other.key_);
+		requested_ = other.requested_;
+		existing_ = other.existing_;
+		acquired_ = other.acquired_;
+		other.acquired_ = false;
+		return *this;
+	}
+
+	~WorldOperationGuard() { Release(); }
+
+	bool Acquired() const { return acquired_; }
+	FolderState Requested() const { return requested_; }
+	FolderState Existing() const { return existing_; }
+
+private:
+	void Release() {
+		if (!acquired_) return;
+		lock_guard<mutex> lock(g_worldOpMutex);
+		g_worldOpInProgress.erase(key_);
+		acquired_ = false;
+	}
+
+	wstring key_;
+	FolderState requested_ = FolderState::BACKUP;
+	FolderState existing_ = FolderState::BACKUP;
+	bool acquired_ = false;
+};
 
 enum class BackupCheckResult {
 	NO_CHANGE,
@@ -370,8 +476,20 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 // 参数: folder: 世界信息结构体, console: 日志输出对象, comment: 用户注释
 void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
     const Config& config = folder.config;
-    console.AddLog(L("LOG_BACKUP_START_HEADER"));
-    console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
+
+	WorldOperationGuard opGuard(filesystem::path(folder.path), FolderState::BACKUP);
+	if (!opGuard.Acquired()) {
+		console.AddLog(
+			L("LOG_OP_REJECTED_BUSY"),
+			wstring_to_utf8(folder.name).c_str(),
+			L(FolderStateToI18nKey(opGuard.Existing())),
+			L(FolderStateToI18nKey(opGuard.Requested()))
+		);
+		return;
+	}
+
+	console.AddLog(L("LOG_BACKUP_START_HEADER"));
+	console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
 
     if (!filesystem::exists(config.zipPath)) {
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
@@ -763,6 +881,18 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 }
 
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
+	if (!opGuard.Acquired()) {
+		console.AddLog(
+			L("LOG_OP_REJECTED_BUSY"),
+			wstring_to_utf8(worldName).c_str(),
+			L(FolderStateToI18nKey(opGuard.Existing())),
+			L(FolderStateToI18nKey(opGuard.Requested()))
+		);
+		return;
+	}
+
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(fullBackupPath.wstring()).c_str());
@@ -772,8 +902,6 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
 		return;
 	}
-
-	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 
 	if (restoreMethod == 0) { // Clean Restore
 		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder.wstring()).c_str());
@@ -797,6 +925,18 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 // restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
+	if (!opGuard.Acquired()) {
+		console.AddLog(
+			L("LOG_OP_REJECTED_BUSY"),
+			wstring_to_utf8(worldName).c_str(),
+			L(FolderStateToI18nKey(opGuard.Existing())),
+			L(FolderStateToI18nKey(opGuard.Requested()))
+		);
+		return;
+	}
+
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
@@ -810,7 +950,6 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 
 	// 准备路径 - 使用跨平台方式
 	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
-	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	filesystem::path targetBackupPath = sourceDir / backupFile;
 
 	// 检查备份文件是否存在
@@ -820,7 +959,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	}
 
 	// 还原前检查世界是否正在运行
-	/*if (IsFileLocked(destinationFolder + L"\\session.lock")) {
+	if (IsFileLocked(destinationFolder.wstring() + L"\\session.lock")) {
 		int msgboxID = MessageBoxW(
 			NULL,
 			utf8_to_wstring(L("RESTORE_OVER_RUNNING_WORLD_MSG")).c_str(),
@@ -831,7 +970,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			console.AddLog("[Info] Restore cancelled by user due to active game session.");
 			return;
 		}
-	}*/
+	}
 
 	// 收集所有相关的备份文件
 	vector<filesystem::path> backupsToApply;
