@@ -38,6 +38,47 @@ void CheckForUpdatesThread() {
     g_NewVersionAvailable = false;
     g_LatestVersionStr.clear();
     g_ReleaseNotes.clear();
+    
+    std::string cmd = "curl -s -H 'User-Agent: MineBackup' https://api.github.com/repos/Leafuke/MineBackup/releases/latest 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        char buffer[4096];
+        std::string result;
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result += buffer;
+        }
+        pclose(pipe);
+        
+        size_t pos = result.find("\"tag_name\"");
+        if (pos != std::string::npos) {
+            pos = result.find(':', pos);
+            if (pos != std::string::npos) {
+                size_t start = result.find('"', pos + 1);
+                size_t end = result.find('"', start + 1);
+                if (start != std::string::npos && end != std::string::npos) {
+                    std::string version = result.substr(start + 1, end - start - 1);
+                    if (!version.empty() && version[0] == 'v') {
+                        version = version.substr(1);
+                    }
+                    if (version > CURRENT_VERSION) {
+                        g_LatestVersionStr = "v" + version;
+                        g_NewVersionAvailable = true;
+                        
+                        pos = result.find("\"body\"");
+                        if (pos != std::string::npos) {
+                            pos = result.find(':', pos);
+                            size_t noteStart = result.find('"', pos + 1);
+                            size_t noteEnd = result.find("\"}", noteStart + 1);
+                            if (noteStart != std::string::npos && noteEnd != std::string::npos) {
+                                g_ReleaseNotes = result.substr(noteStart + 1, noteEnd - noteStart - 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     g_UpdateCheckDone = true;
 }
 
@@ -45,6 +86,28 @@ void CheckForNoticesThread() {
     g_NewNoticeAvailable = false;
     g_NoticeContent.clear();
     g_NoticeUpdatedAt.clear();
+    
+    std::string cmd = "curl -s https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        char buffer[4096];
+        std::string result;
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result += buffer;
+        }
+        pclose(pipe);
+        
+        if (!result.empty()) {
+            std::hash<std::string> hasher;
+            g_NoticeUpdatedAt = std::to_string(hasher(result));
+            
+            if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
+                g_NoticeContent = result;
+                g_NewNoticeAvailable = true;
+            }
+        }
+    }
+    
     g_NoticeCheckDone = true;
 }
 
@@ -130,7 +193,12 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
 }
 
 void RemoveTrayIcon() {
-    
+}
+
+void TriggerHotkeyBackup(std::string comment) {
+}
+
+void TriggerHotkeyRestore() {
 }
 
 void GetUserDefaultUILanguageWin() {
@@ -147,8 +215,6 @@ void GetUserDefaultUILanguageWin() {
 }
 
 std::string GetRegistryValue(const std::string& key, const std::string& valueName) {
-    (void)key;
-    (void)valueName;
     return std::string();
 }
 
@@ -167,7 +233,6 @@ void OpenFolder(const std::wstring& folderPath) {
 }
 
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus) {
-    (void)focus;
     OpenFolder(folderPath);
 }
 
@@ -175,20 +240,12 @@ void ReStartApplication() {
 }
 
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable) {
-    (void)appName;
-    (void)appPath;
-    (void)configType;
-    (void)configId;
-    (void)enable;
 }
 
 void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
-    (void)path;
-    (void)isHidden;
 }
 
 void EnableDarkModeWin(bool enable) {
-    (void)enable;
 }
 
 bool Extract7zToTempFile(std::wstring& extractedPath) {
@@ -240,8 +297,6 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
 }
 
 bool IsFileLocked(const std::wstring& path) {
-	// ���� Linux ���ļ�û��������
-    (void)path;
     return false;
 }
 
