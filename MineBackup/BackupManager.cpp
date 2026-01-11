@@ -1250,6 +1250,9 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 	filesystem::remove_all(temp_export_dir);
 }
 
+
+MyFolder GetOccupiedWorld();
+
 void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	
 	Config cfg = world.config;
@@ -1257,15 +1260,15 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
 
 	// 启动后台等待线程
-	auto startTime = std::chrono::steady_clock::now();
-	const auto timeout = std::chrono::seconds(15);
+	auto startTime = chrono::steady_clock::now();
+	auto timeout = chrono::seconds(15);
 
 	// 等待响应或超时
-	while (std::chrono::steady_clock::now() - startTime < timeout) {
+	while (chrono::steady_clock::now() - startTime < timeout) {
 		if (g_appState.isRespond) {
 			break; // 收到响应
 		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		this_thread::sleep_for(chrono::milliseconds(100));
 	}
 
 	// 检查是收到了响应还是超时了
@@ -1276,12 +1279,35 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 		return;
 	}
 
-	// --- 收到响应，开始还原 ---
+	// 收到响应，检查世界是否仍然被占用
+
+	g_appState.isRespond = false; // 仍标记为未响应，等确认存档关闭后确认为响应
+
+	startTime = chrono::steady_clock::now();
+	timeout = chrono::seconds(10);
+
+	while (chrono::steady_clock::now() - startTime < timeout) {
+		MyFolder checkOccupiedFolder = GetOccupiedWorld();
+		if (checkOccupiedFolder.name == world.name) {
+			this_thread::sleep_for(chrono::seconds(1));
+		}
+		else {
+			g_appState.isRespond = true;
+			break;
+		}
+	}
+	if (!g_appState.isRespond) {
+		console.AddLog(L("[Error] World is still occupied after mod response. Restore aborted."));
+		BroadcastEvent("event=restore_cancelled;reason=world_occupied");
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		return;
+	}
+
 	g_appState.isRespond = false; // 重置标志位
 	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
 	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
 
-	Sleep(3000); // 等待3秒，确保文件写入完成
+	Sleep(2000); // 等待2秒，确保文件写入完成
 
 	// 查找最新备份文件 (这部分逻辑保持不变)
 	wstring backupDir = cfg.backupPath + L"\\" + world.name;
