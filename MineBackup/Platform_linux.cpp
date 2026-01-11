@@ -195,12 +195,6 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
 void RemoveTrayIcon() {
 }
 
-void TriggerHotkeyBackup(std::string comment) {
-}
-
-void TriggerHotkeyRestore() {
-}
-
 void GetUserDefaultUILanguageWin() {
     const char* langEnv = std::getenv("LANG");
     if (!langEnv || std::strlen(langEnv) < 2) langEnv = std::getenv("LANGUAGE");

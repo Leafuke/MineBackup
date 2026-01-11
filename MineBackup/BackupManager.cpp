@@ -959,6 +959,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	}
 
 	// 还原前检查世界是否正在运行
+#ifdef _WIN32
 	if (IsFileLocked(destinationFolder.wstring() + L"\\session.lock")) {
 		int msgboxID = MessageBoxW(
 			NULL,
@@ -971,6 +972,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			return;
 		}
 	}
+#endif
 
 	// 收集所有相关的备份文件
 	vector<filesystem::path> backupsToApply;
