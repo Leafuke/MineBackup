@@ -1,21 +1,23 @@
 警告·重要通知
 
+2026.1.11
+v1.11.5 版本增加了许多检测，极大地增强了备份及还原的安全性并进行了许多功能上的改进，请*务必*更新到该版本。
+注意：在联动模组更新0.3.0/0.4.0之前，Carpet模组的假人仍然可能出现异常，请手动备份`fake_player.gca.json`以确保还原时的一致性。
+
+2026.1.8
 请不要使用 MineBackup 的 Alt+Ctrl+Z 快速还原功能，根据 Issue #43，快速还原逻辑存在漏洞并且可能导致难以预料的bug。
 如果你需要还原存档，请务必确保退出存档后再执行还原操作。
 如果你已经遇到存档损坏的问题，可以在做好必要备份的前提下，手动将存档文件夹中的内容删除，然后再使用MineBackup的“安全还原”功能还原到没有出现问题前的状态。
 
-这是我在编写联动模组以及主程序功能时的严重疏忽，对此我表示诚挚的歉意。
 
-漏洞细节：模组和主程序均未进行严格的检查程序就执行还原。
 
 WARNING · IMPORTANT NOTICE
 
-Please do NOT use the Alt+Ctrl+Z quick restore feature of MineBackup. According to Issue #43, the quick restore logic contains a vulnerability and may lead to unforeseen bugs.
+2026.1.11
+Version v1.11.5 has added numerous verification checks, significantly enhancing the safety of backups and restores, and includes many functional improvements. You **must** update to this version.
+Note: Before the add-on mod is updated to version 0.3.0/0.4.0, fake players from the Carpet mod may still behave abnormally. Please manually back up `fake_player.gca.json` to ensure consistency during restoration.
 
+2026.1.8
+Please do not use the Alt+Ctrl+Z quick restore feature of MineBackup. According to Issue #43, the quick restore logic contains a vulnerability and may lead to unforeseen bugs.
 If you need to restore a backup, please be sure to exit the world/save before performing the restore operation.
-
 If you have already encountered save data corruption, after making necessary backups, you can manually delete the contents of the save folder, and then use MineBackup's "Safe Restore" feature to revert to a state before the issues occurred.
-
-This was a serious oversight on my part during the development of the add-on mod and the main program features. I offer my sincere apologies for this.
-
-Vulnerability Details: Neither the mod nor the main program performed strict checks before executing the restore.
