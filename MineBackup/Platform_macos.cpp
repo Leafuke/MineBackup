@@ -1,4 +1,4 @@
-#include "Platform_linux.h"
+#include "Platform_macos.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "Console.h"
@@ -13,6 +13,7 @@
 #include <thread>
 #include <system_error>
 #include <unistd.h>
+#include <mach-o/dyld.h>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -31,7 +32,20 @@ extern AppState g_appState;
 
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
     (void)iconType;
-    std::cout << "[" << title << "] " << message << std::endl;
+    std::string icon = "note";
+    if (iconType == 1) icon = "caution";
+    else if (iconType == 2) icon = "stop";
+    
+    std::string escaped_message = message;
+    size_t pos = 0;
+    while ((pos = escaped_message.find('"', pos)) != std::string::npos) {
+        escaped_message.replace(pos, 1, "\\\"");
+        pos += 2;
+    }
+    
+    std::string cmd = "osascript -e 'display dialog \"" + escaped_message + 
+                      "\" with title \"" + title + "\" with icon " + icon + " buttons {\"OK\"}' >/dev/null 2>&1 &";
+    std::system(cmd.c_str());
 }
 
 void CheckForUpdatesThread() {
@@ -98,6 +112,7 @@ void CheckForNoticesThread() {
         pclose(pipe);
         
         if (!result.empty()) {
+            // Use content hash as version identifier
             std::hash<std::string> hasher;
             g_NoticeUpdatedAt = std::to_string(hasher(result));
             
@@ -111,27 +126,29 @@ void CheckForNoticesThread() {
     g_NoticeCheckDone = true;
 }
 
-static std::wstring RunZenity(const std::string& args) {
-    std::string cmd = "zenity --file-selection " + args + " 2>/dev/null";
+static std::wstring RunOsaScript(const std::string& script) {
+    std::string cmd = "osascript -e '" + script + "' 2>/dev/null";
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) return L"";
+    
     char buffer[4096] = {0};
     std::string output;
-    if (fgets(buffer, sizeof(buffer), pipe)) {
-        output = buffer;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
     }
     pclose(pipe);
+    
     if (output.empty()) return L"";
     if (!output.empty() && output.back() == '\n') output.pop_back();
     return utf8_to_wstring(output);
 }
 
 std::wstring SelectFileDialog() {
-    return RunZenity("--title=\"Select File\"");
+    return RunOsaScript("choose file");
 }
 
 std::wstring SelectFolderDialog() {
-    return RunZenity("--directory --title=\"Select Folder\"");
+    return RunOsaScript("POSIX path of (choose folder)");
 }
 
 std::wstring GetDocumentsPath() {
@@ -150,7 +167,7 @@ static std::wstring TimePointToString(const fs::file_time_type& tp) {
             tp - fs::file_time_type::clock::now() + chrono::system_clock::now());
         time_t cftime = chrono::system_clock::to_time_t(sctp);
         struct tm buf;
-        if (localtime_s(&buf, &cftime) == 0) {
+        if (localtime_r(&cftime, &buf) != nullptr) {
             wchar_t out[64];
             wcsftime(out, sizeof(out) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &buf);
             return out;
@@ -182,7 +199,7 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
         }
         if (latest == 0) return L"/";
         struct tm buf;
-        if (localtime_s(&buf, &latest) == 0) {
+        if (localtime_r(&latest, &buf) != nullptr) {
             wchar_t out[64];
             wcsftime(out, sizeof(out) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &buf);
             return out;
@@ -211,32 +228,62 @@ void GetUserDefaultUILanguageWin() {
             return;
         }
     }
+    
+    FILE* pipe = popen("defaults read -g AppleLanguages 2>/dev/null | head -2 | tail -1 | tr -d ' \"'", "r");
+    if (pipe) {
+        char buffer[64] = {0};
+        if (fgets(buffer, sizeof(buffer), pipe)) {
+            std::string lang(buffer);
+            if (lang.rfind("zh", 0) == 0) {
+                g_CurrentLang = "zh_CN";
+                pclose(pipe);
+                return;
+            }
+        }
+        pclose(pipe);
+    }
+    
     g_CurrentLang = "en_US";
 }
 
 std::string GetRegistryValue(const std::string& key, const std::string& valueName) {
+    (void)key;
+    (void)valueName;
     return std::string();
 }
 
 void OpenLinkInBrowser(const std::wstring& url) {
     if (url.empty()) return;
     std::string u8 = wstring_to_utf8(url);
-    std::string cmd = "xdg-open '" + u8 + "' >/dev/null 2>&1 &";
+    std::string cmd = "open '" + u8 + "' >/dev/null 2>&1 &";
     std::system(cmd.c_str());
 }
 
 void OpenFolder(const std::wstring& folderPath) {
     if (folderPath.empty()) return;
     std::string u8 = wstring_to_utf8(folderPath);
-    std::string cmd = "xdg-open '" + u8 + "' >/dev/null 2>&1 &";
+    std::string cmd = "open '" + u8 + "' >/dev/null 2>&1 &";
     std::system(cmd.c_str());
 }
 
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus) {
-    OpenFolder(folderPath);
+    if (!focus.empty()) {
+        std::string u8 = wstring_to_utf8(focus);
+        std::string cmd = "open -R '" + u8 + "' >/dev/null 2>&1 &";
+        std::system(cmd.c_str());
+    } else {
+        OpenFolder(folderPath);
+    }
 }
 
 void ReStartApplication() {
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        std::string cmd = std::string(path) + " &";
+        std::system(cmd.c_str());
+        exit(0);
+    }
 }
 
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable) {
@@ -248,51 +295,86 @@ void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
 void EnableDarkModeWin(bool enable) {
 }
 
+static fs::path GetExecutableDirectory() {
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        return fs::path(path).parent_path();
+    }
+    return fs::current_path();
+}
+
 bool Extract7zToTempFile(std::wstring& extractedPath) {
-    const char* candidates[] = {"/usr/bin/7z", "/usr/local/bin/7z", nullptr};
+    const char* candidates[] = {
+        "/usr/local/bin/7z",
+        "/opt/homebrew/bin/7z",
+        "/usr/bin/7z",
+        "/opt/local/bin/7z",
+        nullptr
+    };
+    
     for (const char** p = candidates; *p; ++p) {
         if (fs::exists(*p)) {
             extractedPath = fs::path(*p).wstring();
             return true;
         }
     }
+    
+    fs::path exeDir = GetExecutableDirectory();
+    fs::path bundled7z = exeDir / "7z";
+    if (fs::exists(bundled7z)) {
+        extractedPath = bundled7z.wstring();
+        return true;
+    }
+    
+    const char* altCandidates[] = {
+        "/usr/local/bin/7zz",
+        "/opt/homebrew/bin/7zz",
+        nullptr
+    };
+    
+    for (const char** p = altCandidates; *p; ++p) {
+        if (fs::exists(*p)) {
+            extractedPath = fs::path(*p).wstring();
+            return true;
+        }
+    }
+    
     return false;
 }
 
 bool ExtractFontToTempFile(std::wstring& extractedPath) {
-    auto exeDir = []() -> fs::path {
-        char buf[4096];
-        ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (len <= 0) return fs::current_path();
-        buf[len] = '\0';
-        return fs::path(buf).parent_path();
-    }();
-
+    fs::path exeDir = GetExecutableDirectory();
+    
     const fs::path bundledCandidates[] = {
         exeDir / "fontawesome-sp.otf",
         exeDir / "fa-solid-900.ttf",
-        exeDir / "fa-regular-400.ttf"
+        exeDir / "fa-regular-400.ttf",
+        exeDir / "../Resources/fontawesome-sp.otf"  // For .app bundles
     };
+    
     for (const auto& p : bundledCandidates) {
         if (fs::exists(p)) {
             extractedPath = p.wstring();
             return true;
         }
     }
-
+    
     const char* sysCandidates[] = {
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/SFNS.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
         nullptr
     };
+    
     for (const char** p = sysCandidates; *p; ++p) {
         if (fs::exists(*p)) {
             extractedPath = fs::path(*p).wstring();
             return true;
         }
     }
+    
     return false;
 }
 
@@ -301,26 +383,31 @@ bool IsFileLocked(const std::wstring& path) {
 }
 
 bool RunCommandInBackground(std::wstring command, Console& console, bool useLowPriority, const std::wstring& workingDirectory) {
-    (void)useLowPriority;
     console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
-
+    
     std::error_code ec;
     fs::path oldCwd = fs::current_path(ec);
     if (!workingDirectory.empty() && fs::exists(workingDirectory)) {
         fs::current_path(workingDirectory, ec);
     }
-
+    
     std::string cmd = wstring_to_utf8(command);
+    
+    if (useLowPriority) {
+        cmd = "nice -n 10 " + cmd;
+    }
+    
     int ret = std::system(cmd.c_str());
-
+    
     if (!workingDirectory.empty()) {
         fs::current_path(oldCwd, ec);
     }
-
+    
     if (ret == 0) {
         console.AddLog(L("LOG_SUCCESS_CMD"));
         return true;
     }
-    console.AddLog(L("LOG_ERROR_CMD_FAILED"), ret);
+    
+    console.AddLog(L("LOG_ERROR_CMD_FAILED"), WEXITSTATUS(ret));
     return false;
 }

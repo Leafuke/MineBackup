@@ -6,6 +6,8 @@
 #include "AppState.h"
 #ifdef _WIN32
 #include "Platform_win.h"
+#elif defined(__APPLE__)
+#include "Platform_macos.h"
 #else
 #include "Platform_linux.h"
 #endif
@@ -56,6 +58,12 @@ bool g_CheckForUpdates = true, g_ReceiveNotices = true, g_StopAutoBackupOnExit =
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
 int g_hotKeyBackupId = 'S', g_hotKeyRestoreId = 'Z';
+
+// 关闭行为设置
+// 0 = 每次询问, 1 = 直接最小化到托盘, 2 = 直接退出
+int g_closeAction = 0;
+bool g_rememberCloseAction = false;
+bool g_showCloseConfirmDialog = false;
 
 atomic<bool> specialTasksRunning = false;
 atomic<bool> specialTasksComplete = false;
@@ -282,6 +290,20 @@ int main(int argc, char** argv)
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
+	// 设置窗口关闭回调，用于拦截关闭按钮
+	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
+		if (g_closeAction == 1) {
+			glfwSetWindowShouldClose(window, GLFW_FALSE);
+			glfwHideWindow(window);
+		} else if (g_closeAction == 2) {
+			SaveConfigs();
+			g_appState.done = true;
+		} else {
+			glfwSetWindowShouldClose(window, GLFW_FALSE);
+			g_showCloseConfirmDialog = true;
+		}
+	});
+
 #ifndef _WIN32
 	if (isFirstRun) {
 		glfwShowWindow(wc);
@@ -299,7 +321,7 @@ int main(int argc, char** argv)
 	void* pMem = LockResource(hMem);
 	int nId = LookupIconIdFromDirectoryEx((PBYTE)pMem, TRUE, 0, 0, LR_DEFAULTCOLOR);
 	hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(nId), RT_ICON);
-	hMem = LoadResource(hInstance, hRes);
+	hMem = LoadResource(hInstance, hRes);;
 	pMem = LockResource(hMem);
 
 	// 从内存中的图标数据加载
@@ -469,7 +491,7 @@ int main(int argc, char** argv)
 	{
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(0.2);
-			ImGui_ImplGlfw_Sleep(10);
+			ImGui_ImplGlfw_Sleep(200);
 			continue;
 		}
 		else {
@@ -477,7 +499,6 @@ int main(int argc, char** argv)
 			this_thread::sleep_for(std::chrono::milliseconds(16)); // 60FPS
 		}
 
-		// Start the Dear ImGui frame
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
@@ -1043,29 +1064,68 @@ int main(int argc, char** argv)
 				}
 				
 
-				{
-					float buttonSize = ImGui::GetFrameHeight();
-					// 将按钮推到菜单栏的最右边
-					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonSize * 3);
+				//{ 已弃用
+				//	float buttonSize = ImGui::GetFrameHeight();
+				//	// 将按钮推到菜单栏的最右边
+				//	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonSize * 3);
 
-					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.4f));
-					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 0.5f));
+				//	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+				//	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.4f));
+				//	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 0.5f));
 
-					
-					// Minimize Button
-					if (ImGui::Button("-", ImVec2(buttonSize, buttonSize))) {
-						g_appState.showMainApp = false;
-						glfwHideWindow(wc);
-					}
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("MINIMIZE_TO_TRAY_TIP"));
+				//	if (ImGui::Button("-", ImVec2(buttonSize, buttonSize))) {
+				//		g_appState.showMainApp = false;
+				//		glfwHideWindow(wc);
+				//	}
+				//	if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("MINIMIZE_TO_TRAY_TIP"));
 
-					ImGui::PopStyleColor(3);
-				}
+				//	ImGui::PopStyleColor(3);
+				//}
 
 
 				ImGui::EndMenuBar();
 			}
+
+			// 关闭确认对话框
+			if (g_showCloseConfirmDialog) {
+				ImGui::OpenPopup(L("CLOSE_CONFIRM_TITLE"));
+				g_showCloseConfirmDialog = false;
+			}
+			
+			if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+				ImGui::TextWrapped(L("CLOSE_CONFIRM_MSG"));
+				ImGui::Separator();
+				
+				static bool tempRememberChoice = false;
+				ImGui::Checkbox(L("CLOSE_REMEMBER_CHOICE"), &tempRememberChoice);
+				
+				ImGui::Dummy(ImVec2(0, 10));
+				
+				if (ImGui::Button(L("CLOSE_MINIMIZE_TO_TRAY"), ImVec2(200, 0))) {
+					if (tempRememberChoice) {
+						g_closeAction = 1;
+						g_rememberCloseAction = true;
+					}
+					glfwHideWindow(wc);
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("CLOSE_EXIT_APP"), ImVec2(200, 0))) {
+					if (tempRememberChoice) {
+						g_closeAction = 2;
+						g_rememberCloseAction = true;
+					}
+					SaveConfigs();
+					g_appState.done = true;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(100, 0))) {
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
+
 			if (showAboutWindow)
 				ImGui::OpenPopup(L("MENU_ABOUT"));
 
@@ -2776,6 +2836,21 @@ void ShowSettingsWindow() {
 			if (ImGui::InputText("##fontPathValue", Fonts, CONSTANT1)) {
 				cfg.fontPath = utf8_to_wstring(Fonts);
 				Fontss = cfg.fontPath;
+			}
+		}
+
+		if (ImGui::CollapsingHeader(L("GROUP_CLOSE_BEHAVIOR"))) {
+			ImGui::Text(L("CLOSE_BEHAVIOR_LABEL"));
+			const char* close_behavior_options[] = { L("CLOSE_BEHAVIOR_ASK"), L("CLOSE_BEHAVIOR_MINIMIZE"), L("CLOSE_BEHAVIOR_EXIT") };
+			int close_behavior_idx = g_rememberCloseAction ? g_closeAction : 0;
+			if (ImGui::Combo("##CloseBehavior", &close_behavior_idx, close_behavior_options, IM_ARRAYSIZE(close_behavior_options))) {
+				if (close_behavior_idx == 0) {
+					g_rememberCloseAction = false;
+					g_closeAction = 0;
+				} else {
+					g_rememberCloseAction = true;
+					g_closeAction = close_behavior_idx;
+				}
 			}
 		}
 	}

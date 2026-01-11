@@ -65,6 +65,8 @@ extern vector<wstring> restoreWhitelist;
 extern int last_interval;
 extern int g_windowHeight, g_windowWidth;
 extern float g_uiScale;
+extern int g_closeAction;
+extern bool g_rememberCloseAction;
 
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool IsFileLocked(const wstring& path);
@@ -290,6 +292,12 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"AutoLog") {
 					g_autoLogEnabled = (val != L"0");
 				}
+				else if (key == L"CloseAction") {
+					g_closeAction = stoi(val);
+				}
+				else if (key == L"RememberCloseAction") {
+					g_rememberCloseAction = (val != L"0");
+				}
 			}
 		}
 	}
@@ -330,6 +338,8 @@ void SaveConfigs(const wstring& filename) {
 	buffer << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
 	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
 	buffer << L"AutoLog=" << (g_autoLogEnabled ? 1 : 0) << L"\n";
+	buffer << L"CloseAction=" << g_closeAction << L"\n";
+	buffer << L"RememberCloseAction=" << (g_rememberCloseAction ? 1 : 0) << L"\n";
 	for (const auto& item : restoreWhitelist) {
 		buffer << L"RestoreWhitelistItem=" << item << L"\n";
 	}

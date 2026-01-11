@@ -9,6 +9,9 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <mutex>
+#include <unordered_map>
+#include <cwctype>
 using namespace std;
 
 #ifndef _WIN32
@@ -24,6 +27,109 @@ static inline wstring NormalizeSeparators(const wstring& s) { return s; }
 static inline filesystem::path JoinPath(const wstring& a, const wstring& b) {
 	return filesystem::path(NormalizeSeparators(a)) / filesystem::path(NormalizeSeparators(b));
 }
+
+enum class FolderState {
+	BACKUP,
+	RESTORE,
+};
+
+static inline const char* FolderStateToI18nKey(FolderState state) {
+	switch (state) {
+	case FolderState::BACKUP: return "OP_BACKUP";
+	case FolderState::RESTORE: return "OP_RESTORE";
+	default: return "OP_BACKUP";
+	}
+}
+
+static inline void ToLowerInPlace(wstring& s) {
+#ifdef _WIN32
+	for (wchar_t& ch : s) ch = (wchar_t)towlower(ch);
+#else
+	(void)s;
+#endif
+}
+
+static inline wstring MakeWorldOperationKey(const filesystem::path& worldPath) {
+	error_code ec;
+	filesystem::path p = worldPath;
+
+	// Normalize to an absolute, lexically-normal path so the same folder maps to one key.
+	auto abs = filesystem::absolute(p, ec);
+	if (!ec) p = abs;
+	p = p.lexically_normal();
+
+	wstring key = p.wstring();
+
+#ifdef _WIN32
+	// Windows paths are case-insensitive; unify casing and separators.
+	for (wchar_t& ch : key) {
+		if (ch == L'/') ch = L'\\';
+	}
+	ToLowerInPlace(key);
+#else
+	for (wchar_t& ch : key) {
+		if (ch == L'\\') ch = L'/';
+	}
+#endif
+
+	return key;
+}
+
+static mutex g_worldOpMutex;
+static unordered_map<wstring, FolderState> g_worldOpInProgress;
+
+class WorldOperationGuard {
+public:
+	WorldOperationGuard(const filesystem::path& worldPath, FolderState requested)
+		: key_(MakeWorldOperationKey(worldPath)), requested_(requested) {
+		lock_guard<mutex> lock(g_worldOpMutex);
+		auto it = g_worldOpInProgress.find(key_);
+		if (it == g_worldOpInProgress.end()) {
+			g_worldOpInProgress.emplace(key_, requested_);
+			acquired_ = true;
+		}
+		else {
+			existing_ = it->second;
+			acquired_ = false;
+		}
+	}
+
+	WorldOperationGuard(const WorldOperationGuard&) = delete;
+	WorldOperationGuard& operator=(const WorldOperationGuard&) = delete;
+
+	WorldOperationGuard(WorldOperationGuard&& other) noexcept {
+		*this = std::move(other);
+	}
+	WorldOperationGuard& operator=(WorldOperationGuard&& other) noexcept {
+		if (this == &other) return *this;
+		Release();
+		key_ = std::move(other.key_);
+		requested_ = other.requested_;
+		existing_ = other.existing_;
+		acquired_ = other.acquired_;
+		other.acquired_ = false;
+		return *this;
+	}
+
+	~WorldOperationGuard() { Release(); }
+
+	bool Acquired() const { return acquired_; }
+	FolderState Requested() const { return requested_; }
+	FolderState Existing() const { return existing_; }
+
+private:
+	void Release() {
+		if (!acquired_) return;
+		lock_guard<mutex> lock(g_worldOpMutex);
+		g_worldOpInProgress.erase(key_);
+		acquired_ = false;
+	}
+
+	wstring key_;
+	FolderState requested_ = FolderState::BACKUP;
+	FolderState existing_ = FolderState::BACKUP;
+	bool acquired_ = false;
+};
 
 enum class BackupCheckResult {
 	NO_CHANGE,
@@ -370,8 +476,20 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 // 参数: folder: 世界信息结构体, console: 日志输出对象, comment: 用户注释
 void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
     const Config& config = folder.config;
-    console.AddLog(L("LOG_BACKUP_START_HEADER"));
-    console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
+
+	WorldOperationGuard opGuard(filesystem::path(folder.path), FolderState::BACKUP);
+	if (!opGuard.Acquired()) {
+		console.AddLog(
+			L("LOG_OP_REJECTED_BUSY"),
+			wstring_to_utf8(folder.name).c_str(),
+			L(FolderStateToI18nKey(opGuard.Existing())),
+			L(FolderStateToI18nKey(opGuard.Requested()))
+		);
+		return;
+	}
+
+	console.AddLog(L("LOG_BACKUP_START_HEADER"));
+	console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
 
     if (!filesystem::exists(config.zipPath)) {
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
@@ -643,10 +761,8 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
 		// 历史记录
-		if (folder.configIndex != -1 && config.backupMode != 3)
+		if (config.backupMode != 3)
 			AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
-		else if (config.backupMode != 3)
-			AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
 
         g_appState.realConfigIndex = -1;
         // 广播一个成功事件
@@ -674,10 +790,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
                 filesystem::rename(latestBackupPath, newPath);
                 latestBackupPath = newPath;
             }
-            if (folder.configIndex != -1)
-                AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
-            else
-                AddHistoryEntry(g_appState.currentConfigIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+			if (latestBackupPath.empty()) {
+				AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+			}
+			else {
+				RemoveHistoryEntry(folder.configIndex, oldName);
+				AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+			}
         }
 
 
@@ -762,6 +881,18 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 }
 
 void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
+	if (!opGuard.Acquired()) {
+		console.AddLog(
+			L("LOG_OP_REJECTED_BUSY"),
+			wstring_to_utf8(worldName).c_str(),
+			L(FolderStateToI18nKey(opGuard.Existing())),
+			L(FolderStateToI18nKey(opGuard.Requested()))
+		);
+		return;
+	}
+
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(fullBackupPath.wstring()).c_str());
@@ -772,10 +903,8 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 		return;
 	}
 
-	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
-
 	if (restoreMethod == 0) { // Clean Restore
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder.wstring()).c_str());
 		try {
 			if (filesystem::exists(destinationFolder)) {
 				filesystem::remove_all(destinationFolder);
@@ -788,7 +917,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 	// For a manually selected file, we treat it as a single restore operation.
 	// Smart Restore logic does not apply as we don't know the history.
-	wstring command = L"\"" + config.zipPath + L"\" x \"" + fullBackupPath.wstring() + L"\" -o\"" + destinationFolder + L"\" -y";
+	wstring command = L"\"" + config.zipPath + L"\" x \"" + fullBackupPath.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y";
 	RunCommandInBackground(command, console, config.useLowPriority);
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
@@ -796,6 +925,18 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 
 // restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
 void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
+	if (!opGuard.Acquired()) {
+		console.AddLog(
+			L("LOG_OP_REJECTED_BUSY"),
+			wstring_to_utf8(worldName).c_str(),
+			L(FolderStateToI18nKey(opGuard.Existing())),
+			L(FolderStateToI18nKey(opGuard.Requested()))
+		);
+		return;
+	}
+
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
@@ -807,19 +948,18 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		return;
 	}
 
-	// 准备路径
-	wstring sourceDir = config.backupPath + L"\\" + worldName;
-	wstring destinationFolder = config.saveRoot + L"\\" + worldName;
-	filesystem::path targetBackupPath = filesystem::path(sourceDir) / backupFile;
+	// 准备路径 - 使用跨平台方式
+	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
+	filesystem::path targetBackupPath = sourceDir / backupFile;
 
 	// 检查备份文件是否存在
-	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir + L"\\" + backupFile)) {
+	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir / backupFile)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return;
 	}
 
 	// 还原前检查世界是否正在运行
-	/*if (IsFileLocked(destinationFolder + L"\\session.lock")) {
+	if (IsFileLocked(destinationFolder.wstring() + L"\\session.lock")) {
 		int msgboxID = MessageBoxW(
 			NULL,
 			utf8_to_wstring(L("RESTORE_OVER_RUNNING_WORLD_MSG")).c_str(),
@@ -830,7 +970,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 			console.AddLog("[Info] Restore cancelled by user due to active game session.");
 			return;
 		}
-	}*/
+	}
 
 	// 收集所有相关的备份文件
 	vector<filesystem::path> backupsToApply;
@@ -916,7 +1056,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 
 	// 1.11.1 将这个清除步骤移动到后面了，避免没成功检索就直接删档
 	if (restoreMethod == 0) {
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder).c_str());
+		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder.wstring()).c_str());
 		bool deletion_ok = true;
 		if (filesystem::exists(destinationFolder)) {
 			try {
@@ -957,7 +1097,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
-		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder + L"\" -y" + filesToExtractStr;
+		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y" + filesToExtractStr;
 		RunCommandInBackground(command, console, config.useLowPriority);
 	}
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
@@ -968,7 +1108,7 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console) {
 	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
-	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
+	filesystem::path backupDir = JoinPath(config.backupPath, entryToDelete.worldName);
 	vector<filesystem::path> filesToDelete;
 	filesToDelete.push_back(backupDir / entryToDelete.backupFile);
 
@@ -1001,7 +1141,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		return;
 	}
 
-	filesystem::path backupDir = config.backupPath + L"\\" + entryToDelete.worldName;
+	filesystem::path backupDir = JoinPath(config.backupPath, entryToDelete.worldName);
 	filesystem::path pathToDelete = backupDir / entryToDelete.backupFile;
 	const HistoryEntry* nextEntryRaw = nullptr;
 
@@ -1249,6 +1389,9 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 	filesystem::remove_all(temp_export_dir);
 }
 
+
+MyFolder GetOccupiedWorld();
+
 void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	
 	Config cfg = world.config;
@@ -1256,15 +1399,15 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
 
 	// 启动后台等待线程
-	auto startTime = std::chrono::steady_clock::now();
-	const auto timeout = std::chrono::seconds(15);
+	auto startTime = chrono::steady_clock::now();
+	auto timeout = chrono::seconds(15);
 
 	// 等待响应或超时
-	while (std::chrono::steady_clock::now() - startTime < timeout) {
+	while (chrono::steady_clock::now() - startTime < timeout) {
 		if (g_appState.isRespond) {
 			break; // 收到响应
 		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		this_thread::sleep_for(chrono::milliseconds(100));
 	}
 
 	// 检查是收到了响应还是超时了
@@ -1275,12 +1418,35 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 		return;
 	}
 
-	// --- 收到响应，开始还原 ---
+	// 收到响应，检查世界是否仍然被占用
+
+	g_appState.isRespond = false; // 仍标记为未响应，等确认存档关闭后确认为响应
+
+	startTime = chrono::steady_clock::now();
+	timeout = chrono::seconds(10);
+
+	while (chrono::steady_clock::now() - startTime < timeout) {
+		MyFolder checkOccupiedFolder = GetOccupiedWorld();
+		if (checkOccupiedFolder.name == world.name) {
+			this_thread::sleep_for(chrono::seconds(1));
+		}
+		else {
+			g_appState.isRespond = true;
+			break;
+		}
+	}
+	if (!g_appState.isRespond) {
+		console.AddLog(L("[Error] World is still occupied after mod response. Restore aborted."));
+		BroadcastEvent("event=restore_cancelled;reason=world_occupied");
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		return;
+	}
+
 	g_appState.isRespond = false; // 重置标志位
 	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
 	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
 
-	Sleep(3000); // 等待3秒，确保文件写入完成
+	Sleep(2000); // 等待2秒，确保文件写入完成
 
 	// 查找最新备份文件 (这部分逻辑保持不变)
 	wstring backupDir = cfg.backupPath + L"\\" + world.name;
