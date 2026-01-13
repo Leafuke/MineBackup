@@ -172,16 +172,15 @@ bool IsFileLocked(const wstring& path) {
 		return false;
 	}
 	HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	//HANDLE hFile = CreateFile(filePath.c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_SHARE_READ, NULL)
 	if (hFile == INVALID_HANDLE_VALUE) {
-		return true;
-		if (GetLastError() == ERROR_SHARING_VIOLATION || GetLastError() == ERROR_LOCK_VIOLATION) {
+		DWORD err = GetLastError();
+		if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION) {
 			return true;
 		}
+		// 其他错误（如文件不存在等）不视为锁定
+		return false;
 	}
-	if (hFile != INVALID_HANDLE_VALUE) {
-		CloseHandle(hFile);
-	}
+	CloseHandle(hFile);
 	return false;
 }
 
@@ -788,8 +787,10 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 				console.AddLog(L("LOG_ERROR_CMD_FAILED_HOTBACKUP_SUGGESTION"));
 				MessageBoxWin((string)L("ERROR"), (string)L("LOG_ERROR_CMD_FAILED_HOTBACKUP_SUGGESTION"), 2);
 			}
-			if (exit_code == 2) // 致命错误
+			if (exit_code == 2) {
 				console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
+				return false;
+			}
 		}
 	}
 	else {

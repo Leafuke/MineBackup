@@ -441,7 +441,8 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 	}
 
 	int to_delete_count = (int)files.size() - limit;
-	for (int i = 0; i < to_delete_count && i < deletable_files.size(); ++i) {
+	size_t safe_delete_count = static_cast<size_t>(max(0, to_delete_count));
+	for (size_t i = 0; i < safe_delete_count && i < deletable_files.size(); ++i) {
 		const auto& file_to_delete = deletable_files[i];
 		try {
 			if (file_to_delete.path().filename().wstring().find(L"[Smart]") == 0)
@@ -515,7 +516,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     tm ltm;
     localtime_s(&ltm, &now);
     wchar_t timeBuf[160];
-    wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+    wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
 	archivePath = (destinationFolder / (L"[" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
 	try {
@@ -695,10 +696,24 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
         // 智能备份需要找到它所基于的文件
         // 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
-		nlohmann::json oldMetadata;
-		ifstream f(metadataFolder / L"metadata.json");
-        oldMetadata = nlohmann::json::parse(f);
-        basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
+		try {
+			nlohmann::json oldMetadata;
+			ifstream f(metadataFolder / L"metadata.json");
+			if (!f.good()) {
+				throw runtime_error("Cannot open metadata file");
+			}
+			oldMetadata = nlohmann::json::parse(f);
+			basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
+		} catch (const exception& e) {
+			console.AddLog("[Warning] Failed to read metadata for smart backup, forcing full backup: %s", e.what());
+			// 回退到完整备份
+			backupTypeStr = L"Full";
+			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+			basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
+			goto execute_backup;
+		}
 
         // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
 		archivePath = (destinationFolder / (L"[Smart][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
@@ -733,17 +748,20 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             // -spf 强制使用完整路径，-spf2 使用相对路径
         }
     }
+
+execute_backup:
     // 在后台线程中执行命令
     if (RunCommandInBackground(command, console, config.useLowPriority, sourcePath)) // 工作目录不能丢！
     {
         console.AddLog(L("LOG_BACKUP_END_HEADER"));
 
-        // 备份文件大小检查
+        // 备份文件大小检查 - 根据备份类型调整阈值
         try {
             if (filesystem::exists(archivePath)) {
                 uintmax_t fileSize = filesystem::file_size(archivePath);
-                // 阈值设置为 10 KB
-                if (fileSize < 10240) {
+                // Full备份至少应该有100KB，Smart备份可以很小
+                uintmax_t minThreshold = (backupTypeStr == L"Full") ? 102400 : 10240;
+                if (fileSize < minThreshold) {
                     console.AddLog(L("BACKUP_FILE_TOO_SMALL_WARNING"), wstring_to_utf8(filesystem::path(archivePath).filename().wstring()).c_str());
                     // 广播一个警告
                     BroadcastEvent("event=backup_warning;type=file_too_small;");
@@ -783,7 +801,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
                 time_t now = time(0);
                 tm ltm;
                 localtime_s(&ltm, &now);
-                wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+                wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
                 // 替换时间戳部分
                 newName.replace(leftBracket + 1, rightBracket - leftBracket - 1, timeBuf);
                 filesystem::path newPath = latestBackupPath.parent_path() / newName;
@@ -805,9 +823,11 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             console.AddLog(L("CLOUD_SYNC_START"));
             wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + folder.name + L"\" --progress";
             // 另起一个线程来执行云同步，避免阻塞后续操作
-            thread([rclone_command, &console, config]() {
-                RunCommandInBackground(rclone_command, console, config.useLowPriority);
-                console.AddLog(L("CLOUD_SYNC_FINISH"));
+            // 注意：使用指针值捕获而非引用，避免console生命周期结束后悬垂引用
+            Console* consolePtr = &console;
+            thread([rclone_command, consolePtr, config]() {
+                RunCommandInBackground(rclone_command, *consolePtr, config.useLowPriority);
+                consolePtr->AddLog(L("CLOUD_SYNC_FINISH"));
                 }).detach();
         }
     }
@@ -855,7 +875,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	tm ltm;
 	localtime_s(&ltm, &now);
 	wchar_t timeBuf[160];
-	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+	wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
 	wstring archivePath = destinationFolder.wstring() + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
 
 	try {
@@ -914,6 +934,15 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 			console.AddLog("[ERROR] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
 		}
 	}
+
+	// 还原前验证备份文件的完整性
+	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
+	wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + fullBackupPath.wstring() + L"\" -y";
+	if (!RunCommandInBackground(testCommand, console, config.useLowPriority)) {
+		console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(fullBackupPath.filename().wstring()).c_str());
+		return; // 中止还原以保护数据
+	}
+	console.AddLog(L("LOG_BACKUP_VERIFICATION_PASSED"));
 
 	// For a manually selected file, we treat it as a single restore operation.
 	// Smart Restore logic does not apply as we don't know the history.
@@ -1094,6 +1123,16 @@ void DoRestore(const Config config, const wstring& worldName, const wstring& bac
 		}
 	}
 
+	// 还原前验证所有备份文件的完整性
+	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
+	for (const auto& backup : backupsToApply) {
+		wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + backup.wstring() + L"\" -y";
+		if (!RunCommandInBackground(testCommand, console, config.useLowPriority)) {
+			console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());
+			return; // 中止还原以保护数据
+		}
+	}
+	console.AddLog(L("LOG_BACKUP_VERIFICATION_PASSED"));
 
 	// 依次执行还原
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
@@ -1244,7 +1283,8 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 	}
 	catch (const exception& e) {
 		console.AddLog(L("LOG_SAFE_DELETE_FATAL_ERROR"), e.what());
-		filesystem::remove_all(tempExtractDir);
+		error_code ec;
+		filesystem::remove_all(tempExtractDir, ec); // 使用不抛异常版本
 	}
 }
 
@@ -1448,7 +1488,18 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
 	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
 
-	Sleep(2000); // 等待2秒，确保文件写入完成
+	// 等待文件不再被锁定，最多等待10秒
+	filesystem::path levelDatPath = filesystem::path(world.path) / L"level.dat";
+	auto waitStart = chrono::steady_clock::now();
+	auto waitTimeout = chrono::seconds(10);
+	while (chrono::steady_clock::now() - waitStart < waitTimeout) {
+		if (!IsFileLocked(levelDatPath.wstring())) {
+			break;
+		}
+		this_thread::sleep_for(chrono::milliseconds(200));
+	}
+	// 额外等待500ms确保文件系统同步完成
+	this_thread::sleep_for(chrono::milliseconds(500));
 
 	// 查找最新备份文件 (这部分逻辑保持不变)
 	wstring backupDir = cfg.backupPath + L"\\" + world.name;

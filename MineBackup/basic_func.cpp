@@ -16,15 +16,27 @@ bool IsPureASCII(const wstring& s) {
 	return true;
 }
 
-// 计算文件的哈希值（这是一个简单的实现，很不严格哒）
-size_t CalculateFileHash(const filesystem::path& filepath) {
-	ifstream file(filepath, ios::binary);
-	if (!file) return 0;
-
-	string content((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
-	hash<string> hasher;
-	return hasher(content);
+// 计算文件的状态标识符（改为使用文件大小+修改时间的组合，避免读取整个文件内容）
+size_t CalculateFileState(const filesystem::path& filepath) {
+	error_code ec;
+	if (!filesystem::exists(filepath, ec) || ec) return 0;
+	
+	uintmax_t fileSize = filesystem::file_size(filepath, ec);
+	if (ec) return 0;
+	
+	auto modTime = filesystem::last_write_time(filepath, ec);
+	if (ec) return 0;
+	
+	// 组合大小和时间生成唯一标识符
+	// 使用 file_time_type 的 time_since_epoch 获取时间戳
+	auto timeValue = modTime.time_since_epoch().count();
+	
+	// 使用简单但有效的哈希组合
+	size_t result = hash<uintmax_t>{}(fileSize);
+	result ^= hash<decltype(timeValue)>{}(timeValue) + 0x9e3779b9 + (result << 6) + (result >> 2);
+	return result;
 }
+
 // 作为全局变量，方便二者修改
 map<wstring, size_t> currentState;
 
@@ -58,7 +70,7 @@ vector<filesystem::path> GetChangedFiles(
 		// 元数据不存在，扫描所有文件并返回，以便进行首次完整备份
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
 			}
 		}
 		return {}; // 返回空列表，因为所有文件状态都记录在 out_currentState 中了
@@ -80,7 +92,7 @@ vector<filesystem::path> GetChangedFiles(
 		// 同样需要扫描所有文件
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
 			}
 		}
 		return {};
@@ -92,27 +104,22 @@ vector<filesystem::path> GetChangedFiles(
 		// 基准文件被用户删除，元数据失效，扫描所有文件以进行新的完整备份
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileHash(entry.path());
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
 			}
 		}
 		return {};
 	}
 
-	// 3. 计算当前状态并与上次状态比较
+	// 3. 计算当前状态并与上次状态比较（使用文件大小+修改时间的快速检测）
 	if (filesystem::exists(worldPath)) {
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
 				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
-				//filesystem::path fileName = entry.path().filename();
-				size_t currentHash = CalculateFileHash(entry.path());
-				out_currentState[relativePath.wstring()] = currentHash;
+				size_t currentFileState = CalculateFileState(entry.path());
+				out_currentState[relativePath.wstring()] = currentFileState;
 
-				//// 将filename和hash都输出一下，用来检查问题，输出到debug.txt文件
-				/*ofstream debugFile("debug.txt", ios::app);
-				debugFile << wstring_to_utf8(fileName.wstring()) << " " << currentHash << endl;*/
-
-				// 如果文件是新的，或者哈希值不同，则判定为已更改
-				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
+				// 如果文件是新的，或者状态不同（大小或时间变化），则判定为已更改
+				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentFileState) {
 					changedFiles.push_back(entry.path());
 				}
 			}
