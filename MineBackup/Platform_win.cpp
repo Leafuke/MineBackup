@@ -788,8 +788,10 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 				console.AddLog(L("LOG_ERROR_CMD_FAILED_HOTBACKUP_SUGGESTION"));
 				MessageBoxWin((string)L("ERROR"), (string)L("LOG_ERROR_CMD_FAILED_HOTBACKUP_SUGGESTION"), 2);
 			}
-			if (exit_code == 2) // 致命错误
+			if (exit_code == 2) {
 				console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
+				return false;
+			}
 		}
 	}
 	else {

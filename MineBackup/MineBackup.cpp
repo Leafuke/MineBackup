@@ -2583,7 +2583,7 @@ void ShowSettingsWindow() {
 				ImGui::SetTooltip(L("TIP_SKIP_IF_UNCHANGED"));
 			}
 
-			const char* zip_methods[] = { "LZMA2", "Deflate", "BZip2", "ZStandard" };
+			const char* zip_methods[] = { "LZMA2", "Deflate", "BZip2", "zstd" };
 			int method_idx = 0;
 			for (int i = 0; i < IM_ARRAYSIZE(zip_methods); ++i) {
 				if (_wcsicmp(cfg.zipMethod.c_str(), utf8_to_wstring(zip_methods[i]).c_str()) == 0) {
