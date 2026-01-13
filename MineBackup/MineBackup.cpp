@@ -33,7 +33,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.11.5";
+string CURRENT_VERSION = "1.11.7";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
