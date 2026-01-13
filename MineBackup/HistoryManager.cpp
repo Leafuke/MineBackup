@@ -134,7 +134,7 @@ void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& b
 	tm ltm;
 	localtime_s(&ltm, &now);
 	wchar_t timeBuf[80];
-	wcsftime(timeBuf, sizeof(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
+	wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
 
 	HistoryEntry entry;
 	entry.timestamp_str = timeBuf;
