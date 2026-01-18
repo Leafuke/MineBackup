@@ -253,6 +253,27 @@ bool Extract7zToTempFile(std::wstring& extractedPath) {
     return false;
 }
 
+static bool CopyBundledFontToTemp(const fs::path& source, std::wstring& extractedPath) {
+    std::error_code ec;
+    if (!fs::exists(source, ec)) return false;
+
+    fs::path tempDir = fs::temp_directory_path(ec);
+    if (ec) {
+        extractedPath = source.wstring();
+        return true;
+    }
+
+    fs::path dest = tempDir / source.filename();
+    fs::copy_file(source, dest, fs::copy_options::overwrite_existing, ec);
+    if (!ec && fs::exists(dest, ec)) {
+        extractedPath = dest.wstring();
+        return true;
+    }
+
+    extractedPath = source.wstring();
+    return true;
+}
+
 bool ExtractFontToTempFile(std::wstring& extractedPath) {
     auto exeDir = []() -> fs::path {
         char buf[4096];
@@ -268,10 +289,7 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
         exeDir / "fa-regular-400.ttf"
     };
     for (const auto& p : bundledCandidates) {
-        if (fs::exists(p)) {
-            extractedPath = p.wstring();
-            return true;
-        }
+        if (CopyBundledFontToTemp(p, extractedPath)) return true;
     }
 
     const char* sysCandidates[] = {

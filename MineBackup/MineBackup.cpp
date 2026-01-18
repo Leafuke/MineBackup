@@ -26,6 +26,10 @@ inline int _getch() { return std::getchar(); }
 #endif
 #include <fstream>
 #include <system_error>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <limits.h>
+#endif
 
 using namespace std;
 
@@ -77,6 +81,69 @@ enum class BackupCheckResult {
 	FORCE_FULL_BACKUP_METADATA_INVALID,
 	FORCE_FULL_BACKUP_BASE_MISSING
 };
+
+static wstring GetDefaultUIFontPath() {
+#ifdef _WIN32
+	if (g_CurrentLang == "zh_CN") {
+		const wstring cn_candidates[] = {
+			L"C:\\Windows\\Fonts\\msyh.ttc",
+			L"C:\\Windows\\Fonts\\msyh.ttf",
+			L"C:\\Windows\\Fonts\\msjh.ttc",
+			L"C:\\Windows\\Fonts\\msjh.ttf",
+			L"C:\\Windows\\Fonts\\SegoeUI.ttf"
+		};
+		for (const auto& cand : cn_candidates) {
+			if (filesystem::exists(cand)) return cand;
+		}
+	}
+	const wstring en_candidates[] = { L"C:\\Windows\\Fonts\\SegoeUI.ttf" };
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return L"";
+#elif defined(__APPLE__)
+	const wstring cn_candidates[] = {
+		L"/System/Library/Fonts/PingFang.ttc",
+		L"/System/Library/Fonts/STHeiti Light.ttc",
+		L"/System/Library/Fonts/STHeiti Medium.ttc",
+		L"/System/Library/Fonts/AppleSDGothicNeo.ttc"
+	};
+	for (const auto& cand : cn_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	const wstring en_candidates[] = {
+		L"/System/Library/Fonts/SFNS.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial.ttf",
+		L"/Library/Fonts/Arial.ttf"
+	};
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return L"";
+#else
+	const wstring candidates[] = {
+		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+		L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+		L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+	};
+	for (const auto& cand : candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return L"";
+#endif
+}
+
+#ifdef __APPLE__
+static void SetWorkingDirectoryToExecutable() {
+	char path[PATH_MAX];
+	uint32_t size = sizeof(path);
+	if (_NSGetExecutablePath(path, &size) == 0) {
+		std::error_code ec;
+		filesystem::current_path(filesystem::path(path).parent_path(), ec);
+	}
+}
+#endif
 
 static void glfw_error_callback(int error, const char* description)
 {
@@ -133,6 +200,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 #else
 int main(int argc, char** argv)
 {
+	#ifdef __APPLE__
+	SetWorkingDirectoryToExecutable();
+	#endif
 	LoadConfigs("config.ini");
 #endif
 
@@ -394,34 +464,16 @@ int main(int argc, char** argv)
 
 	if (isFirstRun) {
 		GetUserDefaultUILanguageWin();
-#ifdef _WIN32
-		if (g_CurrentLang == "zh_CN") {
-			if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-				Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-				Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
-				Fontss = L"C:\\Windows\\Fonts\\msjh.ttc";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
-				Fontss = L"C:\\Windows\\Fonts\\msjh.ttf";
-			else
-				Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-		}
-		else
-			Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-#else
-		if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-			Fontss = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-		else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
-			Fontss = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
-		else
-			Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"; // 英文/通用
-#endif
+		Fontss = GetDefaultUIFontPath();
 	}
-	if (g_CurrentLang == "zh_CN")
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
-	else
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
+	if (!Fontss.empty() && filesystem::exists(Fontss)) {
+		if (g_CurrentLang == "zh_CN")
+			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+		else
+			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
+	} else {
+		io.Fonts->AddFontDefault();
+	}
 
 	// 准备合并图标字体
 	ImFontConfig config2;
@@ -819,29 +871,7 @@ int main(int argc, char** argv)
 						initialConfig.skipIfUnchanged = true;
 						initialConfig.theme = themeId;
 						isSilence = false;
-#ifdef _WIN32
-						if (g_CurrentLang == "zh_CN") {
-							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttf";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msjh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msjh.ttf";
-							else
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-						}
-						else
-							initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-#else
-						if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-							initialConfig.fontPath = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-						else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
-							initialConfig.fontPath = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
-						else
-							initialConfig.fontPath = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-#endif
+						initialConfig.fontPath = GetDefaultUIFontPath();
 						g_appState.specialConfigs.clear();
 
 						// 4. 保存到文件并切换到主应用界面
@@ -1274,10 +1304,10 @@ int main(int argc, char** argv)
 					if (specialSetting) {
 						ImGui::Text("[Sp.]");
 						ImGui::SameLine();
-						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name);
+						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 					}
 					else {
-						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name);
+						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
 					}
 					ImGui::Separator();
 					if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
@@ -2179,10 +2209,10 @@ void ShowSettingsWindow() {
 		if (specialSetting) {
 			ImGui::Text("[Sp.]");
 			ImGui::SameLine();
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name);
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 		}
 		else {
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name);
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
 		}
 		ImGui::Separator();
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {

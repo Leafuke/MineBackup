@@ -4,6 +4,8 @@
 #include "i18n.h"
 #ifdef _WIN32
 #include "Platform_win.h"
+#elif defined(__APPLE__)
+#include "Platform_macos.h"
 #else
 #include "Platform_linux.h"
 #endif
@@ -34,6 +36,26 @@ static wstring GetDefaultFontPath() {
 		if (filesystem::exists(cand)) return cand;
 	}
 	return en_candidates[0];
+#elif defined(__APPLE__)
+	const wstring cn_candidates[] = {
+		L"/System/Library/Fonts/PingFang.ttc",
+		L"/System/Library/Fonts/STHeiti Light.ttc",
+		L"/System/Library/Fonts/STHeiti Medium.ttc",
+		L"/System/Library/Fonts/AppleSDGothicNeo.ttc"
+	};
+	for (const auto& cand : cn_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	const wstring en_candidates[] = {
+		L"/System/Library/Fonts/SFNS.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial.ttf",
+		L"/Library/Fonts/Arial.ttf"
+	};
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return cn_candidates[0];
 #else
 	const wstring candidates[] = {
 		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",

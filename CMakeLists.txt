@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(MineBackup)
+project(MineBackup VERSION 1.11.7)
 
 # For single-config generators (e.g. MinGW Makefiles/Ninja), default to Release.
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
@@ -42,6 +42,8 @@ set(HEADERS
     ${SOURCE_DIR}/Console.h
     ${SOURCE_DIR}/HistoryManager.h
     ${SOURCE_DIR}/Platform_win.h
+    ${SOURCE_DIR}/Platform_linux.h
+    ${SOURCE_DIR}/Platform_macos.h
     ${SOURCE_DIR}/text_to_text.h
     ${SOURCE_DIR}/i18n.h
     ${SOURCE_DIR}/json.hpp
@@ -62,6 +64,8 @@ set(HEADERS
 set(RESOURCES
     ${SOURCE_DIR}/MineBackup.rc
 )
+
+set(FONT_AWESOME_SP ${CMAKE_CURRENT_SOURCE_DIR}/fontawesome-sp.otf)
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
@@ -110,6 +114,27 @@ if(GLFW_TARGET STREQUAL "")
     endif()
 endif()
 
+if(APPLE AND GLFW_TARGET STREQUAL "")
+    include(FetchContent)
+    FetchContent_Declare(
+        glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.3.8
+    )
+    FetchContent_MakeAvailable(glfw)
+    set(GLFW_TARGET glfw)
+endif()
+
+if(APPLE AND GLFW_TARGET STREQUAL "")
+    find_library(GLFW_FALLBACK NAMES glfw3 glfw PATHS /opt/homebrew/lib /usr/local/lib /opt/local/lib)
+    if(GLFW_FALLBACK)
+        add_library(glfw INTERFACE)
+        target_link_libraries(glfw INTERFACE ${GLFW_FALLBACK})
+        target_include_directories(glfw INTERFACE /opt/homebrew/include /usr/local/include /opt/local/include)
+        set(GLFW_TARGET glfw)
+    endif()
+endif()
+
 if(WIN32)
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_win.cpp)
     list(APPEND SOURCES
@@ -117,6 +142,9 @@ if(WIN32)
         ${KNOTLINK_DIR}/SignalSender.cpp
     )
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_win.cpp)
+elseif(APPLE)
+    list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos.cpp)
+    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_macos.cpp)
 else()
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_linux.cpp)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_linux.cpp)
@@ -142,7 +170,25 @@ if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE dwmapi)
 endif()
 
+if(APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        "-framework Cocoa"
+        "-framework IOKit"
+        "-framework CoreVideo"
+    )
+    find_library(ICONV_LIB iconv)
+    if(ICONV_LIB)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${ICONV_LIB})
+    endif()
+endif()
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 
+)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${FONT_AWESOME_SP}"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fontawesome-sp.otf"
 )

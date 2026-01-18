@@ -361,9 +361,11 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
-/MineBackup/awa.7z
+*.7z
 *.ini
 *.txt
 *.otf
 *.exe
-/MineBackup/history.dat
+history.dat
+build/
+.DS_Store
