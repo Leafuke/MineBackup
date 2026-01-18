@@ -73,7 +73,7 @@ struct Console
 	}
 
 	//显示消息
-	void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
+	void    AddLog(const char* fmt, ...)
 	{
 		if (isSilence) return;
 		std::lock_guard<std::mutex> lock(logMutex);

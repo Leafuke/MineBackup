@@ -144,7 +144,8 @@ if(WIN32)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_win.cpp)
 elseif(APPLE)
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos.cpp)
-    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_macos.cpp)
+    list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos_tray.mm)
+    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_macos.cpp ${SOURCE_DIR}/Platform_macos_tray.mm)
 else()
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_linux.cpp)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_linux.cpp)
@@ -170,9 +171,28 @@ if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE dwmapi)
 endif()
 
+if(UNIX AND NOT APPLE AND NOT WIN32)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(APPINDICATOR3 QUIET appindicator3-0.1)
+        pkg_check_modules(GTK3 QUIET gtk+-3.0)
+        if(APPINDICATOR3_FOUND AND GTK3_FOUND)
+            target_compile_definitions(${PROJECT_NAME} PRIVATE MB_HAVE_APPINDICATOR)
+            target_include_directories(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_INCLUDE_DIRS} ${GTK3_INCLUDE_DIRS})
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_LIBRARIES} ${GTK3_LIBRARIES})
+            target_compile_options(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_CFLAGS_OTHER} ${GTK3_CFLAGS_OTHER})
+        endif()
+    endif()
+    find_package(X11 REQUIRED)
+    if(X11_FOUND)
+        target_link_libraries(${PROJECT_NAME} PRIVATE X11)
+    endif()
+endif()
+
 if(APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         "-framework Cocoa"
+        "-framework Carbon"
         "-framework IOKit"
         "-framework CoreVideo"
     )

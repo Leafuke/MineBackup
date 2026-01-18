@@ -3,6 +3,15 @@
 #include "i18n.h"
 #include "Console.h"
 #include "AppState.h"
+#include <GLFW/glfw3.h>
+
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+
+#ifdef MB_HAVE_APPINDICATOR
+#include <gtk/gtk.h>
+#include <libappindicator/app-indicator.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -10,9 +19,11 @@
 #include <ctime>
 #include <fstream>
 #include <cstdio>
+#include <algorithm>
 #include <thread>
 #include <system_error>
 #include <unistd.h>
+#include <cctype>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -28,6 +39,91 @@ extern string g_NoticeUpdatedAt;
 extern string g_NoticeLastSeenVersion;
 extern string CURRENT_VERSION;
 extern AppState g_appState;
+extern GLFWwindow* wc;
+
+static atomic<bool> g_trayThreadRunning(false);
+static thread g_trayThread;
+
+#ifdef MB_HAVE_APPINDICATOR
+static AppIndicator* g_indicator = nullptr;
+static gboolean TrayQuitIdle(gpointer) {
+    gtk_main_quit();
+    return G_SOURCE_REMOVE;
+}
+
+static void TrayMenuOpen(GtkMenuItem*, gpointer) {
+    g_appState.showMainApp = true;
+    if (wc) {
+        glfwShowWindow(wc);
+        glfwFocusWindow(wc);
+        glfwPostEmptyEvent();
+    }
+}
+
+static void TrayMenuExit(GtkMenuItem*, gpointer) {
+    g_appState.done = true;
+    glfwPostEmptyEvent();
+}
+#endif
+
+static atomic<bool> g_hotkeyThreadRunning(false);
+static thread g_hotkeyThread;
+static Display* g_hotkeyDisplay = nullptr;
+static Window g_hotkeyRoot = 0;
+static int g_backupKeycode = 0;
+static int g_restoreKeycode = 0;
+
+static int X11KeycodeFromAscii(Display* display, int key) {
+    if (!display) return 0;
+    char c = static_cast<char>(std::toupper(key));
+    std::string s(1, c);
+    KeySym sym = XStringToKeysym(s.c_str());
+    if (sym == NoSymbol) return 0;
+    return XKeysymToKeycode(display, sym);
+}
+
+static void GrabKeyWithMask(Display* display, Window root, int keycode, unsigned int mask) {
+    XGrabKey(display, keycode, mask, root, True, GrabModeAsync, GrabModeAsync);
+}
+
+static void UngrabKeyWithMask(Display* display, Window root, int keycode, unsigned int mask) {
+    XUngrabKey(display, keycode, mask, root);
+}
+
+static void ApplyGrabMasks(Display* display, Window root, int keycode, bool grab) {
+    const unsigned int baseMask = ControlMask | Mod1Mask;
+    const unsigned int masks[] = {
+        baseMask,
+        baseMask | LockMask,
+        baseMask | Mod2Mask,
+        baseMask | LockMask | Mod2Mask
+    };
+    for (unsigned int mask : masks) {
+        if (grab) GrabKeyWithMask(display, root, keycode, mask);
+        else UngrabKeyWithMask(display, root, keycode, mask);
+    }
+}
+
+static void HotkeyEventLoop() {
+    while (g_hotkeyThreadRunning) {
+        if (!g_hotkeyDisplay) break;
+        while (XPending(g_hotkeyDisplay)) {
+            XEvent ev;
+            XNextEvent(g_hotkeyDisplay, &ev);
+            if (ev.type == KeyPress) {
+                unsigned int state = ev.xkey.state;
+                if ((state & ControlMask) && (state & Mod1Mask)) {
+                    if (ev.xkey.keycode == g_backupKeycode) {
+                        TriggerHotkeyBackup();
+                    } else if (ev.xkey.keycode == g_restoreKeycode) {
+                        TriggerHotkeyRestore();
+                    }
+                }
+            }
+        }
+        this_thread::sleep_for(chrono::milliseconds(50));
+    }
+}
 
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
     (void)iconType;
@@ -192,7 +288,112 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
     return L"N/A";
 }
 
+void CreateTrayIcon() {
+    if (g_trayThreadRunning) return;
+#ifdef MB_HAVE_APPINDICATOR
+    g_trayThreadRunning = true;
+    g_trayThread = thread([]() {
+        int argc = 0;
+        char** argv = nullptr;
+        gtk_init(&argc, &argv);
+        g_indicator = app_indicator_new("minebackup", "applications-system", APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+        app_indicator_set_status(g_indicator, APP_INDICATOR_STATUS_ACTIVE);
+
+        GtkWidget* menu = gtk_menu_new();
+        GtkWidget* open_item = gtk_menu_item_new_with_label(L("OPEN"));
+        GtkWidget* exit_item = gtk_menu_item_new_with_label(L("EXIT"));
+
+        g_signal_connect(open_item, "activate", G_CALLBACK(TrayMenuOpen), nullptr);
+        g_signal_connect(exit_item, "activate", G_CALLBACK(TrayMenuExit), nullptr);
+
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), open_item);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), exit_item);
+        gtk_widget_show_all(menu);
+
+        app_indicator_set_menu(g_indicator, GTK_MENU(menu));
+        gtk_main();
+        g_indicator = nullptr;
+    });
+#else
+    if (!isatty(STDIN_FILENO)) return;
+    g_trayThreadRunning = true;
+    g_trayThread = thread([]() {
+        while (g_trayThreadRunning) {
+            fd_set set;
+            FD_ZERO(&set);
+            FD_SET(STDIN_FILENO, &set);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 200000;
+            int res = select(STDIN_FILENO + 1, &set, nullptr, nullptr, &tv);
+            if (!g_trayThreadRunning) break;
+            if (res > 0 && FD_ISSET(STDIN_FILENO, &set)) {
+                char buf[64];
+                (void)read(STDIN_FILENO, buf, sizeof(buf));
+                g_appState.showMainApp = true;
+                if (wc) {
+                    glfwShowWindow(wc);
+                    glfwFocusWindow(wc);
+                    glfwPostEmptyEvent();
+                }
+            }
+        }
+    });
+#endif
+}
+
 void RemoveTrayIcon() {
+    g_trayThreadRunning = false;
+#ifdef MB_HAVE_APPINDICATOR
+    if (g_indicator) {
+        g_idle_add(TrayQuitIdle, nullptr);
+    }
+#endif
+    if (g_trayThread.joinable()) {
+        g_trayThread.join();
+    }
+}
+
+void RegisterHotkeys(int hotkeyId, int key) {
+    if (!g_hotkeyDisplay) {
+        g_hotkeyDisplay = XOpenDisplay(nullptr);
+        if (!g_hotkeyDisplay) return;
+        g_hotkeyRoot = DefaultRootWindow(g_hotkeyDisplay);
+    }
+    if (!g_hotkeyThreadRunning) {
+        g_hotkeyThreadRunning = true;
+        g_hotkeyThread = thread(HotkeyEventLoop);
+    }
+    int keycode = X11KeycodeFromAscii(g_hotkeyDisplay, key);
+    if (keycode == 0) return;
+    if (hotkeyId == MINEBACKUP_HOTKEY_ID) g_backupKeycode = keycode;
+    if (hotkeyId == MINERESTORE_HOTKEY_ID) g_restoreKeycode = keycode;
+    ApplyGrabMasks(g_hotkeyDisplay, g_hotkeyRoot, keycode, true);
+    XSync(g_hotkeyDisplay, False);
+}
+
+void UnregisterHotkeys(int hotkeyId) {
+    if (!g_hotkeyDisplay) return;
+    int keycode = 0;
+    if (hotkeyId == MINEBACKUP_HOTKEY_ID) {
+        keycode = g_backupKeycode;
+        g_backupKeycode = 0;
+    }
+    if (hotkeyId == MINERESTORE_HOTKEY_ID) {
+        keycode = g_restoreKeycode;
+        g_restoreKeycode = 0;
+    }
+    if (keycode != 0) {
+        ApplyGrabMasks(g_hotkeyDisplay, g_hotkeyRoot, keycode, false);
+        XSync(g_hotkeyDisplay, False);
+    }
+    if (g_backupKeycode == 0 && g_restoreKeycode == 0) {
+        g_hotkeyThreadRunning = false;
+        if (g_hotkeyThread.joinable()) g_hotkeyThread.join();
+        XCloseDisplay(g_hotkeyDisplay);
+        g_hotkeyDisplay = nullptr;
+        g_hotkeyRoot = 0;
+    }
 }
 
 void GetUserDefaultUILanguageWin() {

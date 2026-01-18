@@ -360,10 +360,20 @@ int main(int argc, char** argv)
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
+	#ifndef _WIN32
+	CreateTrayIcon();
+	RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+	RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+	#endif
+
 	// 设置窗口关闭回调，用于拦截关闭按钮
 	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
 		if (g_closeAction == 1) {
 			glfwSetWindowShouldClose(window, GLFW_FALSE);
+			#ifndef _WIN32
+			CreateTrayIcon();
+			#endif
+			g_appState.showMainApp = false;
 			glfwHideWindow(window);
 		} else if (g_closeAction == 2) {
 			SaveConfigs();
@@ -932,7 +942,6 @@ int main(int argc, char** argv)
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
 					ImGui::Separator();
 					// 热键设置右拉栏（鼠标放上去会向右展开两个）
-#ifdef _WIN32
 					static bool waitingForHotkey = false;
 					static int whichFunc = 0;
 					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
@@ -953,15 +962,25 @@ int main(int argc, char** argv)
 									waitingForHotkey = false;
 									if (whichFunc == 1) {
 										g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
+#ifdef _WIN32
 										UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
 										RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+#else
+										UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
+										RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+#endif
 										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
 										break;
 									}
 									else if (whichFunc == 2) {
 										g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
+#ifdef _WIN32
 										UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 										RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+#else
+										UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
+										RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+#endif
 										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
 										break;
 									}
@@ -972,7 +991,6 @@ int main(int argc, char** argv)
 						ImGui::EndMenu();
 					}
 					ImGui::Separator();
-#endif
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
@@ -1069,6 +1087,7 @@ int main(int argc, char** argv)
 					notice_popup_opened = true;
 				}
 
+				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 				if (ImGui::BeginPopupModal(L("NOTICE_POPUP_TITLE"), &notice_popup_opened, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("NOTICE_POPUP_DESC"));
 					ImGui::Separator();
@@ -1122,6 +1141,7 @@ int main(int argc, char** argv)
 				g_showCloseConfirmDialog = false;
 			}
 			
+			ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 			if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 				ImGui::TextWrapped(L("CLOSE_CONFIRM_MSG"));
 				ImGui::Separator();
@@ -1136,6 +1156,10 @@ int main(int argc, char** argv)
 						g_closeAction = 1;
 						g_rememberCloseAction = true;
 					}
+					#ifndef _WIN32
+					CreateTrayIcon();
+					#endif
+					g_appState.showMainApp = false;
 					glfwHideWindow(wc);
 					ImGui::CloseCurrentPopup();
 				}
@@ -2062,6 +2086,10 @@ int main(int argc, char** argv)
 	UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
 	UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 	DestroyWindow(hwnd_hidden);
+#else
+	RemoveTrayIcon();
+	UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
+	UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
 #endif
 	g_worldIconTextures.clear();
 	worldIconWidths.clear();
@@ -2372,11 +2400,12 @@ void ShowSettingsWindow() {
 				}
 			}
 			static int sel_cmd_item = -1;
-			ImGui::BeginListBox("##commands_list", ImVec2(-FLT_MIN, 3 * ImGui::GetTextLineHeightWithSpacing()));
-			for (int n = 0; n < spCfg.commands.size(); n++) {
-				if (ImGui::Selectable(wstring_to_utf8(spCfg.commands[n]).c_str(), sel_cmd_item == n)) sel_cmd_item = n;
+			if (ImGui::BeginListBox("##commands_list", ImVec2(-FLT_MIN, 3 * ImGui::GetTextLineHeightWithSpacing()))) {
+				for (int n = 0; n < spCfg.commands.size(); n++) {
+					if (ImGui::Selectable(wstring_to_utf8(spCfg.commands[n]).c_str(), sel_cmd_item == n)) sel_cmd_item = n;
+				}
+				ImGui::EndListBox();
 			}
-			ImGui::EndListBox();
 			if (ImGui::Button(L("BUTTON_REMOVE_COMMAND")) && sel_cmd_item != -1) {
 				spCfg.commands.erase(spCfg.commands.begin() + sel_cmd_item);
 				sel_cmd_item = -1;
@@ -2916,7 +2945,9 @@ void RunSpecialMode(int configId) {
 	ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
 
 	// 设置控制台标题和头部信息
+#ifdef _WIN32
 	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
+#endif
 	ConsoleLog(&console, L("AUTOMATED_TASK_RUNNER_HEADER"));
 	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), (spCfg.name.c_str()));
 	ConsoleLog(&console, "----------------------------------------------");

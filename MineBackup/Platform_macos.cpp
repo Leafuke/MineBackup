@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <cstdio>
+#include <algorithm>
 #include <functional>
 #include <limits.h>
 #include <thread>
@@ -211,9 +212,6 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
     } catch (...) {
     }
     return L"N/A";
-}
-
-void RemoveTrayIcon() {
 }
 
 void GetUserDefaultUILanguageWin() {

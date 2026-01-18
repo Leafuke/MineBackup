@@ -17,6 +17,8 @@
 #include <cstdarg>
 #ifndef _WIN32
 #include <unistd.h>
+#include <termios.h>
+#include <sys/select.h>
 #endif
 #include <limits.h>
 #include <sys/stat.h>
@@ -40,7 +42,11 @@ inline void Sleep(unsigned long milliseconds) {
 
 // 为 Linux 平台重新定义一些别名...
 using DWORD = unsigned long;
+#if defined(__APPLE__) && defined(__OBJC__)
+#include <objc/objc.h>
+#else
 using BOOL = int;
+#endif
 using HINSTANCE = void*;
 using HWND = void*;
 using LPCWSTR = const wchar_t*;
@@ -153,7 +159,43 @@ inline int _wcsicmp(const wchar_t* a, const wchar_t* b) {
 	return ::wcscasecmp(a, b);
 }
 
-inline int _kbhit() { return 0; }
+inline termios& _mb_saved_termios() {
+	static termios saved{};
+	return saved;
+}
+inline bool& _mb_termios_saved() {
+	static bool saved = false;
+	return saved;
+}
+inline void _mb_restore_termios() {
+	if (_mb_termios_saved()) {
+		tcsetattr(STDIN_FILENO, TCSANOW, &_mb_saved_termios());
+	}
+}
+inline int _kbhit() {
+	static bool initialized = false;
+	static termios newt;
+	if (!initialized) {
+		termios oldt;
+		tcgetattr(STDIN_FILENO, &oldt);
+		_mb_saved_termios() = oldt;
+		_mb_termios_saved() = true;
+		newt = oldt;
+		newt.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+		tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+		setbuf(stdin, NULL);
+		std::atexit(_mb_restore_termios);
+		initialized = true;
+	}
+	fd_set set;
+	FD_ZERO(&set);
+	FD_SET(STDIN_FILENO, &set);
+	struct timeval tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+	int res = select(STDIN_FILENO + 1, &set, nullptr, nullptr, &tv);
+	return res > 0;
+}
 
 inline DWORD GetModuleFileNameW(HINSTANCE, wchar_t* buffer, DWORD size) {
 	if (!buffer || size == 0) return 0;
