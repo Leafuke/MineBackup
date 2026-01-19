@@ -19,7 +19,6 @@
 
 using namespace std;
 
-// 外部变量声明
 extern bool showSettings;
 extern bool specialSetting;
 extern bool isSilence;
@@ -41,7 +40,6 @@ extern vector<wstring> restoreWhitelist;
 extern const char* lang_codes[2];
 extern const char* langs[2];
 
-// 前向声明
 void ApplyTheme(const int& theme);
 wstring SelectFolderDialog();
 wstring SelectFileDialog();
