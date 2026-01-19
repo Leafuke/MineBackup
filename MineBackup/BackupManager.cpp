@@ -1221,7 +1221,14 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 	filesystem::path pathToMergeInto = backupDir / nextEntry.backupFile;
 	console.AddLog(L("LOG_SAFE_DELETE_MERGE_INFO"), wstring_to_utf8(entryToDelete.backupFile).c_str(), wstring_to_utf8(nextEntry.backupFile).c_str());
 
-	filesystem::path tempExtractDir = filesystem::temp_directory_path() / L"MineBackup_Merge";
+
+	filesystem::path tempExtractDir;
+	if (config.snapshotPath.size() >= 2 && filesystem::exists(config.snapshotPath)) {
+		tempExtractDir = filesystem::path(NormalizeSeparators(config.snapshotPath)) / L"MineBackup_Merge";
+	}
+	else {
+		tempExtractDir = filesystem::temp_directory_path() / L"MineBackup_Merge";
+	}
 
 	try {
 		filesystem::remove_all(tempExtractDir);
