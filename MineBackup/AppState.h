@@ -17,6 +17,8 @@
 #include <cstdarg>
 #ifndef _WIN32
 #include <unistd.h>
+#include <termios.h>
+#include <sys/select.h>
 #endif
 #include <limits.h>
 #include <sys/stat.h>
@@ -40,7 +42,11 @@ inline void Sleep(unsigned long milliseconds) {
 
 // 为 Linux 平台重新定义一些别名...
 using DWORD = unsigned long;
+#if defined(__APPLE__) && defined(__OBJC__)
+#include <objc/objc.h>
+#else
 using BOOL = int;
+#endif
 using HINSTANCE = void*;
 using HWND = void*;
 using LPCWSTR = const wchar_t*;
@@ -153,7 +159,43 @@ inline int _wcsicmp(const wchar_t* a, const wchar_t* b) {
 	return ::wcscasecmp(a, b);
 }
 
-inline int _kbhit() { return 0; }
+inline termios& _mb_saved_termios() {
+	static termios saved{};
+	return saved;
+}
+inline bool& _mb_termios_saved() {
+	static bool saved = false;
+	return saved;
+}
+inline void _mb_restore_termios() {
+	if (_mb_termios_saved()) {
+		tcsetattr(STDIN_FILENO, TCSANOW, &_mb_saved_termios());
+	}
+}
+inline int _kbhit() {
+	static bool initialized = false;
+	static termios newt;
+	if (!initialized) {
+		termios oldt;
+		tcgetattr(STDIN_FILENO, &oldt);
+		_mb_saved_termios() = oldt;
+		_mb_termios_saved() = true;
+		newt = oldt;
+		newt.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+		tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+		setbuf(stdin, NULL);
+		std::atexit(_mb_restore_termios);
+		initialized = true;
+	}
+	fd_set set;
+	FD_ZERO(&set);
+	FD_SET(STDIN_FILENO, &set);
+	struct timeval tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+	int res = select(STDIN_FILENO + 1, &set, nullptr, nullptr, &tv);
+	return res > 0;
+}
 
 inline DWORD GetModuleFileNameW(HINSTANCE, wchar_t* buffer, DWORD size) {
 	if (!buffer || size == 0) return 0;
@@ -233,10 +275,66 @@ struct AutomatedTask {
 	int intervalMinutes = 15;
 	int schedMonth = 0, schedDay = 0, schedHour = 0, schedMinute = 0; // 0 意味着“每一”
 };
+// 新的统一任务系统（v2）
+enum class TaskTypeV2 {
+	Backup,     // 备份任务
+	Command,    // CMD命令任务
+	Script      // 脚本任务
+};
+
+enum class TaskExecMode {
+	Sequential,    // 顺序执行（等待上一个任务完成）
+	Parallel       // 并行执行（和上一个任务同时进行）
+};
+
+enum class TaskTrigger {
+	Once,          // 单次执行
+	Interval,      // 间隔执行
+	Scheduled      // 计划执行
+};
+
+struct UnifiedTaskV2 {
+	int id = 0;
+	std::string name;
+	TaskTypeV2 type = TaskTypeV2::Backup;
+	TaskExecMode executionMode = TaskExecMode::Sequential;
+	TaskTrigger triggerMode = TaskTrigger::Once;
+	bool enabled = true;
+
+	// 备份任务相关
+	int configIndex = -1;
+	int worldIndex = -1;
+
+	// CMD命令相关
+	std::wstring command;
+	std::wstring workingDirectory;
+
+	// 计划相关
+	int intervalMinutes = 15;
+	int schedMonth = 0, schedDay = 0, schedHour = 0, schedMinute = 0;
+
+	// 高级选项
+	int retryCount = 0;
+	int timeoutMinutes = 0;
+	bool notifyOnComplete = false;
+	bool notifyOnError = true;
+};
+
+// 服务模式配置
+struct ServiceConfig {
+	bool installAsService = false;
+	std::wstring serviceName = L"MineBackupService";
+	std::wstring serviceDisplayName = L"MineBackup Auto Backup Service";
+	std::wstring serviceDescription = L"Automated backup service for Minecraft worlds";
+	bool startWithSystem = true;
+	bool delayedStart = false;
+};
+
 struct SpecialConfig {
 	bool autoExecute = false;
-	std::vector<std::wstring> commands;
-	std::vector<AutomatedTask> tasks;
+	std::vector<std::wstring> commands;              // 旧版兼容：命令列表
+	std::vector<AutomatedTask> tasks;                // 旧版兼容：任务列表
+	std::vector<UnifiedTaskV2> unifiedTasks;         // 新版统一任务系统
 	bool exitAfterExecution = false;
 	std::string name;
 	int zipLevel = 5;
@@ -249,6 +347,10 @@ struct SpecialConfig {
 	bool runOnStartup = false;
 	bool hideWindow = false;
 	bool backupOnGameStart = false;
+	
+	// Windows服务模式
+	ServiceConfig serviceConfig;
+	bool useServiceMode = false;                     // 是否使用服务模式
 };
 struct HistoryEntry {
 	std::wstring timestamp_str;

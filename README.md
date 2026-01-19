@@ -137,8 +137,9 @@ cd MineBackup
 
 ---
 
-## 📸 Screenshots
+## 📜 Note
 
+The next generation of MineBackup has been realesed as [FolderRewind](https://github.com/Leafuke/FolderRewind). It features better versatility and a modern UI. Features are being actively developed there.
 
 ---
 

@@ -77,7 +77,7 @@
 
 **运行环境**：
 - Windows 系统
-- C++17 编译器（Visual Studio 推荐）
+- C++20 编译器
 - 链接 ImGui 库
 - 附带 7-Zip 
 
@@ -124,12 +124,13 @@ cd MineBackup
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI 框架
 * [**stb**](https://github.com/nothings/stb) — 图片加载
 * [**KnotLink**](https://github.com/hxh230802/KnotLink) — 程序间消息通信框架
+* [**Font-Awesome**](https://github.com/FortAwesome/Font-Awesome) - Icons
 
 ---
 
-## 📸 截图示例
+## 📜 告示
 
-
+下一代 MineBackup - [FolderRewind](https://github.com/Leafuke/FolderRewind) 已经正式发布。它具有更好的通用性和更现代化的界面。新功能开发和功能迁移正在积极进行中。
 
 ---
 

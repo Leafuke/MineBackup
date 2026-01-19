@@ -4,6 +4,8 @@
 #include "i18n.h"
 #ifdef _WIN32
 #include "Platform_win.h"
+#elif defined(__APPLE__)
+#include "Platform_macos.h"
 #else
 #include "Platform_linux.h"
 #endif
@@ -34,6 +36,26 @@ static wstring GetDefaultFontPath() {
 		if (filesystem::exists(cand)) return cand;
 	}
 	return en_candidates[0];
+#elif defined(__APPLE__)
+	const wstring cn_candidates[] = {
+		L"/System/Library/Fonts/PingFang.ttc",
+		L"/System/Library/Fonts/STHeiti Light.ttc",
+		L"/System/Library/Fonts/STHeiti Medium.ttc",
+		L"/System/Library/Fonts/AppleSDGothicNeo.ttc"
+	};
+	for (const auto& cand : cn_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	const wstring en_candidates[] = {
+		L"/System/Library/Fonts/SFNS.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial.ttf",
+		L"/Library/Fonts/Arial.ttf"
+	};
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return cn_candidates[0];
 #else
 	const wstring candidates[] = {
 		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -222,6 +244,39 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"HotBackup") spCur->hotBackup = (val != L"0");
 				else if (key == L"BackupOnStart") spCur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
+				// 新版统一任务系统
+				else if (key == L"UnifiedTask") {
+					wstringstream ss(val);
+					wstring token;
+					UnifiedTaskV2 task;
+					int idx = 0;
+					while (getline(ss, token, L',')) {
+						switch (idx++) {
+							case 0: task.id = stoi(token); break;
+							case 1: task.name = wstring_to_utf8(token); break;
+							case 2: task.type = static_cast<TaskTypeV2>(stoi(token)); break;
+							case 3: task.executionMode = static_cast<TaskExecMode>(stoi(token)); break;
+							case 4: task.triggerMode = static_cast<TaskTrigger>(stoi(token)); break;
+							case 5: task.enabled = (stoi(token) != 0); break;
+							case 6: task.configIndex = stoi(token); break;
+							case 7: task.worldIndex = stoi(token); break;
+							case 8: task.command = token; break;
+							case 9: task.workingDirectory = token; break;
+							case 10: task.intervalMinutes = stoi(token); break;
+							case 11: task.schedMonth = stoi(token); break;
+							case 12: task.schedDay = stoi(token); break;
+							case 13: task.schedHour = stoi(token); break;
+							case 14: task.schedMinute = stoi(token); break;
+						}
+					}
+					spCur->unifiedTasks.push_back(task);
+				}
+				// 服务模式配置
+				else if (key == L"UseServiceMode") spCur->useServiceMode = (val != L"0");
+				else if (key == L"ServiceName") spCur->serviceConfig.serviceName = val;
+				else if (key == L"ServiceDisplayName") spCur->serviceConfig.serviceDisplayName = val;
+				else if (key == L"ServiceAutoStart") spCur->serviceConfig.startWithSystem = (val != L"0");
+				else if (key == L"ServiceDelayedStart") spCur->serviceConfig.delayedStart = (val != L"0");
 			}
 			else if (section == L"General") { // Inside [General] section
 				if (key == L"CurrentConfig") {
@@ -400,6 +455,24 @@ void SaveConfigs(const wstring& filename) {
 				<< L"," << task.intervalMinutes << L"," << task.schedMonth << L"," << task.schedDay
 				<< L"," << task.schedHour << L"," << task.schedMinute << L"\n";
 		}
+		// 新版统一任务系统
+		for (const auto& task : sc.unifiedTasks) {
+			buffer << L"UnifiedTask=" << task.id << L"," 
+				<< utf8_to_wstring(task.name) << L","
+				<< static_cast<int>(task.type) << L","
+				<< static_cast<int>(task.executionMode) << L","
+				<< static_cast<int>(task.triggerMode) << L","
+				<< (task.enabled ? 1 : 0) << L","
+				<< task.configIndex << L","
+				<< task.worldIndex << L","
+				<< task.command << L","
+				<< task.workingDirectory << L","
+				<< task.intervalMinutes << L","
+				<< task.schedMonth << L","
+				<< task.schedDay << L","
+				<< task.schedHour << L","
+				<< task.schedMinute << L"\n";
+		}
 		buffer << L"ExitAfter=" << (sc.exitAfterExecution ? 1 : 0) << L"\n";
 		buffer << L"HideWindow=" << (sc.hideWindow ? 1 : 0) << L"\n";
 		buffer << L"RunOnStartup=" << (sc.runOnStartup ? 1 : 0) << L"\n";
@@ -410,6 +483,12 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n";
 		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
 		buffer << L"Theme=" << sc.theme << L"\n";
+		// 服务模式配置
+		buffer << L"UseServiceMode=" << (sc.useServiceMode ? 1 : 0) << L"\n";
+		buffer << L"ServiceName=" << sc.serviceConfig.serviceName << L"\n";
+		buffer << L"ServiceDisplayName=" << sc.serviceConfig.serviceDisplayName << L"\n";
+		buffer << L"ServiceAutoStart=" << (sc.serviceConfig.startWithSystem ? 1 : 0) << L"\n";
+		buffer << L"ServiceDelayedStart=" << (sc.serviceConfig.delayedStart ? 1 : 0) << L"\n";
 		for (const auto& item : sc.blacklist) {
 			buffer << L"BlacklistItem=" << item << L"\n";
 		}

@@ -8,10 +8,15 @@
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <cstring>
 #include <fstream>
 #include <cstdio>
+#include <algorithm>
+#include <functional>
+#include <limits.h>
 #include <thread>
 #include <system_error>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <mach-o/dyld.h>
 
@@ -209,15 +214,6 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
     return L"N/A";
 }
 
-void RemoveTrayIcon() {
-}
-
-void TriggerHotkeyBackup(std::string comment) {
-}
-
-void TriggerHotkeyRestore() {
-}
-
 void GetUserDefaultUILanguageWin() {
     const char* langEnv = std::getenv("LANG");
     if (!langEnv || std::strlen(langEnv) < 2) langEnv = std::getenv("LANGUAGE");
@@ -343,6 +339,27 @@ bool Extract7zToTempFile(std::wstring& extractedPath) {
     return false;
 }
 
+static bool CopyBundledFontToTemp(const fs::path& source, std::wstring& extractedPath) {
+    std::error_code ec;
+    if (!fs::exists(source, ec)) return false;
+
+    fs::path tempDir = fs::temp_directory_path(ec);
+    if (ec) {
+        extractedPath = source.wstring();
+        return true;
+    }
+
+    fs::path dest = tempDir / source.filename();
+    fs::copy_file(source, dest, fs::copy_options::overwrite_existing, ec);
+    if (!ec && fs::exists(dest, ec)) {
+        extractedPath = dest.wstring();
+        return true;
+    }
+
+    extractedPath = source.wstring();
+    return true;
+}
+
 bool ExtractFontToTempFile(std::wstring& extractedPath) {
     fs::path exeDir = GetExecutableDirectory();
     
@@ -350,21 +367,25 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
         exeDir / "fontawesome-sp.otf",
         exeDir / "fa-solid-900.ttf",
         exeDir / "fa-regular-400.ttf",
-        exeDir / "../Resources/fontawesome-sp.otf"  // For .app bundles
+        exeDir / "../Resources/fontawesome-sp.otf",  // For .app bundles
+        exeDir / "../Resources/fa-solid-900.ttf",
+        exeDir / "../Resources/fa-regular-400.ttf"
     };
     
     for (const auto& p : bundledCandidates) {
-        if (fs::exists(p)) {
-            extractedPath = p.wstring();
-            return true;
-        }
+        if (CopyBundledFontToTemp(p, extractedPath)) return true;
     }
     
     const char* sysCandidates[] = {
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/SFNS.ttf",
         "/Library/Fonts/Arial.ttf",
         "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
         nullptr
     };
     
