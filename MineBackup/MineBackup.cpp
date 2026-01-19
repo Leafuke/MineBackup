@@ -4,6 +4,7 @@
 #include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
+#include "TaskSystem.h"
 #ifdef _WIN32
 #include "Platform_win.h"
 #elif defined(__APPLE__)
@@ -99,6 +100,7 @@ string GetRegistryValue(const string& keyPath, const string& valueName);
 void GameSessionWatcherThread();
 
 void ShowSettingsWindow();
+void ShowSettingsWindowV2();  // 新版设置窗口（横向标签页）
 void ShowHistoryWindow(int& tempCurrentConfigIndex);
 vector<DisplayWorld> BuildDisplayWorldsForSelection();
 
@@ -1958,7 +1960,7 @@ int main(int argc, char** argv)
 
 			if (showSettings) {
 				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // 强制窗口不参与停靠
-				ShowSettingsWindow();
+				ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 			}
 			if (showHistoryWindow) {
 				if (specialSetting) {

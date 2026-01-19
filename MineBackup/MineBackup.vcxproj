@@ -151,6 +151,8 @@
     <ClCompile Include="KnotLink\SignalSender.cpp" />
     <ClCompile Include="MineBackup.cpp" />
     <ClCompile Include="Platform_win.cpp" />
+    <ClCompile Include="SettingsUI.cpp" />
+    <ClCompile Include="TaskSystem.cpp" />
     <ClCompile Include="text_to_text.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -181,6 +183,7 @@
     <ClInclude Include="Platform_win.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="stb_image.h" />
+    <ClInclude Include="TaskSystem.h" />
     <ClInclude Include="text_to_text.h" />
   </ItemGroup>
   <ItemGroup>
