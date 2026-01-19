@@ -40,7 +40,7 @@ extern vector<wstring> restoreWhitelist;
 extern const char* lang_codes[2];
 extern const char* langs[2];
 
-inline void ApplyTheme(const int& theme);
+void ApplyTheme(const int& theme);
 wstring SelectFolderDialog();
 wstring SelectFileDialog();
 void ReStartApplication();

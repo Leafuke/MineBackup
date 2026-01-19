@@ -157,7 +157,7 @@ wstring SanitizeFileName(const wstring& input);
 void CheckForNoticesThread();
 
 void OpenLinkInBrowser(const wstring& url);
-inline void ApplyTheme(const int& theme);
+void ApplyTheme(const int& theme);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 bool ExtractFontToTempFile(wstring& extractedPath);
@@ -2153,7 +2153,7 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 	return true;
 }
 
-inline void ApplyTheme(const int& theme)
+void ApplyTheme(const int& theme)
 {
 	switch (theme) {
 		case 0: ImGuiTheme::ApplyImGuiDark();break;
