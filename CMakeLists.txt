@@ -23,6 +23,7 @@ set(SOURCES
     ${SOURCE_DIR}/Broadcast.cpp
     ${SOURCE_DIR}/GameSessionManager.cpp
     ${SOURCE_DIR}/HistoryManager.cpp
+    ${SOURCE_DIR}/SettingsUI.cpp
     ${SOURCE_DIR}/basic_func.cpp
     ${SOURCE_DIR}/i18n.cpp
     ${SOURCE_DIR}/text_to_text.cpp
@@ -204,11 +205,4 @@ endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-
-)
-
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${FONT_AWESOME_SP}"
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fontawesome-sp.otf"
 )
