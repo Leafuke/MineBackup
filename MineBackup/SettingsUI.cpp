@@ -413,7 +413,7 @@ static void DrawBackupBehavior(Config& cfg) {
         }
     }
     
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(300);
     if (ImGui::Combo(L("COMPRESSION_METHOD"), &method_idx, zip_methods, IM_ARRAYSIZE(zip_methods))) {
         cfg.zipMethod = utf8_to_wstring(zip_methods[method_idx]);
     }
@@ -421,20 +421,20 @@ static void DrawBackupBehavior(Config& cfg) {
 
     // 滑块和输入
     int max_threads = thread::hardware_concurrency();
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(300);
     ImGui::SliderInt(L("CPU_THREAD_COUNT"), &cfg.cpuThreads, 0, max_threads);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_CPU_THREADS"));
 
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(300);
     ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
 
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(300);
     ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
     ImGui::SameLine();
     ImGui::Checkbox(L("IS_SAFE_DELETE"), &isSafeDelete);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("IS_SAFE_DELETE_TIP"));
 
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(300);
     ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
 
@@ -554,7 +554,7 @@ static void DrawAppearanceSettings(Config& cfg) {
             break;
         }
     }
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(300);
     if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
         g_CurrentLang = lang_codes[lang_idx];
     }
@@ -564,7 +564,7 @@ static void DrawAppearanceSettings(Config& cfg) {
     // 主题设置
     ImGui::Text("%s", L("THEME_SETTINGS"));
     const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(300);
     if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
         if (cfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
             // 需要创建自定义主题文件
@@ -578,7 +578,7 @@ static void DrawAppearanceSettings(Config& cfg) {
     ImGui::Spacing();
 
     // UI缩放
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(300);
     ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
     ImGui::SameLine();
     if (ImGui::Button(L("BUTTON_OK"))) {
@@ -614,7 +614,7 @@ static void DrawAppearanceSettings(Config& cfg) {
     ImGui::Text("%s", L("CLOSE_BEHAVIOR_LABEL"));
     const char* close_behavior_options[] = { L("CLOSE_BEHAVIOR_ASK"), L("CLOSE_BEHAVIOR_MINIMIZE"), L("CLOSE_BEHAVIOR_EXIT") };
     int close_behavior_idx = g_rememberCloseAction ? g_closeAction : 0;
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(300);
     if (ImGui::Combo("##CloseBehavior", &close_behavior_idx, close_behavior_options, IM_ARRAYSIZE(close_behavior_options))) {
         if (close_behavior_idx == 0) {
             g_rememberCloseAction = false;
@@ -651,7 +651,7 @@ static void DrawCloudSyncSettings(Config& cfg) {
     ImGui::EndDisabled();
 }
 
-// 绘制特殊配置的任务管理器（新版）
+// 特殊配置的任务管理器
 static void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
     ImGui::SeparatorText(L("TASK_MANAGER_TITLE"));
 
@@ -1040,7 +1040,6 @@ static void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
     }
 }
 
-// 主设置窗口函数 - 新版横向标签页布局
 void ShowSettingsWindowV2() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
     

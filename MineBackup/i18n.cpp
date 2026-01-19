@@ -553,7 +553,22 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "SERVICE_START", u8"启动服务" },
 		{ "SERVICE_STOP", u8"停止服务" },
 		{ "TIP_SERVICE_INSTALL", u8"需要管理员权限。安装后可在Windows服务管理器中管理。" },
-		{ "SERVICE_NOT_SUPPORTED", u8"当前平台不支持服务模式" }
+		{ "SERVICE_NOT_SUPPORTED", u8"当前平台不支持服务模式" },
+		{ "UNIFIED_TASK_SYSTEM_START", u8"[提示] 正在启动统一任务系统，共 %d 个任务..." },
+		{ "LEGACY_TASK_SYSTEM_START", u8"[提示] 正在使用旧版任务系统（建议升级到统一任务系统）..." },
+		{ "TASK_SKIPPED_DISABLED", u8"[提示] 跳过已禁用的任务: %s" },
+		{ "TASK_EXECUTING", u8"[任务] 正在执行任务: %s" },
+		{ "ERROR_INVALID_CONFIG_IN_TASK", u8"[错误] 任务中指定的配置 %d 不存在。" },
+		{ "TASK_COMMAND_COMPLETED", u8"[任务] 命令任务完成: %s" },
+		{ "TASK_SCRIPT_NOT_IMPLEMENTED", u8"[任务] 脚本任务功能尚未实现" },
+		{ "CONFIG_COMBO", u8"选择配置" },
+		{ "WORLD_COMBO", u8"选择世界" },
+		{ "BUTTON_SWITCH_TO_SP_MODE", u8"立即切换到特殊模式" },
+		{ "EXECUTE_ON_STARTUP", u8"程序启动时自动执行" },
+		{ "TIP_EXECUTE_ON_STARTUP", u8"启用后，每次启动程序时会自动进入特殊模式并执行配置的任务" },
+		{ "EXIT_WHEN_FINISHED", u8"执行完成后退出程序" },
+		{ "RUN_ON_WINDOWS_STARTUP", u8"随Windows启动" },
+		{ "HIDE_CONSOLE_WINDOW", u8"隐藏控制台窗口" }
 }},
 	{ "en_US", {
 		{"SETTINGS", "Settings"},
@@ -1104,7 +1119,22 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "SERVICE_START", "Start Service" },
 		{ "SERVICE_STOP", "Stop Service" },
 		{ "TIP_SERVICE_INSTALL", "Requires administrator privileges. After installation, manage via Windows Services." },
-		{ "SERVICE_NOT_SUPPORTED", "Service mode not supported on this platform" }
+		{ "SERVICE_NOT_SUPPORTED", "Service mode not supported on this platform" },
+		{ "UNIFIED_TASK_SYSTEM_START", "[Info] Starting unified task system with %d tasks..." },
+		{ "LEGACY_TASK_SYSTEM_START", "[Info] Using legacy task system (consider upgrading to unified task system)..." },
+		{ "TASK_SKIPPED_DISABLED", "[Info] Skipped disabled task: %s" },
+		{ "TASK_EXECUTING", "[Task] Executing task: %s" },
+		{ "ERROR_INVALID_CONFIG_IN_TASK", "[Error] Configuration %d specified in task does not exist." },
+		{ "TASK_COMMAND_COMPLETED", "[Task] Command task completed: %s" },
+		{ "TASK_SCRIPT_NOT_IMPLEMENTED", "[Task] Script task feature not yet implemented" },
+		{ "CONFIG_COMBO", "Select Config" },
+		{ "WORLD_COMBO", "Select World" },
+		{ "BUTTON_SWITCH_TO_SP_MODE", "Switch to Special Mode Now" },
+		{ "EXECUTE_ON_STARTUP", "Execute on program startup" },
+		{ "TIP_EXECUTE_ON_STARTUP", "When enabled, automatically enters special mode and executes configured tasks on program startup" },
+		{ "EXIT_WHEN_FINISHED", "Exit after execution" },
+		{ "RUN_ON_WINDOWS_STARTUP", "Run on Windows startup" },
+		{ "HIDE_CONSOLE_WINDOW", "Hide console window" }
 }},
 };
 const char* L(const char* key) {

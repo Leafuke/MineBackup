@@ -328,7 +328,9 @@ struct ServiceConfig {
 	std::wstring serviceDescription = L"Automated backup service for Minecraft worlds";
 	bool startWithSystem = true;
 	bool delayedStart = false;
-};struct SpecialConfig {
+};
+
+struct SpecialConfig {
 	bool autoExecute = false;
 	std::vector<std::wstring> commands;              // 旧版兼容：命令列表
 	std::vector<AutomatedTask> tasks;                // 旧版兼容：任务列表

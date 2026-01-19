@@ -315,12 +315,30 @@ namespace TaskSystem {
 
 #else
     // Linux/macOS 平台的空实现
-    bool InstallService(const ServiceModeConfig& config) { return false; }
-    bool UninstallService(const wstring& serviceName) { return false; }
-    bool IsServiceInstalled(const wstring& serviceName) { return false; }
-    bool MineStartService(const wstring& serviceName) { return false; }
-    bool StopService(const wstring& serviceName) { return false; }
-    bool IsServiceRunning(const wstring& serviceName) { return false; }
+    bool InstallService(const ServiceConfig& config) { 
+        (void)config; // 避免未使用参数警告
+        return false; 
+    }
+    bool UninstallService(const wstring& serviceName) { 
+        (void)serviceName;
+        return false; 
+    }
+    bool IsServiceInstalled(const wstring& serviceName) { 
+        (void)serviceName;
+        return false; 
+    }
+    bool MineStartService(const wstring& serviceName) { 
+        (void)serviceName;
+        return false; 
+    }
+    bool StopService(const wstring& serviceName) { 
+        (void)serviceName;
+        return false; 
+    }
+    bool IsServiceRunning(const wstring& serviceName) { 
+        (void)serviceName;
+        return false; 
+    }
 #endif
 
     // 序列化任务
