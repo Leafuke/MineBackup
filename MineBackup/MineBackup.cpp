@@ -27,6 +27,10 @@ inline int _getch() { return std::getchar(); }
 #endif
 #include <fstream>
 #include <system_error>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <limits.h>
+#endif
 
 using namespace std;
 
@@ -78,6 +82,69 @@ enum class BackupCheckResult {
 	FORCE_FULL_BACKUP_METADATA_INVALID,
 	FORCE_FULL_BACKUP_BASE_MISSING
 };
+
+static wstring GetDefaultUIFontPath() {
+#ifdef _WIN32
+	if (g_CurrentLang == "zh_CN") {
+		const wstring cn_candidates[] = {
+			L"C:\\Windows\\Fonts\\msyh.ttc",
+			L"C:\\Windows\\Fonts\\msyh.ttf",
+			L"C:\\Windows\\Fonts\\msjh.ttc",
+			L"C:\\Windows\\Fonts\\msjh.ttf",
+			L"C:\\Windows\\Fonts\\SegoeUI.ttf"
+		};
+		for (const auto& cand : cn_candidates) {
+			if (filesystem::exists(cand)) return cand;
+		}
+	}
+	const wstring en_candidates[] = { L"C:\\Windows\\Fonts\\SegoeUI.ttf" };
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return L"";
+#elif defined(__APPLE__)
+	const wstring cn_candidates[] = {
+		L"/System/Library/Fonts/PingFang.ttc",
+		L"/System/Library/Fonts/STHeiti Light.ttc",
+		L"/System/Library/Fonts/STHeiti Medium.ttc",
+		L"/System/Library/Fonts/AppleSDGothicNeo.ttc"
+	};
+	for (const auto& cand : cn_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	const wstring en_candidates[] = {
+		L"/System/Library/Fonts/SFNS.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		L"/System/Library/Fonts/Supplemental/Arial.ttf",
+		L"/Library/Fonts/Arial.ttf"
+	};
+	for (const auto& cand : en_candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return L"";
+#else
+	const wstring candidates[] = {
+		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+		L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+		L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+	};
+	for (const auto& cand : candidates) {
+		if (filesystem::exists(cand)) return cand;
+	}
+	return L"";
+#endif
+}
+
+#ifdef __APPLE__
+static void SetWorkingDirectoryToExecutable() {
+	char path[PATH_MAX];
+	uint32_t size = sizeof(path);
+	if (_NSGetExecutablePath(path, &size) == 0) {
+		std::error_code ec;
+		filesystem::current_path(filesystem::path(path).parent_path(), ec);
+	}
+}
+#endif
 
 static void glfw_error_callback(int error, const char* description)
 {
@@ -135,6 +202,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 #else
 int main(int argc, char** argv)
 {
+	#ifdef __APPLE__
+	SetWorkingDirectoryToExecutable();
+	#endif
 	LoadConfigs("config.ini");
 #endif
 
@@ -292,10 +362,20 @@ int main(int argc, char** argv)
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
+	#ifndef _WIN32
+	CreateTrayIcon();
+	RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+	RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+	#endif
+
 	// 设置窗口关闭回调，用于拦截关闭按钮
 	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
 		if (g_closeAction == 1) {
 			glfwSetWindowShouldClose(window, GLFW_FALSE);
+			#ifndef _WIN32
+			CreateTrayIcon();
+			#endif
+			g_appState.showMainApp = false;
 			glfwHideWindow(window);
 		} else if (g_closeAction == 2) {
 			SaveConfigs();
@@ -396,34 +476,16 @@ int main(int argc, char** argv)
 
 	if (isFirstRun) {
 		GetUserDefaultUILanguageWin();
-#ifdef _WIN32
-		if (g_CurrentLang == "zh_CN") {
-			if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-				Fontss = L"C:\\Windows\\Fonts\\msyh.ttc";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-				Fontss = L"C:\\Windows\\Fonts\\msyh.ttf";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
-				Fontss = L"C:\\Windows\\Fonts\\msjh.ttc";
-			else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
-				Fontss = L"C:\\Windows\\Fonts\\msjh.ttf";
-			else
-				Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-		}
-		else
-			Fontss = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-#else
-		if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-			Fontss = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-		else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
-			Fontss = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
-		else
-			Fontss = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"; // 英文/通用
-#endif
+		Fontss = GetDefaultUIFontPath();
 	}
-	if (g_CurrentLang == "zh_CN")
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
-	else
-		ImFont* font = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
+	if (!Fontss.empty() && filesystem::exists(Fontss)) {
+		if (g_CurrentLang == "zh_CN")
+			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+		else
+			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
+	} else {
+		io.Fonts->AddFontDefault();
+	}
 
 	// 准备合并图标字体
 	ImFontConfig config2;
@@ -821,29 +883,7 @@ int main(int argc, char** argv)
 						initialConfig.skipIfUnchanged = true;
 						initialConfig.theme = themeId;
 						isSilence = false;
-#ifdef _WIN32
-						if (g_CurrentLang == "zh_CN") {
-							if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttc"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msyh.ttf"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msyh.ttf";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttc"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msjh.ttc";
-							else if (filesystem::exists("C:\\Windows\\Fonts\\msjh.ttf"))
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\msjh.ttf";
-							else
-								initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-						}
-						else
-							initialConfig.fontPath = L"C:\\Windows\\Fonts\\SegoeUI.ttf";
-#else
-						if (filesystem::exists("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-							initialConfig.fontPath = L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-						else if (filesystem::exists("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"))
-							initialConfig.fontPath = L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc";
-						else
-							initialConfig.fontPath = L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-#endif
+						initialConfig.fontPath = GetDefaultUIFontPath();
 						g_appState.specialConfigs.clear();
 
 						// 4. 保存到文件并切换到主应用界面
@@ -904,7 +944,6 @@ int main(int argc, char** argv)
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
 					ImGui::Separator();
 					// 热键设置右拉栏（鼠标放上去会向右展开两个）
-#ifdef _WIN32
 					static bool waitingForHotkey = false;
 					static int whichFunc = 0;
 					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
@@ -925,15 +964,25 @@ int main(int argc, char** argv)
 									waitingForHotkey = false;
 									if (whichFunc == 1) {
 										g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
+#ifdef _WIN32
 										UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
 										RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+#else
+										UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
+										RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+#endif
 										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
 										break;
 									}
 									else if (whichFunc == 2) {
 										g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
+#ifdef _WIN32
 										UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 										RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+#else
+										UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
+										RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+#endif
 										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
 										break;
 									}
@@ -944,7 +993,6 @@ int main(int argc, char** argv)
 						ImGui::EndMenu();
 					}
 					ImGui::Separator();
-#endif
 					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
@@ -1041,6 +1089,7 @@ int main(int argc, char** argv)
 					notice_popup_opened = true;
 				}
 
+				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 				if (ImGui::BeginPopupModal(L("NOTICE_POPUP_TITLE"), &notice_popup_opened, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("NOTICE_POPUP_DESC"));
 					ImGui::Separator();
@@ -1094,6 +1143,7 @@ int main(int argc, char** argv)
 				g_showCloseConfirmDialog = false;
 			}
 			
+			ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 			if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 				ImGui::TextWrapped(L("CLOSE_CONFIRM_MSG"));
 				ImGui::Separator();
@@ -1108,6 +1158,10 @@ int main(int argc, char** argv)
 						g_closeAction = 1;
 						g_rememberCloseAction = true;
 					}
+					#ifndef _WIN32
+					CreateTrayIcon();
+					#endif
+					g_appState.showMainApp = false;
 					glfwHideWindow(wc);
 					ImGui::CloseCurrentPopup();
 				}
@@ -1276,10 +1330,10 @@ int main(int argc, char** argv)
 					if (specialSetting) {
 						ImGui::Text("[Sp.]");
 						ImGui::SameLine();
-						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name);
+						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 					}
 					else {
-						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name);
+						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
 					}
 					ImGui::Separator();
 					if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
@@ -2034,6 +2088,10 @@ int main(int argc, char** argv)
 	UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
 	UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 	DestroyWindow(hwnd_hidden);
+#else
+	RemoveTrayIcon();
+	UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
+	UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
 #endif
 	g_worldIconTextures.clear();
 	worldIconWidths.clear();
@@ -2181,10 +2239,10 @@ void ShowSettingsWindow() {
 		if (specialSetting) {
 			ImGui::Text("[Sp.]");
 			ImGui::SameLine();
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name);
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 		}
 		else {
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name);
+			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
 		}
 		ImGui::Separator();
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
@@ -2344,11 +2402,12 @@ void ShowSettingsWindow() {
 				}
 			}
 			static int sel_cmd_item = -1;
-			ImGui::BeginListBox("##commands_list", ImVec2(-FLT_MIN, 3 * ImGui::GetTextLineHeightWithSpacing()));
-			for (int n = 0; n < spCfg.commands.size(); n++) {
-				if (ImGui::Selectable(wstring_to_utf8(spCfg.commands[n]).c_str(), sel_cmd_item == n)) sel_cmd_item = n;
+			if (ImGui::BeginListBox("##commands_list", ImVec2(-FLT_MIN, 3 * ImGui::GetTextLineHeightWithSpacing()))) {
+				for (int n = 0; n < spCfg.commands.size(); n++) {
+					if (ImGui::Selectable(wstring_to_utf8(spCfg.commands[n]).c_str(), sel_cmd_item == n)) sel_cmd_item = n;
+				}
+				ImGui::EndListBox();
 			}
-			ImGui::EndListBox();
 			if (ImGui::Button(L("BUTTON_REMOVE_COMMAND")) && sel_cmd_item != -1) {
 				spCfg.commands.erase(spCfg.commands.begin() + sel_cmd_item);
 				sel_cmd_item = -1;
@@ -2888,7 +2947,9 @@ void RunSpecialMode(int configId) {
 	ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
 
 	// 设置控制台标题和头部信息
+#ifdef _WIN32
 	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
+#endif
 	ConsoleLog(&console, L("AUTOMATED_TASK_RUNNER_HEADER"));
 	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), (spCfg.name.c_str()));
 	ConsoleLog(&console, "----------------------------------------------");

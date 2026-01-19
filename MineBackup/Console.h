@@ -6,6 +6,8 @@
 #include "AppState.h"
 #ifdef _WIN32
 #include "Platform_win.h"
+#elif defined(__APPLE__)
+#include "Platform_macos.h"
 #else
 #include "Platform_linux.h"
 #endif
@@ -71,7 +73,7 @@ struct Console
 	}
 
 	//显示消息
-	void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
+	void    AddLog(const char* fmt, ...)
 	{
 		if (isSilence) return;
 		std::lock_guard<std::mutex> lock(logMutex);

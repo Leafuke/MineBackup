@@ -5,6 +5,10 @@
 
 #ifdef _WIN32
 #include "Platform_win.h"
+#elif defined(__APPLE__)
+#include "Platform_macos.h"
+#include <errno.h>
+#include <iconv.h>
 #else
 #include "Platform_linux.h"
 #include <errno.h>
