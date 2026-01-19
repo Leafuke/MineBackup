@@ -935,7 +935,7 @@ static void DrawServiceSettings(SpecialConfig& spCfg) {
         ImGui::SameLine();
         if (!isRunning) {
             if (ImGui::Button(L("SERVICE_START"))) {
-                TaskSystem::StartService(spCfg.serviceConfig.serviceName);
+                TaskSystem::MineStartService(spCfg.serviceConfig.serviceName);
             }
         }
         else {

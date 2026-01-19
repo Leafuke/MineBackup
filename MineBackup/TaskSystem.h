@@ -60,15 +60,7 @@ struct UnifiedTask {
     bool notifyOnError = true;                     // 错误时通知
 };
 
-// 服务模式配置
-struct ServiceModeConfig {
-    bool installAsService = false;                 // 是否安装为系统服务
-    std::wstring serviceName = L"MineBackupService";  // 服务名称
-    std::wstring serviceDisplayName = L"MineBackup Auto Backup Service";  // 服务显示名称
-    std::wstring serviceDescription = L"Automated backup service for Minecraft worlds";  // 服务描述
-    bool startWithSystem = true;                   // 随系统启动
-    bool delayedStart = false;                     // 延迟启动
-};
+struct ServiceConfig;
 
 // 任务运行状态
 struct TaskRunState {
@@ -82,17 +74,20 @@ struct TaskRunState {
     time_t nextRunTime = 0;
 };
 
+// 前向声明
+struct Console;
+
 // 任务系统管理函数声明
 namespace TaskSystem {
     // 任务执行
-    void ExecuteTask(const UnifiedTask& task, class Console* console);
-    void ExecuteAllTasks(const std::vector<UnifiedTask>& tasks, class Console* console, bool& shouldExit);
+    void ExecuteTask(const UnifiedTask& task, Console* console);
+    void ExecuteAllTasks(const std::vector<UnifiedTask>& tasks, Console* console, bool& shouldExit);
     
-    // Windows服务相关
-    bool InstallService(const ServiceModeConfig& config);
+    // Windows服务相关（使用AppState.h中的ServiceConfig）
+    bool InstallService(const ServiceConfig& config);
     bool UninstallService(const std::wstring& serviceName);
     bool IsServiceInstalled(const std::wstring& serviceName);
-    bool StartService(const std::wstring& serviceName);
+    bool MineStartService(const std::wstring& serviceName);
     bool StopService(const std::wstring& serviceName);
     bool IsServiceRunning(const std::wstring& serviceName);
     

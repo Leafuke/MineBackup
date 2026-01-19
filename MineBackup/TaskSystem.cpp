@@ -155,7 +155,7 @@ namespace TaskSystem {
 #ifdef _WIN32
     // Windows服务相关实现
     
-    bool InstallService(const ServiceModeConfig& config) {
+    bool InstallService(const ServiceConfig& config) {
         SC_HANDLE schSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
         if (!schSCManager) {
             return false;
@@ -257,7 +257,7 @@ namespace TaskSystem {
         return installed;
     }
 
-    bool StartService(const wstring& serviceName) {
+    bool MineStartService(const wstring& serviceName) {
         SC_HANDLE schSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
         if (!schSCManager) return false;
 
@@ -318,7 +318,7 @@ namespace TaskSystem {
     bool InstallService(const ServiceModeConfig& config) { return false; }
     bool UninstallService(const wstring& serviceName) { return false; }
     bool IsServiceInstalled(const wstring& serviceName) { return false; }
-    bool StartService(const wstring& serviceName) { return false; }
+    bool MineStartService(const wstring& serviceName) { return false; }
     bool StopService(const wstring& serviceName) { return false; }
     bool IsServiceRunning(const wstring& serviceName) { return false; }
 #endif
