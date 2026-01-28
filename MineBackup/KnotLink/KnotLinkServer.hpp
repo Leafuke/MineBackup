@@ -88,17 +88,11 @@ public:
         
         running = false;
 
-        // 关闭所有监听socket (IPv4 和 IPv6)
-        for (auto& [port, socks] : portSockets) {
-            if (socks.first >= 0) { close(socks.first); socks.first = -1; }
-            if (socks.second >= 0) { close(socks.second); socks.second = -1; }
-        }
-        portSockets.clear();
-        
-        signalSocket = -1;
-        subscribeSocket = -1;
-        querySocket = -1;
-        responserSocket = -1;
+        // 关闭所有监听socket
+        if (signalSocket >= 0) { close(signalSocket); signalSocket = -1; }
+        if (subscribeSocket >= 0) { close(subscribeSocket); subscribeSocket = -1; }
+        if (querySocket >= 0) { close(querySocket); querySocket = -1; }
+        if (responserSocket >= 0) { close(responserSocket); responserSocket = -1; }
 
         // 等待所有线程结束
         if (signalThread.joinable()) signalThread.join();
@@ -175,14 +169,10 @@ private:
     std::mutex pendingMutex;
     std::map<std::string, int> pendingQueries; // questionID -> querierSocket
 
-    // 存储每个端口的 IPv4 和 IPv6 sockets
-    std::map<uint16_t, std::pair<int, int>> portSockets; // port -> (ipv4_sock, ipv6_sock)
-
-    // 创建 IPv4 监听 socket
-    int createIPv4ListenSocket(uint16_t port) {
+    int createListenSocket(uint16_t port) {
         int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock < 0) {
-            std::cerr << "[KnotLinkServer] Failed to create IPv4 socket for port " << port << std::endl;
+            std::cerr << "[KnotLinkServer] Failed to create socket for port " << port << std::endl;
             return -1;
         }
 
@@ -196,13 +186,13 @@ private:
         addr.sin_port = htons(port);
 
         if (bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-            std::cerr << "[KnotLinkServer] Failed to bind IPv4 to port " << port << ": " << strerror(errno) << std::endl;
+            std::cerr << "[KnotLinkServer] Failed to bind to port " << port << ": " << strerror(errno) << std::endl;
             close(sock);
             return -1;
         }
 
         if (listen(sock, 10) < 0) {
-            std::cerr << "[KnotLinkServer] Failed to listen on IPv4 port " << port << std::endl;
+            std::cerr << "[KnotLinkServer] Failed to listen on port " << port << std::endl;
             close(sock);
             return -1;
         }
@@ -211,106 +201,8 @@ private:
         int flags = fcntl(sock, F_GETFL, 0);
         fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 
+        std::cout << "[KnotLinkServer] Listening on port " << port << std::endl;
         return sock;
-    }
-
-    // 创建 IPv6 监听 socket (macOS 上 Java 可能使用 IPv6 连接 localhost)
-    int createIPv6ListenSocket(uint16_t port) {
-        int sock = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-        if (sock < 0) {
-            std::cerr << "[KnotLinkServer] Failed to create IPv6 socket for port " << port << std::endl;
-            return -1;
-        }
-
-        // 允许地址重用
-        int opt = 1;
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-        
-        // 仅限 IPv6，不使用双栈
-        setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
-
-        sockaddr_in6 addr{};
-        addr.sin6_family = AF_INET6;
-        addr.sin6_addr = in6addr_loopback; // 只监听 ::1
-        addr.sin6_port = htons(port);
-
-        if (bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-            std::cerr << "[KnotLinkServer] Failed to bind IPv6 to port " << port << ": " << strerror(errno) << std::endl;
-            close(sock);
-            return -1;
-        }
-
-        if (listen(sock, 10) < 0) {
-            std::cerr << "[KnotLinkServer] Failed to listen on IPv6 port " << port << std::endl;
-            close(sock);
-            return -1;
-        }
-
-        // 设置非阻塞
-        int flags = fcntl(sock, F_GETFL, 0);
-        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-
-        return sock;
-    }
-
-    // 创建双栈监听 socket (IPv4 + IPv6)
-    // 返回 IPv4 socket fd，同时创建并存储 IPv6 socket
-    int createListenSocket(uint16_t port) {
-        int ipv4Sock = createIPv4ListenSocket(port);
-        int ipv6Sock = createIPv6ListenSocket(port);
-        
-        int socketCount = 0;
-        if (ipv4Sock >= 0) socketCount++;
-        if (ipv6Sock >= 0) socketCount++;
-        
-        if (socketCount == 0) {
-            std::cerr << "[KnotLinkServer] Failed to create any socket for port " << port << std::endl;
-            return -1;
-        }
-
-        // 存储 socket 对
-        portSockets[port] = {ipv4Sock, ipv6Sock};
-
-        std::cout << "[KnotLinkServer] Listening on port " << port 
-                  << " (" << socketCount << " socket(s))" << std::endl;
-        
-        // 返回 IPv4 socket (或者 IPv6 如果 IPv4 创建失败)
-        return ipv4Sock >= 0 ? ipv4Sock : ipv6Sock;
-    }
-
-    // 辅助函数：在两个 socket 上执行 poll 并接受连接
-    // 返回新接受的 client socket，如果没有连接则返回 -1
-    int acceptFromDualStack(uint16_t port, int timeoutMs = 100) {
-        auto it = portSockets.find(port);
-        if (it == portSockets.end()) return -1;
-        
-        int ipv4Sock = it->second.first;
-        int ipv6Sock = it->second.second;
-        
-        // 构建 pollfd 数组
-        std::vector<pollfd> pfds;
-        if (ipv4Sock >= 0) {
-            pfds.push_back({ipv4Sock, POLLIN, 0});
-        }
-        if (ipv6Sock >= 0) {
-            pfds.push_back({ipv6Sock, POLLIN, 0});
-        }
-        
-        if (pfds.empty()) return -1;
-        
-        if (poll(pfds.data(), pfds.size(), timeoutMs) > 0) {
-            for (auto& pfd : pfds) {
-                if (pfd.revents & POLLIN) {
-                    sockaddr_storage clientAddr{};
-                    socklen_t addrLen = sizeof(clientAddr);
-                    int clientSock = accept(pfd.fd, (sockaddr*)&clientAddr, &addrLen);
-                    if (clientSock >= 0) {
-                        return clientSock;
-                    }
-                }
-            }
-        }
-        return -1;
     }
 
     // 信号服务器 - 端口 6370
@@ -320,12 +212,18 @@ private:
         if (signalSocket < 0) return;
 
         while (running) {
-            int clientSock = acceptFromDualStack(6370);
-            if (clientSock >= 0) {
-                // 处理信号连接 (短连接)
-                std::thread([this, clientSock]() {
-                    handleSignalConnection(clientSock);
-                }).detach();
+            pollfd pfd{signalSocket, POLLIN, 0};
+            if (poll(&pfd, 1, 100) > 0 && (pfd.revents & POLLIN)) {
+                sockaddr_in clientAddr{};
+                socklen_t addrLen = sizeof(clientAddr);
+                int clientSock = accept(signalSocket, (sockaddr*)&clientAddr, &addrLen);
+                
+                if (clientSock >= 0) {
+                    // 处理信号连接 (短连接)
+                    std::thread([this, clientSock]() {
+                        handleSignalConnection(clientSock);
+                    }).detach();
+                }
             }
         }
     }
@@ -334,6 +232,11 @@ private:
         char buffer[4096];
         std::string data;
         
+// 将 socket 设置为阻塞模式
+        int flags = fcntl(clientSock, F_GETFL, 0);
+        fcntl(clientSock, F_SETFL, flags & ~O_NONBLOCK);
+        
+
         // 设置超时
         timeval tv{5, 0};
         setsockopt(clientSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -383,12 +286,18 @@ private:
         std::vector<std::shared_ptr<KLClientConnection>> connections;
 
         while (running) {
-            // 检查新连接 (IPv4 + IPv6)
-            int clientSock = acceptFromDualStack(6372, 10);
-            if (clientSock >= 0) {
-                auto conn = std::make_shared<KLClientConnection>(clientSock);
-                connections.push_back(conn);
-                std::cout << "[KnotLinkServer] New subscriber connection" << std::endl;
+            // 检查新连接
+            pollfd pfd{subscribeSocket, POLLIN, 0};
+            if (poll(&pfd, 1, 100) > 0 && (pfd.revents & POLLIN)) {
+                sockaddr_in clientAddr{};
+                socklen_t addrLen = sizeof(clientAddr);
+                int clientSock = accept(subscribeSocket, (sockaddr*)&clientAddr, &addrLen);
+                
+                if (clientSock >= 0) {
+                    auto conn = std::make_shared<KLClientConnection>(clientSock);
+                    connections.push_back(conn);
+                    std::cout << "[KnotLinkServer] New subscriber connection" << std::endl;
+                }
             }
 
             // 处理现有连接
@@ -457,12 +366,18 @@ private:
         if (querySocket < 0) return;
 
         while (running) {
-            int clientSock = acceptFromDualStack(6376);
-            if (clientSock >= 0) {
-                // 每个查询在独立线程中处理
-                std::thread([this, clientSock]() {
-                    handleQueryConnection(clientSock);
-                }).detach();
+            pollfd pfd{querySocket, POLLIN, 0};
+            if (poll(&pfd, 1, 100) > 0 && (pfd.revents & POLLIN)) {
+                sockaddr_in clientAddr{};
+                socklen_t addrLen = sizeof(clientAddr);
+                int clientSock = accept(querySocket, (sockaddr*)&clientAddr, &addrLen);
+                
+                if (clientSock >= 0) {
+                    // 每个查询在独立线程中处理
+                    std::thread([this, clientSock]() {
+                        handleQueryConnection(clientSock);
+                    }).detach();
+                }
             }
         }
     }
@@ -470,17 +385,17 @@ private:
     void handleQueryConnection(int clientSock) {
         char buffer[4096];
         std::string data;
-        
+
         // 将 socket 设置为阻塞模式（accept 继承了监听 socket 的非阻塞属性）
         int flags = fcntl(clientSock, F_GETFL, 0);
         fcntl(clientSock, F_SETFL, flags & ~O_NONBLOCK);
+        
         
         // 设置超时
         timeval tv{5, 0};
         setsockopt(clientSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
         ssize_t bytesRead = recv(clientSock, buffer, sizeof(buffer) - 1, 0);
-        
         if (bytesRead > 0) {
             buffer[bytesRead] = '\0';
             data = buffer;
@@ -543,13 +458,6 @@ private:
             }
         }
         
-        // 优雅关闭连接：先 shutdown 写端，让客户端有机会读取响应
-        shutdown(clientSock, SHUT_WR);
-        
-        // 等待客户端关闭（或超时），避免 TIME_WAIT 状态堆积
-        char discard[64];
-        while (recv(clientSock, discard, sizeof(discard), 0) > 0) {}
-        
         close(clientSock);
     }
 
@@ -562,12 +470,18 @@ private:
         std::vector<std::shared_ptr<KLClientConnection>> connections;
 
         while (running) {
-            // 检查新连接 (IPv4 + IPv6)
-            int clientSock = acceptFromDualStack(6378, 10);
-            if (clientSock >= 0) {
-                auto conn = std::make_shared<KLClientConnection>(clientSock);
-                connections.push_back(conn);
-                std::cout << "[KnotLinkServer] New responser connection" << std::endl;
+            // 检查新连接
+            pollfd pfd{responserSocket, POLLIN, 0};
+            if (poll(&pfd, 1, 100) > 0 && (pfd.revents & POLLIN)) {
+                sockaddr_in clientAddr{};
+                socklen_t addrLen = sizeof(clientAddr);
+                int clientSock = accept(responserSocket, (sockaddr*)&clientAddr, &addrLen);
+                
+                if (clientSock >= 0) {
+                    auto conn = std::make_shared<KLClientConnection>(clientSock);
+                    connections.push_back(conn);
+                    std::cout << "[KnotLinkServer] New responser connection" << std::endl;
+                }
             }
 
             // 处理现有连接
