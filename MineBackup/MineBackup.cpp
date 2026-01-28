@@ -233,10 +233,12 @@ int main(int argc, char** argv)
 	g_exitWatcherThread = thread(GameSessionWatcherThread);
 	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
 
-#ifdef _WIN32
 	if (g_enableKnotLink) {
-		// 初始化信号发送器 （异步进行避免卡顿）
+		// 初始化 KnotLink （异步进行避免卡顿）
 		thread linkLoaderThread([]() {
+#ifndef _WIN32
+			InitKnotLink();
+#endif
 			g_signalSender = new SignalSender("0x00000020", "0x00000020");
 			// 初始化命令响应器，并将 ProcessCommand 设为回调
 			try {
@@ -257,7 +259,6 @@ int main(int argc, char** argv)
 		});
 		linkLoaderThread.detach();
 	}
-#endif
 
 
 	if (g_appState.specialConfigMode)
@@ -1424,8 +1425,8 @@ int main(int argc, char** argv)
 					bool is_selected = (selectedWorldIndex == i);
 
 					// worldFolder / backupFolder 基于 effectiveConfig
-					wstring worldFolder = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
-					wstring backupFolder = dw.effectiveConfig.backupPath + L"\\" + dw.name;
+					wstring worldFolder = dw.effectiveConfig.saveRoot + L"/" + dw.name;
+					wstring backupFolder = dw.effectiveConfig.backupPath + L"/" + dw.name;
 
 					// --- 左侧图标区 ---
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -1447,8 +1448,8 @@ int main(int argc, char** argv)
 						// 标记为正在加载或失败，避免重复尝试
 						g_worldIconTextures[iconKey] = 0; // 0 表示无效纹理
 
-						string iconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png"));
-						string bedrockIconPath = utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\world_icon.jpeg"));
+						string iconPath = wstring_to_utf8(worldFolder + L"/icon.png");
+						string bedrockIconPath = wstring_to_utf8(worldFolder + L"/world_icon.jpeg");
 
 						GLuint texture_id = 0;
 						int tex_w = 0, tex_h = 0;
@@ -1489,14 +1490,23 @@ int main(int argc, char** argv)
 						wstring sel = SelectFileDialog();
 						if (!sel.empty()) {
 							// 覆盖原 icon.png
-							CopyFileW(sel.c_str(), (worldFolder + L"\\icon.png").c_str(), FALSE);
+#ifdef _WIN32
+							wstring destPath = worldFolder + L"\\icon.png";
+#else
+							wstring destPath = worldFolder + L"/icon.png";
+#endif
+							CopyFileW(sel.c_str(), destPath.c_str(), FALSE);
 							// 释放旧纹理并重新加载
 							if (current_texture) {
 								glDeleteTextures(1, &current_texture);
 							}
 							GLuint newTextureId = 0;
 							int tex_w = 0, tex_h = 0;
-							LoadTextureFromFileGL(utf8_to_gbk(wstring_to_utf8(worldFolder + L"\\icon.png")).c_str(), &newTextureId, &tex_w, &tex_h);
+#ifdef _WIN32
+							LoadTextureFromFileGL(utf8_to_gbk(wstring_to_utf8(destPath)).c_str(), &newTextureId, &tex_w, &tex_h);
+#else
+							LoadTextureFromFileGL(wstring_to_utf8(destPath).c_str(), &newTextureId, &tex_w, &tex_h);
+#endif
 							g_worldIconTextures[iconKey] = newTextureId;
 							g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
 						}
@@ -2107,17 +2117,8 @@ int main(int argc, char** argv)
 		g_exitWatcherThread.join();
 	}
 
-	//linkLoaderThread.join();
-#ifdef _WIN32
-	if (g_commandResponser) {
-		//delete g_commandResponser;
-		g_commandResponser = nullptr;
-	}
-	if (g_signalSender) {
-		//delete g_signalSender;
-		g_signalSender = nullptr;
-	}
-#endif
+	// 清理 KnotLink
+	CleanupKnotLink();
 
 	return 0;
 }
