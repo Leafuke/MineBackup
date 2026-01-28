@@ -143,10 +143,15 @@ if(WIN32)
         ${KNOTLINK_DIR}/SignalSender.cpp
     )
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_win.cpp)
+    target_sources(${PROJECT_NAME} PRIVATE 
+        ${KNOTLINK_DIR}/OpenSocketResponser.cpp
+        ${KNOTLINK_DIR}/SignalSender.cpp
+    )
 elseif(APPLE)
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos.cpp)
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos_tray.mm)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_macos.cpp ${SOURCE_DIR}/Platform_macos_tray.mm)
+    # KnotLink POSIX 版本使用 header-only 实现
 else()
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_linux.cpp)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_linux.cpp)

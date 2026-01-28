@@ -249,7 +249,11 @@ struct Config {
 	int backupMode = 1;
 	int zipLevel = 5;
 	int keepCount = 0;
-	bool hotBackup = true; // 1.11.3 之后默认开启热备份
+#ifdef _WIN32
+	bool hotBackup = true; // 1.11.3 之后默认开启热备份 (Windows)
+#else
+	bool hotBackup = false; // Linux/MacOS 默认关闭热备份，因为游戏不锁定文件
+#endif
 	bool backupBefore = false;
 	int theme = 1;
 	int folderNameType = 0;
