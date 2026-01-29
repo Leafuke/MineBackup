@@ -3,6 +3,7 @@
 #define TEXT_TO_TEXT_H
 #include <string>
 #include <filesystem>
+#include <algorithm>
 
 // UTF-8 helpers built around char8_t for C++20
 std::u8string wstring_to_u8string(const std::wstring& wstr);
