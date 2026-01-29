@@ -916,15 +916,106 @@ int main(int argc, char** argv)
 			ImGui::PopStyleVar(3);
 
 			static bool showAboutWindow = false;
+			static bool showImportConfigConfirm = false;
+			static bool showImportHistoryConfirm = false;
+			static wstring pendingImportPath;
 			// --- 顶部菜单栏 ---
 			if (ImGui::BeginMenuBar()) {
 
 				if (ImGui::BeginMenu(L("MENU_FILE"))) {
+					// 导出配置
+					if (ImGui::MenuItem(L("MENU_EXPORT_CONFIG"))) {
+						wstring exportPath = SelectSaveFileDialog(L"config_export.ini", L"INI Files (*.ini)\0*.ini\0All Files (*.*)\0*.*\0");
+						if (!exportPath.empty()) {
+							SaveConfigs(exportPath);
+							console.AddLog(L("LOG_CONFIG_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+						}
+					}
+					// 导入配置
+					if (ImGui::MenuItem(L("MENU_IMPORT_CONFIG"))) {
+						wstring importPath = SelectFileDialog();
+						if (!importPath.empty() && filesystem::exists(importPath)) {
+							pendingImportPath = importPath;
+							showImportConfigConfirm = true;
+						}
+					}
+					ImGui::Separator();
+					// 导出历史记录
+					if (ImGui::MenuItem(L("MENU_EXPORT_HISTORY"))) {
+						wstring exportPath = SelectSaveFileDialog(L"history_export.dat", L"DAT Files (*.dat)\0*.dat\0All Files (*.*)\0*.*\0");
+						if (!exportPath.empty()) {
+							try {
+								filesystem::copy_file(L"history.dat", exportPath, filesystem::copy_options::overwrite_existing);
+								console.AddLog(L("LOG_HISTORY_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+							} catch (const exception& e) {
+								console.AddLog("[Error] Failed to export history: %s", e.what());
+							}
+						}
+					}
+					// 导入历史记录
+					if (ImGui::MenuItem(L("MENU_IMPORT_HISTORY"))) {
+						wstring importPath = SelectFileDialog();
+						if (!importPath.empty() && filesystem::exists(importPath)) {
+							pendingImportPath = importPath;
+							showImportHistoryConfirm = true;
+						}
+					}
+					ImGui::Separator();
 					if (ImGui::MenuItem(L("EXIT"))) {
 						g_appState.done = true;
 						SaveConfigs();
 					}
 					ImGui::EndMenu();
+				}
+
+				// 导入配置确认对话框
+				if (showImportConfigConfirm) {
+					ImGui::OpenPopup(L("CONFIRM_IMPORT_CONFIG_TITLE"));
+				}
+				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_CONFIG_TITLE"), &showImportConfigConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
+					ImGui::TextWrapped(L("CONFIRM_IMPORT_CONFIG_MSG"));
+					ImGui::Separator();
+					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(120, 0))) {
+						LoadConfigs(wstring_to_utf8(pendingImportPath));
+						SaveConfigs(); // 保存到默认位置
+						console.AddLog(L("LOG_CONFIG_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+						showImportConfigConfirm = false;
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::SameLine();
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+						showImportConfigConfirm = false;
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::EndPopup();
+				}
+
+				// 导入历史记录确认对话框
+				if (showImportHistoryConfirm) {
+					ImGui::OpenPopup(L("CONFIRM_IMPORT_HISTORY_TITLE"));
+				}
+				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_HISTORY_TITLE"), &showImportHistoryConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
+					ImGui::TextWrapped(L("CONFIRM_IMPORT_HISTORY_MSG"));
+					ImGui::Separator();
+					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(120, 0))) {
+						try {
+							filesystem::copy_file(pendingImportPath, L"history.dat", filesystem::copy_options::overwrite_existing);
+							LoadHistory();
+							console.AddLog(L("LOG_HISTORY_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+						} catch (const exception& e) {
+							console.AddLog("[Error] Failed to import history: %s", e.what());
+						}
+						showImportHistoryConfirm = false;
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::SameLine();
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+						showImportHistoryConfirm = false;
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::EndPopup();
 				}
 
 				if (ImGui::BeginMenu(L("SETTINGS"))) {
@@ -1424,9 +1515,9 @@ int main(int argc, char** argv)
 					ImGui::PushID(i);
 					bool is_selected = (selectedWorldIndex == i);
 
-					// worldFolder / backupFolder 基于 effectiveConfig
-					wstring worldFolder = dw.effectiveConfig.saveRoot + L"/" + dw.name;
-					wstring backupFolder = dw.effectiveConfig.backupPath + L"/" + dw.name;
+					// worldFolder / backupFolder 基于 effectiveConfig - 使用跨平台路径拼接
+					wstring worldFolder = JoinPath(dw.effectiveConfig.saveRoot, dw.name).wstring();
+					wstring backupFolder = JoinPath(dw.effectiveConfig.backupPath, dw.name).wstring();
 
 					// --- 左侧图标区 ---
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -1448,8 +1539,15 @@ int main(int argc, char** argv)
 						// 标记为正在加载或失败，避免重复尝试
 						g_worldIconTextures[iconKey] = 0; // 0 表示无效纹理
 
-						string iconPath = wstring_to_utf8(worldFolder + L"/icon.png");
-						string bedrockIconPath = wstring_to_utf8(worldFolder + L"/world_icon.jpeg");
+						filesystem::path iconPathFs = JoinPath(worldFolder, L"icon.png");
+						filesystem::path bedrockIconPathFs = JoinPath(worldFolder, L"world_icon.jpeg");
+#ifdef _WIN32
+						string iconPath = utf8_to_gbk(wstring_to_utf8(iconPathFs.wstring()));
+						string bedrockIconPath = utf8_to_gbk(wstring_to_utf8(bedrockIconPathFs.wstring()));
+#else
+						string iconPath = wstring_to_utf8(iconPathFs.wstring());
+						string bedrockIconPath = wstring_to_utf8(bedrockIconPathFs.wstring());
+#endif
 
 						GLuint texture_id = 0;
 						int tex_w = 0, tex_h = 0;
@@ -1489,12 +1587,8 @@ int main(int argc, char** argv)
 					if (ImGui::IsItemClicked()) {
 						wstring sel = SelectFileDialog();
 						if (!sel.empty()) {
-							// 覆盖原 icon.png
-#ifdef _WIN32
-							wstring destPath = worldFolder + L"\\icon.png";
-#else
-							wstring destPath = worldFolder + L"/icon.png";
-#endif
+							// 覆盖原 icon.png - 使用跨平台路径拼接
+							wstring destPath = JoinPath(worldFolder, L"icon.png").wstring();
 							CopyFileW(sel.c_str(), destPath.c_str(), FALSE);
 							// 释放旧纹理并重新加载
 							if (current_texture) {
@@ -1619,8 +1713,8 @@ int main(int argc, char** argv)
 						ImGui::Separator();
 
 						// -- 详细信息 --
-						wstring worldFolder = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
-						wstring backupFolder = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
+						wstring worldFolder = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring();
+						wstring backupFolder = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
 						ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(GetLastOpenTime(worldFolder)).c_str());
 						ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(GetLastBackupTime(backupFolder)).c_str());
 
@@ -1666,7 +1760,7 @@ int main(int argc, char** argv)
 						// -- 主要操作按钮 --
 						float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
 						if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
-							MyFolder world = { displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc, displayWorlds[selectedWorldIndex].effectiveConfig, displayWorlds[selectedWorldIndex].baseConfigIndex, selectedWorldIndex };
+							MyFolder world = { JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring(), displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc, displayWorlds[selectedWorldIndex].effectiveConfig, displayWorlds[selectedWorldIndex].baseConfigIndex, selectedWorldIndex };
 							thread backup_thread(DoBackup, world, ref(console), utf8_to_wstring(backupComment));
 							backup_thread.detach();
 							strcpy_s(backupComment, "");
@@ -1730,7 +1824,7 @@ int main(int argc, char** argv)
 							}
 						}
 						if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
-							wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name;
+							wstring path = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
 							if (filesystem::exists(path)) {
 								OpenFolder(path);
 							}
@@ -1739,7 +1833,7 @@ int main(int argc, char** argv)
 							}
 						}
 						if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
-							wstring path = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot + L"\\" + displayWorlds[selectedWorldIndex].name;
+							wstring path = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring();
 							OpenFolder(path);
 						}
 
@@ -1822,7 +1916,8 @@ int main(int argc, char** argv)
 							const Config& config = g_appState.configs[displayWorlds[selectedWorldIndex].baseConfigIndex];
 							if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
 								console.AddLog(L("CLOUD_SYNC_START"));
-								wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + config.backupPath + L"\\" + displayWorlds[selectedWorldIndex].name + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
+								wstring localBackupPath = JoinPath(config.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
+								wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + localBackupPath + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
 								// 另起一个线程来执行云同步，避免阻塞后续操作
 								thread([rclone_command, config]() {
 									RunCommandInBackground(rclone_command, console, config.useLowPriority);
@@ -1924,7 +2019,7 @@ int main(int argc, char** argv)
 							if (ImGui::Button(L("BUTTON_EXPORT"), ImVec2(120, 0))) {
 								const auto& dw = displayWorlds[selectedWorldIndex];
 
-								wstring worldFullPath = dw.effectiveConfig.saveRoot + L"\\" + dw.name;
+								wstring worldFullPath = JoinPath(dw.effectiveConfig.saveRoot, dw.name).wstring();
 
 								thread export_thread(DoExportForSharing, tempExportConfig, dw.name, worldFullPath, utf8_to_wstring(outputPathBuf), utf8_to_wstring(descBuf), ref(console));
 								export_thread.detach();
@@ -1963,6 +2058,7 @@ int main(int argc, char** argv)
 							ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 							ImGui::Separator();
 							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(240, 0))) {
+								lock_guard<mutex> lock(g_appState.task_mutex);
 								if (g_appState.g_active_auto_backups.count(taskKey)) {
 									// 1. 设置停止标志
 									g_appState.g_active_auto_backups.at(taskKey).stop_flag = true;
@@ -2263,11 +2359,7 @@ void RunSpecialMode(int configId) {
 						taskConfig.useLowPriority = spCfg.useLowPriority;
 
 						const auto& worldData = taskConfig.worlds[task.worldIndex];
-#ifdef _WIN32
-						MyFolder world = { taskConfig.saveRoot + L"\\" + worldData.first, worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
-#else
-						MyFolder world = { taskConfig.saveRoot + L"/" + worldData.first, worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
-#endif
+						MyFolder world = { JoinPath(taskConfig.saveRoot, worldData.first).wstring(), worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
 
 						// 根据触发模式执行
 						if (task.triggerMode == TaskTrigger::Once) {
@@ -2411,11 +2503,7 @@ void RunSpecialMode(int configId) {
 			taskConfig.cpuThreads = spCfg.cpuThreads;
 			taskConfig.useLowPriority = spCfg.useLowPriority;
 
-#ifdef _WIN32
-			MyFolder world = { taskConfig.saveRoot + L"\\" + worldData.first, worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
-#else
-			MyFolder world = { taskConfig.saveRoot + L"/" + worldData.first, worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
-#endif
+			MyFolder world = { JoinPath(taskConfig.saveRoot, worldData.first).wstring(), worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
 
 			if (task.backupType == 0) { // 类型 0: 一次性备份
 				ConsoleLog(&console, L("TASK_QUEUE_ONETIME_BACKUP"), wstring_to_utf8(worldData.first).c_str());
@@ -2780,7 +2868,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
 				if (cfg.backupBefore) {
-					MyFolder world = { cfg.saveRoot + L"\\" + selected_entry->worldName, selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
+					MyFolder world = { JoinPath(cfg.saveRoot, selected_entry->worldName).wstring(), selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
 					DoBackup(world, ref(console), L"BeforeRestore");
 				}
 				// 传递 customRestoreBuf, 只有在 mode 3 时它才可能有内容

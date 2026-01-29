@@ -156,6 +156,15 @@ std::wstring SelectFolderDialog() {
     return RunOsaScript("POSIX path of (choose folder)");
 }
 
+std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName, const std::wstring& filter) {
+    std::string script = "POSIX path of (choose file name";
+    if (!defaultFileName.empty()) {
+        script += " default name \"" + wstring_to_utf8(defaultFileName) + "\"";
+    }
+    script += ")";
+    return RunOsaScript(script);
+}
+
 std::wstring GetDocumentsPath() {
     const char* home = std::getenv("HOME");
     if (home) {

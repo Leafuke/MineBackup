@@ -230,6 +230,14 @@ std::wstring SelectFolderDialog() {
     return RunZenity("--directory --title=\"Select Folder\"");
 }
 
+std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName, const std::wstring& filter) {
+    std::string args = "--save --confirm-overwrite --title=\"Save File\"";
+    if (!defaultFileName.empty()) {
+        args += " --filename=\"" + wstring_to_utf8(defaultFileName) + "\"";
+    }
+    return RunZenity(args);
+}
+
 std::wstring GetDocumentsPath() {
     const char* home = std::getenv("HOME");
     if (home) {

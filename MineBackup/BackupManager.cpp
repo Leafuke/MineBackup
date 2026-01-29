@@ -14,20 +14,6 @@
 #include <cwctype>
 using namespace std;
 
-#ifndef _WIN32
-static inline wstring NormalizeSeparators(const wstring& s) {
-	wstring r = s;
-	replace(r.begin(), r.end(), L'\\', L'/');
-	return r;
-}
-#else
-static inline wstring NormalizeSeparators(const wstring& s) { return s; }
-#endif
-
-static inline filesystem::path JoinPath(const wstring& a, const wstring& b) {
-	return filesystem::path(NormalizeSeparators(a)) / filesystem::path(NormalizeSeparators(b));
-}
-
 enum class FolderState {
 	BACKUP,
 	RESTORE,
@@ -1322,7 +1308,7 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 			lock_guard<mutex> lock(g_appState.configsMutex);
 			if (g_appState.configs.count(configIdx) && worldIdx >= 0 && worldIdx < g_appState.configs[configIdx].worlds.size()) {
 				MyFolder folder = {
-					g_appState.configs[configIdx].saveRoot + L"\\" + g_appState.configs[configIdx].worlds[worldIdx].first,
+					JoinPath(g_appState.configs[configIdx].saveRoot, g_appState.configs[configIdx].worlds[worldIdx].first).wstring(),
 					g_appState.configs[configIdx].worlds[worldIdx].first,
 					g_appState.configs[configIdx].worlds[worldIdx].second,
 					g_appState.configs[configIdx],
@@ -1509,7 +1495,7 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	this_thread::sleep_for(chrono::milliseconds(500));
 
 	// 查找最新备份文件 (这部分逻辑保持不变)
-	wstring backupDir = cfg.backupPath + L"\\" + world.name;
+	filesystem::path backupDir = JoinPath(cfg.backupPath, world.name);
 	filesystem::path latestBackup;
 	auto latest_time = filesystem::file_time_type{};
 	bool found = false;

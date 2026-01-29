@@ -19,12 +19,13 @@ MyFolder GetOccupiedWorld() {
 		const Config& cfg = config_pair.second;
 		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
 			const auto& world = cfg.worlds[world_idx];
-			wstring levelDatPath = cfg.saveRoot + L"\\" + world.first + L"\\session.lock";
+			filesystem::path worldPath = JoinPath(cfg.saveRoot, world.first);
+			wstring levelDatPath = (worldPath / L"session.lock").wstring();
 			if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
-				wstring temp = cfg.saveRoot + L"\\" + world.first + L"\\db";
-				if (!filesystem::exists(temp))
+				filesystem::path dbPath = worldPath / L"db";
+				if (!filesystem::exists(dbPath))
 					continue;
-				for (const auto& entry : filesystem::directory_iterator(temp)) {
+				for (const auto& entry : filesystem::directory_iterator(dbPath)) {
 					const auto entryPath = entry.path();
 					const auto entryPathW = entryPath.wstring();
 					if (IsFileLocked(entryPathW)) {
@@ -34,7 +35,7 @@ MyFolder GetOccupiedWorld() {
 				}
 			}
 			if (IsFileLocked(levelDatPath)) {
-				return MyFolder{ cfg.saveRoot + L"\\" + world.first, world.first, world.second, cfg, config_idx, world_idx };
+				return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };
 			}
 		}
 	}

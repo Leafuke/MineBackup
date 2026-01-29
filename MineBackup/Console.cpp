@@ -10,7 +10,6 @@
 #include <filesystem>
 using namespace std;
 Console console;
-static map<pair<int, int>, AutoBackupTask> g_active_auto_backups; // Key: {configIdx, worldIdx}
 std::mutex consoleMutex;				// 控制台模式的锁
 
 
@@ -49,7 +48,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			return error_response(L("BROADCAST_WORLD_INDEX_ERROR"));
 		}
 		const auto& cfg = g_appState.configs[config_idx];
-		wstring backupDir = cfg.backupPath + L"\\" + cfg.worlds[world_idx].first;
+		filesystem::path backupDir = JoinPath(cfg.backupPath, cfg.worlds[world_idx].first);
 		string result = "OK:";
 		if (filesystem::exists(backupDir)) {
 			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
@@ -121,7 +120,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		getline(ss, comment_part); // 获取剩余部分作为注释
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1); // 去除前导空格
 
-		MyFolder world = { g_appState.configs[config_idx].saveRoot + L"\\" + g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].second, g_appState.configs[config_idx], config_idx, world_idx };
+		MyFolder world = { JoinPath(g_appState.configs[config_idx].saveRoot, g_appState.configs[config_idx].worlds[world_idx].first).wstring(), g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].second, g_appState.configs[config_idx], config_idx, world_idx };
 
 		// 先广播消息，通知模组先保存世界
 		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
@@ -217,8 +216,11 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		const auto& world_name = g_appState.configs[config_idx].worlds[world_idx].first;
 		auto taskKey = std::make_pair(config_idx, world_idx);
 
+		// 使用互斥锁保护访问
+		std::lock_guard<std::mutex> lock(g_appState.task_mutex);
+
 		// 检查是否已有任务正在运行，避免重复启动
-		if (g_active_auto_backups.count(taskKey)) {
+		if (g_appState.g_active_auto_backups.count(taskKey)) {
 			string error_msg = "ERROR:An auto-backup task is already running for this world.";
 			BroadcastEvent(error_msg);
 			return error_msg;
@@ -228,14 +230,13 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		console->AddLog("[KnotLink] Received command to start auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
 
 		// 从全局Map中获取或创建一个新的任务实例
-		AutoBackupTask& task = g_active_auto_backups[taskKey];
+		AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
 		task.stop_flag = false; // 重置停止标记
 
 		// 创建新线程，并传入所有必要的参数。
 		// 使用 std::ref 将 stop_flag 的引用传递给线程，以便能远程控制其停止。
 		task.worker = thread(AutoBackupThreadFunction, config_idx, world_idx, interval_minutes, console, ref(task.stop_flag));
-		// 分离线程，使其在后台独立运行，这样指令可以立刻返回成功信息。
-		task.worker.detach();
+		// 注意：不再使用 detach()，以便程序退出时可以正确等待线程结束
 
 		// 构造成功信息并广播事件
 		std::string success_msg = "OK:Auto-backup started for world '" + wstring_to_utf8(world_name) + "' with an interval of " + std::to_string(interval_minutes) + " minutes.";
@@ -244,7 +245,6 @@ string ProcessCommand(const string& commandStr, Console* console) {
 
 		return success_msg;
 	}
-
 	else if (command == "STOP_AUTO_BACKUP") {
 		int config_idx, world_idx;
 		// 解析并验证参数
@@ -261,8 +261,8 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		std::lock_guard<std::mutex> lock(g_appState.task_mutex);
 
 		// 查找指定的任务
-		auto it = g_active_auto_backups.find(taskKey);
-		if (it == g_active_auto_backups.end()) {
+		auto it = g_appState.g_active_auto_backups.find(taskKey);
+		if (it == g_appState.g_active_auto_backups.end()) {
 			std::string error_msg = "ERROR:No active auto-backup task found for this world.";
 			BroadcastEvent(error_msg);
 			return error_msg;
@@ -274,12 +274,12 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		// a. 设置原子停止标记为true，通知线程应该退出了
 		it->second.stop_flag = true;
 
-		// b. 等待线程执行完毕。因为线程可能正在执行备份或处于休眠期，
-		//    所以这里不使用join()来阻塞，AutoBackupThreadFunction内部的循环会检测到stop_flag并自行退出。
-		//    在MineBackup主程序退出时，有统一的join逻辑确保所有线程都已结束。
+		// b. 等待线程执行完毕
+		if (it->second.worker.joinable())
+			it->second.worker.join();
 
 		// c. 从任务列表中移除该任务
-		g_active_auto_backups.erase(it);
+		g_appState.g_active_auto_backups.erase(it);
 
 		// 构造成功信息并广播事件
 		std::string success_msg = "OK:Auto-backup task for world '" + wstring_to_utf8(world_name) + "' has been stopped.";
