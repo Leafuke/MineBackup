@@ -232,6 +232,11 @@ private:
         char buffer[4096];
         std::string data;
         
+// 将 socket 设置为阻塞模式
+        int flags = fcntl(clientSock, F_GETFL, 0);
+        fcntl(clientSock, F_SETFL, flags & ~O_NONBLOCK);
+        
+
         // 设置超时
         timeval tv{5, 0};
         setsockopt(clientSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -380,6 +385,11 @@ private:
     void handleQueryConnection(int clientSock) {
         char buffer[4096];
         std::string data;
+
+        // 将 socket 设置为阻塞模式（accept 继承了监听 socket 的非阻塞属性）
+        int flags = fcntl(clientSock, F_GETFL, 0);
+        fcntl(clientSock, F_SETFL, flags & ~O_NONBLOCK);
+        
         
         // 设置超时
         timeval tv{5, 0};

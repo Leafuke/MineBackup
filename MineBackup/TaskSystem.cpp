@@ -78,7 +78,7 @@ namespace TaskSystem {
 
                 const auto& worldData = cfg.worlds[task.worldIndex];
                 MyFolder world = {
-                    cfg.saveRoot + L"\\" + worldData.first,
+                    JoinPath(cfg.saveRoot, worldData.first).wstring(),
                     worldData.first,
                     worldData.second,
                     cfg,

@@ -653,6 +653,38 @@ wstring SelectFolderDialog() {
 	return L"";
 }
 
+// 保存文件对话框
+wstring SelectSaveFileDialog(const wstring& defaultFileName, const wstring& filter) {
+	HWND hwndOwner = NULL;
+	IFileSaveDialog* pfd;
+	HRESULT hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_ALL,
+		IID_IFileSaveDialog, reinterpret_cast<void**>(&pfd));
+
+	if (SUCCEEDED(hr)) {
+		// 设置默认文件名
+		if (!defaultFileName.empty()) {
+			pfd->SetFileName(defaultFileName.c_str());
+		}
+		
+		hr = pfd->Show(hwndOwner);
+		if (SUCCEEDED(hr)) {
+			IShellItem* psi;
+			hr = pfd->GetResult(&psi);
+			if (SUCCEEDED(hr)) {
+				PWSTR path = nullptr;
+				psi->GetDisplayName(SIGDN_FILESYSPATH, &path);
+				wstring wpath(path);
+				CoTaskMemFree(path);
+				psi->Release();
+				pfd->Release();
+				return wpath;
+			}
+		}
+		pfd->Release();
+	}
+	return L"";
+}
+
 bool Extract7zToTempFile(wstring& extractedPath) {
 
 

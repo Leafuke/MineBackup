@@ -10,6 +10,7 @@ class Console;
 void CheckForUpdatesThread();
 std::wstring SelectFileDialog();
 std::wstring SelectFolderDialog();
+std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName = L"", const std::wstring& filter = L"");
 std::wstring GetLastOpenTime(const std::wstring& worldPath);
 std::wstring GetLastBackupTime(const std::wstring& backupDir);
 std::wstring GetDocumentsPath();
