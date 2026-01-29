@@ -38,7 +38,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.12.0";
+string CURRENT_VERSION = "1.12.1";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
@@ -1300,7 +1300,13 @@ int main(int argc, char** argv)
 					OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_KNOTLINK_TIP"));
-
+				if (ImGui::Button(L("ABOUT_VISIT_FOLDERREWIND")))
+				{
+					OpenLinkInBrowser(L"https://github.com/Leafuke/FolderRewind");
+				}
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_FOLDERREWIND_TIP"));
+				ImGui::Dummy(ImVec2(0.0f, 10.0f));
+				ImGui::Text(L("ABOUT_QQ_GROUP"));
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				ImGui::SeparatorText(L("ABOUT_LICENSE_HEADER"));
 				ImGui::Text("%s", L("ABOUT_LICENSE_TYPE"));
