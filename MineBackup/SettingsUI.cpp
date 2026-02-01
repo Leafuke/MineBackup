@@ -642,6 +642,12 @@ static void DrawAppearanceSettings(Config& cfg) {
                 }
             }
         }
+
+		if (oldLang != g_CurrentLang) {
+            SaveConfigs();
+            ReStartApplication();
+        }
+
         prev_lang_idx = lang_idx;
     }
 
@@ -1223,7 +1229,7 @@ void ShowSettingsWindowV2() {
     ImGui::Spacing();
 
     // 保存按钮
-    if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(150, 30))) {
+    if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(CalcButtonWidth(L("BUTTON_SAVE_AND_CLOSE")), 30))) {
         SaveConfigs();
         showSettings = false;
     }

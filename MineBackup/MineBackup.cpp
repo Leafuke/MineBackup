@@ -49,7 +49,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.12.1";
+string CURRENT_VERSION = "1.12.0";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
@@ -585,11 +585,25 @@ int main(int argc, char** argv)
 			static char saveRootPath[CONSTANT1] = "";
 			static char backupPath[CONSTANT1] = "";
 			static char zipPath[CONSTANT1] = "";
+			static char wizardFontPath[CONSTANT1] = "";
+			static int wizardLangIdx = 0;
+			static bool wizardLangInitialized = false;
+
+			// 初始化语言选择索引
+			if (!wizardLangInitialized) {
+				for (int i = 0; i < 2; i++) {
+					if (g_CurrentLang == lang_codes[i]) {
+						wizardLangIdx = i;
+						break;
+					}
+				}
+				wizardLangInitialized = true;
+			}
 
 			ImGuiViewport* wizardViewport = ImGui::GetMainViewport();
 			ImGui::SetNextWindowViewport(wizardViewport->ID);
 			ImGui::SetNextWindowPos(wizardViewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-			ImGui::SetNextWindowFocus();
+			//ImGui::SetNextWindowFocus();
 
 			if (!isWizardOpen)
 				g_appState.done = true;
@@ -603,7 +617,45 @@ int main(int argc, char** argv)
 				ImGui::TextWrapped(L("WIZARD_INTRO2"));
 				ImGui::TextWrapped(L("WIZARD_INTRO3"));
 
+				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				
+				// 语言选择
+				ImGui::Text(L("LANGUAGE"));
+				if (ImGui::Combo("##WizardLang", &wizardLangIdx, langs, IM_ARRAYSIZE(langs))) {
+					g_CurrentLang = lang_codes[wizardLangIdx];
+					// 切换到中文时，如果字体路径为空，自动设置中文字体
+					if (g_CurrentLang == "zh_CN" && strlen(wizardFontPath) == 0) {
+#ifdef _WIN32
+						wstring defaultCNFont = L"C:\\Windows\\Fonts\\msyh.ttc";
+						if (filesystem::exists(defaultCNFont)) {
+							Fontss = defaultCNFont;
+							strncpy_s(wizardFontPath, wstring_to_utf8(defaultCNFont).c_str(), sizeof(wizardFontPath));
+						}
+#endif
+					}
+				}
+
+				ImGui::Dummy(ImVec2(0.0f, 5.0f));
+				
+				// 字体路径设置
+				ImGui::Text(L("WIZARD_FONT_PATH"));
+				if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
+					wstring selected_file = SelectFileDialog();
+					if (!selected_file.empty()) {
+						strncpy_s(wizardFontPath, wstring_to_utf8(selected_file).c_str(), sizeof(wizardFontPath));
+						Fontss = selected_file;
+					}
+				}
+				ImGui::SameLine();
+				if (ImGui::InputText("##WizardFontPath", wizardFontPath, IM_ARRAYSIZE(wizardFontPath), ImGuiInputTextFlags_EnterReturnsTrue)) {
+					if (strlen(wizardFontPath) > 0) {
+						Fontss = utf8_to_wstring(wizardFontPath);
+					}
+				}
+				ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), L("WIZARD_FONT_TIP"));
+
+				ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
 				ImGui::Text(L("THEME_SETTINGS"));
 				const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 				if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
@@ -895,7 +947,11 @@ int main(int argc, char** argv)
 						initialConfig.skipIfUnchanged = true;
 						initialConfig.theme = themeId;
 						isSilence = false;
-						initialConfig.fontPath = GetDefaultUIFontPath();
+						if (strlen(wizardFontPath) > 0) {
+							initialConfig.fontPath = utf8_to_wstring(wizardFontPath);
+						} else {
+							initialConfig.fontPath = GetDefaultUIFontPath();
+						}
 						g_appState.specialConfigs.clear();
 
 						// 4. 保存到文件并切换到主应用界面
@@ -1202,7 +1258,9 @@ int main(int argc, char** argv)
 					ImGui::TextWrapped("%s", g_NoticeContent.c_str());
 					ImGui::EndChild();
 					ImGui::Separator();
-					if (ImGui::Button(L("NOTICE_CONFIRM"), ImVec2(200, 0))) {
+					float noticeBtnWidth = CalcPairButtonWidth(L("NOTICE_CONFIRM"), L("NOTICE_LATER"));
+					if (noticeBtnWidth < 250) noticeBtnWidth = 250;
+					if (ImGui::Button(L("NOTICE_CONFIRM"), ImVec2(noticeBtnWidth, 0))) {
 						g_NoticeLastSeenVersion = g_NoticeUpdatedAt;
 						g_NewNoticeAvailable = false;
 						notice_snoozed_this_session = true;
@@ -1211,7 +1269,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("NOTICE_LATER"), ImVec2(200, 0))) {
+					if (ImGui::Button(L("NOTICE_LATER"), ImVec2(noticeBtnWidth, 0))) {
 						notice_snoozed_this_session = true;
 						notice_popup_opened = false;
 						ImGui::CloseCurrentPopup();
@@ -2082,7 +2140,7 @@ int main(int argc, char** argv)
 						if (is_task_running) {
 							ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 							ImGui::Separator();
-							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(240, 0))) {
+							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(CalcButtonWidth(L("BUTTON_STOP_AUTOBACKUP")), 0))) {
 								lock_guard<mutex> lock(g_appState.task_mutex);
 								if (g_appState.g_active_auto_backups.count(taskKey)) {
 									// 1. 设置停止标志
@@ -2145,6 +2203,7 @@ int main(int argc, char** argv)
 
 			if (showSettings) {
 				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // 强制窗口不参与停靠
+				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 				ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 			}
 			if (showHistoryWindow) {
@@ -2954,7 +3013,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-		if (ImGui::Button(L("HISTORY_BUTTON_DELETE"), ImVec2(100, 0))) {
+		if (ImGui::Button(L("HISTORY_BUTTON_DELETE"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_DELETE")), 0))) {
 			entry_to_delete = selected_entry;
 			ImGui::OpenPopup(L("HISTORY_DELETE_POPUP_TITLE"));
 		}
