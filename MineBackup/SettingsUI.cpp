@@ -19,6 +19,19 @@
 
 using namespace std;
 
+// 计算自适应按钮宽度的辅助函数
+inline float CalcButtonWidth(const char* text, float minWidth = 80.0f, float padding = 20.0f) {
+    float textWidth = ImGui::CalcTextSize(text).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    return max(textWidth, minWidth);
+}
+
+// 计算成对按钮的一致宽度（取两者中较大的）
+inline float CalcPairButtonWidth(const char* text1, const char* text2, float minWidth = 100.0f, float padding = 20.0f) {
+    float w1 = ImGui::CalcTextSize(text1).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    float w2 = ImGui::CalcTextSize(text2).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    return max(max(w1, w2), minWidth);
+}
+
 extern bool showSettings;
 extern bool specialSetting;
 extern bool isSilence;
@@ -126,7 +139,8 @@ static void DrawConfigManagementPanel() {
             ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
         }
         ImGui::Separator();
-        if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+        float btnW = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+        if (ImGui::Button(L("BUTTON_OK"), ImVec2(btnW, 0))) {
             if (specialSetting) {
                 g_appState.specialConfigs.erase(g_appState.currentConfigIndex);
                 g_appState.specialConfigMode = false;
@@ -139,7 +153,7 @@ static void DrawConfigManagementPanel() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+        if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(btnW, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -177,7 +191,8 @@ static void DrawConfigManagementPanel() {
         ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
         ImGui::Separator();
 
-        if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
+        float createBtnW = CalcPairButtonWidth(L("CREATE_BUTTON"), L("BUTTON_CANCEL"));
+        if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(createBtnW, 0))) {
             if (strlen(new_config_name) > 0) {
                 if (config_type == 0) {
                     int new_index = CreateNewNormalConfig(new_config_name);
@@ -201,7 +216,7 @@ static void DrawConfigManagementPanel() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+        if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(createBtnW, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -471,14 +486,15 @@ static void DrawBlacklistSettings(Config& cfg) {
         static char regex_buf[256] = "regex:";
         ImGui::InputText("Regex Pattern", regex_buf, IM_ARRAYSIZE(regex_buf));
         ImGui::Separator();
-        if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+        float regexBtnW = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+        if (ImGui::Button(L("BUTTON_OK"), ImVec2(regexBtnW, 0))) {
             if (strlen(regex_buf) > 6) {
                 cfg.blacklist.push_back(utf8_to_wstring(regex_buf));
             }
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+        if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(regexBtnW, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -542,19 +558,91 @@ static void DrawRestoreBehavior(Config& cfg) {
     }
 }
 
+// 检测字体是否支持中文（基于文件名判断常见中文字体）
+static bool IsFontSupportChinese(const wstring& fontPath) {
+    if (fontPath.empty()) return false;
+    wstring lowerPath = fontPath;
+    transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
+    // 常见支持中文的字体
+    return (lowerPath.find(L"msyh") != wstring::npos ||      // 微软雅黑
+            lowerPath.find(L"msjh") != wstring::npos ||      // 微软正黑
+            lowerPath.find(L"simsun") != wstring::npos ||    // 宋体
+            lowerPath.find(L"simhei") != wstring::npos ||    // 黑体
+            lowerPath.find(L"simkai") != wstring::npos ||    // 楷体
+            lowerPath.find(L"noto") != wstring::npos ||      // Noto字体系列
+            lowerPath.find(L"pingfang") != wstring::npos ||  // 苹方
+            lowerPath.find(L"heiti") != wstring::npos ||     // 黑体
+            lowerPath.find(L"songti") != wstring::npos ||    // 宋体
+            lowerPath.find(L"wqy") != wstring::npos ||       // 文泉驿
+            lowerPath.find(L"cjk") != wstring::npos ||       // CJK字体
+            lowerPath.find(L"yahei") != wstring::npos);      // 雅黑
+}
+
+// 获取系统中文字体路径
+static wstring GetChineseFontPath() {
+#ifdef _WIN32
+    const wstring candidates[] = {
+        L"C:\\Windows\\Fonts\\msyh.ttc",
+        L"C:\\Windows\\Fonts\\msyh.ttf",
+        L"C:\\Windows\\Fonts\\msjh.ttc",
+        L"C:\\Windows\\Fonts\\msjh.ttf",
+        L"C:\\Windows\\Fonts\\simsun.ttc",
+        L"C:\\Windows\\Fonts\\simhei.ttf"
+    };
+    for (const auto& cand : candidates) {
+        if (filesystem::exists(cand)) return cand;
+    }
+#elif defined(__APPLE__)
+    const wstring candidates[] = {
+        L"/System/Library/Fonts/PingFang.ttc",
+        L"/System/Library/Fonts/STHeiti Light.ttc",
+        L"/System/Library/Fonts/STHeiti Medium.ttc"
+    };
+    for (const auto& cand : candidates) {
+        if (filesystem::exists(cand)) return cand;
+    }
+#else
+    const wstring candidates[] = {
+        L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+    };
+    for (const auto& cand : candidates) {
+        if (filesystem::exists(cand)) return cand;
+    }
+#endif
+    return L"";
+}
+
 // 绘制外观设置
 static void DrawAppearanceSettings(Config& cfg) {
     // 语言选择
     static int lang_idx = 0;
+    static int prev_lang_idx = -1;  // 记录之前的语言索引用于检测变化
     for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
         if (g_CurrentLang == lang_codes[i]) {
             lang_idx = i;
             break;
         }
     }
+    if (prev_lang_idx == -1) prev_lang_idx = lang_idx;
+    
     ImGui::SetNextItemWidth(300);
     if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
+        string oldLang = g_CurrentLang;
         g_CurrentLang = lang_codes[lang_idx];
+        
+        // 当从英文切换到中文时，检查字体是否支持中文
+        if (oldLang == "en_US" && g_CurrentLang == "zh_CN") {
+            if (!IsFontSupportChinese(Fontss)) {
+                // 当前字体不支持中文，自动切换到微软雅黑
+                wstring chineseFont = GetChineseFontPath();
+                if (!chineseFont.empty()) {
+                    Fontss = chineseFont;
+                    cfg.fontPath = chineseFont;
+                }
+            }
+        }
+        prev_lang_idx = lang_idx;
     }
 
     ImGui::Spacing();

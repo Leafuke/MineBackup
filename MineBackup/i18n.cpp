@@ -659,6 +659,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{"THEME_NORD_DARK", "ImGui(dark)"},
 		{"THEME_WIN_LIGHT", "Windows Light"},
 		{"THEME_WIN_DARK", "Windows Dark"},
+		{"THEME_CUSTOM", "Custom"},
 		{"WINDOW_OPACITY", "Window Opacity"},
 		{"IS_HOT_BACKUP", "Hot Backup"},
 		{"FONT_SETTINGS", "Font Settings (Manual path, e.g., from C:\\Windows\\Fonts):"},
@@ -1164,7 +1165,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "TIP_EXECUTE_ON_STARTUP", "When enabled, automatically enters special mode and executes configured tasks on program startup" },
 		{ "EXIT_WHEN_FINISHED", "Exit after execution" },
 		{ "RUN_ON_WINDOWS_STARTUP", "Run on Windows startup" },
-		{ "HIDE_CONSOLE_WINDOW", "Hide console window" }
+		{ "HIDE_CONSOLE_WINDOW", "Hide console window" },
+		{ "CHECK_FOR_UPDATES_ON_STARTUP", "Check Updates" },
 }},
 };
 const char* L(const char* key) {

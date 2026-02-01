@@ -34,6 +34,17 @@ inline int _getch() { return std::getchar(); }
 
 using namespace std;
 
+inline float CalcButtonWidth(const char* text, float minWidth = 80.0f, float padding = 20.0f) {
+    float textWidth = ImGui::CalcTextSize(text).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    return max(textWidth, minWidth);
+}
+
+inline float CalcPairButtonWidth(const char* text1, const char* text2, float minWidth = 100.0f, float padding = 20.0f) {
+    float w1 = ImGui::CalcTextSize(text1).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    float w2 = ImGui::CalcTextSize(text2).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    return max(max(w1, w2), minWidth);
+}
+
 GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
@@ -721,7 +732,7 @@ int main(int argc, char** argv)
 				ImGui::InputText(L("SAVES_ROOT_PATH"), saveRootPath, IM_ARRAYSIZE(saveRootPath));
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
-				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(CalcButtonWidth(L("BUTTON_NEXT")), 0))) {
 	#ifndef _WIN32
 					for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
 	#endif
@@ -751,9 +762,10 @@ int main(int argc, char** argv)
 				ImGui::InputText(L("WIZARD_BACKUP_PATH"), backupPath, IM_ARRAYSIZE(backupPath));
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
-				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
+				float navBtnWidth = CalcPairButtonWidth(L("BUTTON_PREVIOUS"), L("BUTTON_NEXT"));
+				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(navBtnWidth, 0))) page--;
 				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(navBtnWidth, 0))) {
 	#ifndef _WIN32
 					for (size_t i = 0; backupPath[i]; ++i) if (backupPath[i] == '\\') backupPath[i] = '/';
 	#endif
@@ -976,7 +988,8 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_CONFIG_TITLE"), &showImportConfigConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_CONFIG_MSG"));
 					ImGui::Separator();
-					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(120, 0))) {
+					float importBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(importBtnW, 0))) {
 						LoadConfigs(wstring_to_utf8(pendingImportPath));
 						SaveConfigs(); // 保存到默认位置
 						console.AddLog(L("LOG_CONFIG_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
@@ -984,7 +997,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(importBtnW, 0))) {
 						showImportConfigConfirm = false;
 						ImGui::CloseCurrentPopup();
 					}
@@ -999,7 +1012,8 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_HISTORY_TITLE"), &showImportHistoryConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_HISTORY_MSG"));
 					ImGui::Separator();
-					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(120, 0))) {
+					float histBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(histBtnW, 0))) {
 						try {
 							filesystem::copy_file(pendingImportPath, L"history.dat", filesystem::copy_options::overwrite_existing);
 							LoadHistory();
@@ -1011,7 +1025,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(histBtnW, 0))) {
 						showImportHistoryConfirm = false;
 						ImGui::CloseCurrentPopup();
 					}
@@ -1433,7 +1447,8 @@ int main(int argc, char** argv)
 						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
 					}
 					ImGui::Separator();
-					if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+					float delConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("BUTTON_OK"), ImVec2(delConfirmBtnWidth, 0))) {
 						if (specialSetting) {
 							g_appState.specialConfigs.erase(g_appState.currentConfigIndex);
 							g_appState.specialConfigMode = false;
@@ -1446,7 +1461,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(delConfirmBtnWidth, 0))) {
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
@@ -1474,7 +1489,8 @@ int main(int argc, char** argv)
 					ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
 					ImGui::Separator();
 
-					if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
+					float createBtnWidth = CalcPairButtonWidth(L("CREATE_BUTTON"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(createBtnWidth, 0))) {
 						if (strlen(new_config_name) > 0) {
 							if (config_type == 0) {
 								//int new_index = g_appState.configs.empty() ? 1 : g_appState.configs.rbegin()->first + 1;
@@ -1501,7 +1517,7 @@ int main(int argc, char** argv)
 						}
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(createBtnWidth, 0))) {
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
@@ -1856,7 +1872,8 @@ int main(int argc, char** argv)
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), mods_comment, IM_ARRAYSIZE(mods_comment));
 							ImGui::Separator();
 
-							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+							float modsConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_OK"), ImVec2(modsConfirmBtnWidth, 0))) {
 								if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 									filesystem::path tempPath = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot;
 									filesystem::path modsPath = tempPath.parent_path() / "mods";
@@ -1870,7 +1887,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(modsConfirmBtnWidth, 0))) {
 								strcpy_s(mods_comment, "");
 								ImGui::CloseCurrentPopup();
 							}
@@ -1901,7 +1918,8 @@ int main(int argc, char** argv)
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));
 							ImGui::Separator();
 
-							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+							float othersConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_OK"), ImVec2(othersConfirmBtnWidth, 0))) {
 								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment));
 								backup_thread.detach();
 								strcpy_s(others_comment, "");
@@ -1909,7 +1927,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(othersConfirmBtnWidth, 0))) {
 								strcpy_s(others_comment, "");
 								ImGui::CloseCurrentPopup();
 							}
@@ -2022,7 +2040,8 @@ int main(int argc, char** argv)
 							ImGui::InputTextMultiline("##Desc", descBuf, sizeof(descBuf), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4), ImGuiInputTextFlags_AllowTabInput);
 
 							ImGui::Separator();
-							if (ImGui::Button(L("BUTTON_EXPORT"), ImVec2(120, 0))) {
+							float exportBtnWidth = CalcPairButtonWidth(L("BUTTON_EXPORT"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_EXPORT"), ImVec2(exportBtnWidth, 0))) {
 								const auto& dw = displayWorlds[selectedWorldIndex];
 
 								wstring worldFullPath = JoinPath(dw.effectiveConfig.saveRoot, dw.name).wstring();
@@ -2033,7 +2052,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(exportBtnWidth, 0))) {
 								ImGui::CloseCurrentPopup();
 							}
 
@@ -2077,7 +2096,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(CalcButtonWidth(L("BUTTON_CANCEL")), 0))) {
 								ImGui::CloseCurrentPopup();
 							}
 						}
@@ -2086,7 +2105,8 @@ int main(int argc, char** argv)
 							ImGui::Separator();
 							ImGui::InputInt(L("INTERVAL_MINUTES"), &last_interval);
 							if (last_interval < 1) last_interval = 1;
-							if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
+							float autoBkpBtnWidth = CalcPairButtonWidth(L("BUTTON_START"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_START"), ImVec2(autoBkpBtnWidth, 0))) {
 								// 注册并启动线程
 								lock_guard<mutex> lock(g_appState.task_mutex);
 								if (taskKey.first >= 0) {
@@ -2099,7 +2119,7 @@ int main(int argc, char** argv)
 								}
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(autoBkpBtnWidth, 0))) {
 								ImGui::CloseCurrentPopup();
 							}
 						}
@@ -2675,7 +2695,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextUnformatted(L("HISTORY_CONFIRM_CLEAN_MSG"));
 		ImGui::Separator();
-		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+		float cleanConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+		if (ImGui::Button(L("BUTTON_OK"), ImVec2(cleanConfirmBtnWidth, 0))) {
 			if (g_appState.configs.count(tempCurrentConfigIndex) && g_appState.g_history.count(tempCurrentConfigIndex)) {
 				auto& history_vec = g_appState.g_history.at(tempCurrentConfigIndex);
 				history_vec.erase(
@@ -2692,7 +2713,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(cleanConfirmBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
 		ImGui::EndPopup();
 	}
 
@@ -2872,7 +2893,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 			ImGui::Separator();
 
-			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
+			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(CalcButtonWidth(L("BUTTON_CONFIRM_RESTORE")), 0))) {
 				if (cfg.backupBefore) {
 					MyFolder world = { JoinPath(cfg.saveRoot, selected_entry->worldName).wstring(), selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
 					DoBackup(world, ref(console), L"BeforeRestore");
@@ -2945,7 +2966,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::TextUnformatted(L("HISTORY_RENAME_POPUP_MSG"));
 			ImGui::InputText("##renameedit", rename_buf, sizeof(rename_buf));
 			ImGui::Separator();
-			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+			float renameBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(renameBtnWidth, 0))) {
 				filesystem::path old_path = backup_path;
 				filesystem::path new_path = old_path.parent_path() / utf8_to_wstring(rename_buf);
 				if (old_path != new_path && filesystem::exists(old_path)) {
@@ -2963,7 +2985,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(renameBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
 			ImGui::EndPopup();
 		}
 
@@ -2971,14 +2993,19 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextWrapped(L("HISTORY_DELETE_POPUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
 			ImGui::Separator();
-			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+			// 计算三个按钮的一致宽度
+			float delBtnW1 = ImGui::CalcTextSize(L("BUTTON_OK")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
+			float delBtnW2 = ImGui::CalcTextSize(L("CONFIRM_SAFEDELETE")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
+			float delBtnW3 = ImGui::CalcTextSize(L("BUTTON_CANCEL")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
+			float deleteBtnWidth = max(max(delBtnW1, delBtnW2), max(delBtnW3, 100.0f));
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(deleteBtnWidth, 0))) {
 				filesystem::path path_to_delete = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / entry_to_delete->worldName / entry_to_delete->backupFile;
 				DoDeleteBackup(g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("CONFIRM_SAFEDELETE"), ImVec2(120, 0))) {
+			if (ImGui::Button(L("CONFIRM_SAFEDELETE"), ImVec2(deleteBtnWidth, 0))) {
 				if (entry_to_delete->backupType.find(L"Smart") != wstring::npos) {
 					thread safe_delete_thread(DoSafeDeleteBackup, g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
 					safe_delete_thread.detach();
@@ -2990,7 +3017,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(deleteBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
 			ImGui::EndPopup();
 		}
 

@@ -35,6 +35,39 @@ extern string g_NoticeLastSeenVersion;
 extern string CURRENT_VERSION;
 extern AppState g_appState;
 
+static string ExtractLocalizedContent(const string& content) {
+	size_t sepPos = content.find("---");
+	if (sepPos == string::npos) {
+		return content;
+	}
+	
+	size_t beforeSep = sepPos;
+	while (beforeSep > 0 && (content[beforeSep - 1] == '\n' || content[beforeSep - 1] == '\r' || content[beforeSep - 1] == ' ')) {
+		beforeSep--;
+	}
+	
+	size_t afterSep = sepPos + 3;
+	while (afterSep < content.size() && (content[afterSep] == '\n' || content[afterSep] == '\r' || content[afterSep] == ' ' || content[afterSep] == '-')) {
+		afterSep++;
+	}
+	
+	string chineseContent = content.substr(0, beforeSep);
+	string englishContent = afterSep < content.size() ? content.substr(afterSep) : "";
+	
+	while (!chineseContent.empty() && (chineseContent.back() == '\n' || chineseContent.back() == '\r' || chineseContent.back() == ' ')) {
+		chineseContent.pop_back();
+	}
+	while (!englishContent.empty() && (englishContent.back() == '\n' || englishContent.back() == '\r' || englishContent.back() == ' ')) {
+		englishContent.pop_back();
+	}
+	
+	if (g_CurrentLang == "zh_CN") {
+		return chineseContent.empty() ? content : chineseContent;
+	} else {
+		return englishContent.empty() ? content : englishContent;
+	}
+}
+
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
     (void)iconType;
     std::string icon = "note";
@@ -89,7 +122,8 @@ void CheckForUpdatesThread() {
                             size_t noteStart = result.find('"', pos + 1);
                             size_t noteEnd = result.find("\"}", noteStart + 1);
                             if (noteStart != std::string::npos && noteEnd != std::string::npos) {
-                                g_ReleaseNotes = result.substr(noteStart + 1, noteEnd - noteStart - 1);
+                                std::string rawNotes = result.substr(noteStart + 1, noteEnd - noteStart - 1);
+                                g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
                             }
                         }
                     }
@@ -106,25 +140,45 @@ void CheckForNoticesThread() {
     g_NoticeContent.clear();
     g_NoticeUpdatedAt.clear();
     
-    std::string cmd = "curl -s https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
+    std::string langSuffix = (g_CurrentLang == "zh_CN") ? "_zh" : "_en";
+    std::string langCmd = "curl -s https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice" + langSuffix + " 2>/dev/null";
+    
+    std::string result;
+    FILE* pipe = popen(langCmd.c_str(), "r");
     if (pipe) {
         char buffer[4096];
-        std::string result;
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
             result += buffer;
         }
         pclose(pipe);
-        
-        if (!result.empty()) {
-            // Use content hash as version identifier
-            std::hash<std::string> hasher;
-            g_NoticeUpdatedAt = std::to_string(hasher(result));
-            
-            if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
-                g_NoticeContent = result;
-                g_NewNoticeAvailable = true;
+    }
+    
+    // 如果语言特定文件为空或获取失败,回退到原始 notice 文件
+    if (result.empty() || result.find("404") != std::string::npos) {
+        result.clear();
+        std::string fallbackCmd = "curl -s https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice 2>/dev/null";
+        pipe = popen(fallbackCmd.c_str(), "r");
+        if (pipe) {
+            char buffer[4096];
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                result += buffer;
             }
+            pclose(pipe);
+            
+            if (!result.empty()) {
+                result = ExtractLocalizedContent(result);
+            }
+        }
+    }
+    
+    if (!result.empty()) {
+        // Use content hash as version identifier
+        std::hash<std::string> hasher;
+        g_NoticeUpdatedAt = std::to_string(hasher(result));
+        
+        if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
+            g_NoticeContent = result;
+            g_NewNoticeAvailable = true;
         }
     }
     

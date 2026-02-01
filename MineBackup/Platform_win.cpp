@@ -44,6 +44,41 @@ NOTIFYICONDATA nid = { 0 };
 
 LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+static string ExtractLocalizedContent(const string& content) {
+	size_t sepPos = content.find("---");
+	if (sepPos == string::npos) {
+		return content;
+	}
+	
+	size_t beforeSep = sepPos;
+	while (beforeSep > 0 && (content[beforeSep - 1] == '\n' || content[beforeSep - 1] == '\r' || content[beforeSep - 1] == ' ')) {
+		beforeSep--;
+	}
+	
+	size_t afterSep = sepPos + 3; // "---" 长度为3
+	while (afterSep < content.size() && (content[afterSep] == '\n' || content[afterSep] == '\r' || content[afterSep] == ' ' || content[afterSep] == '-')) {
+		afterSep++;
+	}
+	
+	string chineseContent = content.substr(0, beforeSep);
+	string englishContent = afterSep < content.size() ? content.substr(afterSep) : "";
+	
+	// 去除末尾空白
+	while (!chineseContent.empty() && (chineseContent.back() == '\n' || chineseContent.back() == '\r' || chineseContent.back() == ' ')) {
+		chineseContent.pop_back();
+	}
+	while (!englishContent.empty() && (englishContent.back() == '\n' || englishContent.back() == '\r' || englishContent.back() == ' ')) {
+		englishContent.pop_back();
+	}
+	
+	// 根据当前语言返回对应内容
+	if (g_CurrentLang == "zh_CN") {
+		return chineseContent.empty() ? content : chineseContent;
+	} else {
+		return englishContent.empty() ? content : englishContent;
+	}
+}
+
 void EnableDarkModeWin(bool enable) {
 	HWND hwnd = glfwGetWin32Window(wc);
 	BOOL useDark = enable ? TRUE : FALSE;
@@ -258,10 +293,6 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-
-
-
-
 void CheckForNoticesThread() {
 	g_NoticeCheckDone = false;
 	g_NewNoticeAvailable = false;
@@ -275,18 +306,28 @@ void CheckForNoticesThread() {
 	string responseBody;
 	bool success = false;
 
+	wstring noticePath = g_CurrentLang == "zh_CN"
+		? L"/Leafuke/MineBackup/develop/notice_zh"
+		: L"/Leafuke/MineBackup/develop/notice_en";
+
 	hSession = WinHttpOpen(L"MineBackup Notice Checker/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
 	if (!hSession) goto cleanup;
 
 	hConnect = WinHttpConnect(hSession, L"raw.githubusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
 	if (!hConnect) goto cleanup;
 
-	hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/Leafuke/MineBackup/develop/notice", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+	hRequest = WinHttpOpenRequest(hConnect, L"GET", noticePath.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
 	if (!hRequest) goto cleanup;
 
 	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Notice-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 
-	if (!WinHttpReceiveResponse(hRequest, NULL)) goto cleanup;
+	if (!WinHttpReceiveResponse(hRequest, NULL)) {
+		WinHttpCloseHandle(hRequest);
+		hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/Leafuke/MineBackup/develop/notice", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+		if (!hRequest) goto cleanup;
+		WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Notice-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+		if (!WinHttpReceiveResponse(hRequest, NULL)) goto cleanup;
+	}
 
 	do {
 		dwSize = 0;
@@ -315,7 +356,7 @@ void CheckForNoticesThread() {
 		g_NoticeUpdatedAt = lastModified.empty() ? to_string(hash<string>{}(responseBody)) : wstring_to_utf8(lastModified);
 
 		if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
-			g_NoticeContent = responseBody;
+			g_NoticeContent = ExtractLocalizedContent(responseBody);
 			g_NewNoticeAvailable = true;
 		}
 		success = true;
@@ -413,37 +454,19 @@ void CheckForUpdatesThread() {
 		if (!latestVersion.empty() && isNew) {
 			g_LatestVersionStr = "v" + latestVersion;
 			g_NewVersionAvailable = true;
-			g_ReleaseNotes = nlohmann::json::parse(responseBody)["body"].get<std::string>();;
-			for (int i = 0; i < g_ReleaseNotes.size() - 1; ++i)
+			string rawNotes = nlohmann::json::parse(responseBody)["body"].get<std::string>();
+			// 先处理转义字符
+			for (int i = 0; i < rawNotes.size() - 1; ++i)
 			{
-				if (g_ReleaseNotes[i] == '#')
-					g_ReleaseNotes[i] = ' ';
-				else if (g_ReleaseNotes[i] == '\\' && g_ReleaseNotes[i + 1] == 'n')
-					g_ReleaseNotes[i] = '\n', g_ReleaseNotes[i + 1] = ' ';
-				else if (g_ReleaseNotes[i] == '\\')
-					g_ReleaseNotes[i] = ' ', g_ReleaseNotes[i + 1] = ' ';
+				if (rawNotes[i] == '#')
+					rawNotes[i] = ' ';
+				else if (rawNotes[i] == '\\' && rawNotes[i + 1] == 'n')
+					rawNotes[i] = '\n', rawNotes[i + 1] = ' ';
+				else if (rawNotes[i] == '\\')
+					rawNotes[i] = ' ', rawNotes[i + 1] = ' ';
 			}
-			// 查找 .exe 下载链接  -- 直接手动拼接就行
-			//string assets_key = "\"assets\": [";
-			//size_t assets_start = responseBody.find(assets_key);
-			//if (assets_start != string::npos) {
-			//	size_t search_pos = assets_start + assets_key.length();
-			//	while (search_pos < responseBody.length()) {
-			//		size_t asset_obj_start = responseBody.find("{", search_pos);
-			//		if (asset_obj_start == string::npos) break;
-			//		size_t asset_obj_end = responseBody.find("}", asset_obj_start);
-			//		if (asset_obj_end == string::npos) break;
-
-			//		string asset_json = responseBody.substr(asset_obj_start, asset_obj_end - asset_obj_start);
-			//		string asset_name = find_json_value(asset_json, "name");
-
-			//		if (asset_name.size() > 4 && asset_name.substr(asset_name.size() - 4) == ".exe") {
-			//			g_AssetDownloadURL = find_json_value(asset_json, "browser_download_url");
-			//			break; // 找到即退出
-			//		}
-			//		search_pos = asset_obj_end;
-			//	}
-			//}
+			// 根据当前语言提取对应内容（通过---分隔）
+			g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
 		}
 	}
 	catch (...) {
