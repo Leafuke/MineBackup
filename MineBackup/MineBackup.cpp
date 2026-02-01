@@ -34,11 +34,22 @@ inline int _getch() { return std::getchar(); }
 
 using namespace std;
 
+inline float CalcButtonWidth(const char* text, float minWidth = 80.0f, float padding = 20.0f) {
+    float textWidth = ImGui::CalcTextSize(text).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    return max(textWidth, minWidth);
+}
+
+inline float CalcPairButtonWidth(const char* text1, const char* text2, float minWidth = 100.0f, float padding = 20.0f) {
+    float w1 = ImGui::CalcTextSize(text1).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    float w2 = ImGui::CalcTextSize(text2).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
+    return max(max(w1, w2), minWidth);
+}
+
 GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.12.1";
+string CURRENT_VERSION = "1.12.2";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
@@ -574,11 +585,25 @@ int main(int argc, char** argv)
 			static char saveRootPath[CONSTANT1] = "";
 			static char backupPath[CONSTANT1] = "";
 			static char zipPath[CONSTANT1] = "";
+			static char wizardFontPath[CONSTANT1] = "";
+			static int wizardLangIdx = 0;
+			static bool wizardLangInitialized = false;
+
+			// 初始化语言选择索引
+			if (!wizardLangInitialized) {
+				for (int i = 0; i < 2; i++) {
+					if (g_CurrentLang == lang_codes[i]) {
+						wizardLangIdx = i;
+						break;
+					}
+				}
+				wizardLangInitialized = true;
+			}
 
 			ImGuiViewport* wizardViewport = ImGui::GetMainViewport();
 			ImGui::SetNextWindowViewport(wizardViewport->ID);
 			ImGui::SetNextWindowPos(wizardViewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-			ImGui::SetNextWindowFocus();
+			//ImGui::SetNextWindowFocus();
 
 			if (!isWizardOpen)
 				g_appState.done = true;
@@ -592,7 +617,45 @@ int main(int argc, char** argv)
 				ImGui::TextWrapped(L("WIZARD_INTRO2"));
 				ImGui::TextWrapped(L("WIZARD_INTRO3"));
 
+				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				
+				// 语言选择
+				ImGui::Text(L("LANGUAGE"));
+				if (ImGui::Combo("##WizardLang", &wizardLangIdx, langs, IM_ARRAYSIZE(langs))) {
+					g_CurrentLang = lang_codes[wizardLangIdx];
+					// 切换到中文时，如果字体路径为空，自动设置中文字体
+					if (g_CurrentLang == "zh_CN" && strlen(wizardFontPath) == 0) {
+#ifdef _WIN32
+						wstring defaultCNFont = L"C:\\Windows\\Fonts\\msyh.ttc";
+						if (filesystem::exists(defaultCNFont)) {
+							Fontss = defaultCNFont;
+							strncpy_s(wizardFontPath, wstring_to_utf8(defaultCNFont).c_str(), sizeof(wizardFontPath));
+						}
+#endif
+					}
+				}
+
+				ImGui::Dummy(ImVec2(0.0f, 5.0f));
+				
+				// 字体路径设置
+				ImGui::Text(L("WIZARD_FONT_PATH"));
+				if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
+					wstring selected_file = SelectFileDialog();
+					if (!selected_file.empty()) {
+						strncpy_s(wizardFontPath, wstring_to_utf8(selected_file).c_str(), sizeof(wizardFontPath));
+						Fontss = selected_file;
+					}
+				}
+				ImGui::SameLine();
+				if (ImGui::InputText("##WizardFontPath", wizardFontPath, IM_ARRAYSIZE(wizardFontPath), ImGuiInputTextFlags_EnterReturnsTrue)) {
+					if (strlen(wizardFontPath) > 0) {
+						Fontss = utf8_to_wstring(wizardFontPath);
+					}
+				}
+				ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), L("WIZARD_FONT_TIP"));
+
+				ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
 				ImGui::Text(L("THEME_SETTINGS"));
 				const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 				if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
@@ -721,7 +784,7 @@ int main(int argc, char** argv)
 				ImGui::InputText(L("SAVES_ROOT_PATH"), saveRootPath, IM_ARRAYSIZE(saveRootPath));
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
-				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(CalcButtonWidth(L("BUTTON_NEXT")), 0))) {
 	#ifndef _WIN32
 					for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
 	#endif
@@ -751,9 +814,10 @@ int main(int argc, char** argv)
 				ImGui::InputText(L("WIZARD_BACKUP_PATH"), backupPath, IM_ARRAYSIZE(backupPath));
 
 				ImGui::Dummy(ImVec2(0.0f, 20.0f));
-				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(120, 0))) page--;
+				float navBtnWidth = CalcPairButtonWidth(L("BUTTON_PREVIOUS"), L("BUTTON_NEXT"));
+				if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(navBtnWidth, 0))) page--;
 				ImGui::SameLine();
-				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(120, 0))) {
+				if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(navBtnWidth, 0))) {
 	#ifndef _WIN32
 					for (size_t i = 0; backupPath[i]; ++i) if (backupPath[i] == '\\') backupPath[i] = '/';
 	#endif
@@ -883,7 +947,11 @@ int main(int argc, char** argv)
 						initialConfig.skipIfUnchanged = true;
 						initialConfig.theme = themeId;
 						isSilence = false;
-						initialConfig.fontPath = GetDefaultUIFontPath();
+						if (strlen(wizardFontPath) > 0) {
+							initialConfig.fontPath = utf8_to_wstring(wizardFontPath);
+						} else {
+							initialConfig.fontPath = GetDefaultUIFontPath();
+						}
 						g_appState.specialConfigs.clear();
 
 						// 4. 保存到文件并切换到主应用界面
@@ -976,7 +1044,8 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_CONFIG_TITLE"), &showImportConfigConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_CONFIG_MSG"));
 					ImGui::Separator();
-					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(120, 0))) {
+					float importBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(importBtnW, 0))) {
 						LoadConfigs(wstring_to_utf8(pendingImportPath));
 						SaveConfigs(); // 保存到默认位置
 						console.AddLog(L("LOG_CONFIG_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
@@ -984,7 +1053,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(importBtnW, 0))) {
 						showImportConfigConfirm = false;
 						ImGui::CloseCurrentPopup();
 					}
@@ -999,7 +1068,8 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_HISTORY_TITLE"), &showImportHistoryConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_HISTORY_MSG"));
 					ImGui::Separator();
-					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(120, 0))) {
+					float histBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(histBtnW, 0))) {
 						try {
 							filesystem::copy_file(pendingImportPath, L"history.dat", filesystem::copy_options::overwrite_existing);
 							LoadHistory();
@@ -1011,7 +1081,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(histBtnW, 0))) {
 						showImportHistoryConfirm = false;
 						ImGui::CloseCurrentPopup();
 					}
@@ -1188,7 +1258,9 @@ int main(int argc, char** argv)
 					ImGui::TextWrapped("%s", g_NoticeContent.c_str());
 					ImGui::EndChild();
 					ImGui::Separator();
-					if (ImGui::Button(L("NOTICE_CONFIRM"), ImVec2(200, 0))) {
+					float noticeBtnWidth = CalcPairButtonWidth(L("NOTICE_CONFIRM"), L("NOTICE_LATER"));
+					if (noticeBtnWidth < 250) noticeBtnWidth = 250;
+					if (ImGui::Button(L("NOTICE_CONFIRM"), ImVec2(noticeBtnWidth, 0))) {
 						g_NoticeLastSeenVersion = g_NoticeUpdatedAt;
 						g_NewNoticeAvailable = false;
 						notice_snoozed_this_session = true;
@@ -1197,7 +1269,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("NOTICE_LATER"), ImVec2(200, 0))) {
+					if (ImGui::Button(L("NOTICE_LATER"), ImVec2(noticeBtnWidth, 0))) {
 						notice_snoozed_this_session = true;
 						notice_popup_opened = false;
 						ImGui::CloseCurrentPopup();
@@ -1276,7 +1348,8 @@ int main(int argc, char** argv)
 			if (showAboutWindow)
 				ImGui::OpenPopup(L("MENU_ABOUT"));
 
-			//ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+			ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			if (ImGui::BeginPopupModal(L("MENU_ABOUT"), &showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
 			{
 				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
@@ -1433,7 +1506,8 @@ int main(int argc, char** argv)
 						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
 					}
 					ImGui::Separator();
-					if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+					float delConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("BUTTON_OK"), ImVec2(delConfirmBtnWidth, 0))) {
 						if (specialSetting) {
 							g_appState.specialConfigs.erase(g_appState.currentConfigIndex);
 							g_appState.specialConfigMode = false;
@@ -1446,7 +1520,7 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(delConfirmBtnWidth, 0))) {
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
@@ -1474,7 +1548,8 @@ int main(int argc, char** argv)
 					ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
 					ImGui::Separator();
 
-					if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(120, 0))) {
+					float createBtnWidth = CalcPairButtonWidth(L("CREATE_BUTTON"), L("BUTTON_CANCEL"));
+					if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(createBtnWidth, 0))) {
 						if (strlen(new_config_name) > 0) {
 							if (config_type == 0) {
 								//int new_index = g_appState.configs.empty() ? 1 : g_appState.configs.rbegin()->first + 1;
@@ -1501,7 +1576,7 @@ int main(int argc, char** argv)
 						}
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+					if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(createBtnWidth, 0))) {
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
@@ -1856,7 +1931,8 @@ int main(int argc, char** argv)
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), mods_comment, IM_ARRAYSIZE(mods_comment));
 							ImGui::Separator();
 
-							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+							float modsConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_OK"), ImVec2(modsConfirmBtnWidth, 0))) {
 								if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 									filesystem::path tempPath = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot;
 									filesystem::path modsPath = tempPath.parent_path() / "mods";
@@ -1870,7 +1946,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(modsConfirmBtnWidth, 0))) {
 								strcpy_s(mods_comment, "");
 								ImGui::CloseCurrentPopup();
 							}
@@ -1901,7 +1977,8 @@ int main(int argc, char** argv)
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));
 							ImGui::Separator();
 
-							if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+							float othersConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_OK"), ImVec2(othersConfirmBtnWidth, 0))) {
 								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment));
 								backup_thread.detach();
 								strcpy_s(others_comment, "");
@@ -1909,7 +1986,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(othersConfirmBtnWidth, 0))) {
 								strcpy_s(others_comment, "");
 								ImGui::CloseCurrentPopup();
 							}
@@ -2022,7 +2099,8 @@ int main(int argc, char** argv)
 							ImGui::InputTextMultiline("##Desc", descBuf, sizeof(descBuf), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4), ImGuiInputTextFlags_AllowTabInput);
 
 							ImGui::Separator();
-							if (ImGui::Button(L("BUTTON_EXPORT"), ImVec2(120, 0))) {
+							float exportBtnWidth = CalcPairButtonWidth(L("BUTTON_EXPORT"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_EXPORT"), ImVec2(exportBtnWidth, 0))) {
 								const auto& dw = displayWorlds[selectedWorldIndex];
 
 								wstring worldFullPath = JoinPath(dw.effectiveConfig.saveRoot, dw.name).wstring();
@@ -2033,7 +2111,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(exportBtnWidth, 0))) {
 								ImGui::CloseCurrentPopup();
 							}
 
@@ -2063,7 +2141,7 @@ int main(int argc, char** argv)
 						if (is_task_running) {
 							ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 							ImGui::Separator();
-							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(240, 0))) {
+							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(CalcButtonWidth(L("BUTTON_STOP_AUTOBACKUP")), 0))) {
 								lock_guard<mutex> lock(g_appState.task_mutex);
 								if (g_appState.g_active_auto_backups.count(taskKey)) {
 									// 1. 设置停止标志
@@ -2077,7 +2155,7 @@ int main(int argc, char** argv)
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(CalcButtonWidth(L("BUTTON_CANCEL")), 0))) {
 								ImGui::CloseCurrentPopup();
 							}
 						}
@@ -2086,7 +2164,8 @@ int main(int argc, char** argv)
 							ImGui::Separator();
 							ImGui::InputInt(L("INTERVAL_MINUTES"), &last_interval);
 							if (last_interval < 1) last_interval = 1;
-							if (ImGui::Button(L("BUTTON_START"), ImVec2(120, 0))) {
+							float autoBkpBtnWidth = CalcPairButtonWidth(L("BUTTON_START"), L("BUTTON_CANCEL"));
+							if (ImGui::Button(L("BUTTON_START"), ImVec2(autoBkpBtnWidth, 0))) {
 								// 注册并启动线程
 								lock_guard<mutex> lock(g_appState.task_mutex);
 								if (taskKey.first >= 0) {
@@ -2099,7 +2178,7 @@ int main(int argc, char** argv)
 								}
 							}
 							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) {
+							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(autoBkpBtnWidth, 0))) {
 								ImGui::CloseCurrentPopup();
 							}
 						}
@@ -2125,6 +2204,7 @@ int main(int argc, char** argv)
 
 			if (showSettings) {
 				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // 强制窗口不参与停靠
+				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 				ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 			}
 			if (showHistoryWindow) {
@@ -2675,7 +2755,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextUnformatted(L("HISTORY_CONFIRM_CLEAN_MSG"));
 		ImGui::Separator();
-		if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+		float cleanConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+		if (ImGui::Button(L("BUTTON_OK"), ImVec2(cleanConfirmBtnWidth, 0))) {
 			if (g_appState.configs.count(tempCurrentConfigIndex) && g_appState.g_history.count(tempCurrentConfigIndex)) {
 				auto& history_vec = g_appState.g_history.at(tempCurrentConfigIndex);
 				history_vec.erase(
@@ -2692,7 +2773,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(cleanConfirmBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
 		ImGui::EndPopup();
 	}
 
@@ -2872,7 +2953,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 			ImGui::Separator();
 
-			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(120, 0))) {
+			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(CalcButtonWidth(L("BUTTON_CONFIRM_RESTORE")), 0))) {
 				if (cfg.backupBefore) {
 					MyFolder world = { JoinPath(cfg.saveRoot, selected_entry->worldName).wstring(), selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
 					DoBackup(world, ref(console), L"BeforeRestore");
@@ -2933,7 +3014,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-		if (ImGui::Button(L("HISTORY_BUTTON_DELETE"), ImVec2(100, 0))) {
+		if (ImGui::Button(L("HISTORY_BUTTON_DELETE"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_DELETE")), 0))) {
 			entry_to_delete = selected_entry;
 			ImGui::OpenPopup(L("HISTORY_DELETE_POPUP_TITLE"));
 		}
@@ -2945,7 +3026,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::TextUnformatted(L("HISTORY_RENAME_POPUP_MSG"));
 			ImGui::InputText("##renameedit", rename_buf, sizeof(rename_buf));
 			ImGui::Separator();
-			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+			float renameBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(renameBtnWidth, 0))) {
 				filesystem::path old_path = backup_path;
 				filesystem::path new_path = old_path.parent_path() / utf8_to_wstring(rename_buf);
 				if (old_path != new_path && filesystem::exists(old_path)) {
@@ -2963,7 +3045,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(renameBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
 			ImGui::EndPopup();
 		}
 
@@ -2971,14 +3053,19 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextWrapped(L("HISTORY_DELETE_POPUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
 			ImGui::Separator();
-			if (ImGui::Button(L("BUTTON_OK"), ImVec2(120, 0))) {
+			// 计算三个按钮的一致宽度
+			float delBtnW1 = ImGui::CalcTextSize(L("BUTTON_OK")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
+			float delBtnW2 = ImGui::CalcTextSize(L("CONFIRM_SAFEDELETE")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
+			float delBtnW3 = ImGui::CalcTextSize(L("BUTTON_CANCEL")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
+			float deleteBtnWidth = max(max(delBtnW1, delBtnW2), max(delBtnW3, 100.0f));
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(deleteBtnWidth, 0))) {
 				filesystem::path path_to_delete = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / entry_to_delete->worldName / entry_to_delete->backupFile;
 				DoDeleteBackup(g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("CONFIRM_SAFEDELETE"), ImVec2(120, 0))) {
+			if (ImGui::Button(L("CONFIRM_SAFEDELETE"), ImVec2(deleteBtnWidth, 0))) {
 				if (entry_to_delete->backupType.find(L"Smart") != wstring::npos) {
 					thread safe_delete_thread(DoSafeDeleteBackup, g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
 					safe_delete_thread.detach();
@@ -2990,7 +3077,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(deleteBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
 			ImGui::EndPopup();
 		}
 
