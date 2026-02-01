@@ -20,6 +20,7 @@
 - 🧠 **智能模式** — 类 Git 增量备份，节省时间与空间。
 - 📁 **自定义路径** — 将备份保存到任意磁盘或外接设备。
 - 🌏 **多语言支持** — 已支持中/英双语，欢迎贡献更多翻译。
+- 💻 **多平台支持** — 目前支持 Windows、Linux 和 MacOS。
 
 💡 **不仅仅是 Minecraft**：你可以用它来备份任何文件夹，完全不局限于游戏存档。
 
@@ -43,7 +44,7 @@
 ### 3️⃣ 高级技巧
 - 使用 **热键 Alt+Ctrl+S** 即可在游戏运行时触发“热备份”。
 - 启用 **退出检测（DetectOnExit）**：自动在退出 Minecraft 后进行备份。
-- 通过 **KnotLink** 与其他程序或 Mod 联动，实现备份前自动保存世界。
+- 通过 **KnotLink** 与其他程序或 Mod 联动，实现备份前自动保存世界。示例 Mod 可见 [这里](https://modrinth.com/mod/minebackup)。
 
 ---
 
@@ -57,9 +58,8 @@
 - 当检测到世界退出（`level.dat` 释放）时，自动进行热备份。
 
 ### 📌 KnotLink 消息交互
-通过 KnotLink 协议，MineBackup 可以：
-- **发送** 保存请求：`event=knotlink_save_request`
-- **接收** Mod / 服务端返回的 `save_done` 事件后执行备份  
+通过 KnotLink 协议，MineBackup 可以与其他应用或 Mod 进行简单的文本消息通信。详情请参见 [MineBackup](https://modrinth.com/mod/minebackup) Mod。
+
 - **支持的指令**：
 ```
 
@@ -96,7 +96,7 @@ cd MineBackup
 ## 🤝 贡献与支持
 
 * **报告问题 / 提交建议**：[GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
-* **多语言支持**：翻译 [`i18n.h`](MineBackup/i18n.h)，让更多玩家用上自己的语言。
+* **多语言支持**：翻译 [`i18n.h`](MineBackup/i18n.cpp)，让更多玩家用上自己的语言。
 * **文档改进**：帮助完善使用文档和示例。
 
 ---

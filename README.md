@@ -20,7 +20,7 @@
 - 🧠 **Smart Mode** — Git-like incremental backups to save time and storage.
 - 📁 **Custom Paths** — Store backups wherever you want.
 - 🌏 **Multi-language** — Currently supports English and Chinese — more are welcome!
-- 💻 **Multi-platform** — Currently supports Windows and Linux — and MacOS in the near future!
+- 💻 **Multi-platform** — Currently supports Windows, Linux and MacOS.
 
 💡 **Pro tip:** It works on any folder, not just Minecraft worlds.
 
@@ -44,7 +44,7 @@
 ### 3️⃣ Power Features
 - **Hotkey Backup** — Press **Alt+Ctrl+S** in-game to trigger a live backup.
 - **Exit Detection** — Enable *DetectOnExit* to back up automatically when Minecraft closes.
-- **KnotLink Integration** — Let MineBackup talk to mods or other tools to trigger “save before backup.”
+- **KnotLink Integration** — Let MineBackup talk to mods or other tools to trigger “save before backup.” An example mod is [here](https://modrinth.com/mod/minebackup).
 
 ---
 
@@ -59,11 +59,8 @@
 - When it sees the file go from “in use” to “released,” it automatically performs a hot backup.
 
 ### 📡 KnotLink Messaging
-MineBackup can send and receive simple text events to coordinate with other apps or mods:
-- **Sends:**  
-  `event=knotlink_save_request;config=0;world=MyWorld`
-- **Receives:**  
-  `knotlink_save_done` → proceed with backup.
+MineBackup can send and receive simple text events to coordinate with other apps or mods. View [MineBackup](https://modrinth.com/mod/minebackup) as an example mod for detail.
+
 - **Supported Commands:**
 ```
 
@@ -84,8 +81,8 @@ SET\_CONFIG \<config\_idx> <key> <value>
 ## ⚙️ Installation & Build
 
 **Requirements:**
-- Windows/Linux
-- C++20 compiler (Visual Studio recommended)
+- Windows/Linux/MacOS
+- C++20 compiler
 - ImGui library linked
 - 7-Zip executable
 
@@ -103,7 +100,7 @@ cd MineBackup
 ## 🤝 Contributing & Support
 
 * **Report bugs / request features:** [GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
-* **Help translate:** Edit [`i18n.h`](MineBackup/i18n.h) and submit a pull request.
+* **Help translate:** Edit [`i18n.h`](MineBackup/i18n.cpp) and submit a pull request.
 * **Improve docs:** PRs welcome — examples, screenshots, and tips appreciated.
 
 ---
