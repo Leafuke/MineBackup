@@ -1077,7 +1077,7 @@ int main(int argc, char** argv)
 				if (showImportConfigConfirm) {
 					ImGui::OpenPopup(L("CONFIRM_IMPORT_CONFIG_TITLE"));
 				}
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_CONFIG_TITLE"), &showImportConfigConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_CONFIG_MSG"));
 					ImGui::Separator();
@@ -1101,7 +1101,7 @@ int main(int argc, char** argv)
 				if (showImportHistoryConfirm) {
 					ImGui::OpenPopup(L("CONFIRM_IMPORT_HISTORY_TITLE"));
 				}
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_HISTORY_TITLE"), &showImportHistoryConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_HISTORY_MSG"));
 					ImGui::Separator();
@@ -1240,6 +1240,7 @@ int main(int argc, char** argv)
 						open_update_popup = true;
 					}
 					ImGui::PopStyleColor(3);
+					ImGui::SetNextWindowViewport(viewport->ID);
 					if (ImGui::BeginPopupModal(L("UPDATE_POPUP_TITLE"), &open_update_popup, ImGuiWindowFlags_AlwaysAutoResize)) {
 						ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
 						ImGui::Separator();
@@ -1287,7 +1288,7 @@ int main(int argc, char** argv)
 					notice_popup_opened = true;
 				}
 
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("NOTICE_POPUP_TITLE"), &notice_popup_opened, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("NOTICE_POPUP_DESC"));
 					ImGui::Separator();
@@ -1343,7 +1344,7 @@ int main(int argc, char** argv)
 				g_showCloseConfirmDialog = false;
 			}
 			
-			ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+			ImGui::SetNextWindowViewport(viewport->ID);
 			if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 				ImGui::TextWrapped(L("CLOSE_CONFIRM_MSG"));
 				ImGui::Separator();
@@ -1385,7 +1386,7 @@ int main(int argc, char** argv)
 			if (showAboutWindow)
 				ImGui::OpenPopup(L("MENU_ABOUT"));
 
-			ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+			ImGui::SetNextWindowViewport(viewport->ID);
 			ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			if (ImGui::BeginPopupModal(L("MENU_ABOUT"), &showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
 			{
@@ -1590,6 +1591,7 @@ int main(int argc, char** argv)
 				// 删除配置弹窗
 				if (showDeleteConfigPopup)
 					ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 					showDeleteConfigPopup = false;
 					if (specialSetting) {
@@ -1623,6 +1625,8 @@ int main(int argc, char** argv)
 				// 添加新配置弹窗
 				if (showAddConfigPopup)
 					ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
 				{
 					showAddConfigPopup = false;
@@ -1950,6 +1954,7 @@ int main(int argc, char** argv)
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
+							//ImGui::SetNextWindowViewport(viewport->ID);
 							ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
 						}
 
@@ -2027,6 +2032,7 @@ int main(int argc, char** argv)
 							}
 						}
 
+						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_OTHERS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							static char mods_comment[256] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
@@ -2073,6 +2079,7 @@ int main(int argc, char** argv)
 							g_appState.configs[displayWorlds[selectedWorldIndex].baseConfigIndex].othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
 						}
 
+						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							static char others_comment[CONSTANT1] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
@@ -2120,6 +2127,7 @@ int main(int argc, char** argv)
 								ImGui::OpenPopup(L("EXPORT_WINDOW_TITLE"));
 							}
 						}
+						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal(L("EXPORT_WINDOW_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							// 使用 static 变量来持有一次性配置，它们只在弹窗首次打开时被初始化
 							static Config tempExportConfig;
@@ -2224,6 +2232,7 @@ int main(int argc, char** argv)
 					}
 
 					// 自动备份弹窗
+					ImGui::SetNextWindowViewport(viewport->ID);
 					if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 						bool is_task_running = false;
 						pair<int, int> taskKey = { -1,-1 };
@@ -2306,7 +2315,7 @@ int main(int argc, char** argv)
 
 			if (showSettings) {
 				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // 强制窗口不参与停靠
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 			}
 			if (showHistoryWindow) {
