@@ -704,7 +704,11 @@ static void DrawAppearanceSettings(Config& cfg) {
 
     // 关闭行为
     ImGui::Text("%s", L("CLOSE_BEHAVIOR_LABEL"));
+#ifdef __linux__
+    const char* close_behavior_options[] = { L("CLOSE_BEHAVIOR_ASK"), L("CLOSE_BEHAVIOR_MINIMIZE_WINDOW"), L("CLOSE_BEHAVIOR_EXIT") };
+#else
     const char* close_behavior_options[] = { L("CLOSE_BEHAVIOR_ASK"), L("CLOSE_BEHAVIOR_MINIMIZE"), L("CLOSE_BEHAVIOR_EXIT") };
+#endif
     int close_behavior_idx = g_rememberCloseAction ? g_closeAction : 0;
     ImGui::SetNextItemWidth(300);
     if (ImGui::Combo("##CloseBehavior", &close_behavior_idx, close_behavior_options, IM_ARRAYSIZE(close_behavior_options))) {

@@ -30,6 +30,8 @@ inline int _getch() { return std::getchar(); }
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <limits.h>
+#include <CoreText/CoreText.h>
+#include <CoreFoundation/CoreFoundation.h>
 #endif
 
 using namespace std;
@@ -96,50 +98,152 @@ enum class BackupCheckResult {
 
 static wstring GetDefaultUIFontPath() {
 #ifdef _WIN32
+	// 动态获取 Windows 字体目录
+	wstring fontsDir = L"C:\\Windows\\Fonts\\";
+	{
+		wchar_t winDir[MAX_PATH] = {};
+		if (GetWindowsDirectoryW(winDir, MAX_PATH) > 0)
+			fontsDir = wstring(winDir) + L"\\Fonts\\";
+	}
+	// 用户字体目录
+	wstring userFontsDir;
+	{
+		wchar_t localAppData[MAX_PATH] = {};
+		if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0)
+			userFontsDir = wstring(localAppData) + L"\\Microsoft\\Windows\\Fonts\\";
+	}
+
 	if (g_CurrentLang == "zh_CN") {
-		const wstring cn_candidates[] = {
-			L"C:\\Windows\\Fonts\\msyh.ttc",
-			L"C:\\Windows\\Fonts\\msyh.ttf",
-			L"C:\\Windows\\Fonts\\msjh.ttc",
-			L"C:\\Windows\\Fonts\\msjh.ttf",
-			L"C:\\Windows\\Fonts\\SegoeUI.ttf"
-		};
-		for (const auto& cand : cn_candidates) {
-			if (filesystem::exists(cand)) return cand;
+		const wchar_t* cn_names[] = { L"msyh.ttc", L"msyh.ttf", L"msjh.ttc", L"msjh.ttf", L"SegoeUI.ttf", nullptr };
+		for (const wchar_t** fn = cn_names; *fn; ++fn) {
+			wstring p = fontsDir + *fn;
+			if (filesystem::exists(p)) return p;
+			if (!userFontsDir.empty()) {
+				p = userFontsDir + *fn;
+				if (filesystem::exists(p)) return p;
+			}
 		}
 	}
-	const wstring en_candidates[] = { L"C:\\Windows\\Fonts\\SegoeUI.ttf" };
-	for (const auto& cand : en_candidates) {
-		if (filesystem::exists(cand)) return cand;
+	const wchar_t* en_names[] = { L"SegoeUI.ttf", L"segoeui.ttf", L"arial.ttf", nullptr };
+	for (const wchar_t** fn = en_names; *fn; ++fn) {
+		wstring p = fontsDir + *fn;
+		if (filesystem::exists(p)) return p;
+		if (!userFontsDir.empty()) {
+			p = userFontsDir + *fn;
+			if (filesystem::exists(p)) return p;
+		}
 	}
 	return L"";
+
 #elif defined(__APPLE__)
-	const wstring cn_candidates[] = {
+	// 使用 Core Text 按名称查找字体文件路径
+	auto findFontPath = [](const char* fontName) -> wstring {
+		CFStringRef cfName = CFStringCreateWithCString(kCFAllocatorDefault, fontName, kCFStringEncodingUTF8);
+		if (!cfName) return L"";
+		CTFontRef font = CTFontCreateWithName(cfName, 12.0, nullptr);
+		CFRelease(cfName);
+		if (!font) return L"";
+		CFURLRef url = (CFURLRef)CTFontCopyAttribute(font, kCTFontURLAttribute);
+		CFRelease(font);
+		if (!url) return L"";
+		char path[PATH_MAX];
+		Boolean ok = CFURLGetFileSystemRepresentation(url, true, (UInt8*)path, sizeof(path));
+		CFRelease(url);
+		if (!ok) return L"";
+		return utf8_to_wstring(string(path));
+	};
+
+	if (g_CurrentLang == "zh_CN") {
+		// 中文字体：苹方 > 华文黑体 > Hiragino
+		const char* cnFontNames[] = {
+			"PingFangSC-Regular", "PingFang SC",
+			"STHeitiSC-Light", "STHeiti",
+			"Hiragino Sans GB", "Hiragino Sans",
+			nullptr
+		};
+		for (const char** fn = cnFontNames; *fn; ++fn) {
+			wstring p = findFontPath(*fn);
+			if (!p.empty() && filesystem::exists(p)) return p;
+		}
+	}
+	// 英文/默认字体
+	const char* enFontNames[] = {
+		"Helvetica Neue", "Helvetica",
+		".AppleSystemUIFont",
+		"Lucida Grande", "Arial",
+		nullptr
+	};
+	for (const char** fn = enFontNames; *fn; ++fn) {
+		wstring p = findFontPath(*fn);
+		if (!p.empty() && filesystem::exists(p)) return p;
+	}
+	// 回退到硬编码路径
+	const wstring fallbacks[] = {
 		L"/System/Library/Fonts/PingFang.ttc",
 		L"/System/Library/Fonts/STHeiti Light.ttc",
-		L"/System/Library/Fonts/STHeiti Medium.ttc",
-		L"/System/Library/Fonts/AppleSDGothicNeo.ttc"
-	};
-	for (const auto& cand : cn_candidates) {
-		if (filesystem::exists(cand)) return cand;
-	}
-	const wstring en_candidates[] = {
-		L"/System/Library/Fonts/SFNS.ttf",
-		L"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		L"/System/Library/Fonts/Helvetica.ttc",
 		L"/System/Library/Fonts/Supplemental/Arial.ttf",
 		L"/Library/Fonts/Arial.ttf"
 	};
-	for (const auto& cand : en_candidates) {
+	for (const auto& cand : fallbacks) {
 		if (filesystem::exists(cand)) return cand;
 	}
 	return L"";
+
 #else
-	const wstring candidates[] = {
+	// Linux: 使用 fontconfig (fc-match) 动态查找字体
+	auto findFontByFc = [](const char* pattern) -> wstring {
+		string cmd = "fc-match -f '%{file}' '";
+		cmd += pattern;
+		cmd += "' 2>/dev/null";
+		FILE* pipe = popen(cmd.c_str(), "r");
+		if (!pipe) return L"";
+		char buf[4096] = {};
+		string output;
+		if (fgets(buf, sizeof(buf), pipe)) {
+			output = buf;
+		}
+		pclose(pipe);
+		if (!output.empty() && output.back() == '\n') output.pop_back();
+		if (!output.empty() && filesystem::exists(output))
+			return utf8_to_wstring(output);
+		return L"";
+	};
+
+	if (g_CurrentLang == "zh_CN") {
+		const char* cnPatterns[] = {
+			"Noto Sans CJK SC:style=Regular",
+			"Noto Sans CJK:style=Regular",
+			"WenQuanYi Zen Hei",
+			"WenQuanYi Micro Hei",
+			"Droid Sans Fallback",
+			nullptr
+		};
+		for (const char** p = cnPatterns; *p; ++p) {
+			wstring path = findFontByFc(*p);
+			if (!path.empty()) return path;
+		}
+	}
+	// 默认字体
+	const char* defaultPatterns[] = {
+		"sans-serif",
+		"DejaVu Sans",
+		"Liberation Sans",
+		"Noto Sans",
+		nullptr
+	};
+	for (const char** p = defaultPatterns; *p; ++p) {
+		wstring path = findFontByFc(*p);
+		if (!path.empty()) return path;
+	}
+	// 回退到硬编码路径
+	const wstring fallbacks[] = {
 		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+		L"/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
 		L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
 		L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 	};
-	for (const auto& cand : candidates) {
+	for (const auto& cand : fallbacks) {
 		if (filesystem::exists(cand)) return cand;
 	}
 	return L"";
@@ -412,8 +516,10 @@ int main(int argc, char** argv)
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
-	#ifndef _WIN32
+	#ifdef __APPLE__
 	CreateTrayIcon();
+	#endif
+	#ifndef _WIN32
 	RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
 	RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
 	#endif
@@ -422,11 +528,17 @@ int main(int argc, char** argv)
 	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
 		if (g_closeAction == 1) {
 			glfwSetWindowShouldClose(window, GLFW_FALSE);
-			#ifndef _WIN32
+#if defined(__APPLE__)
 			CreateTrayIcon();
-			#endif
 			g_appState.showMainApp = false;
 			glfwHideWindow(window);
+#elif defined(__linux__)
+			// Linux仅最小化窗口，不使用系统托盘
+			glfwIconifyWindow(window);
+#else
+			g_appState.showMainApp = false;
+			glfwHideWindow(window);
+#endif
 		} else if (g_closeAction == 2) {
 			SaveConfigs();
 			g_appState.done = true;
@@ -1353,19 +1465,30 @@ int main(int argc, char** argv)
 				ImGui::Checkbox(L("CLOSE_REMEMBER_CHOICE"), &tempRememberChoice);
 				
 				ImGui::Dummy(ImVec2(0, 10));
-				
+
+#ifdef __linux__
+				if (ImGui::Button(L("CLOSE_MINIMIZE_WINDOW"), ImVec2(200, 0))) {
+					if (tempRememberChoice) {
+						g_closeAction = 1;
+						g_rememberCloseAction = true;
+					}
+					glfwIconifyWindow(wc);
+					ImGui::CloseCurrentPopup();
+				}
+#else
 				if (ImGui::Button(L("CLOSE_MINIMIZE_TO_TRAY"), ImVec2(200, 0))) {
 					if (tempRememberChoice) {
 						g_closeAction = 1;
 						g_rememberCloseAction = true;
 					}
-					#ifndef _WIN32
+#ifdef __APPLE__
 					CreateTrayIcon();
-					#endif
+#endif
 					g_appState.showMainApp = false;
 					glfwHideWindow(wc);
 					ImGui::CloseCurrentPopup();
 				}
+#endif
 				ImGui::SameLine();
 				if (ImGui::Button(L("CLOSE_EXIT_APP"), ImVec2(200, 0))) {
 					if (tempRememberChoice) {
