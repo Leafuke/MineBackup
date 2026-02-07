@@ -317,8 +317,10 @@ int main(int argc, char** argv)
 	}
 
 	glfwSetErrorCallback(glfw_error_callback);
-	if (!glfwInit())
+	if (!glfwInit()) {
+		MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
 		return 1;
+	}
 
 	// Decide GL+GLSL versions
 #if defined(IMGUI_IMPL_OPENGL_ES2)
@@ -341,7 +343,7 @@ int main(int argc, char** argv)
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // Required on Mac
 #else
-	// GL 3.0 + GLSL 130
+	// GL 3.0 + GLSL 130 (default; will try fallbacks below on failure)
 	const char* glsl_version = "#version 130";
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
@@ -368,8 +370,45 @@ int main(int argc, char** argv)
 #endif
 
 	wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
-	if (wc == nullptr)
+
+#if !defined(IMGUI_IMPL_OPENGL_ES2) && !defined(IMGUI_IMPL_OPENGL_ES3) && !defined(__APPLE__)
+	if (wc == nullptr) {
+		fprintf(stderr, "OpenGL 3.0 context creation failed, trying OpenGL 2.1 fallback...\n");
+		glfwDefaultWindowHints();
+		glfwSetErrorCallback(glfw_error_callback);
+		glsl_version = "#version 120";
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
+	}
+	if (wc == nullptr) {
+		fprintf(stderr, "OpenGL 2.1 context creation failed, trying OpenGL 2.0 fallback...\n");
+		glfwDefaultWindowHints();
+		glfwSetErrorCallback(glfw_error_callback);
+		glsl_version = "#version 110";
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
+	}
+	if (wc == nullptr) {
+		fprintf(stderr, "OpenGL 2.0 context creation failed, trying default version...\n");
+		glfwDefaultWindowHints();
+		glfwSetErrorCallback(glfw_error_callback);
+		glsl_version = "#version 110";
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
+	}
+#endif
+
+	if (wc == nullptr) {
+		MessageBoxWin("Fatal Error",
+			"Failed to create window. Your graphics driver may not support OpenGL.\n"
+			"Please update your graphics drivers or install a remote desktop solution that supports OpenGL.",
+			2);
+		glfwTerminate();
 		return 1;
+	}
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
@@ -565,13 +604,11 @@ int main(int argc, char** argv)
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
-			glfwWaitEventsTimeout(0.2);
-			ImGui_ImplGlfw_Sleep(200);
+			glfwWaitEventsTimeout(1.0);
 			continue;
 		}
 		else {
-			glfwPollEvents();
-			this_thread::sleep_for(std::chrono::milliseconds(16)); // 60FPS
+			glfwWaitEventsTimeout(1.0 / 60.0);
 		}
 
 		ImGui_ImplOpenGL3_NewFrame();
@@ -1431,9 +1468,67 @@ int main(int argc, char** argv)
 			float leftW = totalW * 0.32f;
 			float midW = totalW * 0.25f;
 			float rightW = totalW * 0.42f;
-			// --- 动态调整世界图标纹理和尺寸向量的大小 ---
-			vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
+			// 缓存 DisplayWorlds，避免每帧重建（深拷贝 Config + mutex lock）
+			static vector<DisplayWorld> displayWorlds;
+			static int cachedConfigIndex = -999;
+			static bool cachedSpecialSetting = false;
+			static size_t cachedWorldCount = 0;
+			static chrono::steady_clock::time_point lastDisplayWorldsRefresh{};
+			auto now_dw = chrono::steady_clock::now();
+			bool needsRebuild = (cachedConfigIndex != g_appState.currentConfigIndex)
+				|| (cachedSpecialSetting != specialSetting)
+				|| (chrono::duration_cast<chrono::milliseconds>(now_dw - lastDisplayWorldsRefresh).count() > 2000);
+			{
+				// 配置变了或者两秒没更新了，并且当前配置是普通配置
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				if (!specialSetting && g_appState.configs.count(g_appState.currentConfigIndex)) {
+					if (g_appState.configs[g_appState.currentConfigIndex].worlds.size() != cachedWorldCount)
+						needsRebuild = true;
+				}
+			}
+			if (needsRebuild) {
+				displayWorlds = BuildDisplayWorldsForSelection();
+				cachedConfigIndex = g_appState.currentConfigIndex;
+				cachedSpecialSetting = specialSetting;
+				cachedWorldCount = displayWorlds.size();
+				lastDisplayWorldsRefresh = now_dw;
+			}
 			int worldCount = (int)displayWorlds.size();
+
+			// 缓存 GetLastOpenTime / GetLastBackupTime，每5秒刷新一次
+			static map<wstring, wstring> cachedOpenTimes;
+			static map<wstring, wstring> cachedBackupTimes;
+			static map<wstring, bool> cachedNeedsBackup;
+			static chrono::steady_clock::time_point lastTimeCacheRefresh{};
+			auto now_tc = chrono::steady_clock::now();
+			bool refreshTimeCache = chrono::duration_cast<chrono::seconds>(now_tc - lastTimeCacheRefresh).count() >= 5;
+			if (refreshTimeCache || needsRebuild) {
+				cachedOpenTimes.clear();
+				cachedBackupTimes.clear();
+				cachedNeedsBackup.clear();
+				for (int i = 0; i < worldCount; ++i) {
+					const auto& dw_t = displayWorlds[i];
+					wstring wf = JoinPath(dw_t.effectiveConfig.saveRoot, dw_t.name).wstring();
+					wstring bf = JoinPath(dw_t.effectiveConfig.backupPath, dw_t.name).wstring();
+					wstring ot = GetLastOpenTime(wf);
+					wstring bt = GetLastBackupTime(bf);
+					cachedOpenTimes[wf] = ot;
+					cachedBackupTimes[bf] = bt;
+					cachedNeedsBackup[wf] = (ot > bt);
+				}
+				lastTimeCacheRefresh = now_tc;
+			}
+
+			// 一次性获取所有任务运行状态
+			static map<pair<int,int>, bool> cachedTaskRunning;
+			{
+				lock_guard<mutex> taskLock(g_appState.task_mutex);
+				cachedTaskRunning.clear();
+				for (int i = 0; i < worldCount; ++i) {
+					auto key = make_pair(displayWorlds[i].baseConfigIndex, i);
+					cachedTaskRunning[key] = g_appState.g_active_auto_backups.count(key) > 0;
+				}
+			}
 
 
 			if (ImGui::Begin(L("WORLD_LIST"))) {
@@ -1688,12 +1783,13 @@ int main(int argc, char** argv)
 					}
 
 					ImGui::SameLine();
-					// --- 状态逻辑 (为图标做准备) ---
-					lock_guard<mutex> lock(g_appState.task_mutex); // 访问 g_appState.g_active_auto_backups 需要加锁
-					bool is_task_running = g_appState.g_active_auto_backups.count(make_pair(displayWorlds[i].baseConfigIndex, i)) > 0;
-					// 如果最后打开时间比最后备份时间新，则认为需要备份
-					//wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
-					bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
+					// --- 状态逻辑 (使用预计算缓存，避免每帧每项加锁和文件IO)
+					bool is_task_running = cachedTaskRunning[make_pair(displayWorlds[i].baseConfigIndex, i)];
+					bool needs_backup = false;
+					{
+						auto it = cachedNeedsBackup.find(worldFolder);
+						if (it != cachedNeedsBackup.end()) needs_backup = it->second;
+					}
 
 					// 整个区域作为一个可选项
 					// ImGuiSelectableFlags_AllowItemOverlap 允许我们在可选项上面绘制其他控件
@@ -1796,8 +1892,14 @@ int main(int argc, char** argv)
 						// -- 详细信息 --
 						wstring worldFolder = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring();
 						wstring backupFolder = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
-						ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(GetLastOpenTime(worldFolder)).c_str());
-						ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(GetLastBackupTime(backupFolder)).c_str());
+						{
+							auto otIt = cachedOpenTimes.find(worldFolder);
+							auto btIt = cachedBackupTimes.find(backupFolder);
+							wstring openTimeStr = (otIt != cachedOpenTimes.end()) ? otIt->second : GetLastOpenTime(worldFolder);
+							wstring backupTimeStr = (btIt != cachedBackupTimes.end()) ? btIt->second : GetLastBackupTime(backupFolder);
+							ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(openTimeStr).c_str());
+							ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(backupTimeStr).c_str());
+						}
 
 						ImGui::Separator();
 
