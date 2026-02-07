@@ -24,6 +24,9 @@
 #include <system_error>
 #include <unistd.h>
 #include <cctype>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <cstring>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -576,6 +579,51 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
 }
 
 bool IsFileLocked(const std::wstring& path) {
+	// 以下通过AI进行修复，不能保证完全正确，尤其是对于Bedrock Edition的LevelDB锁定机制。需要实际测试验证。
+    // On Linux, Minecraft Java Edition locks session.lock via Java's FileChannel.lock()
+    // which uses fcntl() F_SETLK underneath. We can detect this by trying to acquire
+    // a write lock on the same file.
+    // For Bedrock Edition (LevelDB), flock() is used on db/LOCK.
+
+    std::string u8path = wstring_to_utf8(path);
+    if (u8path.empty()) return false;
+
+    std::error_code ec;
+    if (!fs::exists(u8path, ec) || ec) return false;
+
+    int fd = open(u8path.c_str(), O_RDWR);
+    if (fd < 0) {
+        // If we can't open for writing, try read-only and check fcntl lock
+        fd = open(u8path.c_str(), O_RDONLY);
+        if (fd < 0) return false;
+    }
+
+    // Try fcntl advisory lock (what Java's FileChannel.lock() uses)
+    struct flock fl;
+    memset(&fl, 0, sizeof(fl));
+    fl.l_type = F_WRLCK;   // Try to acquire a write lock
+    fl.l_whence = SEEK_SET;
+    fl.l_start = 0;
+    fl.l_len = 0;          // Lock the entire file
+
+    // F_GETLK checks if the lock *would* conflict — if it would, the file is locked
+    if (fcntl(fd, F_GETLK, &fl) == 0) {
+        close(fd);
+        // If l_type is not F_UNLCK, another process holds a lock
+        return fl.l_type != F_UNLCK;
+    }
+
+    // fcntl failed, try flock() as fallback (used by LevelDB / Bedrock)
+    int ret = flock(fd, LOCK_EX | LOCK_NB);
+    if (ret < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+        close(fd);
+        return true; // File is locked by another process
+    }
+    // We acquired the lock; release it immediately
+    if (ret == 0) {
+        flock(fd, LOCK_UN);
+    }
+    close(fd);
     return false;
 }
 
