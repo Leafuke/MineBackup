@@ -1233,7 +1233,7 @@ void ShowSettingsWindowV2() {
     ImGui::Spacing();
 
     // 保存按钮
-    if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(CalcButtonWidth(L("BUTTON_SAVE_AND_CLOSE")), 30))) {
+    if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(CalcButtonWidth(L("BUTTON_SAVE_AND_CLOSE")), 0))) {
         SaveConfigs();
         showSettings = false;
     }
