@@ -109,9 +109,9 @@ struct Console
 		ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT1"));
 		ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT2"));
 
-		if (ImGui::SmallButton(L("BUTTON_CLEAR"))) { ClearLog(); }
+		if (ImGui::Button(L("BUTTON_CLEAR"))) { ClearLog(); }
 		ImGui::SameLine();
-		bool copy_to_clipboard = ImGui::SmallButton(L("BUTTON_COPY"));
+		bool copy_to_clipboard = ImGui::Button(L("BUTTON_COPY"));
 		ImGui::Separator();
 
 		if (ImGui::BeginPopup(L("BUTTON_OPTIONS")))
@@ -200,11 +200,11 @@ struct Console
 		ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT1"));
 		ImGui::TextWrapped(L("CONSOLE_HELP_PROMPT2"));
 
-		if (ImGui::SmallButton(L("BUTTON_CLEAR"))) { ClearLog(); }
+		if (ImGui::Button(L("BUTTON_CLEAR"))) { ClearLog(); }
 		ImGui::SameLine();
-		bool copy_to_clipboard = ImGui::SmallButton(L("BUTTON_COPY"));
+		bool copy_to_clipboard = ImGui::Button(L("BUTTON_COPY"));
 		ImGui::SameLine();
-		if (ImGui::SmallButton(L("BUTTON_EXPORT_LOG"))) {
+		if (ImGui::Button(L("BUTTON_EXPORT_LOG"))) {
 			std::ofstream out("console_log.txt", std::ios::out | std::ios::trunc);
 			if (!out.is_open()) return;
 			for (int i = 0; i < Items.Size; ++i)

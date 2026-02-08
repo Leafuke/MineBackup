@@ -17,22 +17,40 @@ MyFolder GetOccupiedWorld() {
 	for (const auto& config_pair : g_appState.configs) {
 		int config_idx = config_pair.first;
 		const Config& cfg = config_pair.second;
-		for (int world_idx = 0; world_idx < cfg.worlds.size(); ++world_idx) {
+		if (cfg.saveRoot.empty()) continue; // 跳过未配置的存档路径
+		for (int world_idx = 0; world_idx < (int)cfg.worlds.size(); ++world_idx) {
 			const auto& world = cfg.worlds[world_idx];
 			filesystem::path worldPath = JoinPath(cfg.saveRoot, world.first);
+			error_code ec;
+			if (!filesystem::exists(worldPath, ec) || ec) continue; // 跳过不存在的世界
 			wstring levelDatPath = (worldPath / L"session.lock").wstring();
-			if (!filesystem::exists(levelDatPath)) { // 没有 session.lock 文件，可能是基岩版存档，需要遍历db文件夹下的所有文件看看有没有被锁定的
+			if (!filesystem::exists(levelDatPath, ec)) { // 没有 session.lock 文件，可能是基岩版存档
+				// 基岩版：优先检查 db/LOCK 文件（LevelDB 的标准锁文件）
+				filesystem::path dbLockPath = worldPath / L"db" / L"LOCK";
+				if (filesystem::exists(dbLockPath, ec) && IsFileLocked(dbLockPath.wstring())) {
+					return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };
+				}
+				// 回退：遍历db文件夹（限制扫描数量避免性能问题）
 				filesystem::path dbPath = worldPath / L"db";
-				if (!filesystem::exists(dbPath))
+				if (!filesystem::exists(dbPath, ec))
 					continue;
-				for (const auto& entry : filesystem::directory_iterator(dbPath)) {
-					const auto entryPath = entry.path();
-					const auto entryPathW = entryPath.wstring();
+				int scannedFiles = 0;
+				const int maxScanFiles = 20; // 限制扫描文件数量
+				bool foundLocked = false;
+				for (const auto& entry : filesystem::directory_iterator(dbPath, filesystem::directory_options::skip_permission_denied, ec)) {
+					if (ec) break;
+					if (++scannedFiles > maxScanFiles) break;
+					const auto entryPathW = entry.path().wstring();
 					if (IsFileLocked(entryPathW)) {
 						levelDatPath = entryPathW;
+						foundLocked = true;
 						break;
 					}
 				}
+				if (foundLocked) {
+					return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };
+				}
+				continue; // 没找到锁定文件
 			}
 			if (IsFileLocked(levelDatPath)) {
 				return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };

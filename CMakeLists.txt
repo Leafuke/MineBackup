@@ -151,6 +151,7 @@ elseif(APPLE)
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos.cpp)
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos_tray.mm)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_macos.cpp ${SOURCE_DIR}/Platform_macos_tray.mm)
+    set_source_files_properties(${SOURCE_DIR}/Platform_macos_tray.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     # KnotLink POSIX 版本使用 header-only 实现
 else()
     list(APPEND SOURCES ${SOURCE_DIR}/Platform_linux.cpp)
@@ -201,6 +202,8 @@ if(APPLE)
         "-framework Carbon"
         "-framework IOKit"
         "-framework CoreVideo"
+        "-framework CoreText"
+        "-framework CoreFoundation"
     )
     find_library(ICONV_LIB iconv)
     if(ICONV_LIB)

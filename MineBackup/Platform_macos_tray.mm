@@ -103,35 +103,66 @@ static void EnsureHotkeyHandlerInstalled() {
 
 void CreateTrayIcon() {
 	if (g_statusItem) return;
-	@autoreleasepool {
-		NSStatusBar* bar = [NSStatusBar systemStatusBar];
-		g_statusItem = [bar statusItemWithLength:NSVariableStatusItemLength];
-		g_statusItem.button.title = @"MineBackup";
 
-		g_statusHandler = [[MBStatusItemHandler alloc] init];
-		NSMenu* menu = [[NSMenu alloc] init];
+	// macOS 要求所有 AppKit 操作在主线程执行
+	void (^createBlock)(void) = ^{
+		@autoreleasepool {
+			if (g_statusItem) return;
+			NSStatusBar* bar = [NSStatusBar systemStatusBar];
+			g_statusItem = [bar statusItemWithLength:NSVariableStatusItemLength];
 
-		NSString* openTitle = [NSString stringWithUTF8String:"OPEN"];
-		NSString* exitTitle = [NSString stringWithUTF8String:"EXIT"];
+			// 使用系统图标~
+			NSImage* icon = [NSImage imageWithSystemSymbolName:@"archivebox.fill"
+									 accessibilityDescription:@"MineBackup"];
+			if (icon) {
+				// 调整图标大小适配状态栏
+				[icon setSize:NSMakeSize(18, 18)];
+				g_statusItem.button.image = icon;
+			} else {
+				// 回退到文字标题
+				g_statusItem.button.title = @"MB";
+			}
+			g_statusItem.button.toolTip = @"MineBackup";
 
-		NSMenuItem* openItem = [[NSMenuItem alloc] initWithTitle:openTitle action:@selector(openMain:) keyEquivalent:@""];
-		[openItem setTarget:g_statusHandler];
-		[menu addItem:openItem];
+			g_statusHandler = [[MBStatusItemHandler alloc] init];
+			NSMenu* menu = [[NSMenu alloc] init];
 
-		NSMenuItem* exitItem = [[NSMenuItem alloc] initWithTitle:exitTitle action:@selector(exitApp:) keyEquivalent:@""];
-		[exitItem setTarget:g_statusHandler];
-		[menu addItem:exitItem];
+			NSString* openTitle = [NSString stringWithUTF8String:L("OPEN")];
+			NSString* exitTitle = [NSString stringWithUTF8String:L("EXIT")];
 
-		g_statusItem.menu = menu;
+			NSMenuItem* openItem = [[NSMenuItem alloc] initWithTitle:openTitle action:@selector(openMain:) keyEquivalent:@""];
+			[openItem setTarget:g_statusHandler];
+			[menu addItem:openItem];
+
+			NSMenuItem* exitItem = [[NSMenuItem alloc] initWithTitle:exitTitle action:@selector(exitApp:) keyEquivalent:@""];
+			[exitItem setTarget:g_statusHandler];
+			[menu addItem:exitItem];
+
+			g_statusItem.menu = menu;
+		}
+	};
+
+	if ([NSThread isMainThread]) {
+		createBlock();
+	} else {
+		dispatch_sync(dispatch_get_main_queue(), createBlock);
 	}
 }
 
 void RemoveTrayIcon() {
-	@autoreleasepool {
-		if (!g_statusItem) return;
-		[[NSStatusBar systemStatusBar] removeStatusItem:g_statusItem];
-		g_statusItem = nil;
-		g_statusHandler = nil;
+	void (^removeBlock)(void) = ^{
+		@autoreleasepool {
+			if (!g_statusItem) return;
+			[[NSStatusBar systemStatusBar] removeStatusItem:g_statusItem];
+			g_statusItem = nil;
+			g_statusHandler = nil;
+		}
+	};
+
+	if ([NSThread isMainThread]) {
+		removeBlock();
+	} else {
+		dispatch_sync(dispatch_get_main_queue(), removeBlock);
 	}
 }
 

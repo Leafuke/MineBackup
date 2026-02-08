@@ -30,6 +30,8 @@ inline int _getch() { return std::getchar(); }
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <limits.h>
+#include <CoreText/CoreText.h>
+#include <CoreFoundation/CoreFoundation.h>
 #endif
 
 using namespace std;
@@ -49,7 +51,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.12.2";
+string CURRENT_VERSION = "1.12.3";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
@@ -96,50 +98,152 @@ enum class BackupCheckResult {
 
 static wstring GetDefaultUIFontPath() {
 #ifdef _WIN32
+	// 动态获取 Windows 字体目录
+	wstring fontsDir = L"C:\\Windows\\Fonts\\";
+	{
+		wchar_t winDir[MAX_PATH] = {};
+		if (GetWindowsDirectoryW(winDir, MAX_PATH) > 0)
+			fontsDir = wstring(winDir) + L"\\Fonts\\";
+	}
+	// 用户字体目录
+	wstring userFontsDir;
+	{
+		wchar_t localAppData[MAX_PATH] = {};
+		if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0)
+			userFontsDir = wstring(localAppData) + L"\\Microsoft\\Windows\\Fonts\\";
+	}
+
 	if (g_CurrentLang == "zh_CN") {
-		const wstring cn_candidates[] = {
-			L"C:\\Windows\\Fonts\\msyh.ttc",
-			L"C:\\Windows\\Fonts\\msyh.ttf",
-			L"C:\\Windows\\Fonts\\msjh.ttc",
-			L"C:\\Windows\\Fonts\\msjh.ttf",
-			L"C:\\Windows\\Fonts\\SegoeUI.ttf"
-		};
-		for (const auto& cand : cn_candidates) {
-			if (filesystem::exists(cand)) return cand;
+		const wchar_t* cn_names[] = { L"msyh.ttc", L"msyh.ttf", L"msjh.ttc", L"msjh.ttf", L"SegoeUI.ttf", nullptr };
+		for (const wchar_t** fn = cn_names; *fn; ++fn) {
+			wstring p = fontsDir + *fn;
+			if (filesystem::exists(p)) return p;
+			if (!userFontsDir.empty()) {
+				p = userFontsDir + *fn;
+				if (filesystem::exists(p)) return p;
+			}
 		}
 	}
-	const wstring en_candidates[] = { L"C:\\Windows\\Fonts\\SegoeUI.ttf" };
-	for (const auto& cand : en_candidates) {
-		if (filesystem::exists(cand)) return cand;
+	const wchar_t* en_names[] = { L"SegoeUI.ttf", L"segoeui.ttf", L"arial.ttf", nullptr };
+	for (const wchar_t** fn = en_names; *fn; ++fn) {
+		wstring p = fontsDir + *fn;
+		if (filesystem::exists(p)) return p;
+		if (!userFontsDir.empty()) {
+			p = userFontsDir + *fn;
+			if (filesystem::exists(p)) return p;
+		}
 	}
 	return L"";
+
 #elif defined(__APPLE__)
-	const wstring cn_candidates[] = {
+	// 使用 Core Text 按名称查找字体文件路径
+	auto findFontPath = [](const char* fontName) -> wstring {
+		CFStringRef cfName = CFStringCreateWithCString(kCFAllocatorDefault, fontName, kCFStringEncodingUTF8);
+		if (!cfName) return L"";
+		CTFontRef font = CTFontCreateWithName(cfName, 12.0, nullptr);
+		CFRelease(cfName);
+		if (!font) return L"";
+		CFURLRef url = (CFURLRef)CTFontCopyAttribute(font, kCTFontURLAttribute);
+		CFRelease(font);
+		if (!url) return L"";
+		char path[PATH_MAX];
+		Boolean ok = CFURLGetFileSystemRepresentation(url, true, (UInt8*)path, sizeof(path));
+		CFRelease(url);
+		if (!ok) return L"";
+		return utf8_to_wstring(string(path));
+	};
+
+	if (g_CurrentLang == "zh_CN") {
+		// 中文字体：苹方 > 华文黑体 > Hiragino
+		const char* cnFontNames[] = {
+			"PingFangSC-Regular", "PingFang SC",
+			"STHeitiSC-Light", "STHeiti",
+			"Hiragino Sans GB", "Hiragino Sans",
+			nullptr
+		};
+		for (const char** fn = cnFontNames; *fn; ++fn) {
+			wstring p = findFontPath(*fn);
+			if (!p.empty() && filesystem::exists(p)) return p;
+		}
+	}
+	// 英文/默认字体
+	const char* enFontNames[] = {
+		"Helvetica Neue", "Helvetica",
+		".AppleSystemUIFont",
+		"Lucida Grande", "Arial",
+		nullptr
+	};
+	for (const char** fn = enFontNames; *fn; ++fn) {
+		wstring p = findFontPath(*fn);
+		if (!p.empty() && filesystem::exists(p)) return p;
+	}
+	// 回退到硬编码路径
+	const wstring fallbacks[] = {
 		L"/System/Library/Fonts/PingFang.ttc",
 		L"/System/Library/Fonts/STHeiti Light.ttc",
-		L"/System/Library/Fonts/STHeiti Medium.ttc",
-		L"/System/Library/Fonts/AppleSDGothicNeo.ttc"
-	};
-	for (const auto& cand : cn_candidates) {
-		if (filesystem::exists(cand)) return cand;
-	}
-	const wstring en_candidates[] = {
-		L"/System/Library/Fonts/SFNS.ttf",
-		L"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		L"/System/Library/Fonts/Helvetica.ttc",
 		L"/System/Library/Fonts/Supplemental/Arial.ttf",
 		L"/Library/Fonts/Arial.ttf"
 	};
-	for (const auto& cand : en_candidates) {
+	for (const auto& cand : fallbacks) {
 		if (filesystem::exists(cand)) return cand;
 	}
 	return L"";
+
 #else
-	const wstring candidates[] = {
+	// Linux: 使用 fontconfig (fc-match) 动态查找字体
+	auto findFontByFc = [](const char* pattern) -> wstring {
+		string cmd = "fc-match -f '%{file}' '";
+		cmd += pattern;
+		cmd += "' 2>/dev/null";
+		FILE* pipe = popen(cmd.c_str(), "r");
+		if (!pipe) return L"";
+		char buf[4096] = {};
+		string output;
+		if (fgets(buf, sizeof(buf), pipe)) {
+			output = buf;
+		}
+		pclose(pipe);
+		if (!output.empty() && output.back() == '\n') output.pop_back();
+		if (!output.empty() && filesystem::exists(output))
+			return utf8_to_wstring(output);
+		return L"";
+	};
+
+	if (g_CurrentLang == "zh_CN") {
+		const char* cnPatterns[] = {
+			"Noto Sans CJK SC:style=Regular",
+			"Noto Sans CJK:style=Regular",
+			"WenQuanYi Zen Hei",
+			"WenQuanYi Micro Hei",
+			"Droid Sans Fallback",
+			nullptr
+		};
+		for (const char** p = cnPatterns; *p; ++p) {
+			wstring path = findFontByFc(*p);
+			if (!path.empty()) return path;
+		}
+	}
+	// 默认字体
+	const char* defaultPatterns[] = {
+		"sans-serif",
+		"DejaVu Sans",
+		"Liberation Sans",
+		"Noto Sans",
+		nullptr
+	};
+	for (const char** p = defaultPatterns; *p; ++p) {
+		wstring path = findFontByFc(*p);
+		if (!path.empty()) return path;
+	}
+	// 回退到硬编码路径
+	const wstring fallbacks[] = {
 		L"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+		L"/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
 		L"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
 		L"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 	};
-	for (const auto& cand : candidates) {
+	for (const auto& cand : fallbacks) {
 		if (filesystem::exists(cand)) return cand;
 	}
 	return L"";
@@ -317,8 +421,10 @@ int main(int argc, char** argv)
 	}
 
 	glfwSetErrorCallback(glfw_error_callback);
-	if (!glfwInit())
+	if (!glfwInit()) {
+		MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
 		return 1;
+	}
 
 	// Decide GL+GLSL versions
 #if defined(IMGUI_IMPL_OPENGL_ES2)
@@ -341,7 +447,7 @@ int main(int argc, char** argv)
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // Required on Mac
 #else
-	// GL 3.0 + GLSL 130
+	// GL 3.0 + GLSL 130 (default; will try fallbacks below on failure)
 	const char* glsl_version = "#version 130";
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
@@ -368,13 +474,52 @@ int main(int argc, char** argv)
 #endif
 
 	wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
-	if (wc == nullptr)
+
+#if !defined(IMGUI_IMPL_OPENGL_ES2) && !defined(IMGUI_IMPL_OPENGL_ES3) && !defined(__APPLE__)
+	if (wc == nullptr) {
+		fprintf(stderr, "OpenGL 3.0 context creation failed, trying OpenGL 2.1 fallback...\n");
+		glfwDefaultWindowHints();
+		glfwSetErrorCallback(glfw_error_callback);
+		glsl_version = "#version 120";
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
+	}
+	if (wc == nullptr) {
+		fprintf(stderr, "OpenGL 2.1 context creation failed, trying OpenGL 2.0 fallback...\n");
+		glfwDefaultWindowHints();
+		glfwSetErrorCallback(glfw_error_callback);
+		glsl_version = "#version 110";
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
+	}
+	if (wc == nullptr) {
+		fprintf(stderr, "OpenGL 2.0 context creation failed, trying default version...\n");
+		glfwDefaultWindowHints();
+		glfwSetErrorCallback(glfw_error_callback);
+		glsl_version = "#version 110";
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
+	}
+#endif
+
+	if (wc == nullptr) {
+		MessageBoxWin("Fatal Error",
+			"Failed to create window. Your graphics driver may not support OpenGL.\n"
+			"Please update your graphics drivers or install a remote desktop solution that supports OpenGL.",
+			2);
+		glfwTerminate();
 		return 1;
+	}
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
-	#ifndef _WIN32
+	#ifdef __APPLE__
 	CreateTrayIcon();
+	#endif
+	#ifndef _WIN32
 	RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
 	RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
 	#endif
@@ -383,11 +528,17 @@ int main(int argc, char** argv)
 	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
 		if (g_closeAction == 1) {
 			glfwSetWindowShouldClose(window, GLFW_FALSE);
-			#ifndef _WIN32
+#if defined(__APPLE__)
 			CreateTrayIcon();
-			#endif
 			g_appState.showMainApp = false;
 			glfwHideWindow(window);
+#elif defined(__linux__)
+			// Linux仅最小化窗口，不使用系统托盘
+			glfwIconifyWindow(window);
+#else
+			g_appState.showMainApp = false;
+			glfwHideWindow(window);
+#endif
 		} else if (g_closeAction == 2) {
 			SaveConfigs();
 			g_appState.done = true;
@@ -565,13 +716,11 @@ int main(int argc, char** argv)
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
-			glfwWaitEventsTimeout(0.2);
-			ImGui_ImplGlfw_Sleep(200);
+			glfwWaitEventsTimeout(1.0);
 			continue;
 		}
 		else {
-			glfwPollEvents();
-			this_thread::sleep_for(std::chrono::milliseconds(16)); // 60FPS
+			glfwWaitEventsTimeout(1.0 / 60.0);
 		}
 
 		ImGui_ImplOpenGL3_NewFrame();
@@ -1040,7 +1189,7 @@ int main(int argc, char** argv)
 				if (showImportConfigConfirm) {
 					ImGui::OpenPopup(L("CONFIRM_IMPORT_CONFIG_TITLE"));
 				}
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_CONFIG_TITLE"), &showImportConfigConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_CONFIG_MSG"));
 					ImGui::Separator();
@@ -1064,7 +1213,7 @@ int main(int argc, char** argv)
 				if (showImportHistoryConfirm) {
 					ImGui::OpenPopup(L("CONFIRM_IMPORT_HISTORY_TITLE"));
 				}
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_HISTORY_TITLE"), &showImportHistoryConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("CONFIRM_IMPORT_HISTORY_MSG"));
 					ImGui::Separator();
@@ -1203,6 +1352,7 @@ int main(int argc, char** argv)
 						open_update_popup = true;
 					}
 					ImGui::PopStyleColor(3);
+					ImGui::SetNextWindowViewport(viewport->ID);
 					if (ImGui::BeginPopupModal(L("UPDATE_POPUP_TITLE"), &open_update_popup, ImGuiWindowFlags_AlwaysAutoResize)) {
 						ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
 						ImGui::Separator();
@@ -1213,13 +1363,25 @@ int main(int argc, char** argv)
 						ImGui::EndChild();
 						ImGui::Separator();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(180, 0))) {
+#ifdef _WIN32
 							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
+#elif defined(__APPLE__)
+							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
+#else
+							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
+#endif
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(180, 0))) {
+#ifdef _WIN32
 							OpenLinkInBrowser(L"https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
+#elif defined(__APPLE__)
+							OpenLinkInBrowser(L"https://gh-proxy.com/github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
+#else
+							OpenLinkInBrowser(L"https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
+#endif
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1250,7 +1412,7 @@ int main(int argc, char** argv)
 					notice_popup_opened = true;
 				}
 
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("NOTICE_POPUP_TITLE"), &notice_popup_opened, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped(L("NOTICE_POPUP_DESC"));
 					ImGui::Separator();
@@ -1306,7 +1468,7 @@ int main(int argc, char** argv)
 				g_showCloseConfirmDialog = false;
 			}
 			
-			ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+			ImGui::SetNextWindowViewport(viewport->ID);
 			if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 				ImGui::TextWrapped(L("CLOSE_CONFIRM_MSG"));
 				ImGui::Separator();
@@ -1315,19 +1477,30 @@ int main(int argc, char** argv)
 				ImGui::Checkbox(L("CLOSE_REMEMBER_CHOICE"), &tempRememberChoice);
 				
 				ImGui::Dummy(ImVec2(0, 10));
-				
+
+#ifdef __linux__
+				if (ImGui::Button(L("CLOSE_MINIMIZE_WINDOW"), ImVec2(200, 0))) {
+					if (tempRememberChoice) {
+						g_closeAction = 1;
+						g_rememberCloseAction = true;
+					}
+					glfwIconifyWindow(wc);
+					ImGui::CloseCurrentPopup();
+				}
+#else
 				if (ImGui::Button(L("CLOSE_MINIMIZE_TO_TRAY"), ImVec2(200, 0))) {
 					if (tempRememberChoice) {
 						g_closeAction = 1;
 						g_rememberCloseAction = true;
 					}
-					#ifndef _WIN32
+#ifdef __APPLE__
 					CreateTrayIcon();
-					#endif
+#endif
 					g_appState.showMainApp = false;
 					glfwHideWindow(wc);
 					ImGui::CloseCurrentPopup();
 				}
+#endif
 				ImGui::SameLine();
 				if (ImGui::Button(L("CLOSE_EXIT_APP"), ImVec2(200, 0))) {
 					if (tempRememberChoice) {
@@ -1348,7 +1521,7 @@ int main(int argc, char** argv)
 			if (showAboutWindow)
 				ImGui::OpenPopup(L("MENU_ABOUT"));
 
-			ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+			ImGui::SetNextWindowViewport(viewport->ID);
 			ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			if (ImGui::BeginPopupModal(L("MENU_ABOUT"), &showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
 			{
@@ -1431,9 +1604,67 @@ int main(int argc, char** argv)
 			float leftW = totalW * 0.32f;
 			float midW = totalW * 0.25f;
 			float rightW = totalW * 0.42f;
-			// --- 动态调整世界图标纹理和尺寸向量的大小 ---
-			vector<DisplayWorld> displayWorlds = BuildDisplayWorldsForSelection();
+			// 缓存 DisplayWorlds，避免每帧重建（深拷贝 Config + mutex lock）
+			static vector<DisplayWorld> displayWorlds;
+			static int cachedConfigIndex = -999;
+			static bool cachedSpecialSetting = false;
+			static size_t cachedWorldCount = 0;
+			static chrono::steady_clock::time_point lastDisplayWorldsRefresh{};
+			auto now_dw = chrono::steady_clock::now();
+			bool needsRebuild = (cachedConfigIndex != g_appState.currentConfigIndex)
+				|| (cachedSpecialSetting != specialSetting)
+				|| (chrono::duration_cast<chrono::milliseconds>(now_dw - lastDisplayWorldsRefresh).count() > 2000);
+			{
+				// 配置变了或者两秒没更新了，并且当前配置是普通配置
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				if (!specialSetting && g_appState.configs.count(g_appState.currentConfigIndex)) {
+					if (g_appState.configs[g_appState.currentConfigIndex].worlds.size() != cachedWorldCount)
+						needsRebuild = true;
+				}
+			}
+			if (needsRebuild) {
+				displayWorlds = BuildDisplayWorldsForSelection();
+				cachedConfigIndex = g_appState.currentConfigIndex;
+				cachedSpecialSetting = specialSetting;
+				cachedWorldCount = displayWorlds.size();
+				lastDisplayWorldsRefresh = now_dw;
+			}
 			int worldCount = (int)displayWorlds.size();
+
+			// 缓存 GetLastOpenTime / GetLastBackupTime，每5秒刷新一次
+			static map<wstring, wstring> cachedOpenTimes;
+			static map<wstring, wstring> cachedBackupTimes;
+			static map<wstring, bool> cachedNeedsBackup;
+			static chrono::steady_clock::time_point lastTimeCacheRefresh{};
+			auto now_tc = chrono::steady_clock::now();
+			bool refreshTimeCache = chrono::duration_cast<chrono::seconds>(now_tc - lastTimeCacheRefresh).count() >= 5;
+			if (refreshTimeCache || needsRebuild) {
+				cachedOpenTimes.clear();
+				cachedBackupTimes.clear();
+				cachedNeedsBackup.clear();
+				for (int i = 0; i < worldCount; ++i) {
+					const auto& dw_t = displayWorlds[i];
+					wstring wf = JoinPath(dw_t.effectiveConfig.saveRoot, dw_t.name).wstring();
+					wstring bf = JoinPath(dw_t.effectiveConfig.backupPath, dw_t.name).wstring();
+					wstring ot = GetLastOpenTime(wf);
+					wstring bt = GetLastBackupTime(bf);
+					cachedOpenTimes[wf] = ot;
+					cachedBackupTimes[bf] = bt;
+					cachedNeedsBackup[wf] = (ot > bt);
+				}
+				lastTimeCacheRefresh = now_tc;
+			}
+
+			// 一次性获取所有任务运行状态
+			static map<pair<int,int>, bool> cachedTaskRunning;
+			{
+				lock_guard<mutex> taskLock(g_appState.task_mutex);
+				cachedTaskRunning.clear();
+				for (int i = 0; i < worldCount; ++i) {
+					auto key = make_pair(displayWorlds[i].baseConfigIndex, i);
+					cachedTaskRunning[key] = g_appState.g_active_auto_backups.count(key) > 0;
+				}
+			}
 
 
 			if (ImGui::Begin(L("WORLD_LIST"))) {
@@ -1495,6 +1726,7 @@ int main(int argc, char** argv)
 				// 删除配置弹窗
 				if (showDeleteConfigPopup)
 					ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 					showDeleteConfigPopup = false;
 					if (specialSetting) {
@@ -1528,6 +1760,8 @@ int main(int argc, char** argv)
 				// 添加新配置弹窗
 				if (showAddConfigPopup)
 					ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+
+				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
 				{
 					showAddConfigPopup = false;
@@ -1688,12 +1922,13 @@ int main(int argc, char** argv)
 					}
 
 					ImGui::SameLine();
-					// --- 状态逻辑 (为图标做准备) ---
-					lock_guard<mutex> lock(g_appState.task_mutex); // 访问 g_appState.g_active_auto_backups 需要加锁
-					bool is_task_running = g_appState.g_active_auto_backups.count(make_pair(displayWorlds[i].baseConfigIndex, i)) > 0;
-					// 如果最后打开时间比最后备份时间新，则认为需要备份
-					//wstring worldFolder = cfg.saveRoot + L"\\" + cfg.worlds[i].first;
-					bool needs_backup = GetLastOpenTime(worldFolder) > GetLastBackupTime(backupFolder);
+					// --- 状态逻辑 (使用预计算缓存，避免每帧每项加锁和文件IO)
+					bool is_task_running = cachedTaskRunning[make_pair(displayWorlds[i].baseConfigIndex, i)];
+					bool needs_backup = false;
+					{
+						auto it = cachedNeedsBackup.find(worldFolder);
+						if (it != cachedNeedsBackup.end()) needs_backup = it->second;
+					}
 
 					// 整个区域作为一个可选项
 					// ImGuiSelectableFlags_AllowItemOverlap 允许我们在可选项上面绘制其他控件
@@ -1796,8 +2031,14 @@ int main(int argc, char** argv)
 						// -- 详细信息 --
 						wstring worldFolder = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring();
 						wstring backupFolder = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
-						ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(GetLastOpenTime(worldFolder)).c_str());
-						ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(GetLastBackupTime(backupFolder)).c_str());
+						{
+							auto otIt = cachedOpenTimes.find(worldFolder);
+							auto btIt = cachedBackupTimes.find(backupFolder);
+							wstring openTimeStr = (otIt != cachedOpenTimes.end()) ? otIt->second : GetLastOpenTime(worldFolder);
+							wstring backupTimeStr = (btIt != cachedBackupTimes.end()) ? btIt->second : GetLastBackupTime(backupFolder);
+							ImGui::Text("%s: %s", L("TABLE_LAST_OPEN"), wstring_to_utf8(openTimeStr).c_str());
+							ImGui::Text("%s: %s", L("TABLE_LAST_BACKUP"), wstring_to_utf8(backupTimeStr).c_str());
+						}
 
 						ImGui::Separator();
 
@@ -1848,6 +2089,7 @@ int main(int argc, char** argv)
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("BUTTON_AUTO_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
+							//ImGui::SetNextWindowViewport(viewport->ID);
 							ImGui::OpenPopup(L("AUTOBACKUP_SETTINGS"));
 						}
 
@@ -1925,6 +2167,7 @@ int main(int argc, char** argv)
 							}
 						}
 
+						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_OTHERS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							static char mods_comment[256] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
@@ -1971,6 +2214,7 @@ int main(int argc, char** argv)
 							g_appState.configs[displayWorlds[selectedWorldIndex].baseConfigIndex].othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
 						}
 
+						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							static char others_comment[CONSTANT1] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
@@ -2018,6 +2262,7 @@ int main(int argc, char** argv)
 								ImGui::OpenPopup(L("EXPORT_WINDOW_TITLE"));
 							}
 						}
+						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal(L("EXPORT_WINDOW_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							// 使用 static 变量来持有一次性配置，它们只在弹窗首次打开时被初始化
 							static Config tempExportConfig;
@@ -2122,6 +2367,7 @@ int main(int argc, char** argv)
 					}
 
 					// 自动备份弹窗
+					ImGui::SetNextWindowViewport(viewport->ID);
 					if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 						bool is_task_running = false;
 						pair<int, int> taskKey = { -1,-1 };
@@ -2204,7 +2450,7 @@ int main(int argc, char** argv)
 
 			if (showSettings) {
 				//ImGui::SetNextWindowDockID(0, ImGuiCond_None); // 强制窗口不参与停靠
-				ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+				ImGui::SetNextWindowViewport(viewport->ID);
 				ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 			}
 			if (showHistoryWindow) {
