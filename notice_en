@@ -1,13 +1,7 @@
 IMPORTANT NOTICE
 
-2026.1.25
-The MacOS version file for MineBackup 1.12.0 was uploaded incorrectly and has now been fixed. Please re-download it.
+2026.2.12
+The development focus for the Windows version will gradually shift towards the second-generation achieve time machine, FolderRewind. If you are a Windows user, it is recommended that you gradually migrate to FolderRewind for a better experience and support.
 
-2026.1.19  
-MineBackup 1.12.0 has been released, featuring a redesigned special mode and enhanced configuration functionality.  
-While this version maintains forward compatibility with automated tasks, support for legacy features is planned to be discontinued in the future.  
-If you are still using the old special mode, make sure to upgrade your configuration accordingly.
-
-2026.1.14
-The next generation of MineBackup has been released as [FolderRewind](https://github.com/Leafuke/FolderRewind).
-It features better versatility and a modern UI. Features are being actively developed there. You can download it from Microsoft Store.
+The second-generation achieve time machine can be directly downloaded from the Microsoft Store by searching for "FolderRewind".
+Repository: https://github.com/Leafuke/FolderRewind
