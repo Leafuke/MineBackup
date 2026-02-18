@@ -646,7 +646,7 @@ int main(int argc, char** argv)
 		else
 			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
 	} else {
-		io.Fonts->AddFontDefault();
+		io.Fonts->AddFontDefaultVector();
 	}
 
 	// 准备合并图标字体
@@ -712,6 +712,8 @@ int main(int argc, char** argv)
 		ImGuiTheme::ApplyNord(false);
 	}
 
+	double g_FPS = 1.0 / 60.0;
+
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
@@ -720,7 +722,7 @@ int main(int argc, char** argv)
 			continue;
 		}
 		else {
-			glfwWaitEventsTimeout(1.0 / 60.0);
+			glfwWaitEventsTimeout(g_FPS);
 		}
 
 		ImGui_ImplOpenGL3_NewFrame();
