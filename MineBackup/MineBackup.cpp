@@ -582,24 +582,29 @@ int main(int argc, char** argv)
 #endif
 
 
-	// Setup Dear ImGui context
+	// Setup Dear ImGui context (参照 ImGui Wiki: Getting Started - GLFW + OpenGL)
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 
-	ImGuiIO& io = ImGui::GetIO(); (void)io;
-	io.FontGlobalScale = g_uiScale;
-	// 启用Docking
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // 加上就失去圆角了，不知道怎么解决
-	io.ConfigViewportsNoAutoMerge = true; // 不自动合并视口
+	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
+	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewports
+	io.ConfigViewportsNoAutoMerge = true;                     // 不自动合并视口
+
+	// Error Recovery
+	io.ConfigErrorRecoveryEnableAssert = true;
+	io.ConfigErrorRecoveryEnableDebugLog = true;
+	io.ConfigErrorRecoveryEnableTooltip = true;
+
+	// DPI 缩放
+	io.FontGlobalScale = g_uiScale;
+	io.ConfigDpiScaleFonts = true;
 
 	ImGuiStyle& style = ImGui::GetStyle();
-	// 设置字体和全局缩放
-	style.ScaleAllSizes(g_uiScale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
-	io.ConfigDpiScaleFonts = true;
-	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
+	style.ScaleAllSizes(g_uiScale);
+
 	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
 	{
 		style.WindowRounding = 0.0f;
@@ -640,11 +645,17 @@ int main(int argc, char** argv)
 		GetUserDefaultUILanguageWin();
 		Fontss = GetDefaultUIFontPath();
 	}
+
 	if (!Fontss.empty() && filesystem::exists(Fontss)) {
-		if (g_CurrentLang == "zh_CN")
-			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
-		else
-			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
+		ImFontConfig fontCfg;
+		fontCfg.PixelSnapH = true;
+		if (g_CurrentLang == "zh_CN") {
+			fontCfg.OversampleH = 1;  // CJK 全字符集字数多，降低过采样节省纹理内存
+			fontCfg.OversampleV = 1;
+			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesChineseFull());
+		} else {
+			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesDefault());
+		}
 	} else {
 		io.Fonts->AddFontDefaultVector();
 	}
@@ -712,7 +723,24 @@ int main(int argc, char** argv)
 		ImGuiTheme::ApplyNord(false);
 	}
 
-	double g_FPS = 1.0 / 60.0;
+	// 没有交互时降低帧率，减少 CPU/GPU 占用
+	struct FpsIdling {
+		float fpsIdle = 10.0f;        // 空闲时的 FPS
+		float fpsActive = 60.0f;      // 活跃时的 FPS
+		bool  enableIdling = true;     // 是否启用空闲节能
+		bool  isIdling = false;        // 输出：当前是否处于空闲状态
+		double lastActivityTime = 0.0; // 上次交互的时间
+		double idleTimeout = 3.0;      // 多少秒无交互后进入空闲
+	} fpsIdling;
+
+	auto ClockSeconds = []() -> double {
+		static const auto start = std::chrono::steady_clock::now();
+		auto now = std::chrono::steady_clock::now();
+		std::chrono::duration<double> elapsed = now - start;
+		return elapsed.count();
+	};
+
+	fpsIdling.lastActivityTime = ClockSeconds();
 
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
@@ -721,8 +749,28 @@ int main(int argc, char** argv)
 			glfwWaitEventsTimeout(1.0);
 			continue;
 		}
-		else {
-			glfwWaitEventsTimeout(g_FPS);
+
+		// Power Save：基于 ImGui 输入事件检测空闲状态
+		double nowTime = ClockSeconds();
+		{
+			ImGuiContext& g = *GImGui;
+			bool hasInputEvent = !g.InputEventsQueue.empty();
+			if (hasInputEvent || g.ActiveId != 0 || g.MovingWindow != nullptr) {
+				fpsIdling.lastActivityTime = nowTime;
+			}
+		}
+
+		bool shouldIdle = fpsIdling.enableIdling && 
+			((nowTime - fpsIdling.lastActivityTime) > fpsIdling.idleTimeout);
+		fpsIdling.isIdling = shouldIdle;
+
+		// 根据空闲状态选择不同的等待策略
+		if (shouldIdle) {
+			double waitTimeout = 1.0 / (double)fpsIdling.fpsIdle;
+			glfwWaitEventsTimeout(waitTimeout);
+		} else {
+			double waitTimeout = 1.0 / (double)fpsIdling.fpsActive;
+			glfwWaitEventsTimeout(waitTimeout);
 		}
 
 		ImGui_ImplOpenGL3_NewFrame();
@@ -2571,7 +2619,11 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // 避免边缘伪影
-	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // 避免边缘伪影x2
+
+#if defined(GL_UNPACK_ROW_LENGTH)
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0); // 确保没有行对齐问题
+#endif
 
 	// 上传纹理数据
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
