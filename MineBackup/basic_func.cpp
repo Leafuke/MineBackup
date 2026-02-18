@@ -58,6 +58,15 @@ vector<filesystem::path> GetChangedFiles(
 	BackupCheckResult& out_result,
 	map<wstring, size_t>& out_currentState // 将当前状态传出，供后续保存
 ) {
+	auto collectCurrentState = [&]() {
+		if (!filesystem::exists(worldPath)) return;
+		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
+			if (entry.is_regular_file()) {
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
+			}
+		}
+	};
+
 	out_result = BackupCheckResult::NO_CHANGE;
 	out_currentState.clear();
 	vector<filesystem::path> changedFiles;
@@ -68,49 +77,50 @@ vector<filesystem::path> GetChangedFiles(
 	if (!filesystem::exists(metadataFile)) {
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
 		// 元数据不存在，扫描所有文件并返回，以便进行首次完整备份
-		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
-			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
-			}
-		}
+		collectCurrentState();
 		return {}; // 返回空列表，因为所有文件状态都记录在 out_currentState 中了
 	}
 
 	nlohmann::json metadata;
+	wstring lastBackupFile;
 	wstring basedOnBackupFile;
 	try {
 		ifstream f(metadataFile.c_str());
 		metadata = nlohmann::json::parse(f);
-		basedOnBackupFile = utf8_to_wstring(metadata.at("basedOnBackupFile"));
+		if (metadata.contains("lastBackupFile") && metadata.at("lastBackupFile").is_string()) {
+			lastBackupFile = utf8_to_wstring(metadata.at("lastBackupFile"));
+		}
+		if (metadata.contains("basedOnBackupFile") && metadata.at("basedOnBackupFile").is_string()) {
+			basedOnBackupFile = utf8_to_wstring(metadata.at("basedOnBackupFile"));
+		}
 		for (auto& [key, val] : metadata.at("fileStates").items()) {
 			lastState[utf8_to_wstring(key)] = val.get<size_t>();
 		}
 	}
-	catch (const nlohmann::json::exception& e) {
+	catch (const exception& e) {
 		// 元数据文件损坏或格式错误
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
 		// 同样需要扫描所有文件
-		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
-			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
-			}
-		}
+		collectCurrentState();
 		return {};
 	}
 
-	// 2. 核心验证：检查元数据依赖的基准备份文件是否存在
-	if (!filesystem::exists(backupPath / basedOnBackupFile)) {
+	// 2. 核心验证：上次备份文件（差异检测地基）必须存在
+	if (lastBackupFile.empty() || !filesystem::exists(backupPath / lastBackupFile)) {
+		out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
+		collectCurrentState();
+		return {};
+	}
+
+	// 3. 兼容旧链路：如果元数据记录了 basedOnBackupFile，也要求其存在
+	if (!basedOnBackupFile.empty() && !filesystem::exists(backupPath / basedOnBackupFile)) {
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
 		// 基准文件被用户删除，元数据失效，扫描所有文件以进行新的完整备份
-		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
-			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
-			}
-		}
+		collectCurrentState();
 		return {};
 	}
 
-	// 3. 计算当前状态并与上次状态比较（使用文件大小+修改时间的快速检测）
+	// 4. 计算当前状态并与上次状态比较（使用文件大小+修改时间的快速检测）
 	if (filesystem::exists(worldPath)) {
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {

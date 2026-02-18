@@ -69,6 +69,17 @@ static wstring GetDefaultFontPath() {
 #endif
 }
 
+static int NormalizeCompressionLevel(const wstring& method, int level) {
+	int minLevel = 1;
+	int maxLevel = 9;
+	if (_wcsicmp(method.c_str(), L"zstd") == 0) {
+		maxLevel = 22;
+	}
+	if (level < minLevel) return minLevel;
+	if (level > maxLevel) return maxLevel;
+	return level;
+}
+
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 extern int g_hotKeyBackupId , g_hotKeyRestoreId;
 
@@ -362,6 +373,17 @@ void LoadConfigs(const string& filename) {
 		restoreWhitelist.push_back(L"soul_archive.json");
 		restoreWhitelist.push_back(L"level.dat");
 		restoreWhitelist.push_back(L"level.dat_old");
+	}
+
+	for (auto& kv : g_appState.configs) {
+		Config& cfg = kv.second;
+		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
+	}
+
+	for (auto& kv : g_appState.specialConfigs) {
+		SpecialConfig& spCfg = kv.second;
+		if (spCfg.zipLevel < 1) spCfg.zipLevel = 1;
+		if (spCfg.zipLevel > 22) spCfg.zipLevel = 22;
 	}
 }
 

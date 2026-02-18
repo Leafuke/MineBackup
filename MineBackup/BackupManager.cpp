@@ -35,6 +35,17 @@ static inline void ToLowerInPlace(wstring& s) {
 #endif
 }
 
+static inline int NormalizeCompressionLevel(const wstring& method, int level) {
+	int minLevel = 1;
+	int maxLevel = 9;
+	if (_wcsicmp(method.c_str(), L"zstd") == 0) {
+		maxLevel = 22;
+	}
+	if (level < minLevel) return minLevel;
+	if (level > maxLevel) return maxLevel;
+	return level;
+}
+
 static inline wstring MakeWorldOperationKey(const filesystem::path& worldPath) {
 	error_code ec;
 	filesystem::path p = worldPath;
@@ -486,6 +497,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 	wstring originalSourcePath = folder.path;
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
+	bool snapshotUsed = false;
 	filesystem::path destinationFolder = JoinPath(config.backupPath, folder.name);
 	filesystem::path metadataFolder = JoinPath(config.backupPath, L"_metadata");
 	metadataFolder /= folder.name;
@@ -521,12 +533,21 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
         if (!snapshotPath.empty()) {
             sourcePath = snapshotPath;
+			snapshotUsed = true;
             this_thread::sleep_for(chrono::milliseconds(200));
         } else {
             console.AddLog(L("LOG_ERROR_SNAPSHOT"));
             return;
         }
     }
+
+	auto cleanupSnapshot = [&]() {
+		if (!snapshotUsed || sourcePath == folder.path) return;
+		console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
+		error_code ec;
+		filesystem::remove_all(sourcePath, ec);
+		if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
+	};
 
     bool forceFullBackup = true;
     if (filesystem::exists(destinationFolder)) {
@@ -584,6 +605,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
     if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+		cleanupSnapshot();
         return;
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
         console.AddLog(L("LOG_METADATA_INVALID"));
@@ -607,9 +629,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         } catch (const filesystem::filesystem_error& e) {
             console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-            if (config.hotBackup) {
-                filesystem::remove_all(sourcePath);
-            }
+			cleanupSnapshot();
             return;
         }
     }
@@ -623,9 +643,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
     if (files_to_backup.empty()) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-        if (config.hotBackup) {
-            filesystem::remove_all(sourcePath);
-        }
+		cleanupSnapshot();
         return;
     }
 
@@ -652,11 +670,11 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 #endif
     } else {
         console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
-        if (config.hotBackup) {
-            filesystem::remove_all(sourcePath);
-        }
+		cleanupSnapshot();
         return;
     }
+
+	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
 
     wstring backupTypeStr;
     wstring basedOnBackupFile;
@@ -665,7 +683,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	if (config.backupMode == 1 || forceFullBackup) {
 		backupTypeStr = L"Full";
 		archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
     } else if (config.backupMode == 2) {
@@ -695,7 +713,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 			// 回退到完整备份
 			backupTypeStr = L"Full";
 			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 			basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
 			goto execute_backup;
@@ -704,7 +722,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
 		archivePath = (destinationFolder / (L"[Smart][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
-        command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
             L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
     } else if (config.backupMode == 3) {
         backupTypeStr = L"Overwrite";
@@ -723,13 +741,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
         if (found) {
             console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(config.zipLevel);
+			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(normalizedZipLevel);
             archivePath = latestBackupPath.wstring(); // 记录被更新的文件
         }
         else {
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) + L" -m0=" + config.zipMethod +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + NormalizeSeparators(sourcePath) + L"/*\"";
             // -spf 强制使用完整路径，-spf2 使用相对路径
         }
@@ -822,12 +840,7 @@ execute_backup:
     }
 
     filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
-    if (config.hotBackup && sourcePath != folder.path) {
-        console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
-        error_code ec;
-        filesystem::remove_all(sourcePath, ec);
-        if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
-    }
+	cleanupSnapshot();
 }
 void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment) {
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
@@ -874,7 +887,8 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 		return;
 	}
 
-	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
+	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
@@ -1400,7 +1414,8 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		ofs.close();
 
 		// 构建并执行 7z 命令
-		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(tempConfig.zipLevel) +
+		const int normalizedZipLevel = NormalizeCompressionLevel(tempConfig.zipMethod, tempConfig.zipLevel);
+		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 			L" \"" + outputPath + L"\"" + L" @" + filelist_path;
 
 		// 工作目录应为原始世界路径，以确保压缩包内路径正确
