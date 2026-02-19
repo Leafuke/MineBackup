@@ -87,6 +87,12 @@
     <ClCompile Include="KnotLink\SignalSender.cpp">
       <Filter>KnotLink</Filter>
     </ClCompile>
+    <ClCompile Include="SettingsUI.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="TaskSystem.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="i18n.h">
@@ -172,6 +178,9 @@
     </ClInclude>
     <ClInclude Include="imgui\imgui_style.h">
       <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="TaskSystem.h">
+      <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

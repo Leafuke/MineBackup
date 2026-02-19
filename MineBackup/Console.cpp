@@ -186,7 +186,6 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return "OK:Mods backup started.";
 	}
 	else if (command == "BACKUP_CURRENT") { // 直接调用备份正在运行的世界的函数
-		BroadcastEvent("event=pre_hot_backup;");
 		if (ss.rdbuf()->in_avail() > 0) {
 			string comment_part;
 			getline(ss, comment_part);
@@ -289,11 +288,91 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return success_msg;
 	}
 	else if (command == "SHUTDOWN_WORLD_SUCCESS") {
+		// 兼容旧版联动模组: 世界保存并退出完成
 		if (g_appState.hotkeyRestoreState == HotRestoreState::WAITING_FOR_MOD) {
 			g_appState.isRespond = true;
+			// 同时触发新的条件变量机制
+			g_appState.knotLinkMod.notifyFlag(&KnotLinkModInfo::worldSaveAndExitComplete);
 			return "OK:Acknowledged. Restore will now proceed.";
 		}
 		return "ERROR:Not currently waiting for a world shutdown signal.";
+	}
+	else if (command == "HANDSHAKE_RESPONSE") {
+		// 联动模组的握手回应: HANDSHAKE_RESPONSE <mod_version>
+		// 用于确认模组存在并检查版本兼容性
+		string mod_version;
+		if (!(ss >> mod_version)) {
+			return "ERROR:Missing mod version. Usage: HANDSHAKE_RESPONSE <mod_version>";
+		}
+
+		auto& mod = g_appState.knotLinkMod;
+		mod.modDetected = true;
+		mod.modVersion = mod_version;
+		mod.versionCompatible = KnotLinkModInfo::IsVersionCompatible(
+			mod_version, KnotLinkModInfo::MIN_MOD_VERSION);
+
+		if (mod.versionCompatible) {
+			console->AddLog(L("KNOTLINK_HANDSHAKE_OK"), mod_version.c_str());
+		}
+		else {
+			console->AddLog(L("KNOTLINK_HANDSHAKE_VERSION_MISMATCH"),
+				mod_version.c_str(), KnotLinkModInfo::MIN_MOD_VERSION);
+		}
+
+		// 唤醒等待握手的线程
+		mod.notifyFlag(&KnotLinkModInfo::handshakeReceived);
+
+		BroadcastEvent("event=handshake_ack;status=" +
+			string(mod.versionCompatible ? "compatible" : "incompatible") +
+			";mod_version=" + mod_version);
+		return "OK:Handshake received. Version " + mod_version +
+			(mod.versionCompatible.load() ? " (compatible)" : " (incompatible)");
+	}
+	else if (command == "WORLD_SAVED") {
+		// 联动模组通知: 世界已保存完毕 (用于热备份流程)
+		// 主程序在发送 pre_hot_backup 后等待此消息，确认世界数据已完整保存
+		auto& mod = g_appState.knotLinkMod;
+		mod.notifyFlag(&KnotLinkModInfo::worldSaveComplete);
+		console->AddLog(L("KNOTLINK_WORLD_SAVED"));
+		BroadcastEvent("event=world_save_acknowledged;");
+		return "OK:World save acknowledged. Snapshot will be created.";
+	}
+	else if (command == "WORLD_SAVE_AND_EXIT_COMPLETE") {
+		// 联动模组通知: 世界已保存并退出完毕 (用于热还原流程)
+		// 与 SHUTDOWN_WORLD_SUCCESS 功能相同，但是新版规范命令名
+		if (g_appState.hotkeyRestoreState == HotRestoreState::WAITING_FOR_MOD) {
+			g_appState.isRespond = true;
+			g_appState.knotLinkMod.notifyFlag(&KnotLinkModInfo::worldSaveAndExitComplete);
+			console->AddLog(L("KNOTLINK_WORLD_SAVE_EXIT_COMPLETE"));
+			return "OK:Acknowledged. Restore will now proceed.";
+		}
+		return "ERROR:Not currently waiting for a world save-and-exit signal.";
+	}
+	else if (command == "REJOIN_RESULT") {
+		// 联动模组通知: 重进世界的结果
+		// REJOIN_RESULT success 或 REJOIN_RESULT failure [reason]
+		string result_str;
+		if (!(ss >> result_str)) {
+			return "ERROR:Missing result. Usage: REJOIN_RESULT <success|failure> [reason]";
+		}
+
+		auto& mod = g_appState.knotLinkMod;
+		bool success = (result_str == "success");
+		mod.rejoinSuccess = success;
+		mod.notifyFlag(&KnotLinkModInfo::rejoinResponseReceived);
+
+		if (success) {
+			console->AddLog(L("KNOTLINK_REJOIN_SUCCESS"));
+			BroadcastEvent("event=rejoin_acknowledged;status=success;");
+		}
+		else {
+			string reason;
+			getline(ss, reason);
+			if (!reason.empty() && reason.front() == ' ') reason.erase(0, 1);
+			console->AddLog(L("KNOTLINK_REJOIN_FAILED"), reason.c_str());
+			BroadcastEvent("event=rejoin_acknowledged;status=failure;reason=" + reason);
+		}
+		return "OK:Rejoin result received: " + result_str;
 	}
 	else if (command == "ADD_TO_WE") {
 		int config_idx, world_idx;

@@ -390,12 +390,70 @@ enum class HotRestoreState {
 	RESTORING,         // 模组已响应，正在执行还原
 };
 
-//struct WorldStateCache {
-//	std::wstring lastOpenTime;
-//	std::wstring lastBackupTime;
-//	bool needsBackup;
-//	std::filesystem::file_time_type lastChecked;
-//};
+// KnotLink 联动模组状态信息
+// 用于跟踪联动模组的检测结果和通信状态
+struct KnotLinkModInfo {
+	std::atomic<bool> modDetected{false};       // 是否检测到联动模组
+	std::string modVersion;                      // 模组版本号
+	std::atomic<bool> versionCompatible{false}; // 模组版本是否兼容
+
+	// 最低要求的模组版本号
+	static constexpr const char* MIN_MOD_VERSION = "1.0.0";
+
+	// 异步响应同步机制
+	std::mutex mtx;
+	std::condition_variable cv;
+
+	// 响应标志 (受 mtx 保护)
+	bool handshakeReceived = false;            // 收到握手响应
+	bool worldSaveComplete = false;            // 模组已完成世界保存 (用于热备份)
+	bool worldSaveAndExitComplete = false;     // 模组已完成世界保存并退出 (用于热还原)
+	bool rejoinResponseReceived = false;       // 收到重进世界结果
+	bool rejoinSuccess = false;                // 重进世界是否成功
+
+	// 重置单次操作的标志 (在每次操作前调用)
+	void resetForOperation() {
+		std::lock_guard<std::mutex> lock(mtx);
+		handshakeReceived = false;
+		worldSaveComplete = false;
+		worldSaveAndExitComplete = false;
+		rejoinResponseReceived = false;
+		rejoinSuccess = false;
+	}
+
+	// 完全重置
+	void resetDetection() {
+		modDetected = false;
+		modVersion.clear();
+		versionCompatible = false;
+		resetForOperation();
+	}
+
+	// 版本比较
+	static bool IsVersionCompatible(const std::string& current, const std::string& required) {
+		auto parseVersion = [](const std::string& v) -> std::tuple<int, int, int> {
+			int major = 0, minor = 0, patch = 0;
+			std::sscanf(v.c_str(), "%d.%d.%d", &major, &minor, &patch);
+			return { major, minor, patch };
+		};
+		return parseVersion(current) >= parseVersion(required);
+	}
+
+	// 通知指定标志并唤醒等待线程
+	void notifyFlag(bool KnotLinkModInfo::* flag, bool value = true) {
+		{
+			std::lock_guard<std::mutex> lock(mtx);
+			this->*flag = value;
+		}
+		cv.notify_all();
+	}
+
+	// 等待指定标志变为 true，带超时
+	bool waitForFlag(bool KnotLinkModInfo::* flag, std::chrono::milliseconds timeout) {
+		std::unique_lock<std::mutex> lock(mtx);
+		return cv.wait_for(lock, timeout, [this, flag]() { return this->*flag; });
+	}
+};
 
 struct AppState {
 
@@ -413,14 +471,14 @@ struct AppState {
 	std::map<int, SpecialConfig> specialConfigs;
 
 	std::map<std::pair<int, int>, AutoBackupTask> g_active_auto_backups; // Key: {configIdx, worldIdx}
-	//std::map<std::pair<int, int>, WorldStateCache> worldCache; // Key: {configIdx, worldIdx}
-
-
 
 	std::mutex configsMutex;			// 用于保护全局配置的互斥锁
 	std::mutex task_mutex;		// 专门用于保护 g_active_auto_backups
 	bool isRespond = false;
 	std::atomic<HotRestoreState> hotkeyRestoreState = HotRestoreState::IDLE;
+
+	KnotLinkModInfo knotLinkMod;
+
     // Settings
     bool g_CheckForUpdates = true;
 };

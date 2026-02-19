@@ -171,7 +171,7 @@ void TriggerHotkeyRestore() {
 	HotRestoreState expected_idle = HotRestoreState::IDLE;
 	// 使用CAS操作确保线程安全地从IDLE转换到WAITING_FOR_MOD
 	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
-		console.AddLog(L("[Hotkey] A restore operation is already in progress. Ignoring request."));
+		console.AddLog(L("KNOTLINK_RESTORE_ALREADY_IN_PROGRESS"));
 		return;
 	}
 
@@ -179,13 +179,38 @@ void TriggerHotkeyRestore() {
 	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
 
 	MyFolder world = GetOccupiedWorld();
-	if (!world.path.empty()) {
-		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
-		DoHotRestore(world, ref(console), false);
+	if (world.path.empty()) {
+		g_appState.isRespond = false;
+		console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		return;
 	}
-	
-	g_appState.isRespond = false;
-	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
-	g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
+
+	console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
+
+	bool modAvailable = PerformModHandshake("restore", wstring_to_utf8(world.name));
+
+	if (!modAvailable) {
+		if (g_appState.knotLinkMod.modDetected.load() && !g_appState.knotLinkMod.versionCompatible.load()) {
+			// 检测到模组但版本不兼容
+			console.AddLog(L("KNOTLINK_RESTORE_MOD_VERSION_INCOMPATIBLE"),
+				g_appState.knotLinkMod.modVersion.c_str(),
+				KnotLinkModInfo::MIN_MOD_VERSION);
+		}
+		else {
+			// 没有检测到模组
+			console.AddLog(L("KNOTLINK_RESTORE_MOD_REQUIRED"));
+		}
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
+		return;
+	}
+
+	console.AddLog(L("KNOTLINK_RESTORE_MOD_OK"),
+		g_appState.knotLinkMod.modVersion.c_str());
+
+	// 联动模组就绪，在后台线程中执行热还原
+	thread([world]() {
+		DoHotRestore(world, ref(console), false);
+	}).detach();
 }

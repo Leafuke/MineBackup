@@ -529,7 +529,42 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	// 检测到 level.dat 被锁定，则强制启用热备份
 
     if (config.hotBackup || IsFileLocked(sourcePath + L"/level.dat")) {
-        BroadcastEvent("event=pre_hot_backup;");
+        // 在热备份前，先检查联动模组是否存在
+        bool modAvailable = PerformModHandshake("backup", wstring_to_utf8(folder.name));
+
+        if (modAvailable) {
+            console.AddLog(L("KNOTLINK_MOD_DETECTED_BACKUP"),
+                g_appState.knotLinkMod.modVersion.c_str());
+        } else {
+            if (g_appState.knotLinkMod.modDetected.load() && !g_appState.knotLinkMod.versionCompatible.load()) {
+                console.AddLog(L("KNOTLINK_MOD_VERSION_TOO_OLD"),
+                    g_appState.knotLinkMod.modVersion.c_str(),
+                    KnotLinkModInfo::MIN_MOD_VERSION);
+            } else {
+                console.AddLog(L("KNOTLINK_MOD_NOT_DETECTED_BACKUP"));
+            }
+        }
+
+        // 通知模组准备热备份
+        BroadcastEvent("event=pre_hot_backup;config=" + to_string(folder.configIndex) +
+            ";world=" + wstring_to_utf8(folder.name));
+
+        if (modAvailable) {
+            // 联动模组存在且版本兼容: 等待模组完成世界保存
+            console.AddLog(L("KNOTLINK_WAITING_WORLD_SAVE"));
+            bool saved = g_appState.knotLinkMod.waitForFlag(
+                &KnotLinkModInfo::worldSaveComplete,
+                std::chrono::milliseconds(10000)); // 最多等待10秒
+
+            if (saved) {
+                console.AddLog(L("KNOTLINK_WORLD_SAVE_CONFIRMED"));
+            } else {
+                // 超时：模组未在规定时间内完成保存，依然继续创建快照
+                console.AddLog(L("KNOTLINK_WORLD_SAVE_TIMEOUT"));
+            }
+        }
+
+        // 创建快照
         wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
         if (!snapshotPath.empty()) {
             sourcePath = snapshotPath;
@@ -1445,71 +1480,76 @@ MyFolder GetOccupiedWorld();
 void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	
 	Config cfg = world.config;
+	auto& mod = g_appState.knotLinkMod;
 
-	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
+	// 确认联动模组状态（在 TriggerHotkeyRestore 中已完成握手） ===
+	// 到达这里说明模组已检测到且版本兼容
+	console.AddLog(L("KNOTLINK_HOT_RESTORE_START"), wstring_to_utf8(world.name).c_str());
 
-	// 启动后台等待线程
-	auto startTime = chrono::steady_clock::now();
-	auto timeout = chrono::seconds(15);
+	// 发送预还原消息，请求模组保存世界并退出
+	mod.resetForOperation();
+	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) +
+		";world=" + wstring_to_utf8(world.name));
+	console.AddLog(L("KNOTLINK_WAITING_WORLD_SAVE_EXIT"));
 
-	// 等待响应或超时
-	while (chrono::steady_clock::now() - startTime < timeout) {
-		if (g_appState.isRespond) {
-			break; // 收到响应
-		}
-		this_thread::sleep_for(chrono::milliseconds(100));
-	}
-
-	// 检查是收到了响应还是超时了
-	if (!g_appState.isRespond) {
-		console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
-		BroadcastEvent("event=restore_cancelled;reason=timeout");
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
-		return;
-	}
-
-	// 收到响应，检查世界是否仍然被占用
-
-	g_appState.isRespond = false; // 仍标记为未响应，等确认存档关闭后确认为响应
-
-	startTime = chrono::steady_clock::now();
-	timeout = chrono::seconds(10);
-
-	while (chrono::steady_clock::now() - startTime < timeout) {
-		MyFolder checkOccupiedFolder = GetOccupiedWorld();
-		if (checkOccupiedFolder.name == world.name) {
-			this_thread::sleep_for(chrono::seconds(1));
-		}
-		else {
-			g_appState.isRespond = true;
-			break;
-		}
-	}
-	if (!g_appState.isRespond) {
-		console.AddLog(L("[Error] World is still occupied after mod response. Restore aborted."));
-		BroadcastEvent("event=restore_cancelled;reason=world_occupied");
+	// 等待模组通知世界保存并退出完成
+	// 使用 condition_variable 高效等待，取代旧的轮询方式
+	bool exitComplete = mod.waitForFlag(
+		&KnotLinkModInfo::worldSaveAndExitComplete,
+		std::chrono::milliseconds(10000)); // 最多等待10秒
+	if (!exitComplete) {
+		console.AddLog(L("KNOTLINK_HOT_RESTORE_TIMEOUT"));
+		BroadcastEvent("event=restore_cancelled;reason=timeout;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
 		return;
 	}
 
-	g_appState.isRespond = false; // 重置标志位
-	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
-	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
+	console.AddLog(L("KNOTLINK_MOD_EXIT_CONFIRMED"));
 
-	// 等待文件不再被锁定，最多等待10秒
-	filesystem::path levelDatPath = filesystem::path(world.path) / L"level.dat";
-	auto waitStart = chrono::steady_clock::now();
-	auto waitTimeout = chrono::seconds(10);
-	while (chrono::steady_clock::now() - waitStart < waitTimeout) {
-		if (!IsFileLocked(levelDatPath.wstring())) {
-			break;
+	// 等待文件系统确认世界不再被占用
+	{
+		auto startTime = chrono::steady_clock::now();
+		auto checkTimeout = chrono::seconds(15);
+		bool worldReleased = false;
+
+		while (chrono::steady_clock::now() - startTime < checkTimeout) {
+			MyFolder checkOccupied = GetOccupiedWorld();
+			if (checkOccupied.name != world.name) {
+				worldReleased = true;
+				break;
+			}
+			this_thread::sleep_for(chrono::milliseconds(500));
 		}
-		this_thread::sleep_for(chrono::milliseconds(200));
-	}
-	// 额外等待500ms确保文件系统同步完成
-	this_thread::sleep_for(chrono::milliseconds(500));
 
-	// 查找最新备份文件 (这部分逻辑保持不变)
+		if (!worldReleased) {
+			console.AddLog(L("KNOTLINK_HOT_RESTORE_WORLD_OCCUPIED"));
+			BroadcastEvent("event=restore_cancelled;reason=world_occupied;world=" + wstring_to_utf8(world.name));
+			g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+			g_appState.isRespond = false;
+			return;
+		}
+	}
+
+	// 等待文件锁释放
+	{
+		filesystem::path levelDatPath = filesystem::path(world.path) / L"level.dat";
+		auto waitStart = chrono::steady_clock::now();
+		auto waitTimeout = chrono::seconds(10);
+		while (chrono::steady_clock::now() - waitStart < waitTimeout) {
+			if (!IsFileLocked(levelDatPath.wstring())) {
+				break;
+			}
+			this_thread::sleep_for(chrono::milliseconds(200));
+		}
+		// 额外等待确保文件系统同步完成
+		this_thread::sleep_for(chrono::milliseconds(500));
+	}
+
+	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+	console.AddLog(L("KNOTLINK_HOT_RESTORE_PROCEEDING"));
+
+	// 查找最新备份文件
 	filesystem::path backupDir = JoinPath(cfg.backupPath, world.name);
 	filesystem::path latestBackup;
 	auto latest_time = filesystem::file_time_type{};
@@ -1529,8 +1569,9 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 
 	if (!found) {
 		console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
+		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
 		return;
 	}
 
@@ -1538,11 +1579,41 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 
 	DoRestore(cfg, world.name, latestBackup.filename().wstring(), ref(console), 0, "");
 
-	// 假设成功，广播完成事件
-	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
-	console.AddLog(L("[Hotkey] Restore completed successfully."));
+	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex) +
+		";world=" + wstring_to_utf8(world.name));
+	console.AddLog(L("KNOTLINK_HOT_RESTORE_DONE"));
 
-	// 最终，重置状态
+	// 发送重进世界的指令
+	BroadcastEvent("event=rejoin_world;world=" + wstring_to_utf8(world.name));
+	console.AddLog(L("KNOTLINK_REJOIN_SENT"));
+
+	// 等待重进世界结果
+	bool rejoinReceived = mod.waitForFlag(
+		&KnotLinkModInfo::rejoinResponseReceived,
+		std::chrono::milliseconds(30000)); // 最多等待30秒
+
+	if (rejoinReceived) {
+		bool success = false;
+		{
+			std::lock_guard<std::mutex> lock(mod.mtx);
+			success = mod.rejoinSuccess;
+		}
+		if (success) {
+			console.AddLog(L("KNOTLINK_REJOIN_OK"));
+			BroadcastEvent("event=hot_restore_complete;status=full_success;world=" + wstring_to_utf8(world.name));
+		}
+		else {
+			console.AddLog(L("KNOTLINK_REJOIN_FAIL"));
+			BroadcastEvent("event=hot_restore_complete;status=restore_ok_rejoin_failed;world=" + wstring_to_utf8(world.name));
+		}
+	}
+	else {
+		// 重进世界超时 — 还原已成功但重进结果未知
+		console.AddLog(L("KNOTLINK_REJOIN_TIMEOUT"));
+		BroadcastEvent("event=hot_restore_complete;status=restore_ok_rejoin_timeout;world=" + wstring_to_utf8(world.name));
+	}
+
+	// 重置状态
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 	g_appState.isRespond = false;
 }
