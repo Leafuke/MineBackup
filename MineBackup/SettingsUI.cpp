@@ -678,7 +678,7 @@ static void DrawAppearanceSettings(Config& cfg) {
     ImGui::SetNextItemWidth(300);
     if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
         string oldLang = g_CurrentLang;
-        g_CurrentLang = lang_codes[lang_idx];
+        SetLanguage(lang_codes[lang_idx]);
         
         // 当从英文切换到中文时，检查字体是否支持中文
         if (oldLang == "en_US" && g_CurrentLang == "zh_CN") {

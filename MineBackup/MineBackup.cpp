@@ -815,7 +815,7 @@ int main(int argc, char** argv)
 				// 语言选择
 				ImGui::Text(L("LANGUAGE"));
 				if (ImGui::Combo("##WizardLang", &wizardLangIdx, langs, IM_ARRAYSIZE(langs))) {
-					g_CurrentLang = lang_codes[wizardLangIdx];
+					SetLanguage(lang_codes[wizardLangIdx]);
 					// 切换到中文时，如果字体路径为空，自动设置中文字体
 					if (g_CurrentLang == "zh_CN" && strlen(wizardFontPath) == 0) {
 #ifdef _WIN32
@@ -2226,7 +2226,7 @@ int main(int argc, char** argv)
 									if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
 										modsPath = tempPath / "mods";
 									}
-									thread backup_thread(DoOthersBackup, g_appState.configs[g_appState.currentConfigIndex], modsPath, utf8_to_wstring(mods_comment));
+									thread backup_thread(DoOthersBackup, g_appState.configs[g_appState.currentConfigIndex], modsPath, utf8_to_wstring(mods_comment), ref(console));
 									backup_thread.detach();
 									strcpy_s(mods_comment, "");
 								}
@@ -2267,7 +2267,7 @@ int main(int argc, char** argv)
 
 							float othersConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 							if (ImGui::Button(L("BUTTON_OK"), ImVec2(othersConfirmBtnWidth, 0))) {
-								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment));
+								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment), ref(console));
 								backup_thread.detach();
 								strcpy_s(others_comment, "");
 								SaveConfigs(); // 保存一下路径

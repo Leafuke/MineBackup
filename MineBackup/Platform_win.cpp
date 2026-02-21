@@ -133,16 +133,16 @@ void GetUserDefaultUILanguageWin() {
 	LANGID langId = GetUserDefaultUILanguage();
 	switch (PRIMARYLANGID(langId)) {
 	case LANG_CHINESE:
-		g_CurrentLang = "zh_CN";
+		SetLanguage("zh_CN");
 		break;
 	case LANG_CHINESE_TRADITIONAL:
-		g_CurrentLang = "zh_CN";
+		SetLanguage("zh_CN");
 		break;
 	case LANG_ENGLISH:
-		g_CurrentLang = "en_US";
+		SetLanguage("en_US");
 		break;
 	default:
-		g_CurrentLang = "en_US"; // 默认英语
+		SetLanguage("en_US"); // 默认英语
 		break;
 	}
 	return;
@@ -783,7 +783,7 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
 // 参数:
 //   - command: 要执行的完整命令行（宽字符）。
 //   - console: 监控台对象的引用，用于输出日志信息。
-bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory) {
+bool RunCommandInBackground(const wstring& command, Console& console, bool useLowPriority, const wstring& workingDirectory) {
 	// CreateProcessW需要一个可写的C-style字符串，所以我们将wstring复制到vector<wchar_t>
 	vector<wchar_t> cmd_line(command.begin(), command.end());
 	cmd_line.push_back(L'\0'); // 添加字符串结束符
@@ -813,9 +813,11 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 
 	// 检查子进程的退出代码
 	DWORD exit_code;
+	bool success = false;
 	if (GetExitCodeProcess(pi.hProcess, &exit_code)) {
 		if (exit_code == 0) {
 			console.AddLog(L("LOG_SUCCESS_CMD"));
+			success = true;
 		}
 		else {
 			console.AddLog(L("LOG_ERROR_CMD_FAILED"), exit_code);
@@ -825,7 +827,6 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 			}
 			if (exit_code == 2) {
 				console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
-				return false;
 			}
 		}
 	}
@@ -836,5 +837,5 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 	// 清理句柄
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
-	return true;
+	return success;
 }

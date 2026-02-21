@@ -140,7 +140,7 @@ extern bool isSafeDelete;
 
 wstring GetDocumentsPath();
 
-void AddBackupToWESnapshots(const Config config, const wstring& worldName, const wstring& backupFile, Console& console) {
+void AddBackupToWESnapshots(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console) {
 	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
 
 	// 创建快照路径
@@ -868,7 +868,7 @@ execute_backup:
     filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
 	cleanupSnapshot();
 }
-void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment, Console& console) {
+void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wstring& comment, Console& console) {
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
 
 	filesystem::path saveRoot(config.saveRoot);
@@ -926,7 +926,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	console.AddLog(L("LOG_BACKUP_OTHERS_END"));
 }
 
-void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+void DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -979,7 +979,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 }
 
 // restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
-void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+void DoRestore(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {

@@ -302,7 +302,7 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"Language") {
 					if (val[2] == L'-')
 						val[2] = L'_';
-					g_CurrentLang = wstring_to_utf8(val);
+					SetLanguage(wstring_to_utf8(val));
 				}
 				else if (key == L"CheckForUpdates") {
 					g_CheckForUpdates = (val != L"0");

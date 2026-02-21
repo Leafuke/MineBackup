@@ -33,7 +33,7 @@ void EnableDarkModeWin(bool enable);
 bool Extract7zToTempFile(std::wstring& extractedPath);
 bool ExtractFontToTempFile(std::wstring& extractedPath);
 bool IsFileLocked(const std::wstring& path);
-bool RunCommandInBackground(std::wstring command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
+bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
 void CheckForNoticesThread();
 
 #endif // !_PLATFORM_MACOS_H
