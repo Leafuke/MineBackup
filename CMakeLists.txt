@@ -23,7 +23,10 @@ set(SOURCES
     ${SOURCE_DIR}/Broadcast.cpp
     ${SOURCE_DIR}/GameSessionManager.cpp
     ${SOURCE_DIR}/HistoryManager.cpp
+    ${SOURCE_DIR}/HistoryUI.cpp
     ${SOURCE_DIR}/SettingsUI.cpp
+    ${SOURCE_DIR}/SpecialMode.cpp
+    ${SOURCE_DIR}/WizardUI.cpp
     ${SOURCE_DIR}/basic_func.cpp
     ${SOURCE_DIR}/i18n.cpp
     ${SOURCE_DIR}/text_to_text.cpp
@@ -41,10 +44,15 @@ set(HEADERS
     ${SOURCE_DIR}/Broadcast.h
     ${SOURCE_DIR}/ConfigManager.h
     ${SOURCE_DIR}/Console.h
+    ${SOURCE_DIR}/DataModels.h
+    ${SOURCE_DIR}/Globals.h
     ${SOURCE_DIR}/HistoryManager.h
+    ${SOURCE_DIR}/MainUI.h
+    ${SOURCE_DIR}/PlatformCompat.h
     ${SOURCE_DIR}/Platform_win.h
     ${SOURCE_DIR}/Platform_linux.h
     ${SOURCE_DIR}/Platform_macos.h
+    ${SOURCE_DIR}/UIHelpers.h
     ${SOURCE_DIR}/text_to_text.h
     ${SOURCE_DIR}/i18n.h
     ${SOURCE_DIR}/json.hpp

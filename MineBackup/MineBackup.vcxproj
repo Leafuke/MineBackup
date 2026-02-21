@@ -142,6 +142,7 @@
     <ClCompile Include="Console.cpp" />
     <ClCompile Include="GameSessionManager.cpp" />
     <ClCompile Include="HistoryManager.cpp" />
+    <ClCompile Include="HistoryUI.cpp" />
     <ClCompile Include="i18n.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -154,6 +155,8 @@
     <ClCompile Include="MineBackup.cpp" />
     <ClCompile Include="Platform_win.cpp" />
     <ClCompile Include="SettingsUI.cpp" />
+    <ClCompile Include="SpecialMode.cpp" />
+    <ClCompile Include="WizardUI.cpp" />
     <ClCompile Include="TaskSystem.cpp" />
     <ClCompile Include="text_to_text.cpp" />
   </ItemGroup>
@@ -163,6 +166,9 @@
     <ClInclude Include="Broadcast.h" />
     <ClInclude Include="ConfigManager.h" />
     <ClInclude Include="Console.h" />
+    <ClInclude Include="DataModels.h" />
+    <ClInclude Include="Globals.h" />
+    <ClInclude Include="MainUI.h" />
     <ClInclude Include="HistoryManager.h" />
     <ClInclude Include="i18n.h" />
     <ClInclude Include="IconsFontAwesome6.h" />
@@ -181,9 +187,11 @@
     <ClInclude Include="KnotLink\OpenSocketResponser.hpp" />
     <ClInclude Include="KnotLink\SignalSender.hpp" />
     <ClInclude Include="KnotLink\TcpClient.hpp" />
+    <ClInclude Include="PlatformCompat.h" />
     <ClInclude Include="Platform_linux.h" />
     <ClInclude Include="Platform_win.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="UIHelpers.h" />
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="TaskSystem.h" />
     <ClInclude Include="text_to_text.h" />
