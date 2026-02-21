@@ -145,24 +145,19 @@ if(APPLE AND GLFW_TARGET STREQUAL "")
 endif()
 
 if(WIN32)
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_win.cpp)
-    list(APPEND SOURCES
-        ${KNOTLINK_DIR}/OpenSocketResponser.cpp
-        ${KNOTLINK_DIR}/SignalSender.cpp
-    )
-    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_win.cpp)
-    target_sources(${PROJECT_NAME} PRIVATE 
+    target_sources(${PROJECT_NAME} PRIVATE
+        ${SOURCE_DIR}/Platform_win.cpp
         ${KNOTLINK_DIR}/OpenSocketResponser.cpp
         ${KNOTLINK_DIR}/SignalSender.cpp
     )
 elseif(APPLE)
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos.cpp)
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos_tray.mm)
-    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_macos.cpp ${SOURCE_DIR}/Platform_macos_tray.mm)
+    target_sources(${PROJECT_NAME} PRIVATE
+        ${SOURCE_DIR}/Platform_macos.cpp
+        ${SOURCE_DIR}/Platform_macos_tray.mm
+    )
     set_source_files_properties(${SOURCE_DIR}/Platform_macos_tray.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     # KnotLink POSIX 版本使用 header-only 实现
 else()
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_linux.cpp)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_linux.cpp)
 endif()
 

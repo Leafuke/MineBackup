@@ -46,6 +46,5 @@ struct AppState {
 	bool g_CheckForUpdates = true;
 };
 
-// Declare a single global instance
 extern AppState g_appState;
 #endif

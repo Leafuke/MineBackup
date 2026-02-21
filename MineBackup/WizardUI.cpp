@@ -1,6 +1,3 @@
-// WizardUI.cpp — 首次启动配置向导
-// 从 MineBackup.cpp 拆分出
-
 #include "Globals.h"
 #include "UIHelpers.h"
 #include "imgui-all.h"
