@@ -645,9 +645,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING ||
         forceFullBackupDueToLimit) || forceFullBackup;
 
-    if (config.backupMode == 2 && !forceFullBackup) {
-        candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
-    } else {
+	if (!(config.backupMode == 2 && !forceFullBackup)) {
         try {
             candidate_files.clear();
             for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
@@ -870,7 +868,7 @@ execute_backup:
     filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
 	cleanupSnapshot();
 }
-void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment) {
+void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment, Console& console) {
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
 
 	filesystem::path saveRoot(config.saveRoot);

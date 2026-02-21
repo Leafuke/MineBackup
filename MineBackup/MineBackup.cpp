@@ -2415,12 +2415,10 @@ int main(int argc, char** argv)
 					if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 						bool is_task_running = false;
 						pair<int, int> taskKey = { -1,-1 };
-						vector<DisplayWorld> localDisplayWorlds; // 供显示使用
+						vector<DisplayWorld> localDisplayWorlds = displayWorlds; // 供显示使用，避免每帧重建
 						{
 							lock_guard<mutex> lock(g_appState.task_mutex);
 							if (selectedWorldIndex >= 0) {
-								// 如果使用 displayWorlds：
-								localDisplayWorlds = BuildDisplayWorldsForSelection();
 								if (selectedWorldIndex < (int)localDisplayWorlds.size()) {
 									taskKey = { localDisplayWorlds[selectedWorldIndex].baseConfigIndex, localDisplayWorlds[selectedWorldIndex].baseWorldIndex };
 									is_task_running = (g_appState.g_active_auto_backups.count(taskKey) > 0);
@@ -2450,26 +2448,34 @@ int main(int argc, char** argv)
 							}
 						}
 						else {
-							ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(BuildDisplayWorldsForSelection()[selectedWorldIndex].name).c_str());
-							ImGui::Separator();
-							ImGui::InputInt(L("INTERVAL_MINUTES"), &last_interval);
-							if (last_interval < 1) last_interval = 1;
-							float autoBkpBtnWidth = CalcPairButtonWidth(L("BUTTON_START"), L("BUTTON_CANCEL"));
-							if (ImGui::Button(L("BUTTON_START"), ImVec2(autoBkpBtnWidth, 0))) {
-								// 注册并启动线程
-								lock_guard<mutex> lock(g_appState.task_mutex);
-								if (taskKey.first >= 0) {
-									AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
-									task.stop_flag = false;
-
-									task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, last_interval, &console, ref(task.stop_flag));
-
+							if (selectedWorldIndex < 0 || selectedWorldIndex >= (int)localDisplayWorlds.size()) {
+								ImGui::TextDisabled("%s", L("PROMPT_SELECT_WORLD"));
+								if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(CalcButtonWidth(L("BUTTON_CANCEL")), 0))) {
 									ImGui::CloseCurrentPopup();
 								}
 							}
-							ImGui::SameLine();
-							if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(autoBkpBtnWidth, 0))) {
-								ImGui::CloseCurrentPopup();
+							else {
+								ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
+								ImGui::Separator();
+								ImGui::InputInt(L("INTERVAL_MINUTES"), &last_interval);
+								if (last_interval < 1) last_interval = 1;
+								float autoBkpBtnWidth = CalcPairButtonWidth(L("BUTTON_START"), L("BUTTON_CANCEL"));
+								if (ImGui::Button(L("BUTTON_START"), ImVec2(autoBkpBtnWidth, 0))) {
+									// 注册并启动线程
+									lock_guard<mutex> lock(g_appState.task_mutex);
+									if (taskKey.first >= 0) {
+										AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
+										task.stop_flag = false;
+
+										task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, last_interval, &console, ref(task.stop_flag));
+
+										ImGui::CloseCurrentPopup();
+									}
+								}
+								ImGui::SameLine();
+								if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(autoBkpBtnWidth, 0))) {
+									ImGui::CloseCurrentPopup();
+								}
 							}
 						}
 						ImGui::EndPopup();

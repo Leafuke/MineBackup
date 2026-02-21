@@ -10,7 +10,7 @@ using namespace std;
 
 bool IsPureASCII(const wstring& s) {
 	for (wchar_t c : s) {
-		if (c < 0 || c > 127) {
+		if (static_cast<unsigned int>(c) > 127u) {
 			return false;
 		}
 	}
@@ -37,11 +37,6 @@ size_t CalculateFileState(const filesystem::path& filepath) {
 	result ^= hash<decltype(timeValue)>{}(timeValue) + 0x9e3779b9 + (result << 6) + (result >> 2);
 	return result;
 }
-
-// 作为全局变量，方便二者修改
-map<wstring, size_t> currentState;
-
-// 全局变量 currentState 不再需要，作用域移至函数内部
 
 // 位于 basic_func.cpp
 vector<filesystem::path> GetChangedFiles(

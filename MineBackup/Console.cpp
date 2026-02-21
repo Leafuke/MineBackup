@@ -193,7 +193,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			if (g_appState.configs.count(config_idx)) {
 				filesystem::path tempPath = g_appState.configs[config_idx].saveRoot;
 				filesystem::path modsPath = tempPath.parent_path() / "mods";
-				DoOthersBackup(g_appState.configs[config_idx], modsPath, utf8_to_wstring(comment_part));
+				DoOthersBackup(g_appState.configs[config_idx], modsPath, utf8_to_wstring(comment_part), *console);
 			}
 			}).detach();
 		return "OK:Mods backup started.";
