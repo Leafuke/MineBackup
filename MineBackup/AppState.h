@@ -463,7 +463,8 @@ struct AppState {
 
 
     // Data
-	int currentConfigIndex = 1, realConfigIndex = -1; // 如果realConfigIndex不为-1，说明是特殊配置
+	int currentConfigIndex = 1;
+	std::atomic<int> realConfigIndex{-1}; // 如果realConfigIndex不为-1，说明是特殊配置
 	std::map<int, Config> configs;
 	std::map<int, std::vector<HistoryEntry>> g_history;
 	std::map<int, SpecialConfig> specialConfigs;

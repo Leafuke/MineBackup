@@ -22,6 +22,7 @@
 #include <wchar.h>
 #include <functional>
 #include <vector>
+#include <tuple>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
@@ -416,39 +417,19 @@ void CheckForUpdatesThread() {
 		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
 			latestVersion = latestVersion.substr(1);
 		}
-		size_t pos1 = latestVersion.find('.');
-		size_t pos2 = latestVersion.find('.', pos1 + 1);
-		size_t pos3 = latestVersion.find('-');
-		size_t pos11 = CURRENT_VERSION.find('.');
-		size_t pos22 = CURRENT_VERSION.find('.', pos1 + 1);
-		size_t pos33 = CURRENT_VERSION.find('-');
-		bool isNew = false;
-		// 把所有数值都赋值
-		size_t curMajor = stoi(CURRENT_VERSION.substr(0, pos11)), curMinor1 = stoi(CURRENT_VERSION.substr(pos11 + 1, pos22)), newMajor = stoi(latestVersion.substr(0, pos1)), newMinor1 = stoi(latestVersion.substr(pos1 + 1, pos2));
-		size_t curMinor2 = pos33 == string::npos ? stoi(CURRENT_VERSION.substr(pos22 + 1)) : stoi(CURRENT_VERSION.substr(pos22 + 1, pos33)), newMinor2 = pos3 == string::npos ? stoi(latestVersion.substr(pos2 + 1)) : stoi(latestVersion.substr(pos2 + 1, pos3));
-		size_t curSp = pos33 == string::npos ? 0 : stoi(CURRENT_VERSION.substr(pos33 + 3)), newSp = pos3 == string::npos ? 0 : stoi(latestVersion.substr(pos3 + 3));
-		// 有这几种版本号 v1.7.9 v1.7.10 v1.7.9-sp1
-		// 这一段我写得非常非常不满意，但是……将就着吧
-
-
-		if (newMajor > curMajor) {
-			isNew = true;
-		}
-		else if (newMajor == curMajor) {
-			if (newMinor1 > curMinor1) {
-				isNew = true;
-			}
-			else if (newMinor1 == curMinor1) {
-				if (newMinor2 > curMinor2) {
-					isNew = true;
-				}
-				else if (newMinor2 == curMinor2) {
-					if (newSp > curSp) {
-						isNew = true;
-					}
-				}
-			}
-		}
+		// 解析版本号为 (major, minor, patch, sp) 元组，支持格式: 1.7.9, 1.7.10, 1.7.9-sp1
+		auto parseVersion = [](const string& ver) -> tuple<int,int,int,int> {
+			size_t p1 = ver.find('.');
+			size_t p2 = (p1 != string::npos) ? ver.find('.', p1 + 1) : string::npos;
+			size_t p3 = ver.find('-');
+			if (p1 == string::npos || p2 == string::npos) return {0,0,0,0};
+			int major = stoi(ver.substr(0, p1));
+			int minor = stoi(ver.substr(p1 + 1, p2 - p1 - 1));
+			int patch = (p3 == string::npos) ? stoi(ver.substr(p2 + 1)) : stoi(ver.substr(p2 + 1, p3 - p2 - 1));
+			int sp = (p3 != string::npos && p3 + 3 < ver.size()) ? stoi(ver.substr(p3 + 3)) : 0;
+			return {major, minor, patch, sp};
+		};
+		bool isNew = parseVersion(latestVersion) > parseVersion(CURRENT_VERSION);
 
 		// 简单版本比较 (例如 "1.7.0" > "1.6.7")
 		if (!latestVersion.empty() && isNew) {

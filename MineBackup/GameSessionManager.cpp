@@ -13,7 +13,7 @@ map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Valu
 bool IsFileLocked(const wstring& path);
 
 MyFolder GetOccupiedWorld() {
-	//lock_guard<mutex> lock(g_appState.configsMutex);
+	lock_guard<mutex> lock(g_appState.configsMutex);
 	for (const auto& config_pair : g_appState.configs) {
 		int config_idx = config_pair.first;
 		const Config& cfg = config_pair.second;

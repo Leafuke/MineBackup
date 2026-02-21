@@ -194,7 +194,6 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"HotBackup") cur->hotBackup = (val != L"0");
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
-				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
@@ -448,7 +447,6 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"Theme=" << c.theme << L"\n";
 		buffer << L"Font=" << c.fontPath << L"\n";
 		buffer << L"BackupNaming=" << c.folderNameType << L"\n";
-		buffer << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		buffer << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		buffer << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
