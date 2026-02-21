@@ -1,5 +1,6 @@
 ﻿#include "json.hpp"
 #include "text_to_text.h"
+#include "BackupManager.h"
 #include <string>
 #include <map>
 #include <filesystem>
@@ -39,14 +40,6 @@ size_t CalculateFileState(const filesystem::path& filepath) {
 
 // 作为全局变量，方便二者修改
 map<wstring, size_t> currentState;
-
-// 定义检查结果的枚举类型
-enum class BackupCheckResult {
-	NO_CHANGE,
-	CHANGES_DETECTED,
-	FORCE_FULL_BACKUP_METADATA_INVALID,
-	FORCE_FULL_BACKUP_BASE_MISSING
-};
 
 // 全局变量 currentState 不再需要，作用域移至函数内部
 

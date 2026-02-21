@@ -1,4 +1,4 @@
-﻿#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
 #include "Broadcast.h"
 #include "imgui-all.h"
 #include "imgui_style.h"
@@ -89,12 +89,6 @@ thread g_exitWatcherThread;
 atomic<bool> g_stopExitWatcher(false);
 wstring g_worldToFocusInHistory = L"";
 vector<wstring> restoreWhitelist;
-enum class BackupCheckResult {
-	NO_CHANGE,
-	CHANGES_DETECTED,
-	FORCE_FULL_BACKUP_METADATA_INVALID,
-	FORCE_FULL_BACKUP_BASE_MISSING
-};
 
 static wstring GetDefaultUIFontPath() {
 #ifdef _WIN32
@@ -3021,15 +3015,30 @@ void RunSpecialMode(int configId) {
 }
 
 void ShowHistoryWindow(int& tempCurrentConfigIndex) {
-	// 使用static变量来持久化UI状态
-	static HistoryEntry* selected_entry = nullptr;
+	// 使用 (worldName, backupFile) 键值对标识选中项，避免指针悬垂
+	static std::wstring sel_world, sel_file;   // 当前选中条目的键
+	static std::wstring del_world, del_file;   // 待删除条目的键
 	static ImGuiTextFilter filter;
 	static char rename_buf[MAX_PATH];
 	static char comment_buf[512];
-	static string original_comment; // 用于支持“取消”编辑
+	static string original_comment;
 	static bool is_comment_editing = false;
-	static HistoryEntry* entry_to_delete = nullptr;
 	Config& cfg = g_appState.configs[tempCurrentConfigIndex];
+
+	// 每帧从键值解析出安全指针（如果条目已被删除/清理，自动失效为 nullptr）
+	auto ResolveEntry = [&](const std::wstring& w, const std::wstring& f) -> HistoryEntry* {
+		if (w.empty()) return nullptr;
+		auto it = g_appState.g_history.find(tempCurrentConfigIndex);
+		if (it == g_appState.g_history.end()) return nullptr;
+		for (auto& e : it->second) {
+			if (e.worldName == w && e.backupFile == f) return &e;
+		}
+		return nullptr;
+	};
+	HistoryEntry* selected_entry = ResolveEntry(sel_world, sel_file);
+	if (!selected_entry) { sel_world.clear(); sel_file.clear(); }
+	HistoryEntry* entry_to_delete = ResolveEntry(del_world, del_file);
+	if (!entry_to_delete) { del_world.clear(); del_file.clear(); }
 
 	ImGui::SetNextWindowSize(ImVec2(850, 600), ImGuiCond_FirstUseEver);
 
@@ -3040,7 +3049,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 	// 当窗口关闭或配置改变时，重置选中项
 	if (!showHistoryWindow || (selected_entry && g_appState.g_history.find(tempCurrentConfigIndex) == g_appState.g_history.end())) {
-		selected_entry = nullptr;
+		sel_world.clear(); sel_file.clear(); selected_entry = nullptr;
 		is_comment_editing = false;
 	}
 
@@ -3121,7 +3130,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					ImGui::PushID(entry);
 					if (ImGui::Selectable("##entry_selectable", selected_entry == entry, 0, ImVec2(0, ImGui::GetTextLineHeight() * 2.5f))) {
 						selected_entry = entry;
-						is_comment_editing = false; // 切换选择时退出编辑模式
+						sel_world = entry->worldName; sel_file = entry->backupFile;
+						is_comment_editing = false;
 					}
 
 					ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -3316,6 +3326,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
 		if (ImGui::Button(L("HISTORY_BUTTON_DELETE"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_DELETE")), 0))) {
 			entry_to_delete = selected_entry;
+			del_world = sel_world; del_file = sel_file;
 			ImGui::OpenPopup(L("HISTORY_DELETE_POPUP_TITLE"));
 		}
 		ImGui::PopStyleColor(2);
@@ -3338,6 +3349,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 						if (!ec) {
 							filesystem::last_write_time(new_path, last_write, ec); // 恢复修改时间
 							selected_entry->backupFile = new_path.filename().wstring();
+							sel_file = selected_entry->backupFile;
 							SaveHistory();
 						}
 					}

@@ -128,13 +128,6 @@ private:
 	bool acquired_ = false;
 };
 
-enum class BackupCheckResult {
-	NO_CHANGE,
-	CHANGES_DETECTED,
-	FORCE_FULL_BACKUP_METADATA_INVALID,
-	FORCE_FULL_BACKUP_BASE_MISSING
-};
-
 wstring SanitizeFileName(const wstring& input);
 vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath, const filesystem::path& backupPath, BackupCheckResult& out_result, map<wstring, size_t>& out_currentState);
 bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
@@ -910,7 +903,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	localtime_s(&ltm, &now);
 	wchar_t timeBuf[160];
 	wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-	wstring archivePath = destinationFolder.wstring() + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+	wstring archivePath = (destinationFolder / (L"[" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
 	try {
 		filesystem::create_directories(destinationFolder);

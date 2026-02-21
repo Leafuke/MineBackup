@@ -67,8 +67,12 @@ using errno_t = int;
 
 inline errno_t strcpy_s(char* dest, size_t destsz, const char* src) {
 	if (!dest || !src || destsz == 0) return EINVAL;
-	std::strncpy(dest, src, destsz - 1);
-	dest[destsz - 1] = '\0';
+	std::size_t srclen = std::strlen(src);
+	if (srclen >= destsz) {
+		dest[0] = '\0';
+		return ERANGE;
+	}
+	std::memcpy(dest, src, srclen + 1);
 	return 0;
 }
 
@@ -90,13 +94,7 @@ inline errno_t strncpy_s(char (&dest)[N], const char* src) {
 
 template <size_t N>
 inline errno_t strcpy_s(char (&dest)[N], const char* src) {
-	return strncpy_s(dest, N, src);
-}
-
-inline errno_t strcpy_s(char* dest, const char* src) {
-	if (!dest || !src) return EINVAL;
-	std::strncpy(dest, src, std::strlen(src));
-	return 0;
+	return strcpy_s(dest, N, src);
 }
 
 inline errno_t sprintf_s(char* dest, size_t destsz, const char* fmt, ...) {
