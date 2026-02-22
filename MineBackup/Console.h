@@ -77,14 +77,17 @@ struct Console
 	{
 		if (isSilence) return;
 		std::lock_guard<std::mutex> lock(logMutex);
-		// FIXME-OPT
-		char buf[1024];
 		va_list args;
 		va_start(args, fmt);
-		vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
-		buf[IM_ARRAYSIZE(buf) - 1] = 0;
+		va_list args_copy;
+		va_copy(args_copy, args);
+		int needed = vsnprintf(nullptr, 0, fmt, args_copy);
+		va_end(args_copy);
+		if (needed < 0) { va_end(args); return; }
+		std::vector<char> buf(static_cast<size_t>(needed) + 1);
+		vsnprintf(buf.data(), buf.size(), fmt, args);
 		va_end(args);
-		Items.push_back(Strdup(buf));
+		Items.push_back(Strdup(buf.data()));
 	}
 
 	void    Draw(const char* title, bool* p_open)

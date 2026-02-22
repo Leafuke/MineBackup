@@ -69,6 +69,17 @@ static wstring GetDefaultFontPath() {
 #endif
 }
 
+static int NormalizeCompressionLevel(const wstring& method, int level) {
+	int minLevel = 1;
+	int maxLevel = 9;
+	if (_wcsicmp(method.c_str(), L"zstd") == 0) {
+		maxLevel = 22;
+	}
+	if (level < minLevel) return minLevel;
+	if (level > maxLevel) return maxLevel;
+	return level;
+}
+
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 extern int g_hotKeyBackupId , g_hotKeyRestoreId;
 
@@ -183,7 +194,6 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"HotBackup") cur->hotBackup = (val != L"0");
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
-				else if (key == L"SilenceMode") isSilence = (val != L"0");
 				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
@@ -292,7 +302,7 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"Language") {
 					if (val[2] == L'-')
 						val[2] = L'_';
-					g_CurrentLang = wstring_to_utf8(val);
+					SetLanguage(wstring_to_utf8(val));
 				}
 				else if (key == L"CheckForUpdates") {
 					g_CheckForUpdates = (val != L"0");
@@ -363,6 +373,17 @@ void LoadConfigs(const string& filename) {
 		restoreWhitelist.push_back(L"level.dat");
 		restoreWhitelist.push_back(L"level.dat_old");
 	}
+
+	for (auto& kv : g_appState.configs) {
+		Config& cfg = kv.second;
+		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
+	}
+
+	for (auto& kv : g_appState.specialConfigs) {
+		SpecialConfig& spCfg = kv.second;
+		if (spCfg.zipLevel < 1) spCfg.zipLevel = 1;
+		if (spCfg.zipLevel > 22) spCfg.zipLevel = 22;
+	}
 }
 
 void SaveConfigs(const wstring& filename) {
@@ -426,7 +447,6 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"Theme=" << c.theme << L"\n";
 		buffer << L"Font=" << c.fontPath << L"\n";
 		buffer << L"BackupNaming=" << c.folderNameType << L"\n";
-		buffer << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		buffer << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		buffer << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";

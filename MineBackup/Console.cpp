@@ -25,8 +25,8 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return "ERROR:" + msg;
 		};
 
-	// 使用 lock_guard 确保在函数作用域内访问 g_appState.configs 是线程安全的
-	lock_guard<mutex> lock(g_appState.configsMutex);
+	// 使用 unique_lock 确保访问 g_appState.configs 是线程安全的（可在线程分派前提前释放）
+	unique_lock<mutex> lock(g_appState.configsMutex);
 
 	if (command == "LIST_CONFIGS") {
 		string result = "OK:";
@@ -122,17 +122,21 @@ string ProcessCommand(const string& commandStr, Console* console) {
 
 		MyFolder world = { JoinPath(g_appState.configs[config_idx].saveRoot, g_appState.configs[config_idx].worlds[world_idx].first).wstring(), g_appState.configs[config_idx].worlds[world_idx].first, g_appState.configs[config_idx].worlds[world_idx].second, g_appState.configs[config_idx], config_idx, world_idx };
 
+		string worldNameUtf8 = wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first);
+
 		// 先广播消息，通知模组先保存世界
-		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
+		BroadcastEvent("event=backup_started;config=" + to_string(config_idx) + ";world=" + worldNameUtf8);
+
+		// 释放锁后再启动后台线程，避免新线程与当前线程争用同一互斥锁
+		lock.unlock();
 
 		// 在后台线程中执行备份，避免阻塞命令处理器
 		thread([=]() {
-			// 在新线程中再次加锁，因为 g_appState.configs 可能在主线程中被修改
 			lock_guard<mutex> thread_lock(g_appState.configsMutex);
 			if (g_appState.configs.count(config_idx)) // 确保配置仍然存在
 				DoBackup(world, *console, utf8_to_wstring(comment_part));
 			}).detach();
-		return "OK:Backup started for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
+		return "OK:Backup started for world '" + worldNameUtf8 + "'";
 	}
 	else if (command == "RESTORE") {
 		int config_idx, world_idx;
@@ -150,18 +154,23 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			return error_response(L("BROADCAST_MISSING_BACKUP_FILE"));
 		}
 
+		string worldNameUtf8 = wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first);
+
+		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+		BroadcastEvent("event=restore_started;config=" + to_string(config_idx) + ";world=" + worldNameUtf8);
+
+		// 释放锁后再启动后台线程
+		lock.unlock();
+
 		// In a background thread to avoid blocking
 		thread([=]() {
 			lock_guard<mutex> thread_lock(g_appState.configsMutex);
 			if (g_appState.configs.count(config_idx)) {
-				// Default to clean restore (method 0) for remote commands for safety
 				DoRestore(g_appState.configs[config_idx], g_appState.configs[config_idx].worlds[world_idx].first, utf8_to_wstring(backup_file), *console, 0);
 			}
 			}).detach();
 
-		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
-		BroadcastEvent("event=restore_started;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
-		return "OK:Restore started for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
+		return "OK:Restore started for world '" + worldNameUtf8 + "'";
 	}
 	else if (command == "BACKUP_MODS") {
 		int config_idx;
@@ -173,20 +182,23 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		getline(ss, comment_part); // Get rest of the line as comment
 		if (!comment_part.empty() && comment_part.front() == ' ') comment_part.erase(0, 1);
 
+		BroadcastEvent("event=mods_backup_started;config=" + to_string(config_idx));
+		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+
+		// 释放锁后再启动后台线程
+		lock.unlock();
+
 		thread([=]() {
 			lock_guard<mutex> thread_lock(g_appState.configsMutex);
 			if (g_appState.configs.count(config_idx)) {
 				filesystem::path tempPath = g_appState.configs[config_idx].saveRoot;
 				filesystem::path modsPath = tempPath.parent_path() / "mods";
-				DoOthersBackup(g_appState.configs[config_idx], modsPath, utf8_to_wstring(comment_part));
+				DoOthersBackup(g_appState.configs[config_idx], modsPath, utf8_to_wstring(comment_part), *console);
 			}
 			}).detach();
-		BroadcastEvent("event=mods_backup_started;config=" + to_string(config_idx));
-		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
 		return "OK:Mods backup started.";
 	}
 	else if (command == "BACKUP_CURRENT") { // 直接调用备份正在运行的世界的函数
-		BroadcastEvent("event=pre_hot_backup;");
 		if (ss.rdbuf()->in_avail() > 0) {
 			string comment_part;
 			getline(ss, comment_part);
@@ -254,11 +266,14 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			return error_msg;
 		}
 
-		const auto& world_name = g_appState.configs[config_idx].worlds[world_idx].first;
+		wstring world_name = g_appState.configs[config_idx].worlds[world_idx].first;
 		auto taskKey = std::make_pair(config_idx, world_idx);
 
+		// 释放 configsMutex 后再获取 task_mutex，避免持有 configsMutex 时 join 工作线程导致死锁
+		lock.unlock();
+
 		// 使用互斥锁保护访问
-		std::lock_guard<std::mutex> lock(g_appState.task_mutex);
+		std::lock_guard<std::mutex> task_lock(g_appState.task_mutex);
 
 		// 查找指定的任务
 		auto it = g_appState.g_active_auto_backups.find(taskKey);
@@ -289,11 +304,91 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return success_msg;
 	}
 	else if (command == "SHUTDOWN_WORLD_SUCCESS") {
+		// 兼容旧版联动模组: 世界保存并退出完成
 		if (g_appState.hotkeyRestoreState == HotRestoreState::WAITING_FOR_MOD) {
 			g_appState.isRespond = true;
+			// 同时触发新的条件变量机制
+			g_appState.knotLinkMod.notifyFlag(&KnotLinkModInfo::worldSaveAndExitComplete);
 			return "OK:Acknowledged. Restore will now proceed.";
 		}
 		return "ERROR:Not currently waiting for a world shutdown signal.";
+	}
+	else if (command == "HANDSHAKE_RESPONSE") {
+		// 联动模组的握手回应: HANDSHAKE_RESPONSE <mod_version>
+		// 用于确认模组存在并检查版本兼容性
+		string mod_version;
+		if (!(ss >> mod_version)) {
+			return "ERROR:Missing mod version. Usage: HANDSHAKE_RESPONSE <mod_version>";
+		}
+
+		auto& mod = g_appState.knotLinkMod;
+		mod.modDetected = true;
+		mod.modVersion = mod_version;
+		mod.versionCompatible = KnotLinkModInfo::IsVersionCompatible(
+			mod_version, KnotLinkModInfo::MIN_MOD_VERSION);
+
+		if (mod.versionCompatible) {
+			console->AddLog(L("KNOTLINK_HANDSHAKE_OK"), mod_version.c_str());
+		}
+		else {
+			console->AddLog(L("KNOTLINK_HANDSHAKE_VERSION_MISMATCH"),
+				mod_version.c_str(), KnotLinkModInfo::MIN_MOD_VERSION);
+		}
+
+		// 唤醒等待握手的线程
+		mod.notifyFlag(&KnotLinkModInfo::handshakeReceived);
+
+		BroadcastEvent("event=handshake_ack;status=" +
+			string(mod.versionCompatible ? "compatible" : "incompatible") +
+			";mod_version=" + mod_version);
+		return "OK:Handshake received. Version " + mod_version +
+			(mod.versionCompatible.load() ? " (compatible)" : " (incompatible)");
+	}
+	else if (command == "WORLD_SAVED") {
+		// 联动模组通知: 世界已保存完毕 (用于热备份流程)
+		// 主程序在发送 pre_hot_backup 后等待此消息，确认世界数据已完整保存
+		auto& mod = g_appState.knotLinkMod;
+		mod.notifyFlag(&KnotLinkModInfo::worldSaveComplete);
+		console->AddLog(L("KNOTLINK_WORLD_SAVED"));
+		BroadcastEvent("event=world_save_acknowledged;");
+		return "OK:World save acknowledged. Snapshot will be created.";
+	}
+	else if (command == "WORLD_SAVE_AND_EXIT_COMPLETE") {
+		// 联动模组通知: 世界已保存并退出完毕 (用于热还原流程)
+		// 与 SHUTDOWN_WORLD_SUCCESS 功能相同，但是新版规范命令名
+		if (g_appState.hotkeyRestoreState == HotRestoreState::WAITING_FOR_MOD) {
+			g_appState.isRespond = true;
+			g_appState.knotLinkMod.notifyFlag(&KnotLinkModInfo::worldSaveAndExitComplete);
+			console->AddLog(L("KNOTLINK_WORLD_SAVE_EXIT_COMPLETE"));
+			return "OK:Acknowledged. Restore will now proceed.";
+		}
+		return "ERROR:Not currently waiting for a world save-and-exit signal.";
+	}
+	else if (command == "REJOIN_RESULT") {
+		// 联动模组通知: 重进世界的结果
+		// REJOIN_RESULT success 或 REJOIN_RESULT failure [reason]
+		string result_str;
+		if (!(ss >> result_str)) {
+			return "ERROR:Missing result. Usage: REJOIN_RESULT <success|failure> [reason]";
+		}
+
+		auto& mod = g_appState.knotLinkMod;
+		bool success = (result_str == "success");
+		mod.rejoinSuccess = success;
+		mod.notifyFlag(&KnotLinkModInfo::rejoinResponseReceived);
+
+		if (success) {
+			console->AddLog(L("KNOTLINK_REJOIN_SUCCESS"));
+			BroadcastEvent("event=rejoin_acknowledged;status=success;");
+		}
+		else {
+			string reason;
+			getline(ss, reason);
+			if (!reason.empty() && reason.front() == ' ') reason.erase(0, 1);
+			console->AddLog(L("KNOTLINK_REJOIN_FAILED"), reason.c_str());
+			BroadcastEvent("event=rejoin_acknowledged;status=failure;reason=" + reason);
+		}
+		return "OK:Rejoin result received: " + result_str;
 	}
 	else if (command == "ADD_TO_WE") {
 		int config_idx, world_idx;
@@ -311,6 +406,13 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			return error_response(L("BROADCAST_MISSING_BACKUP_FILE"));
 		}
 
+		string worldNameUtf8 = wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first);
+		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+		BroadcastEvent("event=we_snapshot_completed;config=" + to_string(config_idx) + ";world=" + worldNameUtf8);
+
+		// 释放锁后再启动后台线程
+		lock.unlock();
+
 		thread([=]() {
 			lock_guard<mutex> thread_lock(g_appState.configsMutex);
 			if (g_appState.configs.count(config_idx)) {
@@ -318,9 +420,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 			}
 			}).detach();
 
-		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
-		BroadcastEvent("event=we_snapshot_completed;config=" + to_string(config_idx) + ";world=" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first));
-		return "OK:Snapshot completed for world '" + wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first) + "'";
+		return "OK:Snapshot completed for world '" + worldNameUtf8 + "'";
 	}
 	else if (command == "RESTORE_CURRENT_LATEST") {
 		TriggerHotkeyRestore();

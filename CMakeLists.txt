@@ -23,7 +23,10 @@ set(SOURCES
     ${SOURCE_DIR}/Broadcast.cpp
     ${SOURCE_DIR}/GameSessionManager.cpp
     ${SOURCE_DIR}/HistoryManager.cpp
+    ${SOURCE_DIR}/HistoryUI.cpp
     ${SOURCE_DIR}/SettingsUI.cpp
+    ${SOURCE_DIR}/SpecialMode.cpp
+    ${SOURCE_DIR}/WizardUI.cpp
     ${SOURCE_DIR}/basic_func.cpp
     ${SOURCE_DIR}/i18n.cpp
     ${SOURCE_DIR}/text_to_text.cpp
@@ -41,10 +44,15 @@ set(HEADERS
     ${SOURCE_DIR}/Broadcast.h
     ${SOURCE_DIR}/ConfigManager.h
     ${SOURCE_DIR}/Console.h
+    ${SOURCE_DIR}/DataModels.h
+    ${SOURCE_DIR}/Globals.h
     ${SOURCE_DIR}/HistoryManager.h
+    ${SOURCE_DIR}/MainUI.h
+    ${SOURCE_DIR}/PlatformCompat.h
     ${SOURCE_DIR}/Platform_win.h
     ${SOURCE_DIR}/Platform_linux.h
     ${SOURCE_DIR}/Platform_macos.h
+    ${SOURCE_DIR}/UIHelpers.h
     ${SOURCE_DIR}/text_to_text.h
     ${SOURCE_DIR}/i18n.h
     ${SOURCE_DIR}/json.hpp
@@ -137,24 +145,19 @@ if(APPLE AND GLFW_TARGET STREQUAL "")
 endif()
 
 if(WIN32)
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_win.cpp)
-    list(APPEND SOURCES
-        ${KNOTLINK_DIR}/OpenSocketResponser.cpp
-        ${KNOTLINK_DIR}/SignalSender.cpp
-    )
-    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_win.cpp)
-    target_sources(${PROJECT_NAME} PRIVATE 
+    target_sources(${PROJECT_NAME} PRIVATE
+        ${SOURCE_DIR}/Platform_win.cpp
         ${KNOTLINK_DIR}/OpenSocketResponser.cpp
         ${KNOTLINK_DIR}/SignalSender.cpp
     )
 elseif(APPLE)
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos.cpp)
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_macos_tray.mm)
-    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_macos.cpp ${SOURCE_DIR}/Platform_macos_tray.mm)
+    target_sources(${PROJECT_NAME} PRIVATE
+        ${SOURCE_DIR}/Platform_macos.cpp
+        ${SOURCE_DIR}/Platform_macos_tray.mm
+    )
     set_source_files_properties(${SOURCE_DIR}/Platform_macos_tray.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     # KnotLink POSIX 版本使用 header-only 实现
 else()
-    list(APPEND SOURCES ${SOURCE_DIR}/Platform_linux.cpp)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_linux.cpp)
 endif()
 

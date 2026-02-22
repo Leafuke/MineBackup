@@ -22,6 +22,7 @@
 #include <wchar.h>
 #include <functional>
 #include <vector>
+#include <tuple>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
@@ -132,16 +133,16 @@ void GetUserDefaultUILanguageWin() {
 	LANGID langId = GetUserDefaultUILanguage();
 	switch (PRIMARYLANGID(langId)) {
 	case LANG_CHINESE:
-		g_CurrentLang = "zh_CN";
+		SetLanguage("zh_CN");
 		break;
 	case LANG_CHINESE_TRADITIONAL:
-		g_CurrentLang = "zh_CN";
+		SetLanguage("zh_CN");
 		break;
 	case LANG_ENGLISH:
-		g_CurrentLang = "en_US";
+		SetLanguage("en_US");
 		break;
 	default:
-		g_CurrentLang = "en_US"; // 默认英语
+		SetLanguage("en_US"); // 默认英语
 		break;
 	}
 	return;
@@ -416,39 +417,19 @@ void CheckForUpdatesThread() {
 		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
 			latestVersion = latestVersion.substr(1);
 		}
-		size_t pos1 = latestVersion.find('.');
-		size_t pos2 = latestVersion.find('.', pos1 + 1);
-		size_t pos3 = latestVersion.find('-');
-		size_t pos11 = CURRENT_VERSION.find('.');
-		size_t pos22 = CURRENT_VERSION.find('.', pos1 + 1);
-		size_t pos33 = CURRENT_VERSION.find('-');
-		bool isNew = false;
-		// 把所有数值都赋值
-		size_t curMajor = stoi(CURRENT_VERSION.substr(0, pos11)), curMinor1 = stoi(CURRENT_VERSION.substr(pos11 + 1, pos22)), newMajor = stoi(latestVersion.substr(0, pos1)), newMinor1 = stoi(latestVersion.substr(pos1 + 1, pos2));
-		size_t curMinor2 = pos33 == string::npos ? stoi(CURRENT_VERSION.substr(pos22 + 1)) : stoi(CURRENT_VERSION.substr(pos22 + 1, pos33)), newMinor2 = pos3 == string::npos ? stoi(latestVersion.substr(pos2 + 1)) : stoi(latestVersion.substr(pos2 + 1, pos3));
-		size_t curSp = pos33 == string::npos ? 0 : stoi(CURRENT_VERSION.substr(pos33 + 3)), newSp = pos3 == string::npos ? 0 : stoi(latestVersion.substr(pos3 + 3));
-		// 有这几种版本号 v1.7.9 v1.7.10 v1.7.9-sp1
-		// 这一段我写得非常非常不满意，但是……将就着吧
-
-
-		if (newMajor > curMajor) {
-			isNew = true;
-		}
-		else if (newMajor == curMajor) {
-			if (newMinor1 > curMinor1) {
-				isNew = true;
-			}
-			else if (newMinor1 == curMinor1) {
-				if (newMinor2 > curMinor2) {
-					isNew = true;
-				}
-				else if (newMinor2 == curMinor2) {
-					if (newSp > curSp) {
-						isNew = true;
-					}
-				}
-			}
-		}
+		// 解析版本号为 (major, minor, patch, sp) 元组，支持格式: 1.7.9, 1.7.10, 1.7.9-sp1
+		auto parseVersion = [](const string& ver) -> tuple<int,int,int,int> {
+			size_t p1 = ver.find('.');
+			size_t p2 = (p1 != string::npos) ? ver.find('.', p1 + 1) : string::npos;
+			size_t p3 = ver.find('-');
+			if (p1 == string::npos || p2 == string::npos) return {0,0,0,0};
+			int major = stoi(ver.substr(0, p1));
+			int minor = stoi(ver.substr(p1 + 1, p2 - p1 - 1));
+			int patch = (p3 == string::npos) ? stoi(ver.substr(p2 + 1)) : stoi(ver.substr(p2 + 1, p3 - p2 - 1));
+			int sp = (p3 != string::npos && p3 + 3 < ver.size()) ? stoi(ver.substr(p3 + 3)) : 0;
+			return {major, minor, patch, sp};
+		};
+		bool isNew = parseVersion(latestVersion) > parseVersion(CURRENT_VERSION);
 
 		// 简单版本比较 (例如 "1.7.0" > "1.6.7")
 		if (!latestVersion.empty() && isNew) {
@@ -802,7 +783,7 @@ bool ExtractFontToTempFile(wstring& extractedPath) {
 // 参数:
 //   - command: 要执行的完整命令行（宽字符）。
 //   - console: 监控台对象的引用，用于输出日志信息。
-bool RunCommandInBackground(wstring command, Console& console, bool useLowPriority, const wstring& workingDirectory) {
+bool RunCommandInBackground(const wstring& command, Console& console, bool useLowPriority, const wstring& workingDirectory) {
 	// CreateProcessW需要一个可写的C-style字符串，所以我们将wstring复制到vector<wchar_t>
 	vector<wchar_t> cmd_line(command.begin(), command.end());
 	cmd_line.push_back(L'\0'); // 添加字符串结束符
@@ -832,9 +813,11 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 
 	// 检查子进程的退出代码
 	DWORD exit_code;
+	bool success = false;
 	if (GetExitCodeProcess(pi.hProcess, &exit_code)) {
 		if (exit_code == 0) {
 			console.AddLog(L("LOG_SUCCESS_CMD"));
+			success = true;
 		}
 		else {
 			console.AddLog(L("LOG_ERROR_CMD_FAILED"), exit_code);
@@ -844,7 +827,6 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 			}
 			if (exit_code == 2) {
 				console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
-				return false;
 			}
 		}
 	}
@@ -855,5 +837,5 @@ bool RunCommandInBackground(wstring command, Console& console, bool useLowPriori
 	// 清理句柄
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
-	return true;
+	return success;
 }

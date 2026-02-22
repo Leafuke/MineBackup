@@ -35,6 +35,17 @@ static inline void ToLowerInPlace(wstring& s) {
 #endif
 }
 
+static inline int NormalizeCompressionLevel(const wstring& method, int level) {
+	int minLevel = 1;
+	int maxLevel = 9;
+	if (_wcsicmp(method.c_str(), L"zstd") == 0) {
+		maxLevel = 22;
+	}
+	if (level < minLevel) return minLevel;
+	if (level > maxLevel) return maxLevel;
+	return level;
+}
+
 static inline wstring MakeWorldOperationKey(const filesystem::path& worldPath) {
 	error_code ec;
 	filesystem::path p = worldPath;
@@ -117,13 +128,6 @@ private:
 	bool acquired_ = false;
 };
 
-enum class BackupCheckResult {
-	NO_CHANGE,
-	CHANGES_DETECTED,
-	FORCE_FULL_BACKUP_METADATA_INVALID,
-	FORCE_FULL_BACKUP_BASE_MISSING
-};
-
 wstring SanitizeFileName(const wstring& input);
 vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath, const filesystem::path& backupPath, BackupCheckResult& out_result, map<wstring, size_t>& out_currentState);
 bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
@@ -136,7 +140,7 @@ extern bool isSafeDelete;
 
 wstring GetDocumentsPath();
 
-void AddBackupToWESnapshots(const Config config, const wstring& worldName, const wstring& backupFile, Console& console) {
+void AddBackupToWESnapshots(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console) {
 	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
 
 	// 创建快照路径
@@ -486,6 +490,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 	wstring originalSourcePath = folder.path;
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
+	bool snapshotUsed = false;
 	filesystem::path destinationFolder = JoinPath(config.backupPath, folder.name);
 	filesystem::path metadataFolder = JoinPath(config.backupPath, L"_metadata");
 	metadataFolder /= folder.name;
@@ -517,16 +522,61 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	// 检测到 level.dat 被锁定，则强制启用热备份
 
     if (config.hotBackup || IsFileLocked(sourcePath + L"/level.dat")) {
-        BroadcastEvent("event=pre_hot_backup;");
+        // 在热备份前，先检查联动模组是否存在
+        bool modAvailable = PerformModHandshake("backup", wstring_to_utf8(folder.name));
+
+        if (modAvailable) {
+            console.AddLog(L("KNOTLINK_MOD_DETECTED_BACKUP"),
+                g_appState.knotLinkMod.modVersion.c_str());
+        } else {
+            if (g_appState.knotLinkMod.modDetected.load() && !g_appState.knotLinkMod.versionCompatible.load()) {
+                console.AddLog(L("KNOTLINK_MOD_VERSION_TOO_OLD"),
+                    g_appState.knotLinkMod.modVersion.c_str(),
+                    KnotLinkModInfo::MIN_MOD_VERSION);
+            } else {
+                console.AddLog(L("KNOTLINK_MOD_NOT_DETECTED_BACKUP"));
+            }
+        }
+
+        if (modAvailable) {
+            // 联动模组存在且版本兼容: 等待模组完成世界保存
+            console.AddLog(L("KNOTLINK_WAITING_WORLD_SAVE"));
+			std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 握手和下一个广播之间必须有短暂延时
+			// 通知模组准备热备份
+			BroadcastEvent("event=pre_hot_backup;config=" + to_string(folder.configIndex) +
+				";world=" + wstring_to_utf8(folder.name));
+			bool saved = g_appState.knotLinkMod.waitForFlag(
+				&KnotLinkModInfo::worldSaveComplete,
+                std::chrono::milliseconds(10000)); // 最多等待10秒
+
+            if (saved) {
+                console.AddLog(L("KNOTLINK_WORLD_SAVE_CONFIRMED"));
+            } else {
+                // 超时：模组未在规定时间内完成保存，停止
+                console.AddLog(L("KNOTLINK_WORLD_SAVE_TIMEOUT"));
+				return;
+            }
+        }
+
+        // 创建快照
         wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
         if (!snapshotPath.empty()) {
             sourcePath = snapshotPath;
+			snapshotUsed = true;
             this_thread::sleep_for(chrono::milliseconds(200));
         } else {
             console.AddLog(L("LOG_ERROR_SNAPSHOT"));
             return;
         }
     }
+
+	auto cleanupSnapshot = [&]() {
+		if (!snapshotUsed || sourcePath == folder.path) return;
+		console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
+		error_code ec;
+		filesystem::remove_all(sourcePath, ec);
+		if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
+	};
 
     bool forceFullBackup = true;
     if (filesystem::exists(destinationFolder)) {
@@ -584,6 +634,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
     if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
+		cleanupSnapshot();
         return;
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
         console.AddLog(L("LOG_METADATA_INVALID"));
@@ -595,9 +646,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING ||
         forceFullBackupDueToLimit) || forceFullBackup;
 
-    if (config.backupMode == 2 && !forceFullBackup) {
-        candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
-    } else {
+	if (!(config.backupMode == 2 && !forceFullBackup)) {
         try {
             candidate_files.clear();
             for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
@@ -607,9 +656,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         } catch (const filesystem::filesystem_error& e) {
             console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-            if (config.hotBackup) {
-                filesystem::remove_all(sourcePath);
-            }
+			cleanupSnapshot();
             return;
         }
     }
@@ -623,9 +670,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
     if (files_to_backup.empty()) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-        if (config.hotBackup) {
-            filesystem::remove_all(sourcePath);
-        }
+		cleanupSnapshot();
         return;
     }
 
@@ -652,11 +697,11 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 #endif
     } else {
         console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
-        if (config.hotBackup) {
-            filesystem::remove_all(sourcePath);
-        }
+		cleanupSnapshot();
         return;
     }
+
+	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
 
     wstring backupTypeStr;
     wstring basedOnBackupFile;
@@ -665,7 +710,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	if (config.backupMode == 1 || forceFullBackup) {
 		backupTypeStr = L"Full";
 		archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
     } else if (config.backupMode == 2) {
@@ -695,7 +740,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 			// 回退到完整备份
 			backupTypeStr = L"Full";
 			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
 			basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
 			goto execute_backup;
@@ -704,7 +749,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
 		archivePath = (destinationFolder / (L"[Smart][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
-        command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
             L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
     } else if (config.backupMode == 3) {
         backupTypeStr = L"Overwrite";
@@ -723,13 +768,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
         if (found) {
             console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(config.zipLevel);
+			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(normalizedZipLevel);
             archivePath = latestBackupPath.wstring(); // 记录被更新的文件
         }
         else {
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) + L" -m0=" + config.zipMethod +
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) + L" -m0=" + config.zipMethod +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + NormalizeSeparators(sourcePath) + L"/*\"";
             // -spf 强制使用完整路径，-spf2 使用相对路径
         }
@@ -822,14 +867,9 @@ execute_backup:
     }
 
     filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
-    if (config.hotBackup && sourcePath != folder.path) {
-        console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
-        error_code ec;
-        filesystem::remove_all(sourcePath, ec);
-        if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
-    }
+	cleanupSnapshot();
 }
-void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstring& comment) {
+void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wstring& comment, Console& console) {
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
 
 	filesystem::path saveRoot(config.saveRoot);
@@ -862,7 +902,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	localtime_s(&ltm, &now);
 	wchar_t timeBuf[160];
 	wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-	wstring archivePath = destinationFolder.wstring() + L"\\" + L"[" + timeBuf + L"]" + archiveNameBase + L"." + config.zipFormat;
+	wstring archivePath = (destinationFolder / (L"[" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
 	try {
 		filesystem::create_directories(destinationFolder);
@@ -874,7 +914,8 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 		return;
 	}
 
-	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(config.zipLevel) +
+	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
+	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
@@ -886,7 +927,7 @@ void DoOthersBackup(const Config config, filesystem::path backupWhat, const wstr
 	console.AddLog(L("LOG_BACKUP_OTHERS_END"));
 }
 
-void DoRestore2(const Config config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+void DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -939,7 +980,7 @@ void DoRestore2(const Config config, const wstring& worldName, const filesystem:
 }
 
 // restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
-void DoRestore(const Config config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+void DoRestore(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -1400,7 +1441,8 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		ofs.close();
 
 		// 构建并执行 7z 命令
-		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(tempConfig.zipLevel) +
+		const int normalizedZipLevel = NormalizeCompressionLevel(tempConfig.zipMethod, tempConfig.zipLevel);
+		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 			L" \"" + outputPath + L"\"" + L" @" + filelist_path;
 
 		// 工作目录应为原始世界路径，以确保压缩包内路径正确
@@ -1430,71 +1472,76 @@ MyFolder GetOccupiedWorld();
 void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	
 	Config cfg = world.config;
+	auto& mod = g_appState.knotLinkMod;
 
-	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
+	// 确认联动模组状态（在 TriggerHotkeyRestore 中已完成握手） ===
+	// 到达这里说明模组已检测到且版本兼容
+	console.AddLog(L("KNOTLINK_HOT_RESTORE_START"), wstring_to_utf8(world.name).c_str());
 
-	// 启动后台等待线程
-	auto startTime = chrono::steady_clock::now();
-	auto timeout = chrono::seconds(15);
+	// 发送预还原消息，请求模组保存世界并退出
+	mod.resetForOperation();
+	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex) +
+		";world=" + wstring_to_utf8(world.name));
+	console.AddLog(L("KNOTLINK_WAITING_WORLD_SAVE_EXIT"));
 
-	// 等待响应或超时
-	while (chrono::steady_clock::now() - startTime < timeout) {
-		if (g_appState.isRespond) {
-			break; // 收到响应
-		}
-		this_thread::sleep_for(chrono::milliseconds(100));
-	}
-
-	// 检查是收到了响应还是超时了
-	if (!g_appState.isRespond) {
-		console.AddLog(L("[Error] Mod did not respond within 15 seconds. Restore aborted."));
-		BroadcastEvent("event=restore_cancelled;reason=timeout");
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE; // 重置状态
-		return;
-	}
-
-	// 收到响应，检查世界是否仍然被占用
-
-	g_appState.isRespond = false; // 仍标记为未响应，等确认存档关闭后确认为响应
-
-	startTime = chrono::steady_clock::now();
-	timeout = chrono::seconds(10);
-
-	while (chrono::steady_clock::now() - startTime < timeout) {
-		MyFolder checkOccupiedFolder = GetOccupiedWorld();
-		if (checkOccupiedFolder.name == world.name) {
-			this_thread::sleep_for(chrono::seconds(1));
-		}
-		else {
-			g_appState.isRespond = true;
-			break;
-		}
-	}
-	if (!g_appState.isRespond) {
-		console.AddLog(L("[Error] World is still occupied after mod response. Restore aborted."));
-		BroadcastEvent("event=restore_cancelled;reason=world_occupied");
+	// 等待模组通知世界保存并退出完成
+	// 使用 condition_variable 高效等待，取代旧的轮询方式
+	bool exitComplete = mod.waitForFlag(
+		&KnotLinkModInfo::worldSaveAndExitComplete,
+		std::chrono::milliseconds(10000)); // 最多等待10秒
+	if (!exitComplete) {
+		console.AddLog(L("KNOTLINK_HOT_RESTORE_TIMEOUT"));
+		BroadcastEvent("event=restore_cancelled;reason=timeout;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
 		return;
 	}
 
-	g_appState.isRespond = false; // 重置标志位
-	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
-	console.AddLog(L("[Hotkey] Mod is ready. Starting restore process."));
+	console.AddLog(L("KNOTLINK_MOD_EXIT_CONFIRMED"));
 
-	// 等待文件不再被锁定，最多等待10秒
-	filesystem::path levelDatPath = filesystem::path(world.path) / L"level.dat";
-	auto waitStart = chrono::steady_clock::now();
-	auto waitTimeout = chrono::seconds(10);
-	while (chrono::steady_clock::now() - waitStart < waitTimeout) {
-		if (!IsFileLocked(levelDatPath.wstring())) {
-			break;
+	// 等待文件系统确认世界不再被占用
+	{
+		auto startTime = chrono::steady_clock::now();
+		auto checkTimeout = chrono::seconds(15);
+		bool worldReleased = false;
+
+		while (chrono::steady_clock::now() - startTime < checkTimeout) {
+			MyFolder checkOccupied = GetOccupiedWorld();
+			if (checkOccupied.name != world.name) {
+				worldReleased = true;
+				break;
+			}
+			this_thread::sleep_for(chrono::milliseconds(500));
 		}
-		this_thread::sleep_for(chrono::milliseconds(200));
-	}
-	// 额外等待500ms确保文件系统同步完成
-	this_thread::sleep_for(chrono::milliseconds(500));
 
-	// 查找最新备份文件 (这部分逻辑保持不变)
+		if (!worldReleased) {
+			console.AddLog(L("KNOTLINK_HOT_RESTORE_WORLD_OCCUPIED"));
+			BroadcastEvent("event=restore_cancelled;reason=world_occupied;world=" + wstring_to_utf8(world.name));
+			g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+			g_appState.isRespond = false;
+			return;
+		}
+	}
+
+	// 等待文件锁释放
+	{
+		filesystem::path levelDatPath = filesystem::path(world.path) / L"level.dat";
+		auto waitStart = chrono::steady_clock::now();
+		auto waitTimeout = chrono::seconds(10);
+		while (chrono::steady_clock::now() - waitStart < waitTimeout) {
+			if (!IsFileLocked(levelDatPath.wstring())) {
+				break;
+			}
+			this_thread::sleep_for(chrono::milliseconds(200));
+		}
+		// 额外等待确保文件系统同步完成
+		this_thread::sleep_for(chrono::milliseconds(500));
+	}
+
+	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+	console.AddLog(L("KNOTLINK_HOT_RESTORE_PROCEEDING"));
+
+	// 查找最新备份文件
 	filesystem::path backupDir = JoinPath(cfg.backupPath, world.name);
 	filesystem::path latestBackup;
 	auto latest_time = filesystem::file_time_type{};
@@ -1514,8 +1561,9 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 
 	if (!found) {
 		console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found");
+		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
 		return;
 	}
 
@@ -1523,11 +1571,45 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 
 	DoRestore(cfg, world.name, latestBackup.filename().wstring(), ref(console), 0, "");
 
-	// 假设成功，广播完成事件
-	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex) + ";world=" + wstring_to_utf8(world.name));
-	console.AddLog(L("[Hotkey] Restore completed successfully."));
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	// 最终，重置状态
+	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex) +
+		";world=" + wstring_to_utf8(world.name));
+	console.AddLog(L("KNOTLINK_HOT_RESTORE_DONE"));
+
+	std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+
+	// 发送重进世界的指令
+	BroadcastEvent("event=rejoin_world;world=" + wstring_to_utf8(world.name));
+	console.AddLog(L("KNOTLINK_REJOIN_SENT"));
+
+	// 等待重进世界结果
+	bool rejoinReceived = mod.waitForFlag(
+		&KnotLinkModInfo::rejoinResponseReceived,
+		std::chrono::milliseconds(30000)); // 最多等待30秒
+
+	if (rejoinReceived) {
+		bool success = false;
+		{
+			std::lock_guard<std::mutex> lock(mod.mtx);
+			success = mod.rejoinSuccess;
+		}
+		if (success) {
+			console.AddLog(L("KNOTLINK_REJOIN_OK"));
+			BroadcastEvent("event=hot_restore_complete;status=full_success;world=" + wstring_to_utf8(world.name));
+		}
+		else {
+			console.AddLog(L("KNOTLINK_REJOIN_FAIL"));
+			BroadcastEvent("event=hot_restore_complete;status=restore_ok_rejoin_failed;world=" + wstring_to_utf8(world.name));
+		}
+	}
+	else {
+		// 重进世界超时 — 还原已成功但重进结果未知
+		console.AddLog(L("KNOTLINK_REJOIN_TIMEOUT"));
+		BroadcastEvent("event=hot_restore_complete;status=restore_ok_rejoin_timeout;world=" + wstring_to_utf8(world.name));
+	}
+
+	// 重置状态
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 	g_appState.isRespond = false;
 }

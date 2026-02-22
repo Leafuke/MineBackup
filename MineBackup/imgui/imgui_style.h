@@ -19,7 +19,7 @@ namespace ImGuiTheme {
         return ImVec4(r, g, b, alpha);
     }
 
-    std::string ImVec4ToHex(const ImVec4& color) {
+    inline std::string ImVec4ToHex(const ImVec4& color) {
         std::stringstream ss;
         int r = static_cast<int>(std::round(color.x * 255.0f));
         int g = static_cast<int>(std::round(color.y * 255.0f));
@@ -33,7 +33,7 @@ namespace ImGuiTheme {
         return ("#" + ss.str());
     }
 
-    void ApplyImGuiLight() {
+    inline void ApplyImGuiLight() {
 
         EnableDarkModeWin(false);
         ImGuiStyle& style = ImGui::GetStyle();
@@ -43,6 +43,7 @@ namespace ImGuiTheme {
         style.PopupRounding = 5.0f;
         style.ScrollbarRounding = 5.0f;
         style.ChildRounding = 8.0f;
+        style.TabRounding = 5.0f;
 
         style.WindowBorderSize = 1.0f;
         style.ChildBorderSize = 1.0f;
@@ -54,10 +55,14 @@ namespace ImGuiTheme {
         style.FramePadding = ImVec2(6, 4);
         style.ItemSpacing = ImVec2(8, 6);
         style.ScrollbarSize = 14.0f;
+
+        style.AntiAliasedLines = true;
+        style.AntiAliasedLinesUseTex = true;
+        style.AntiAliasedFill = true;
 
         ImGui::StyleColorsLight();
 	}
-    void ApplyImGuiDark() {
+    inline void ApplyImGuiDark() {
         EnableDarkModeWin(true);
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 8.0f;
@@ -66,6 +71,7 @@ namespace ImGuiTheme {
         style.PopupRounding = 5.0f;
         style.ScrollbarRounding = 5.0f;
         style.ChildRounding = 8.0f;
+        style.TabRounding = 5.0f;
 
         style.WindowBorderSize = 1.0f;
         style.ChildBorderSize = 1.0f;
@@ -77,9 +83,14 @@ namespace ImGuiTheme {
         style.FramePadding = ImVec2(6, 4);
         style.ItemSpacing = ImVec2(8, 6);
         style.ScrollbarSize = 14.0f;
+
+        style.AntiAliasedLines = true;
+        style.AntiAliasedLinesUseTex = true;
+        style.AntiAliasedFill = true;
+
         ImGui::StyleColorsDark();
     }
-    void ApplyImGuiClassic() {
+    inline void ApplyImGuiClassic() {
         EnableDarkModeWin(true);
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 8.0f;
@@ -88,6 +99,7 @@ namespace ImGuiTheme {
         style.PopupRounding = 5.0f;
         style.ScrollbarRounding = 5.0f;
         style.ChildRounding = 8.0f;
+        style.TabRounding = 5.0f;
 
         style.WindowBorderSize = 1.0f;
         style.ChildBorderSize = 1.0f;
@@ -99,10 +111,15 @@ namespace ImGuiTheme {
         style.FramePadding = ImVec2(6, 4);
         style.ItemSpacing = ImVec2(8, 6);
         style.ScrollbarSize = 14.0f;
+
+        style.AntiAliasedLines = true;
+        style.AntiAliasedLinesUseTex = true;
+        style.AntiAliasedFill = true;
+
         ImGui::StyleColorsClassic();
     }
 
-    void ApplyWindows11(bool dark_mode) {
+    inline void ApplyWindows11(bool dark_mode) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 
@@ -148,17 +165,33 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_TitleBg] = bg_base;
             colors[ImGuiCol_TitleBgActive] = bg_base;
+            colors[ImGuiCol_TitleBgCollapsed] = Hex(0x1E1E1E, 0.75f);
             colors[ImGuiCol_MenuBarBg] = Hex(0x1B1B1B);
 
             colors[ImGuiCol_Header] = Hex(0x383838);
             colors[ImGuiCol_HeaderHovered] = Hex(0x404040);
             colors[ImGuiCol_HeaderActive] = Hex(0x4D4D4D);
 
+            colors[ImGuiCol_Separator] = border;
+            colors[ImGuiCol_SeparatorHovered] = accent;
+            colors[ImGuiCol_SeparatorActive] = Hex(0x76D6FF);
+
+            colors[ImGuiCol_ResizeGrip] = Hex(0x333333);
+            colors[ImGuiCol_ResizeGripHovered] = accent;
+            colors[ImGuiCol_ResizeGripActive] = Hex(0x76D6FF);
+
+            colors[ImGuiCol_InputTextCursor] = text;
+
             colors[ImGuiCol_Tab] = Hex(0x222222);
             colors[ImGuiCol_TabHovered] = Hex(0x343434);
-            colors[ImGuiCol_TabActive] = bg_child;
-            colors[ImGuiCol_TabUnfocused] = Hex(0x222222);
-            colors[ImGuiCol_TabUnfocusedActive] = bg_child;
+            colors[ImGuiCol_TabSelected] = bg_child;
+            colors[ImGuiCol_TabSelectedOverline] = accent;
+            colors[ImGuiCol_TabDimmed] = Hex(0x222222);
+            colors[ImGuiCol_TabDimmedSelected] = bg_child;
+            colors[ImGuiCol_TabDimmedSelectedOverline] = Hex(0x4A4A4A);
+
+            colors[ImGuiCol_DockingPreview] = Hex(0x4CC2FF, 0.70f);
+            colors[ImGuiCol_DockingEmptyBg] = Hex(0x1A1A1A);
 
             colors[ImGuiCol_Button] = Hex(0x333333);
             colors[ImGuiCol_ButtonHovered] = Hex(0x3D3D3D);
@@ -168,6 +201,27 @@ namespace ImGuiTheme {
             colors[ImGuiCol_SliderGrab] = accent;
             colors[ImGuiCol_SliderGrabActive] = Hex(0x76D6FF);
             colors[ImGuiCol_DragDropTarget] = accent;
+            colors[ImGuiCol_DragDropTargetBg] = Hex(0x4CC2FF, 0.12f);
+            colors[ImGuiCol_TreeLines] = Hex(0x4A4A4A);
+            colors[ImGuiCol_UnsavedMarker] = Hex(0xFFD633);
+
+            colors[ImGuiCol_PlotLines] = Hex(0x9CDCFE);
+            colors[ImGuiCol_PlotLinesHovered] = Hex(0xFF6040);
+            colors[ImGuiCol_PlotHistogram] = Hex(0xE5A00D);
+            colors[ImGuiCol_PlotHistogramHovered] = Hex(0xFF9A1A);
+
+            colors[ImGuiCol_TableHeaderBg] = Hex(0x303030);
+            colors[ImGuiCol_TableBorderStrong] = Hex(0x4A4A4A);
+            colors[ImGuiCol_TableBorderLight] = Hex(0x3A3A3A);
+            colors[ImGuiCol_TableRowBg] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TableRowBgAlt] = Hex(0xFFFFFF, 0.03f);
+
+            colors[ImGuiCol_TextLink] = accent;
+            colors[ImGuiCol_TextSelectedBg] = Hex(0x4CC2FF, 0.35f);
+            colors[ImGuiCol_NavCursor] = accent;
+            colors[ImGuiCol_NavWindowingHighlight] = Hex(0xFFFFFF, 0.70f);
+            colors[ImGuiCol_NavWindowingDimBg] = Hex(0x000000, 0.20f);
+            colors[ImGuiCol_ModalWindowDimBg] = Hex(0x000000, 0.55f);
 
             colors[ImGuiCol_ScrollbarBg] = Hex(0x000000, 0.06f);
             colors[ImGuiCol_ScrollbarGrab] = Hex(0x3F3F3F);
@@ -198,17 +252,33 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_TitleBg] = bg_base;
             colors[ImGuiCol_TitleBgActive] = bg_base;
+            colors[ImGuiCol_TitleBgCollapsed] = Hex(0xF3F3F3, 0.75f);
             colors[ImGuiCol_MenuBarBg] = Hex(0xECECEC);
 
             colors[ImGuiCol_Header] = Hex(0xECECEC);
             colors[ImGuiCol_HeaderHovered] = Hex(0xE0E0E0);
             colors[ImGuiCol_HeaderActive] = Hex(0xD6D6D6);
 
+            colors[ImGuiCol_Separator] = border;
+            colors[ImGuiCol_SeparatorHovered] = accent;
+            colors[ImGuiCol_SeparatorActive] = Hex(0x005A9E);
+
+            colors[ImGuiCol_ResizeGrip] = Hex(0xE5E5E5);
+            colors[ImGuiCol_ResizeGripHovered] = accent;
+            colors[ImGuiCol_ResizeGripActive] = Hex(0x005A9E);
+
+            colors[ImGuiCol_InputTextCursor] = text;
+
             colors[ImGuiCol_Tab] = Hex(0xF3F3F3);
             colors[ImGuiCol_TabHovered] = Hex(0xE6E6E6);
-            colors[ImGuiCol_TabActive] = Hex(0xFFFFFF);
-            colors[ImGuiCol_TabUnfocused] = Hex(0xF3F3F3);
-            colors[ImGuiCol_TabUnfocusedActive] = Hex(0xFFFFFF);
+            colors[ImGuiCol_TabSelected] = Hex(0xFFFFFF);
+            colors[ImGuiCol_TabSelectedOverline] = accent;
+            colors[ImGuiCol_TabDimmed] = Hex(0xF3F3F3);
+            colors[ImGuiCol_TabDimmedSelected] = Hex(0xFFFFFF);
+            colors[ImGuiCol_TabDimmedSelectedOverline] = Hex(0xD0D0D0);
+
+            colors[ImGuiCol_DockingPreview] = Hex(0x0067C0, 0.70f);
+            colors[ImGuiCol_DockingEmptyBg] = Hex(0xF0F0F0);
 
             colors[ImGuiCol_Button] = Hex(0xFFFFFF);
             colors[ImGuiCol_ButtonHovered] = Hex(0xFBFBFB);
@@ -217,6 +287,29 @@ namespace ImGuiTheme {
             colors[ImGuiCol_CheckMark] = accent;
             colors[ImGuiCol_SliderGrab] = Hex(0x666666);
             colors[ImGuiCol_SliderGrabActive] = accent;
+
+            colors[ImGuiCol_TableHeaderBg] = Hex(0xECECEC);
+            colors[ImGuiCol_TableBorderStrong] = Hex(0xD0D0D0);
+            colors[ImGuiCol_TableBorderLight] = Hex(0xE0E0E0);
+            colors[ImGuiCol_TableRowBg] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TableRowBgAlt] = Hex(0x000000, 0.03f);
+
+            colors[ImGuiCol_TextLink] = accent;
+            colors[ImGuiCol_TextSelectedBg] = Hex(0x0067C0, 0.25f);
+            colors[ImGuiCol_NavCursor] = accent;
+            colors[ImGuiCol_NavWindowingHighlight] = Hex(0xFFFFFF, 0.70f);
+            colors[ImGuiCol_NavWindowingDimBg] = Hex(0x000000, 0.20f);
+            colors[ImGuiCol_ModalWindowDimBg] = Hex(0x000000, 0.40f);
+
+            colors[ImGuiCol_DragDropTarget] = accent;
+            colors[ImGuiCol_DragDropTargetBg] = Hex(0x0067C0, 0.10f);
+            colors[ImGuiCol_TreeLines] = Hex(0xD0D0D0);
+            colors[ImGuiCol_UnsavedMarker] = Hex(0xD4A017);
+
+            colors[ImGuiCol_PlotLines] = Hex(0x0067C0);
+            colors[ImGuiCol_PlotLinesHovered] = Hex(0xD03030);
+            colors[ImGuiCol_PlotHistogram] = Hex(0xC77C00);
+            colors[ImGuiCol_PlotHistogramHovered] = Hex(0xE5A00D);
 
             style.FrameBorderSize = 1.0f;
             colors[ImGuiCol_Border] = border_str;
@@ -228,7 +321,7 @@ namespace ImGuiTheme {
         }
     }
 
-    void ApplyVSCodeDark() {
+    inline void ApplyVSCodeDark() {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 
@@ -276,25 +369,64 @@ namespace ImGuiTheme {
 
         colors[ImGuiCol_Tab] = bg_main;
         colors[ImGuiCol_TabHovered] = border;
-        colors[ImGuiCol_TabActive] = bg_child;
-        colors[ImGuiCol_TabUnfocused] = bg_main;
-        colors[ImGuiCol_TabUnfocusedActive] = bg_child;
+        colors[ImGuiCol_TabSelected] = bg_child;
+        colors[ImGuiCol_TabSelectedOverline] = accent_blue;
+        colors[ImGuiCol_TabDimmed] = bg_main;
+        colors[ImGuiCol_TabDimmedSelected] = bg_child;
+
+        colors[ImGuiCol_DockingPreview] = Hex(0x3794FF, 0.70f);
+        colors[ImGuiCol_DockingEmptyBg] = Hex(0x1A1A1A);
 
         colors[ImGuiCol_ScrollbarBg] = bg_main;
         colors[ImGuiCol_ScrollbarGrab] = Hex(0x4D4D4D);
         colors[ImGuiCol_ScrollbarGrabHovered] = Hex(0x5A5A5A);
         colors[ImGuiCol_ScrollbarGrabActive] = Hex(0x6A6A6A);
 
+        colors[ImGuiCol_Separator] = border;
+        colors[ImGuiCol_SeparatorHovered] = accent_blue;
+        colors[ImGuiCol_SeparatorActive] = Hex(0x5AA2FF);
+
         colors[ImGuiCol_CheckMark] = accent_blue;
         colors[ImGuiCol_SliderGrab] = accent_blue;
         colors[ImGuiCol_SliderGrabActive] = Hex(0x5AA2FF);
         colors[ImGuiCol_ResizeGrip] = Hex(0x2D2D2D);
         colors[ImGuiCol_ResizeGripHovered] = accent_blue;
+        colors[ImGuiCol_ResizeGripActive] = Hex(0x5AA2FF);
+
+        colors[ImGuiCol_InputTextCursor] = text;
+
+        colors[ImGuiCol_TableHeaderBg] = Hex(0x252526);
+        colors[ImGuiCol_TableBorderStrong] = border;
+        colors[ImGuiCol_TableBorderLight] = Hex(0x333333);
+
+        colors[ImGuiCol_TextLink] = accent_blue;
         colors[ImGuiCol_TextSelectedBg] = Hex(0x094771, 0.45f);
-        colors[ImGuiCol_NavHighlight] = Hex(0x000000, 0.0f);
+        colors[ImGuiCol_NavCursor] = accent_blue;
+        colors[ImGuiCol_NavWindowingHighlight] = Hex(0xFFFFFF, 0.70f);
+        colors[ImGuiCol_NavWindowingDimBg] = Hex(0x000000, 0.20f);
+        colors[ImGuiCol_ModalWindowDimBg] = Hex(0x000000, 0.55f);
+
+        colors[ImGuiCol_TitleBg] = bg_main;
+        colors[ImGuiCol_TitleBgActive] = bg_main;
+        colors[ImGuiCol_TitleBgCollapsed] = Hex(0x1E1E1E, 0.75f);
+
+        colors[ImGuiCol_TabDimmedSelectedOverline] = Hex(0x3C3C3C);
+
+        colors[ImGuiCol_TableRowBg] = Hex(0x000000, 0.0f);
+        colors[ImGuiCol_TableRowBgAlt] = Hex(0xFFFFFF, 0.03f);
+
+        colors[ImGuiCol_DragDropTarget] = accent_blue;
+        colors[ImGuiCol_DragDropTargetBg] = Hex(0x3794FF, 0.12f);
+        colors[ImGuiCol_TreeLines] = Hex(0x3C3C3C);
+        colors[ImGuiCol_UnsavedMarker] = Hex(0xE8AB53);
+
+        colors[ImGuiCol_PlotLines] = Hex(0x9CDCFE);
+        colors[ImGuiCol_PlotLinesHovered] = Hex(0xFF6040);
+        colors[ImGuiCol_PlotHistogram] = Hex(0xCE9178);
+        colors[ImGuiCol_PlotHistogramHovered] = Hex(0xFF9A1A);
     }
 
-    void ApplyNord(bool dark_mode) {
+    inline void ApplyNord(bool dark_mode) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 
@@ -344,9 +476,14 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_Tab] = bg_main;
             colors[ImGuiCol_TabHovered] = border;
-            colors[ImGuiCol_TabActive] = bg_child;
-            colors[ImGuiCol_TabUnfocused] = bg_main;
-            colors[ImGuiCol_TabUnfocusedActive] = bg_child;
+            colors[ImGuiCol_TabSelected] = bg_child;
+            colors[ImGuiCol_TabSelectedOverline] = accent;
+            colors[ImGuiCol_TabDimmed] = bg_main;
+            colors[ImGuiCol_TabDimmedSelected] = bg_child;
+            colors[ImGuiCol_TabDimmedSelectedOverline] = Hex(0x4C566A);
+
+            colors[ImGuiCol_DockingPreview] = Hex(0x88C0D0, 0.70f);
+            colors[ImGuiCol_DockingEmptyBg] = Hex(0x2B303B);
 
             colors[ImGuiCol_ScrollbarBg] = bg_main;
             colors[ImGuiCol_ScrollbarGrab] = Hex(0x4C566A);
@@ -356,9 +493,39 @@ namespace ImGuiTheme {
             colors[ImGuiCol_CheckMark] = accent;
             colors[ImGuiCol_SliderGrab] = accent;
             colors[ImGuiCol_SliderGrabActive] = Hex(0x81A1C1);
+
+            colors[ImGuiCol_Separator] = border;
+            colors[ImGuiCol_SeparatorHovered] = accent;
+            colors[ImGuiCol_SeparatorActive] = Hex(0x81A1C1);
+
             colors[ImGuiCol_ResizeGrip] = Hex(0x4C566A);
             colors[ImGuiCol_ResizeGripHovered] = accent;
+            colors[ImGuiCol_ResizeGripActive] = Hex(0x81A1C1);
+
+            colors[ImGuiCol_InputTextCursor] = text;
+
+            colors[ImGuiCol_TableHeaderBg] = Hex(0x3B4252);
+            colors[ImGuiCol_TableBorderStrong] = border;
+            colors[ImGuiCol_TableBorderLight] = Hex(0x434C5E);
+            colors[ImGuiCol_TableRowBg] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TableRowBgAlt] = Hex(0xFFFFFF, 0.03f);
+
+            colors[ImGuiCol_TextLink] = accent;
             colors[ImGuiCol_TextSelectedBg] = Hex(0x81A1C1, 0.35f);
+            colors[ImGuiCol_NavCursor] = accent;
+            colors[ImGuiCol_NavWindowingHighlight] = Hex(0xECEFF4, 0.70f);
+            colors[ImGuiCol_NavWindowingDimBg] = Hex(0x000000, 0.20f);
+            colors[ImGuiCol_ModalWindowDimBg] = Hex(0x000000, 0.55f);
+
+            colors[ImGuiCol_DragDropTarget] = accent;
+            colors[ImGuiCol_DragDropTargetBg] = Hex(0x88C0D0, 0.12f);
+            colors[ImGuiCol_TreeLines] = Hex(0x4C566A);
+            colors[ImGuiCol_UnsavedMarker] = Hex(0xEBCB8B);
+
+            colors[ImGuiCol_PlotLines] = Hex(0x88C0D0);
+            colors[ImGuiCol_PlotLinesHovered] = Hex(0xBF616A);
+            colors[ImGuiCol_PlotHistogram] = Hex(0xEBCB8B);
+            colors[ImGuiCol_PlotHistogramHovered] = Hex(0xD08770);
         }
         else {
             EnableDarkModeWin(false);
@@ -393,7 +560,14 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_Tab] = bg_main;
             colors[ImGuiCol_TabHovered] = border;
-            colors[ImGuiCol_TabActive] = bg_child;
+            colors[ImGuiCol_TabSelected] = bg_child;
+            colors[ImGuiCol_TabSelectedOverline] = accent;
+            colors[ImGuiCol_TabDimmed] = bg_main;
+            colors[ImGuiCol_TabDimmedSelected] = bg_child;
+            colors[ImGuiCol_TabDimmedSelectedOverline] = Hex(0xD8DEE9);
+
+            colors[ImGuiCol_DockingPreview] = Hex(0x5E81AC, 0.70f);
+            colors[ImGuiCol_DockingEmptyBg] = Hex(0xE5E9F0);
 
             colors[ImGuiCol_ScrollbarBg] = Hex(0x000000, 0.04f);
             colors[ImGuiCol_ScrollbarGrab] = Hex(0xC7D0DA);
@@ -403,11 +577,43 @@ namespace ImGuiTheme {
             colors[ImGuiCol_CheckMark] = accent;
             colors[ImGuiCol_SliderGrab] = accent;
             colors[ImGuiCol_SliderGrabActive] = Hex(0x81A1C1);
+
+            colors[ImGuiCol_Separator] = border;
+            colors[ImGuiCol_SeparatorHovered] = accent;
+            colors[ImGuiCol_SeparatorActive] = Hex(0x81A1C1);
+
+            colors[ImGuiCol_ResizeGrip] = Hex(0xD8DEE9);
+            colors[ImGuiCol_ResizeGripHovered] = accent;
+            colors[ImGuiCol_ResizeGripActive] = Hex(0x81A1C1);
+
+            colors[ImGuiCol_InputTextCursor] = text;
+
+            colors[ImGuiCol_TableHeaderBg] = Hex(0xE5E9F0);
+            colors[ImGuiCol_TableBorderStrong] = border;
+            colors[ImGuiCol_TableBorderLight] = Hex(0xDFE3EB);
+            colors[ImGuiCol_TableRowBg] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TableRowBgAlt] = Hex(0x000000, 0.03f);
+
+            colors[ImGuiCol_TextLink] = accent;
             colors[ImGuiCol_TextSelectedBg] = Hex(0x5E81AC, 0.25f);
+            colors[ImGuiCol_NavCursor] = accent;
+            colors[ImGuiCol_NavWindowingHighlight] = Hex(0xFFFFFF, 0.70f);
+            colors[ImGuiCol_NavWindowingDimBg] = Hex(0x000000, 0.20f);
+            colors[ImGuiCol_ModalWindowDimBg] = Hex(0x000000, 0.40f);
+
+            colors[ImGuiCol_DragDropTarget] = accent;
+            colors[ImGuiCol_DragDropTargetBg] = Hex(0x5E81AC, 0.10f);
+            colors[ImGuiCol_TreeLines] = Hex(0xD8DEE9);
+            colors[ImGuiCol_UnsavedMarker] = Hex(0xD08770);
+
+            colors[ImGuiCol_PlotLines] = Hex(0x5E81AC);
+            colors[ImGuiCol_PlotLinesHovered] = Hex(0xBF616A);
+            colors[ImGuiCol_PlotHistogram] = Hex(0xEBCB8B);
+            colors[ImGuiCol_PlotHistogramHovered] = Hex(0xD08770);
         }
     }
 
-    void ApplySolarized(bool dark_mode) {
+    inline void ApplySolarized(bool dark_mode) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 
@@ -455,17 +661,61 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_Tab] = base;
             colors[ImGuiCol_TabHovered] = border;
-            colors[ImGuiCol_TabActive] = child;
+            colors[ImGuiCol_TabSelected] = child;
+            colors[ImGuiCol_TabSelectedOverline] = accent;
+            colors[ImGuiCol_TabDimmed] = base;
+            colors[ImGuiCol_TabDimmedSelected] = child;
+
+            colors[ImGuiCol_DockingPreview] = Hex(0x268BD2, 0.70f);
+            colors[ImGuiCol_DockingEmptyBg] = Hex(0x00212B);
 
             colors[ImGuiCol_ScrollbarBg] = base;
             colors[ImGuiCol_ScrollbarGrab] = Hex(0x3B4D54);
             colors[ImGuiCol_ScrollbarGrabHovered] = Hex(0x4A5F67);
             colors[ImGuiCol_ScrollbarGrabActive] = Hex(0x5C727A);
 
+            colors[ImGuiCol_Separator] = border;
+            colors[ImGuiCol_SeparatorHovered] = accent;
+            colors[ImGuiCol_SeparatorActive] = Hex(0x2AA3F0);
+
+            colors[ImGuiCol_ResizeGrip] = Hex(0x073642);
+            colors[ImGuiCol_ResizeGripHovered] = accent;
+            colors[ImGuiCol_ResizeGripActive] = Hex(0x2AA3F0);
+
+            colors[ImGuiCol_InputTextCursor] = text;
+
             colors[ImGuiCol_CheckMark] = accent;
             colors[ImGuiCol_SliderGrab] = accent;
             colors[ImGuiCol_SliderGrabActive] = Hex(0x2AA3F0);
+
+            colors[ImGuiCol_TextLink] = accent;
             colors[ImGuiCol_TextSelectedBg] = Hex(0x268BD2, 0.35f);
+            colors[ImGuiCol_NavCursor] = accent;
+            colors[ImGuiCol_NavWindowingHighlight] = Hex(0xEEE8D5, 0.70f);
+            colors[ImGuiCol_NavWindowingDimBg] = Hex(0x000000, 0.20f);
+            colors[ImGuiCol_ModalWindowDimBg] = Hex(0x000000, 0.55f);
+
+            colors[ImGuiCol_BorderShadow] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TitleBg] = base;
+            colors[ImGuiCol_TitleBgActive] = base;
+            colors[ImGuiCol_TitleBgCollapsed] = Hex(0x002B36, 0.75f);
+            colors[ImGuiCol_TabDimmedSelectedOverline] = Hex(0x586E75);
+
+            colors[ImGuiCol_TableHeaderBg] = Hex(0x073642);
+            colors[ImGuiCol_TableBorderStrong] = Hex(0x586E75);
+            colors[ImGuiCol_TableBorderLight] = Hex(0x2A4A56);
+            colors[ImGuiCol_TableRowBg] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TableRowBgAlt] = Hex(0xFFFFFF, 0.03f);
+
+            colors[ImGuiCol_DragDropTarget] = accent;
+            colors[ImGuiCol_DragDropTargetBg] = Hex(0x268BD2, 0.12f);
+            colors[ImGuiCol_TreeLines] = Hex(0x586E75);
+            colors[ImGuiCol_UnsavedMarker] = Hex(0xB58900);
+
+            colors[ImGuiCol_PlotLines] = Hex(0x2AA198);
+            colors[ImGuiCol_PlotLinesHovered] = Hex(0xDC322F);
+            colors[ImGuiCol_PlotHistogram] = Hex(0xB58900);
+            colors[ImGuiCol_PlotHistogramHovered] = Hex(0xCB4B16);
         }
         else {
             ImVec4 base = Hex(0xFDF6E3);
@@ -497,21 +747,65 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_Tab] = base;
             colors[ImGuiCol_TabHovered] = border;
-            colors[ImGuiCol_TabActive] = child;
+            colors[ImGuiCol_TabSelected] = child;
+            colors[ImGuiCol_TabSelectedOverline] = accent;
+            colors[ImGuiCol_TabDimmed] = base;
+            colors[ImGuiCol_TabDimmedSelected] = child;
+
+            colors[ImGuiCol_DockingPreview] = Hex(0x268BD2, 0.70f);
+            colors[ImGuiCol_DockingEmptyBg] = Hex(0xEEE8D5);
 
             colors[ImGuiCol_ScrollbarBg] = Hex(0x000000, 0.05f);
             colors[ImGuiCol_ScrollbarGrab] = Hex(0xC3CEC8);
             colors[ImGuiCol_ScrollbarGrabHovered] = Hex(0xB3C0BA);
             colors[ImGuiCol_ScrollbarGrabActive] = Hex(0xA1B0A9);
 
+            colors[ImGuiCol_Separator] = border;
+            colors[ImGuiCol_SeparatorHovered] = accent;
+            colors[ImGuiCol_SeparatorActive] = Hex(0x2AA3F0);
+
+            colors[ImGuiCol_ResizeGrip] = Hex(0xEEE8D5);
+            colors[ImGuiCol_ResizeGripHovered] = accent;
+            colors[ImGuiCol_ResizeGripActive] = Hex(0x2AA3F0);
+
+            colors[ImGuiCol_InputTextCursor] = text;
+
             colors[ImGuiCol_CheckMark] = accent;
             colors[ImGuiCol_SliderGrab] = accent;
             colors[ImGuiCol_SliderGrabActive] = Hex(0x2AA3F0);
+
+            colors[ImGuiCol_TextLink] = accent;
             colors[ImGuiCol_TextSelectedBg] = Hex(0x268BD2, 0.25f);
+            colors[ImGuiCol_NavCursor] = accent;
+            colors[ImGuiCol_NavWindowingHighlight] = Hex(0xFFFFFF, 0.70f);
+            colors[ImGuiCol_NavWindowingDimBg] = Hex(0x000000, 0.20f);
+            colors[ImGuiCol_ModalWindowDimBg] = Hex(0x000000, 0.40f);
+
+            colors[ImGuiCol_BorderShadow] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TitleBg] = base;
+            colors[ImGuiCol_TitleBgActive] = base;
+            colors[ImGuiCol_TitleBgCollapsed] = Hex(0xFDF6E3, 0.75f);
+            colors[ImGuiCol_TabDimmedSelectedOverline] = Hex(0x93A1A1);
+
+            colors[ImGuiCol_TableHeaderBg] = Hex(0xEEE8D5);
+            colors[ImGuiCol_TableBorderStrong] = Hex(0x93A1A1);
+            colors[ImGuiCol_TableBorderLight] = Hex(0xC8C4B6);
+            colors[ImGuiCol_TableRowBg] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TableRowBgAlt] = Hex(0x000000, 0.03f);
+
+            colors[ImGuiCol_DragDropTarget] = accent;
+            colors[ImGuiCol_DragDropTargetBg] = Hex(0x268BD2, 0.10f);
+            colors[ImGuiCol_TreeLines] = Hex(0x93A1A1);
+            colors[ImGuiCol_UnsavedMarker] = Hex(0xB58900);
+
+            colors[ImGuiCol_PlotLines] = Hex(0x2AA198);
+            colors[ImGuiCol_PlotLinesHovered] = Hex(0xDC322F);
+            colors[ImGuiCol_PlotHistogram] = Hex(0xB58900);
+            colors[ImGuiCol_PlotHistogramHovered] = Hex(0xCB4B16);
         }
     }
 
-    void ApplyCustom() {
+    inline void ApplyCustom() {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
         try {
@@ -570,7 +864,7 @@ namespace ImGuiTheme {
         }
     }
 
-    void WriteDefaultCustomTheme() {
+    inline void WriteDefaultCustomTheme() {
         nlohmann::json j;
         ImGuiStyle& style = ImGui::GetStyle();
         j["window_rounding"] = style.WindowRounding;

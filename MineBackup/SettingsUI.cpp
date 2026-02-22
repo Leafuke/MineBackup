@@ -32,6 +32,50 @@ inline float CalcPairButtonWidth(const char* text1, const char* text2, float min
     return max(max(w1, w2), minWidth);
 }
 
+static void GetCompressionLevelRange(const wstring& method, int& minLevel, int& maxLevel) {
+    minLevel = 1;
+    maxLevel = 9;
+    if (_wcsicmp(method.c_str(), L"zstd") == 0) {
+        maxLevel = 22;
+    }
+}
+
+static void ClampCompressionLevel(const wstring& method, int& level) {
+    int minLevel = 1;
+    int maxLevel = 9;
+    GetCompressionLevelRange(method, minLevel, maxLevel);
+    if (level < minLevel) level = minLevel;
+    if (level > maxLevel) level = maxLevel;
+}
+
+static void GetSpecialConfigCompressionLevelRange(const SpecialConfig& spCfg, int& minLevel, int& maxLevel) {
+    minLevel = 1;
+    maxLevel = 9;
+
+    auto widenByConfigMethod = [&](int configIndex) {
+        auto it = g_appState.configs.find(configIndex);
+        if (it == g_appState.configs.end()) return;
+        int methodMin = 1;
+        int methodMax = 9;
+        GetCompressionLevelRange(it->second.zipMethod, methodMin, methodMax);
+        if (methodMax > maxLevel) {
+            maxLevel = methodMax;
+        }
+    };
+
+    if (!spCfg.unifiedTasks.empty()) {
+        for (const auto& task : spCfg.unifiedTasks) {
+            if (task.type != TaskTypeV2::Backup || !task.enabled) continue;
+            widenByConfigMethod(task.configIndex);
+        }
+        return;
+    }
+
+    for (const auto& task : spCfg.tasks) {
+        widenByConfigMethod(task.configIndex);
+    }
+}
+
 extern bool showSettings;
 extern bool specialSetting;
 extern bool isSilence;
@@ -429,6 +473,7 @@ static void DrawBackupBehavior(Config& cfg) {
     ImGui::SetNextItemWidth(300);
     if (ImGui::Combo(L("COMPRESSION_METHOD"), &method_idx, zip_methods, IM_ARRAYSIZE(zip_methods))) {
         cfg.zipMethod = utf8_to_wstring(zip_methods[method_idx]);
+        ClampCompressionLevel(cfg.zipMethod, cfg.zipLevel);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_COMPRESSION_METHOD"));
 
@@ -439,7 +484,11 @@ static void DrawBackupBehavior(Config& cfg) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_CPU_THREADS"));
 
     ImGui::SetNextItemWidth(300);
-    ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, 0, 9);
+    int minLevel = 1;
+    int maxLevel = 9;
+    GetCompressionLevelRange(cfg.zipMethod, minLevel, maxLevel);
+    ClampCompressionLevel(cfg.zipMethod, cfg.zipLevel);
+    ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, minLevel, maxLevel);
 
     ImGui::SetNextItemWidth(300);
     ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
@@ -629,7 +678,7 @@ static void DrawAppearanceSettings(Config& cfg) {
     ImGui::SetNextItemWidth(300);
     if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
         string oldLang = g_CurrentLang;
-        g_CurrentLang = lang_codes[lang_idx];
+        SetLanguage(lang_codes[lang_idx]);
         
         // 当从英文切换到中文时，检查字体是否支持中文
         if (oldLang == "en_US" && g_CurrentLang == "zh_CN") {
@@ -1114,7 +1163,12 @@ static void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_CPU_THREADS"));
 
             ImGui::SetNextItemWidth(200);
-            ImGui::SliderInt(L("COMPRESSION_LEVEL"), &spCfg.zipLevel, 0, 9);
+            int spMinLevel = 1;
+            int spMaxLevel = 9;
+            GetSpecialConfigCompressionLevelRange(spCfg, spMinLevel, spMaxLevel);
+            if (spCfg.zipLevel < spMinLevel) spCfg.zipLevel = spMinLevel;
+            if (spCfg.zipLevel > spMaxLevel) spCfg.zipLevel = spMaxLevel;
+            ImGui::SliderInt(L("COMPRESSION_LEVEL"), &spCfg.zipLevel, spMinLevel, spMaxLevel);
 
             ImGui::SetNextItemWidth(150);
             ImGui::InputInt(L("BACKUPS_TO_KEEP"), &spCfg.keepCount);

@@ -18,5 +18,6 @@ extern std::string g_CurrentLang;
 extern const char* lang_codes[2];
 extern const char* langs[2];
 const char* L(const char* key);
+void SetLanguage(const std::string& lang);
 
 #endif // !_i18n

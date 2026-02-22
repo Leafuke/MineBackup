@@ -1,6 +1,7 @@
 ﻿#include "i18n.h"
 #include "text_to_text.h"
 std::string g_CurrentLang = "en_US";
+static const std::unordered_map<std::string, Utf8Value>* g_CurrentLangMap = nullptr;
 const char* lang_codes[2] = { "zh_CN", "en_US" };
 const char* langs[2] = { as_utf8(u8"简体中文"), "English" };
 std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_LangTable = {
@@ -296,6 +297,33 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "LOG_GAME_SESSION_STARTED", u8"[监控] 检测到游戏会话开始: %s。触发备份..." },
 		{ "LOG_GAME_SESSION_ENDED", u8"[监控] 检测到游戏会话结束: %s。" },
 		{ "KNOTLINK_PRE_HOT_BACKUP", u8"[KnotLink] 准备热备份: 配置 '%s', 世界 '%s'" },
+		{ "KNOTLINK_HANDSHAKE_OK", u8"[KnotLink] 联动模组握手成功！模组版本: %s" },
+		{ "KNOTLINK_HANDSHAKE_VERSION_MISMATCH", u8"[KnotLink] 联动模组版本不兼容！检测到版本: %s, 最低要求: %s" },
+		{ "KNOTLINK_MOD_DETECTED_BACKUP", u8"[KnotLink] 检测到联动模组 (v%s)，将在模组保存世界后再创建快照。" },
+		{ "KNOTLINK_MOD_NOT_DETECTED_BACKUP", u8"[KnotLink] 未检测到联动模组，将直接创建快照进行热备份。" },
+		{ "KNOTLINK_MOD_VERSION_TOO_OLD", u8"[KnotLink] 联动模组版本过旧 (v%s < v%s)，将直接创建快照。" },
+		{ "KNOTLINK_WAITING_WORLD_SAVE", u8"[KnotLink] 正在等待联动模组完成世界保存..." },
+		{ "KNOTLINK_WORLD_SAVE_CONFIRMED", u8"[KnotLink] 联动模组已确认世界保存完毕，开始创建快照。" },
+		{ "KNOTLINK_WORLD_SAVE_TIMEOUT", u8"[KnotLink] 等待世界保存超时，停止任务。" },
+		{ "KNOTLINK_WORLD_SAVED", u8"[KnotLink] 收到联动模组通知：世界保存完毕。" },
+		{ "KNOTLINK_WORLD_SAVE_EXIT_COMPLETE", u8"[KnotLink] 收到联动模组通知：世界已保存并退出。" },
+		{ "KNOTLINK_RESTORE_MOD_REQUIRED", u8"[KnotLink] 热还原需要联动模组支持！请安装 MineBackup 联动模组后重试。" },
+		{ "KNOTLINK_RESTORE_MOD_VERSION_INCOMPATIBLE", u8"[KnotLink] 联动模组版本不兼容 (v%s)，热还原需要 v%s 或更高。" },
+		{ "KNOTLINK_RESTORE_MOD_OK", u8"[KnotLink] 联动模组就绪 (v%s)，开始热还原流程。" },
+		{ "KNOTLINK_RESTORE_ALREADY_IN_PROGRESS", u8"[热键] 还原操作正在进行中，请等待完成。" },
+		{ "KNOTLINK_HOT_RESTORE_START", u8"[KnotLink] 开始热还原流程: 世界 '%s'" },
+		{ "KNOTLINK_WAITING_WORLD_SAVE_EXIT", u8"[KnotLink] 正在等待联动模组完成世界保存并退出..." },
+		{ "KNOTLINK_HOT_RESTORE_TIMEOUT", u8"[KnotLink] 等待模组响应超时（30秒），热还原已取消。" },
+		{ "KNOTLINK_MOD_EXIT_CONFIRMED", u8"[KnotLink] 联动模组已确认世界退出完毕。" },
+		{ "KNOTLINK_HOT_RESTORE_WORLD_OCCUPIED", u8"[KnotLink] 模组报告退出但世界仍被占用，热还原已取消。" },
+		{ "KNOTLINK_HOT_RESTORE_PROCEEDING", u8"[KnotLink] 所有前置检查通过，开始执行还原..." },
+		{ "KNOTLINK_HOT_RESTORE_DONE", u8"[KnotLink] 还原已完成，正在通知模组重进世界。" },
+		{ "KNOTLINK_REJOIN_SENT", u8"[KnotLink] 已向模组发送重进世界指令，等待结果..." },
+		{ "KNOTLINK_REJOIN_OK", u8"[KnotLink] 模组已成功重进世界。热还原全流程完成！" },
+		{ "KNOTLINK_REJOIN_FAIL", u8"[KnotLink] 模组重进世界失败。还原已完成但需手动重进游戏。" },
+		{ "KNOTLINK_REJOIN_TIMEOUT", u8"[KnotLink] 等待模组重进世界超时。还原已完成但重进结果未知。" },
+		{ "KNOTLINK_REJOIN_SUCCESS", u8"[KnotLink] 模组确认: 重进世界成功。" },
+		{ "KNOTLINK_REJOIN_FAILED", u8"[KnotLink] 模组确认: 重进世界失败。原因: %s" },
 		{ "MENU_FILE", u8"文件" },
 		{ "MENU_EXPORT_CONFIG", u8"导出配置..." },
 		{ "MENU_IMPORT_CONFIG", u8"导入配置..." },
@@ -878,6 +906,33 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "LOG_GAME_SESSION_STARTED", "[Watcher] Game session started for: %s. Triggering backup..." },
 		{ "LOG_GAME_SESSION_ENDED", "[Watcher] Game session ended for: %s." },
 		{ "KNOTLINK_PRE_HOT_BACKUP", "[KnotLink] Preparing hot backup: Config '%s', World '%s'" },
+		{ "KNOTLINK_HANDSHAKE_OK", "[KnotLink] Mod handshake successful! Mod version: %s" },
+		{ "KNOTLINK_HANDSHAKE_VERSION_MISMATCH", "[KnotLink] Mod version incompatible! Detected: %s, Required: %s" },
+		{ "KNOTLINK_MOD_DETECTED_BACKUP", "[KnotLink] Companion mod detected (v%s). Will create snapshot after mod saves the world." },
+		{ "KNOTLINK_MOD_NOT_DETECTED_BACKUP", "[KnotLink] No companion mod detected. Creating snapshot directly for hot backup." },
+		{ "KNOTLINK_MOD_VERSION_TOO_OLD", "[KnotLink] Companion mod too old (v%s < v%s). Creating snapshot directly." },
+		{ "KNOTLINK_WAITING_WORLD_SAVE", "[KnotLink] Waiting for mod to complete world save..." },
+		{ "KNOTLINK_WORLD_SAVE_CONFIRMED", "[KnotLink] Mod confirmed world save complete. Creating snapshot now." },
+		{ "KNOTLINK_WORLD_SAVE_TIMEOUT", "[KnotLink] World save wait timed out. Aborting..." },
+		{ "KNOTLINK_WORLD_SAVED", "[KnotLink] Mod notification received: World saved." },
+		{ "KNOTLINK_WORLD_SAVE_EXIT_COMPLETE", "[KnotLink] Mod notification received: World saved and exited." },
+		{ "KNOTLINK_RESTORE_MOD_REQUIRED", "[KnotLink] Hot restore requires the companion mod! Please install the MineBackup companion mod." },
+		{ "KNOTLINK_RESTORE_MOD_VERSION_INCOMPATIBLE", "[KnotLink] Mod version incompatible (v%s). Hot restore requires v%s or higher." },
+		{ "KNOTLINK_RESTORE_MOD_OK", "[KnotLink] Companion mod ready (v%s). Starting hot restore." },
+		{ "KNOTLINK_RESTORE_ALREADY_IN_PROGRESS", "[Hotkey] A restore operation is already in progress. Please wait." },
+		{ "KNOTLINK_HOT_RESTORE_START", "[KnotLink] Starting hot restore: World '%s'" },
+		{ "KNOTLINK_WAITING_WORLD_SAVE_EXIT", "[KnotLink] Waiting for mod to save and exit world..." },
+		{ "KNOTLINK_HOT_RESTORE_TIMEOUT", "[KnotLink] Mod response timed out. Hot restore cancelled." },
+		{ "KNOTLINK_MOD_EXIT_CONFIRMED", "[KnotLink] Mod confirmed world exit complete." },
+		{ "KNOTLINK_HOT_RESTORE_WORLD_OCCUPIED", "[KnotLink] Mod reported exit but world still occupied. Hot restore cancelled." },
+		{ "KNOTLINK_HOT_RESTORE_PROCEEDING", "[KnotLink] All pre-checks passed. Performing restore..." },
+		{ "KNOTLINK_HOT_RESTORE_DONE", "[KnotLink] Restore complete. Notifying mod to rejoin world." },
+		{ "KNOTLINK_REJOIN_SENT", "[KnotLink] Rejoin command sent to mod. Waiting for result..." },
+		{ "KNOTLINK_REJOIN_OK", "[KnotLink] Mod successfully rejoined world. Hot restore fully complete!" },
+		{ "KNOTLINK_REJOIN_FAIL", "[KnotLink] Mod failed to rejoin world. Restore complete but manual rejoin needed." },
+		{ "KNOTLINK_REJOIN_TIMEOUT", "[KnotLink] Rejoin result timed out. Restore complete but rejoin status unknown." },
+		{ "KNOTLINK_REJOIN_SUCCESS", "[KnotLink] Mod confirmed: Rejoined world successfully." },
+		{ "KNOTLINK_REJOIN_FAILED", "[KnotLink] Mod confirmed: Rejoin failed. Reason: %s" },
 		{ "MENU_FILE", "File" },
 		{ "MENU_EXPORT_CONFIG", "Export Config..." },
 		{ "MENU_IMPORT_CONFIG", "Import Config..." },
@@ -1178,8 +1233,19 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 }},
 };
 const char* L(const char* key) {
-    auto it = g_LangTable[g_CurrentLang].find(key);
-    if (it != g_LangTable[g_CurrentLang].end())
+    if (!g_CurrentLangMap) {
+        // Lazy init: first call before SetLanguage()
+        auto langIt = g_LangTable.find(g_CurrentLang);
+        if (langIt == g_LangTable.end()) return key;
+        g_CurrentLangMap = &langIt->second;
+    }
+    auto it = g_CurrentLangMap->find(key);
+    if (it != g_CurrentLangMap->end())
 		return it->second.value.c_str();
     return key;
+}
+void SetLanguage(const std::string& lang) {
+    g_CurrentLang = lang;
+    auto it = g_LangTable.find(lang);
+    g_CurrentLangMap = (it != g_LangTable.end()) ? &it->second : nullptr;
 }

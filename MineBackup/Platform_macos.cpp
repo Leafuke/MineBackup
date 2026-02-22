@@ -285,7 +285,7 @@ void GetUserDefaultUILanguageWin() {
     if (langEnv && std::strlen(langEnv) >= 2) {
         std::string lang(langEnv);
         if (lang.rfind("zh", 0) == 0) {
-            g_CurrentLang = "zh_CN";
+            SetLanguage("zh_CN");
             return;
         }
     }
@@ -296,7 +296,7 @@ void GetUserDefaultUILanguageWin() {
         if (fgets(buffer, sizeof(buffer), pipe)) {
             std::string lang(buffer);
             if (lang.rfind("zh", 0) == 0) {
-                g_CurrentLang = "zh_CN";
+                SetLanguage("zh_CN");
                 pclose(pipe);
                 return;
             }
@@ -304,7 +304,7 @@ void GetUserDefaultUILanguageWin() {
         pclose(pipe);
     }
     
-    g_CurrentLang = "en_US";
+    SetLanguage("en_US");
 }
 
 std::string GetRegistryValue(const std::string& key, const std::string& valueName) {
@@ -508,7 +508,7 @@ bool IsFileLocked(const std::wstring& path) {
     return false;
 }
 
-bool RunCommandInBackground(std::wstring command, Console& console, bool useLowPriority, const std::wstring& workingDirectory) {
+bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory) {
     console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
     
     std::error_code ec;
