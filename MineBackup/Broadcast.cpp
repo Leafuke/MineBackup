@@ -70,11 +70,11 @@ void InitKnotLink() {
 
 void CleanupKnotLink() {
     if (g_commandResponser) {
-        delete g_commandResponser;
+        //delete g_commandResponser;
         g_commandResponser = nullptr;
     }
     if (g_signalSender) {
-        delete g_signalSender;
+        //delete g_signalSender;
         g_signalSender = nullptr;
     }
 }

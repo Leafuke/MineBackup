@@ -13,7 +13,7 @@ map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Valu
 bool IsFileLocked(const wstring& path);
 
 MyFolder GetOccupiedWorld() {
-	lock_guard<mutex> lock(g_appState.configsMutex);
+	//lock_guard<mutex> lock(g_appState.configsMutex);
 	for (const auto& config_pair : g_appState.configs) {
 		int config_idx = config_pair.first;
 		const Config& cfg = config_pair.second;
@@ -189,6 +189,9 @@ void TriggerHotkeyRestore() {
 	console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
 
 	bool modAvailable = PerformModHandshake("restore", wstring_to_utf8(world.name));
+
+	// 握手和下一个广播之间必须有短暂延时
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
 	if (!modAvailable) {
 		if (g_appState.knotLinkMod.modDetected.load() && !g_appState.knotLinkMod.versionCompatible.load()) {

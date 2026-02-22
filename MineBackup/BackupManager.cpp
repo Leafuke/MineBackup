@@ -538,22 +538,23 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         }
 
-        // 通知模组准备热备份
-        BroadcastEvent("event=pre_hot_backup;config=" + to_string(folder.configIndex) +
-            ";world=" + wstring_to_utf8(folder.name));
-
         if (modAvailable) {
             // 联动模组存在且版本兼容: 等待模组完成世界保存
             console.AddLog(L("KNOTLINK_WAITING_WORLD_SAVE"));
-            bool saved = g_appState.knotLinkMod.waitForFlag(
-                &KnotLinkModInfo::worldSaveComplete,
+			std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 握手和下一个广播之间必须有短暂延时
+			// 通知模组准备热备份
+			BroadcastEvent("event=pre_hot_backup;config=" + to_string(folder.configIndex) +
+				";world=" + wstring_to_utf8(folder.name));
+			bool saved = g_appState.knotLinkMod.waitForFlag(
+				&KnotLinkModInfo::worldSaveComplete,
                 std::chrono::milliseconds(10000)); // 最多等待10秒
 
             if (saved) {
                 console.AddLog(L("KNOTLINK_WORLD_SAVE_CONFIRMED"));
             } else {
-                // 超时：模组未在规定时间内完成保存，依然继续创建快照
+                // 超时：模组未在规定时间内完成保存，停止
                 console.AddLog(L("KNOTLINK_WORLD_SAVE_TIMEOUT"));
+				return;
             }
         }
 
@@ -1570,9 +1571,13 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 
 	DoRestore(cfg, world.name, latestBackup.filename().wstring(), ref(console), 0, "");
 
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
 	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex) +
 		";world=" + wstring_to_utf8(world.name));
 	console.AddLog(L("KNOTLINK_HOT_RESTORE_DONE"));
+
+	std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
 	// 发送重进世界的指令
 	BroadcastEvent("event=rejoin_world;world=" + wstring_to_utf8(world.name));

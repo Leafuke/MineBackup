@@ -43,7 +43,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.12.3";
+string CURRENT_VERSION = "1.13.0";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
@@ -1204,7 +1204,7 @@ int main(int argc, char** argv)
 				ImGui::Text("%s", L("ABOUT_LICENSE_TEXT"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
-				if (ImGui::Button(L("BUTTON_OK"), ImVec2(250, 0))) // 缁欐寜閽竴涓浐瀹氬搴︿互鑾峰緱鏇村ソ鐨勮鎰?
+				if (ImGui::Button(L("BUTTON_OK"), ImVec2(250, 0)))
 				{
 					showAboutWindow = false;
 					ImGui::CloseCurrentPopup();
@@ -1325,7 +1325,7 @@ int main(int argc, char** argv)
 				static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
 
 				if (ImGui::BeginCombo("##ConfigSwitcher", current_config_label.c_str())) {
-					// 鏅€氶厤缃?
+					// 普通配置
 					for (auto const& [idx, val] : g_appState.configs) {
 						const bool is_selected = (g_appState.currentConfigIndex == idx);
 						string label = "[No." + to_string(idx) + "] " + val.name;
@@ -1462,11 +1462,8 @@ int main(int argc, char** argv)
 
 				ImGui::SeparatorText(L("WORLD_LIST"));
 
-				// 鏂扮殑鑷畾涔夊崱鐗?
 				//ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // 预留底部按钮空间
 				ImGui::BeginChild("WorldListChild", ImVec2(0, 0), true);
-
-				// selectedWorldIndex 鐨勮涔夌幇鍦ㄦ敼鍙樹簡鈥斺€斿畠鐜板湪鏄?displayWorlds 鐨勭储寮曪紙鑰屼笉鏄?cfg.worlds 鐨勭储寮曪級
 
 
 				for (int i = 0; i < worldCount; ++i) {
