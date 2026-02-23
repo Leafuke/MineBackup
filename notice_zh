@@ -1,8 +1,9 @@
 重要通知
 
-2026.2.12
-Windows 端的开发重心将逐渐转向第二代存档时光机 FolderRewind，
-如果你是 Windows 平台用户，建议您逐渐迁移到 FolderRewind 以获得更好的体验和支持。
+2026.2.23
+从1.4.0版本开始，第二代存档时光机FolderRewind的综合使用体验已经超过MineBackup，且在之后的版本中
+Windows端将优先支持FolderRewind的功能开发和优化，如果您正在使用MineBackup，建议尽快迁移到FolderRewind以获得更好的体验。
+如果您依然选择继续使用MineBackup，也没问题，在可以预见的未来，MineBackup仍将继续维护和更新。
 
-第二代存档时光机可以直接在微软应用商店搜索“存档时光机”下载安装。
+第二代存档时光机可以直接在微软应用商店搜索“存档时光机”下载安装。或者下载离线安装包。
 开源仓库：https://github.com/Leafuke/FolderRewind
