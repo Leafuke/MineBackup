@@ -166,7 +166,7 @@ void TriggerHotkeyBackup(string comment) {
 	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
 }
 
-void TriggerHotkeyRestore() {
+void TriggerHotkeyRestore(const string& backupFile) {
 
 	HotRestoreState expected_idle = HotRestoreState::IDLE;
 	// 使用CAS操作确保线程安全地从IDLE转换到WAITING_FOR_MOD
@@ -213,7 +213,7 @@ void TriggerHotkeyRestore() {
 		g_appState.knotLinkMod.modVersion.c_str());
 
 	// 联动模组就绪，在后台线程中执行热还原
-	thread([world]() {
-		DoHotRestore(world, ref(console), false);
+	thread([world, backupFile]() {
+		DoHotRestore(world, ref(console), false, utf8_to_wstring(backupFile));
 	}).detach();
 }

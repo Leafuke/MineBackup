@@ -1469,7 +1469,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 MyFolder GetOccupiedWorld();
 
-void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
+void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, const std::wstring& backupFile) {
 	
 	Config cfg = world.config;
 	auto& mod = g_appState.knotLinkMod;
@@ -1541,21 +1541,33 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
 	console.AddLog(L("KNOTLINK_HOT_RESTORE_PROCEEDING"));
 
-	// 查找最新备份文件
+	// 查找目标备份文件（指定文件名或最新备份）
 	filesystem::path backupDir = JoinPath(cfg.backupPath, world.name);
-	filesystem::path latestBackup;
-	auto latest_time = filesystem::file_time_type{};
+	filesystem::path targetBackup;
 	bool found = false;
 
-	if (filesystem::exists(backupDir)) {
-		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
-			if (entry.is_regular_file()) {
-				if (entry.last_write_time() > latest_time) {
-					latest_time = entry.last_write_time();
-					latestBackup = entry.path();
-					found = true;
+	if (!backupFile.empty()) {
+		targetBackup = backupDir / backupFile;
+		found = filesystem::exists(targetBackup) && filesystem::is_regular_file(targetBackup);
+	}
+	else {
+		filesystem::path latestBackup;
+	auto latest_time = filesystem::file_time_type{};
+
+		if (filesystem::exists(backupDir)) {
+			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+				if (entry.is_regular_file()) {
+					if (entry.last_write_time() > latest_time) {
+						latest_time = entry.last_write_time();
+						latestBackup = entry.path();
+						found = true;
+					}
 				}
 			}
+		}
+
+		if (found) {
+			targetBackup = latestBackup;
 		}
 	}
 
@@ -1567,9 +1579,9 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup) {
 		return;
 	}
 
-	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(latestBackup.filename().wstring()).c_str());
+	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(targetBackup.filename().wstring()).c_str());
 
-	DoRestore(cfg, world.name, latestBackup.filename().wstring(), ref(console), 0, "");
+	DoRestore(cfg, world.name, targetBackup.filename().wstring(), ref(console), 0, "");
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 

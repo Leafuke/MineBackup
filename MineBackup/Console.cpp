@@ -11,6 +11,7 @@
 using namespace std;
 Console console;
 std::mutex consoleMutex;				// 控制台模式的锁
+MyFolder GetOccupiedWorld();
 
 
 string ProcessCommand(const string& commandStr, Console* console) {
@@ -59,6 +60,27 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		}
 		if (result.back() == ';') result.pop_back();
 		BroadcastEvent("event=list_backups;config=" + to_string(config_idx) + ";world=" + to_string(world_idx) + ";data=" + result);
+		return result;
+	}
+	else if (command == "LIST_BACKUPS_CURRENT") {
+		MyFolder world = GetOccupiedWorld();
+		if (world.path.empty()) {
+			return error_response("No active world found.");
+		}
+
+		filesystem::path backupDir = JoinPath(world.config.backupPath, world.name);
+		string result = "OK:";
+		if (filesystem::exists(backupDir)) {
+			for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+				if (entry.is_regular_file()) {
+					result += wstring_to_utf8(entry.path().filename().wstring()) + ";";
+				}
+			}
+		}
+		if (result.back() == ';') result.pop_back();
+
+		BroadcastEvent("event=list_backups_current;config=" + to_string(world.configIndex) +
+			";world=" + wstring_to_utf8(world.name) + ";data=" + result);
 		return result;
 	}
 	else if (command == "LIST_WORLDS") {
@@ -423,7 +445,28 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		return "OK:Snapshot completed for world '" + worldNameUtf8 + "'";
 	}
 	else if (command == "RESTORE_CURRENT_LATEST") {
-		TriggerHotkeyRestore();
+		lock.unlock();
+		thread([]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			TriggerHotkeyRestore("");
+			}).detach();
+		return "OK:Restore Started";
+	}
+	else if (command == "RESTORE_CURRENT") {
+		string backup_file;
+		getline(ss, backup_file);
+		if (!backup_file.empty() && backup_file.front() == ' ') backup_file.erase(0, 1);
+		if (backup_file.empty()) {
+			BroadcastEvent(L("BROADCAST_MISSING_BACKUP_FILE"));
+			return error_response(L("BROADCAST_MISSING_BACKUP_FILE"));
+		}
+
+		lock.unlock();
+		thread([backup_file]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			TriggerHotkeyRestore(backup_file);
+			}).detach();
+		return "OK:Restore Started";
 	}
 	else if (command == "SEND") {
 

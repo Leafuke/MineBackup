@@ -19,7 +19,7 @@ void RemoveTrayIcon();
 void RegisterHotkeys(int hotkeyId, int key);
 void UnregisterHotkeys(int hotkeyId);
 void TriggerHotkeyBackup(std::string comment = "Hotkey");
-void TriggerHotkeyRestore();
+void TriggerHotkeyRestore(const std::string& backupFile = "");
 void GetUserDefaultUILanguageWin();
 std::string GetRegistryValue(const std::string& key, const std::string& valueName);
 // iconType: 0 info, 1 warning, 2 error (matching Windows signature)

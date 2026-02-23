@@ -21,7 +21,7 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir);
 void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance);
 void RemoveTrayIcon();
 void TriggerHotkeyBackup(std::string comment = "Hotkey");
-void TriggerHotkeyRestore();
+void TriggerHotkeyRestore(const std::string& backupFile = "");
 void GetUserDefaultUILanguageWin();
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType);
 HWND CreateHiddenWindow(HINSTANCE hInstance);
