@@ -1,7 +1,10 @@
 IMPORTANT NOTICE
 
-2026.2.12
-The development focus for the Windows version will gradually shift towards the second-generation achieve time machine, FolderRewind. If you are a Windows user, it is recommended that you gradually migrate to FolderRewind for a better experience and support.
+2026.2.23
 
-The second-generation achieve time machine can be directly downloaded from the Microsoft Store by searching for "FolderRewind".
-Repository: https://github.com/Leafuke/FolderRewind
+Starting from version 1.4.0, the overall user experience of the second-generation archive time machine FolderRewind has surpassed MineBackup. In future versions, Windows will prioritize the development and optimization of FolderRewind's features. 
+If you are currently using MineBackup, it is recommended to migrate to FolderRewind as soon as possible for a better experience. 
+If you choose to continue using MineBackup, that's fine too. MineBackup will continue to be maintained and updated in the foreseeable future.
+
+The second-generation archive time machine can be directly downloaded from the Microsoft Store by searching for "FolderRewind" or by downloading the offline installer package.
+Open source repository: https://github.com/Leafuke/FolderRewind

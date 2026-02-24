@@ -1,19 +1,19 @@
-name: Build & Upload MineBackup (Linux)
+name: Build & Upload MineBackup (macOS)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
+  build-macos:
+    runs-on: macos-latest
     steps:
     - name: Checkout source
       uses: actions/checkout@v3
 
     - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake pkg-config libglfw3-dev libgl1-mesa-dev p7zip-full
+        brew update
+        brew install glfw
 
     - name: Configure CMake
       run: cmake -DCMAKE_BUILD_TYPE=Release .
@@ -27,9 +27,10 @@ jobs:
         cp ./bin/MineBackup release-package/
         find ./MineBackup/Assets -maxdepth 1 -type f \( -name "*.ttf" -o -name "*.otf" \) -exec cp {} release-package/Assets/ \;
 
-    - name: 7z Compress Executable + Fonts
+    - name: Zip executable + fonts
       run: |
-        7z a MineBackup-linux.7z ./release-package/*
+        cd release-package
+        zip -r ../MineBackup-macos.zip .
 
     - name: Get latest release
       id: get_release
@@ -51,7 +52,7 @@ jobs:
       with:
         script: |
           const releaseId = Number('${{ steps.get_release.outputs.release_id }}');
-          const assetName = 'MineBackup-linux.7z';
+          const assetName = 'MineBackup-macos.zip';
           const assets = await github.rest.repos.listReleaseAssets({
             owner: context.repo.owner,
             repo: context.repo.repo,
@@ -76,6 +77,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: ./MineBackup-linux.7z
-        asset_name: MineBackup-linux.7z
-        asset_content_type: application/x-7z-compressed
+        asset_path: ./MineBackup-macos.zip
+        asset_name: MineBackup-macos.zip
+        asset_content_type: application/zip

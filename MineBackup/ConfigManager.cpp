@@ -88,6 +88,7 @@ extern bool g_enableKnotLink;
 extern bool g_CheckForUpdates;
 extern bool g_ReceiveNotices;
 extern bool g_StopAutoBackupOnExit;
+extern bool g_SilentStartupToTray;
 extern bool isSilence;
 extern bool isSafeDelete;
 extern bool g_AutoScanForWorlds;
@@ -328,6 +329,9 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"StopAutoBackupOnExit") {
 					g_StopAutoBackupOnExit = (val != L"0");
 				}
+				else if (key == L"SilentStartupToTray") {
+					g_SilentStartupToTray = (val != L"0");
+				}
 				else if (key == L"RestoreWhitelistItem") {
 					restoreWhiteList = true;
 					restoreWhitelist.push_back(val);
@@ -407,6 +411,7 @@ void SaveConfigs(const wstring& filename) {
 	buffer << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
 	buffer << L"AutoBackupInterval=" << last_interval << L"\n";
 	buffer << L"StopAutoBackupOnExit=" << (g_StopAutoBackupOnExit ? 1 : 0) << L"\n";
+	buffer << L"SilentStartupToTray=" << (g_SilentStartupToTray ? 1 : 0) << L"\n";
 	buffer << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
 	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
 	buffer << L"WindowHeight=" << g_windowHeight << L"\n";

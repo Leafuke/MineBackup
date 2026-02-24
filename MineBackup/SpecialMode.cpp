@@ -19,6 +19,7 @@
 
 #ifdef _WIN32
 #include <conio.h>
+inline int _getch_special() { return _getch(); }
 #else
 #include <cstdio>
 #include <unistd.h>
@@ -344,7 +345,7 @@ void RunSpecialMode(int configId) {
 	// --- 3. 用户输入主循环（如果控制台可见）---
 	while (!shouldExit) {
 		if (!spCfg.hideWindow && _kbhit()) {
-			char c = tolower(_getch());
+			char c = tolower(_getch_special());
 			if (c == 'q') {
 				g_stopExitWatcher = true;
 				if (g_exitWatcherThread.joinable()) {

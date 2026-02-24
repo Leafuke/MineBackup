@@ -43,7 +43,7 @@ GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.13.0";
+string CURRENT_VERSION = "1.13.1";
 atomic<bool> g_UpdateCheckDone(false);
 atomic<bool> g_NewVersionAvailable(false);
 atomic<bool> g_NoticeCheckDone(false);
@@ -65,6 +65,7 @@ bool showSettings = false;
 bool isSilence = false, isSafeDelete = true;
 bool specialSetting = false;
 bool g_CheckForUpdates = true, g_ReceiveNotices = true, g_StopAutoBackupOnExit = false, g_RunOnStartup = false, g_AutoScanForWorlds = false, g_autoLogEnabled = true;
+bool g_SilentStartupToTray = false;
 bool showHistoryWindow = false;
 bool g_enableKnotLink = true;
 int g_hotKeyBackupId = 'S', g_hotKeyRestoreId = 'Z';
@@ -273,6 +274,12 @@ void ConsoleLog(Console* console, const char* format, ...);
 #ifdef _WIN32
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
+	bool launchSilentStartup = false;
+	if (lpCmdLine) {
+		string cmdLine(lpCmdLine);
+		launchSilentStartup = (cmdLine.find("--silent-startup") != string::npos) || (cmdLine.find("-silentstartup") != string::npos);
+	}
+
 	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
 	wchar_t exePath[MAX_PATH];
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
@@ -295,6 +302,16 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 #else
 int main(int argc, char** argv)
 {
+	bool launchSilentStartup = false;
+	for (int i = 1; i < argc; ++i) {
+		if (!argv[i]) continue;
+		string arg = argv[i];
+		if (arg == "--silent-startup" || arg == "-silentstartup") {
+			launchSilentStartup = true;
+			break;
+		}
+	}
+
 	#ifdef __APPLE__
 	SetWorkingDirectoryToExecutable();
 	#endif
@@ -437,10 +454,14 @@ int main(int argc, char** argv)
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists("config.ini");
 	static bool showConfigWizard = isFirstRun;
-	g_appState.showMainApp = !isFirstRun;
+	const bool shouldStartHiddenToTray = launchSilentStartup && !isFirstRun;
+	g_appState.showMainApp = !isFirstRun && !shouldStartHiddenToTray;
 	if (isFirstRun) {
 		g_windowWidth *= main_scale, g_windowHeight *= main_scale;
 		g_uiScale = main_scale;
+	}
+	if (shouldStartHiddenToTray) {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 	}
 
 #ifndef _WIN32
@@ -886,9 +907,20 @@ int main(int argc, char** argv)
 					if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup)) {
 						wchar_t selfPath[MAX_PATH];
 						GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup);
+						if (!g_RunOnStartup) {
+							g_SilentStartupToTray = false;
+						}
+						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup, g_SilentStartupToTray);
 					}
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
+					ImGui::BeginDisabled(!g_RunOnStartup);
+					if (ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray)) {
+						wchar_t selfPath[MAX_PATH];
+						GetModuleFileNameW(NULL, selfPath, MAX_PATH);
+						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup, g_SilentStartupToTray);
+					}
+					ImGui::EndDisabled();
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
 					ImGui::Checkbox(L("BUTTON_AUTO_LOG"), &g_autoLogEnabled);
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));

@@ -43,9 +43,12 @@ struct Console
 		Commands.push_back("BACKUP");
 		Commands.push_back("BACKUP_MODS");
 		Commands.push_back("RESTORE");
+		Commands.push_back("RESTORE_CURRENT");
+		Commands.push_back("RESTORE_CURRENT_LATEST");
 		Commands.push_back("SET_CONFIG");
 		Commands.push_back("GET_CONFIG");
 		Commands.push_back("LIST_BACKUPS");
+		Commands.push_back("LIST_BACKUPS_CURRENT");
 		Commands.push_back("LIST_WORLDS");
 		Commands.push_back("LIST_CONFIGS");
 		AutoScroll = true;                  //自动滚动好呀
