@@ -84,6 +84,7 @@ extern bool g_CheckForUpdates;
 extern bool g_ReceiveNotices;
 extern bool g_StopAutoBackupOnExit;
 extern bool g_RunOnStartup;
+extern bool g_SilentStartupToTray;
 extern bool g_AutoScanForWorlds;
 extern bool g_autoLogEnabled;
 extern bool g_enableKnotLink;
@@ -1117,7 +1118,7 @@ static void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
             if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
                 wchar_t selfPath[MAX_PATH];
                 GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-                SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, true, g_appState.currentConfigIndex, spCfg.runOnStartup);
+                SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, true, g_appState.currentConfigIndex, spCfg.runOnStartup, g_SilentStartupToTray);
             }
             #endif
             

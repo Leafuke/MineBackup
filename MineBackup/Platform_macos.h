@@ -27,7 +27,7 @@ void OpenLinkInBrowser(const std::wstring& url);
 void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);
 void ReStartApplication();
-void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable);
+void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray = false);
 void SetFileAttributesWin(const std::wstring& path, bool isHidden);
 void EnableDarkModeWin(bool enable);
 bool Extract7zToTempFile(std::wstring& extractedPath);

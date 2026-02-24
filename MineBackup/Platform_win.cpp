@@ -539,7 +539,7 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 }
 
 // configType: 1 特殊配置
-void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable) {
+void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray) {
 	HKEY hKey;
 	const wstring keyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
@@ -553,6 +553,8 @@ void SetAutoStart(const string& appName, const wstring& appPath, bool configType
 				command = L"\"" + appPath + L"\" -specialcfg " + to_wstring(configId);
 			else // 普通配置
 				command = L"\"" + appPath + L"\" -cfg " + to_wstring(configId);
+			if (silentStartupToTray)
+				command += L" --silent-startup";
 
 			// RegSetValueExW 需要6个参数: HKEY, LPCWSTR, DWORD, DWORD, const BYTE*, DWORD
 			RegSetValueExW(

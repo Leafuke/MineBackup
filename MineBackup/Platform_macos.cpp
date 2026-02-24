@@ -347,7 +347,7 @@ void ReStartApplication() {
     }
 }
 
-void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable) {
+void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray) {
 }
 
 void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
