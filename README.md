@@ -54,27 +54,16 @@
 - Hit **Alt + Ctrl + S** while playing:  
   Detects the currently active world → broadcasts a save request → runs a hot backup in the background.
 
-### 🕒 Auto Exit Backups
-- With *DetectOnExit* enabled, MineBackup checks every 10 seconds for changes to `level.dat`.
-- When it sees the file go from “in use” to “released,” it automatically performs a hot backup.
+### 📌 Hotkey Restore
+- **Alt + Ctrl + Z**: Instantly restore your currently active world to the last backup! Requires integration with the MineBackup-Mod.
 
 ### 📡 KnotLink Messaging
 MineBackup can send and receive simple text events to coordinate with other apps or mods. View [MineBackup](https://modrinth.com/mod/minebackup) as an example mod for detail.
 
 - **Supported Commands:**
-```
 
-BACKUP \<config\_idx> \<world\_idx> \[comment]
-RESTORE \<config\_idx>
-LIST\_WORLDS \<config\_idx>
-LIST\_CONFIGS
-SET\_CONFIG \<config\_idx> <key> <value>
 
-````
-*key*: `backup_mode` / `hot_backup`  
-*value*: `1/2/3` or `0/1`
-
-> 🔍 See [Developer & Advanced User Guide](#-developer--advanced-user-guide) for full protocol details.
+See [Developer & Advanced User Guide](https://folderrewind.top/docs/plugins/knotlink) for full protocol details.
 
 ---
 
@@ -92,7 +81,6 @@ SET\_CONFIG \<config\_idx> <key> <value>
 git clone https://github.com/Leafuke/MineBackup.git
 cd MineBackup
 
-# Make sure the ImGui source is included
 ````
 
 ---
@@ -101,25 +89,7 @@ cd MineBackup
 
 * **Report bugs / request features:** [GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
 * **Help translate:** Edit [`i18n.h`](MineBackup/i18n.cpp) and submit a pull request.
-* **Improve docs:** PRs welcome — examples, screenshots, and tips appreciated.
-
----
-
-## 📚 Developer & Advanced User Guide
-
-### KnotLink Quick Reference
-
-| Command       | Description                              |
-| ------------- | ---------------------------------------- |
-| BACKUP        | Immediately back up a given config/world |
-| RESTORE       | Restore a given config                   |
-| LIST_WORLDS  | List all worlds under a config           |
-| LIST_CONFIGS | List all configs                         |
-
-
-**APPID:** `0x00000020`
-**socket ID:** `0x00000010`
-**signal ID:** `0x00000020`
+* **Improve docs:** Visit the [official documentation](https://folderrewind.top) to submit suggestions for improvement. This is the official website for the second-generation FolderRewind, and it will also add documentation support for the first-generation MineBackup in the future.
 
 ---
 
@@ -136,7 +106,7 @@ cd MineBackup
 
 ## 📜 Note
 
-The next generation of MineBackup has been realesed as [FolderRewind](https://github.com/Leafuke/FolderRewind). It features better versatility and a modern UI. Features are being actively developed there.
+The next generation of MineBackup has been realesed as [FolderRewind](https://github.com/Leafuke/FolderRewind). It features better versatility and a modern UI. For Windows users, FR is now a competitive alternative to MineBackup.
 
 ---
 

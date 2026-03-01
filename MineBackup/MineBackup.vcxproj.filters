@@ -93,6 +93,15 @@
     <ClCompile Include="TaskSystem.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="HistoryUI.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="SpecialMode.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="WizardUI.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="i18n.h">
@@ -180,6 +189,21 @@
       <Filter>imgui</Filter>
     </ClInclude>
     <ClInclude Include="TaskSystem.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="DataModels.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Globals.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="MainUI.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="PlatformCompat.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="UIHelpers.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
