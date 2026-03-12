@@ -32,7 +32,6 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	static std::wstring sel_world, sel_file;   // 当前选中条目的键
 	static std::wstring del_world, del_file;   // 待删除条目的键
 	static ImGuiTextFilter filter;
-	static char rename_buf[MAX_PATH];
 	static char comment_buf[512];
 	static string original_comment;
 	static bool is_comment_editing = false;
@@ -307,11 +306,6 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::EndPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(L("HISTORY_BUTTON_RENAME"))) {
-			strncpy_s(rename_buf, wstring_to_utf8(selected_entry->backupFile).c_str(), sizeof(rename_buf));
-			ImGui::OpenPopup(L("HISTORY_RENAME_POPUP_TITLE"));
-		}
-		ImGui::SameLine();
 		if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"))) {
 			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
 			ShellExecuteW(NULL, L"open", L"explorer.exe", cmd.c_str(), NULL, SW_SHOWNORMAL);
@@ -343,36 +337,6 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::OpenPopup(L("HISTORY_DELETE_POPUP_TITLE"));
 		}
 		ImGui::PopStyleColor(2);
-
-
-		// --- 重命名弹窗 ---
-		if (ImGui::BeginPopupModal(L("HISTORY_RENAME_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-			ImGui::TextUnformatted(L("HISTORY_RENAME_POPUP_MSG"));
-			ImGui::InputText("##renameedit", rename_buf, sizeof(rename_buf));
-			ImGui::Separator();
-			float renameBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
-			if (ImGui::Button(L("BUTTON_OK"), ImVec2(renameBtnWidth, 0))) {
-				filesystem::path old_path = backup_path;
-				filesystem::path new_path = old_path.parent_path() / utf8_to_wstring(rename_buf);
-				if (old_path != new_path && filesystem::exists(old_path)) {
-					error_code ec;
-					auto last_write = filesystem::last_write_time(old_path, ec);
-					if (!ec) {
-						filesystem::rename(old_path, new_path, ec);
-						if (!ec) {
-							filesystem::last_write_time(new_path, last_write, ec); // 恢复修改时间
-							selected_entry->backupFile = new_path.filename().wstring();
-							sel_file = selected_entry->backupFile;
-							SaveHistory();
-						}
-					}
-				}
-				ImGui::CloseCurrentPopup();
-			}
-			ImGui::SameLine();
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(renameBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
-			ImGui::EndPopup();
-		}
 
 		// --- 删除确认弹窗 ---
 		if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {

@@ -9,9 +9,11 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 #include <mutex>
 #include <unordered_map>
 #include <cwctype>
+#include <set>
 using namespace std;
 
 enum class FolderState {
@@ -129,7 +131,7 @@ private:
 };
 
 wstring SanitizeFileName(const wstring& input);
-vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath, const filesystem::path& backupPath, BackupCheckResult& out_result, map<wstring, size_t>& out_currentState);
+vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath, const filesystem::path& backupPath, BackupCheckResult& out_result, map<wstring, BackupFileState>& out_currentState, BackupChangeSet& out_changeSet);
 bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
 bool IsFileLocked(const wstring& path);
 
@@ -139,6 +141,533 @@ extern bool isSafeDelete;
 
 
 wstring GetDocumentsPath();
+
+namespace {
+	constexpr const wchar_t* kDeletedOnlyMarkerDir = L"__MineBackup_Internal";
+	constexpr const wchar_t* kDeletedOnlyMarkerFile = L"__DeletedOnly.marker";
+
+	struct BackupMetadataRecordIndex {
+		wstring archiveFileName;
+		wstring backupType;
+		wstring basedOnFullBackup;
+		wstring previousBackupFileName;
+		wstring createdAtUtc;
+	};
+
+	struct BackupMetadataSummary {
+		int version = 2;
+		wstring lastBackupFileName;
+		wstring basedOnFullBackup;
+		map<wstring, BackupFileState> fileStates;
+		vector<BackupMetadataRecordIndex> records;
+	};
+
+	struct BackupChangeRecord {
+		wstring archiveFileName;
+		wstring backupType;
+		wstring basedOnFullBackup;
+		wstring previousBackupFileName;
+		wstring createdAtUtc;
+		vector<wstring> addedFiles;
+		vector<wstring> modifiedFiles;
+		vector<wstring> deletedFiles;
+		vector<wstring> fullFileList;
+	};
+
+	enum class RestoreChainStatus {
+		OK,
+		METADATA_UNAVAILABLE,
+		MISSING_BASE_FULL,
+		INVALID
+	};
+
+	struct RestoreChainResult {
+		RestoreChainStatus status = RestoreChainStatus::INVALID;
+		vector<filesystem::path> chain;
+		bool usedMetadata = false;
+	};
+
+	struct SmartRestoreArchiveGroup {
+		filesystem::path archive;
+		vector<wstring> files;
+	};
+
+	struct SmartRestorePlan {
+		vector<filesystem::path> chain;
+		vector<SmartRestoreArchiveGroup> archiveGroups;
+	};
+
+	static wstring GetMetadataRecordFileName(const wstring& backupFileName) {
+		return backupFileName + L".json";
+	}
+
+	static filesystem::path GetMetadataRecordPath(const filesystem::path& metadataDir, const wstring& backupFileName) {
+		return metadataDir / GetMetadataRecordFileName(backupFileName);
+	}
+
+	static filesystem::path GetMetadataDirectory(const Config& config, const wstring& worldName) {
+		filesystem::path metadataFolder = JoinPath(config.backupPath, L"_metadata");
+		metadataFolder /= worldName;
+		return metadataFolder;
+	}
+
+	static string MakeUtcTimestampString() {
+		auto now = chrono::system_clock::now();
+		time_t nowTime = chrono::system_clock::to_time_t(now);
+		tm utcTime{};
+#ifdef _WIN32
+		gmtime_s(&utcTime, &nowTime);
+#else
+		gmtime_r(&nowTime, &utcTime);
+#endif
+		char buf[32];
+		strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &utcTime);
+		return buf;
+	}
+
+	static bool IsIncrementalBackupType(const wstring& typeOrFileName) {
+		return _wcsicmp(typeOrFileName.c_str(), L"Smart") == 0
+			|| typeOrFileName.find(L"[Smart]") != wstring::npos;
+	}
+
+	static bool IsFullLikeBackupType(const wstring& typeOrFileName) {
+		return _wcsicmp(typeOrFileName.c_str(), L"Full") == 0
+			|| _wcsicmp(typeOrFileName.c_str(), L"Overwrite") == 0
+			|| typeOrFileName.find(L"[Full]") != wstring::npos;
+	}
+
+	static nlohmann::json SerializeFileState(const BackupFileState& state) {
+		nlohmann::json item;
+		item["size"] = state.size;
+		item["lastWriteTimeTicks"] = state.lastWriteTimeTicks;
+		return item;
+	}
+
+	static bool TryDeserializeFileState(const nlohmann::json& item, BackupFileState& outState) {
+		if (!item.is_object()) return false;
+		outState.size = item.value("size", static_cast<uintmax_t>(0));
+		outState.lastWriteTimeTicks = item.value("lastWriteTimeTicks", static_cast<long long>(0));
+		return true;
+	}
+
+	static bool LoadBackupMetadataSummary(const filesystem::path& metadataDir, BackupMetadataSummary& outSummary) {
+		filesystem::path metadataFile = metadataDir / L"metadata.json";
+		if (!filesystem::exists(metadataFile)) return false;
+
+		try {
+			ifstream in(metadataFile, ios::binary);
+			if (!in.is_open()) return false;
+
+			nlohmann::json root = nlohmann::json::parse(in);
+			outSummary = BackupMetadataSummary{};
+			outSummary.version = root.value("version", 2);
+			outSummary.lastBackupFileName = utf8_to_wstring(root.value("lastBackupFileName", string{}));
+			if (outSummary.lastBackupFileName.empty()) {
+				outSummary.lastBackupFileName = utf8_to_wstring(root.value("lastBackupFile", string{}));
+			}
+			outSummary.basedOnFullBackup = utf8_to_wstring(root.value("basedOnFullBackup", string{}));
+			if (outSummary.basedOnFullBackup.empty()) {
+				outSummary.basedOnFullBackup = utf8_to_wstring(root.value("basedOnBackupFile", string{}));
+			}
+
+			if (!root.contains("fileStates") || !root.at("fileStates").is_object()) {
+				return false;
+			}
+			for (auto& [key, value] : root.at("fileStates").items()) {
+				BackupFileState state;
+				if (!TryDeserializeFileState(value, state)) {
+					return false;
+				}
+				outSummary.fileStates.emplace(utf8_to_wstring(key), state);
+			}
+
+			if (root.contains("records") && root.at("records").is_array()) {
+				for (const auto& recordJson : root.at("records")) {
+					if (!recordJson.is_object()) continue;
+					BackupMetadataRecordIndex record;
+					record.archiveFileName = utf8_to_wstring(recordJson.value("archiveFileName", string{}));
+					record.backupType = utf8_to_wstring(recordJson.value("backupType", string{}));
+					record.basedOnFullBackup = utf8_to_wstring(recordJson.value("basedOnFullBackup", string{}));
+					record.previousBackupFileName = utf8_to_wstring(recordJson.value("previousBackupFileName", string{}));
+					record.createdAtUtc = utf8_to_wstring(recordJson.value("createdAtUtc", string{}));
+					if (!record.archiveFileName.empty()) {
+						outSummary.records.push_back(std::move(record));
+					}
+				}
+			}
+
+			return true;
+		}
+		catch (...) {
+			return false;
+		}
+	}
+
+	static bool LoadBackupChangeRecord(const filesystem::path& metadataDir, const wstring& archiveFileName, BackupChangeRecord& outRecord) {
+		filesystem::path recordPath = GetMetadataRecordPath(metadataDir, archiveFileName);
+		if (!filesystem::exists(recordPath)) return false;
+
+		try {
+			ifstream in(recordPath, ios::binary);
+			if (!in.is_open()) return false;
+
+			nlohmann::json root = nlohmann::json::parse(in);
+			outRecord = BackupChangeRecord{};
+			outRecord.archiveFileName = utf8_to_wstring(root.value("archiveFileName", string{}));
+			outRecord.backupType = utf8_to_wstring(root.value("backupType", string{}));
+			outRecord.basedOnFullBackup = utf8_to_wstring(root.value("basedOnFullBackup", string{}));
+			outRecord.previousBackupFileName = utf8_to_wstring(root.value("previousBackupFileName", string{}));
+			outRecord.createdAtUtc = utf8_to_wstring(root.value("createdAtUtc", string{}));
+
+			auto loadStringArray = [](const nlohmann::json& parent, const char* key, vector<wstring>& out) {
+				out.clear();
+				if (!parent.contains(key) || !parent.at(key).is_array()) return;
+				for (const auto& item : parent.at(key)) {
+					if (item.is_string()) out.push_back(utf8_to_wstring(item.get<string>()));
+				}
+				sort(out.begin(), out.end());
+			};
+
+			loadStringArray(root, "addedFiles", outRecord.addedFiles);
+			loadStringArray(root, "modifiedFiles", outRecord.modifiedFiles);
+			loadStringArray(root, "deletedFiles", outRecord.deletedFiles);
+			loadStringArray(root, "fullFileList", outRecord.fullFileList);
+			if (outRecord.archiveFileName.empty()) {
+				outRecord.archiveFileName = archiveFileName;
+			}
+			return true;
+		}
+		catch (...) {
+			return false;
+		}
+	}
+
+	static void SaveBackupChangeRecord(const filesystem::path& metadataDir, const BackupChangeRecord& record) {
+		filesystem::create_directories(metadataDir);
+		nlohmann::json root;
+		root["archiveFileName"] = wstring_to_utf8(record.archiveFileName);
+		root["backupType"] = wstring_to_utf8(record.backupType);
+		root["basedOnFullBackup"] = wstring_to_utf8(record.basedOnFullBackup);
+		root["previousBackupFileName"] = wstring_to_utf8(record.previousBackupFileName);
+		root["createdAtUtc"] = wstring_to_utf8(record.createdAtUtc);
+
+		auto writeStringArray = [](nlohmann::json& parent, const char* key, const vector<wstring>& values) {
+			nlohmann::json arr = nlohmann::json::array();
+			for (const auto& value : values) {
+				arr.push_back(wstring_to_utf8(value));
+			}
+			parent[key] = std::move(arr);
+		};
+
+		writeStringArray(root, "addedFiles", record.addedFiles);
+		writeStringArray(root, "modifiedFiles", record.modifiedFiles);
+		writeStringArray(root, "deletedFiles", record.deletedFiles);
+		writeStringArray(root, "fullFileList", record.fullFileList);
+
+		ofstream out(GetMetadataRecordPath(metadataDir, record.archiveFileName), ios::binary | ios::trunc);
+		out << root.dump(2);
+	}
+
+	static void SaveBackupMetadataSummary(const filesystem::path& metadataDir, const BackupMetadataSummary& summary) {
+		filesystem::create_directories(metadataDir);
+		nlohmann::json root;
+		root["version"] = summary.version;
+		root["lastBackupFileName"] = wstring_to_utf8(summary.lastBackupFileName);
+		root["basedOnFullBackup"] = wstring_to_utf8(summary.basedOnFullBackup);
+
+		nlohmann::json fileStates = nlohmann::json::object();
+		for (const auto& pair : summary.fileStates) {
+			fileStates[wstring_to_utf8(pair.first)] = SerializeFileState(pair.second);
+		}
+		root["fileStates"] = std::move(fileStates);
+
+		nlohmann::json records = nlohmann::json::array();
+		for (const auto& record : summary.records) {
+			nlohmann::json recordJson;
+			recordJson["archiveFileName"] = wstring_to_utf8(record.archiveFileName);
+			recordJson["backupType"] = wstring_to_utf8(record.backupType);
+			recordJson["basedOnFullBackup"] = wstring_to_utf8(record.basedOnFullBackup);
+			recordJson["previousBackupFileName"] = wstring_to_utf8(record.previousBackupFileName);
+			recordJson["createdAtUtc"] = wstring_to_utf8(record.createdAtUtc);
+			records.push_back(std::move(recordJson));
+		}
+		root["records"] = std::move(records);
+
+		ofstream out(metadataDir / L"metadata.json", ios::binary | ios::trunc);
+		out << root.dump(2);
+	}
+
+	static void UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
+		BackupMetadataSummary summary;
+		LoadBackupMetadataSummary(metadataDir, summary);
+
+		const wstring previousLastBackupFile = summary.lastBackupFileName;
+		const wstring normalizedBase = IsIncrementalBackupType(backupType)
+			? (baseBackupFile.empty() ? currentBackupFile : baseBackupFile)
+			: currentBackupFile;
+
+		BackupChangeRecord record;
+		record.archiveFileName = currentBackupFile;
+		record.backupType = backupType;
+		record.basedOnFullBackup = normalizedBase;
+		record.previousBackupFileName = IsIncrementalBackupType(backupType) ? previousLastBackupFile : L"";
+		record.createdAtUtc = utf8_to_wstring(MakeUtcTimestampString());
+		record.addedFiles = changeSet.addedFiles;
+		record.modifiedFiles = changeSet.modifiedFiles;
+		record.deletedFiles = changeSet.deletedFiles;
+		for (const auto& pair : currentState) {
+			record.fullFileList.push_back(pair.first);
+		}
+		sort(record.fullFileList.begin(), record.fullFileList.end());
+		SaveBackupChangeRecord(metadataDir, record);
+
+		summary.version = 2;
+		summary.lastBackupFileName = currentBackupFile;
+		summary.basedOnFullBackup = normalizedBase;
+		summary.fileStates = currentState;
+		summary.records.erase(
+			remove_if(summary.records.begin(), summary.records.end(), [&](const BackupMetadataRecordIndex& item) {
+				return _wcsicmp(item.archiveFileName.c_str(), currentBackupFile.c_str()) == 0;
+			}),
+			summary.records.end()
+		);
+
+		BackupMetadataRecordIndex indexRecord;
+		indexRecord.archiveFileName = currentBackupFile;
+		indexRecord.backupType = backupType;
+		indexRecord.basedOnFullBackup = normalizedBase;
+		indexRecord.previousBackupFileName = record.previousBackupFileName;
+		indexRecord.createdAtUtc = record.createdAtUtc;
+		summary.records.push_back(std::move(indexRecord));
+		sort(summary.records.begin(), summary.records.end(), [](const BackupMetadataRecordIndex& a, const BackupMetadataRecordIndex& b) {
+			if (a.createdAtUtc != b.createdAtUtc) return a.createdAtUtc < b.createdAtUtc;
+			return a.archiveFileName < b.archiveFileName;
+		});
+
+		SaveBackupMetadataSummary(metadataDir, summary);
+	}
+
+	static void InvalidateBackupMetadata(const Config& config, const wstring& worldName, const wstring& deletedBackupFile, const wstring& renamedOldFile = L"", const wstring& renamedNewFile = L"") {
+		filesystem::path metadataDir = GetMetadataDirectory(config, worldName);
+		error_code ec;
+		if (!deletedBackupFile.empty()) {
+			filesystem::remove(GetMetadataRecordPath(metadataDir, deletedBackupFile), ec);
+		}
+		if (!renamedOldFile.empty() && !renamedNewFile.empty()) {
+			filesystem::path oldRecord = GetMetadataRecordPath(metadataDir, renamedOldFile);
+			filesystem::path newRecord = GetMetadataRecordPath(metadataDir, renamedNewFile);
+			filesystem::rename(oldRecord, newRecord, ec);
+		}
+		filesystem::remove(metadataDir / L"metadata.json", ec);
+	}
+
+	static void ClearReadonlyAttributesRecursively(const filesystem::path& dir) {
+		error_code ec;
+		if (!filesystem::exists(dir, ec) || ec) return;
+		for (const auto& entry : filesystem::recursive_directory_iterator(dir, filesystem::directory_options::skip_permission_denied, ec)) {
+			if (ec) break;
+			filesystem::permissions(entry.path(), filesystem::perms::owner_all, filesystem::perm_options::add, ec);
+		}
+		filesystem::permissions(dir, filesystem::perms::owner_all, filesystem::perm_options::add, ec);
+	}
+
+	static filesystem::path CreateSafeRestoreTempDirectoryPath(const filesystem::path& targetDir) {
+		filesystem::path normalized = targetDir.lexically_normal();
+		filesystem::path parent = normalized.parent_path();
+		if (parent.empty()) {
+			throw runtime_error("Restore target has no parent directory.");
+		}
+
+		filesystem::path base = parent / (normalized.filename().wstring() + L"-Temp");
+		filesystem::path candidate = base;
+		int suffix = 1;
+		error_code ec;
+		while (filesystem::exists(candidate, ec)) {
+			candidate = filesystem::path(base.wstring() + L"-" + to_wstring(suffix++));
+		}
+		return candidate;
+	}
+
+	static bool TryPrepareSafeRestoreWorkspace(const filesystem::path& targetDir, filesystem::path& tempDir, string& errorMessage) {
+		tempDir.clear();
+		errorMessage.clear();
+		try {
+			error_code ec;
+			if (!filesystem::exists(targetDir, ec) || ec) {
+				filesystem::create_directories(targetDir);
+				return true;
+			}
+
+			tempDir = CreateSafeRestoreTempDirectoryPath(targetDir);
+			filesystem::rename(targetDir, tempDir);
+			filesystem::create_directories(targetDir);
+			return true;
+		}
+		catch (const exception& ex) {
+			errorMessage = ex.what();
+			return false;
+		}
+	}
+
+	static bool IsInRestoreWhitelist(const filesystem::path& entryPath, const filesystem::path& rootDir, const vector<wstring>& whitelist) {
+		wstring entryName = entryPath.filename().wstring();
+		wstring entryPathLower = entryPath.wstring();
+		transform(entryPathLower.begin(), entryPathLower.end(), entryPathLower.begin(), ::towlower);
+
+		wstring relativePathLower;
+		error_code ec;
+		filesystem::path relativePath = filesystem::relative(entryPath, rootDir, ec);
+		if (!ec) {
+			relativePathLower = relativePath.wstring();
+			transform(relativePathLower.begin(), relativePathLower.end(), relativePathLower.begin(), ::towlower);
+		}
+
+		for (const auto& ruleOrig : whitelist) {
+			if (ruleOrig.empty()) continue;
+			wstring rule = ruleOrig;
+			transform(rule.begin(), rule.end(), rule.begin(), ::towlower);
+
+			if (!entryName.empty()) {
+				wstring entryNameLower = entryName;
+				transform(entryNameLower.begin(), entryNameLower.end(), entryNameLower.begin(), ::towlower);
+				if (entryNameLower == rule) {
+					return true;
+				}
+			}
+
+			if (entryPathLower.find(rule) != wstring::npos) return true;
+			if (!relativePathLower.empty() && relativePathLower.find(rule) != wstring::npos) return true;
+		}
+		return false;
+	}
+
+	static bool IsPathOrAncestorInRestoreWhitelist(const filesystem::path& entryPath, const filesystem::path& rootDir, const vector<wstring>& whitelist) {
+		if (IsInRestoreWhitelist(entryPath, rootDir, whitelist)) {
+			return true;
+		}
+
+		error_code ec;
+		filesystem::path rootFull = filesystem::absolute(rootDir, ec).lexically_normal();
+		filesystem::path current = filesystem::is_directory(entryPath, ec) ? entryPath : entryPath.parent_path();
+		while (!current.empty()) {
+			filesystem::path currentFull = filesystem::absolute(current, ec).lexically_normal();
+			if (currentFull == rootFull) {
+				break;
+			}
+			if (IsInRestoreWhitelist(currentFull, rootDir, whitelist)) {
+				return true;
+			}
+			current = currentFull.parent_path();
+		}
+		return false;
+	}
+
+	static void CleanupInternalRestoreMarkers(const filesystem::path& targetDir) {
+		error_code ec;
+		filesystem::path internalDir = targetDir / kDeletedOnlyMarkerDir;
+		if (filesystem::exists(internalDir, ec) && !ec) {
+			ClearReadonlyAttributesRecursively(internalDir);
+			filesystem::remove_all(internalDir, ec);
+		}
+	}
+
+	static void CopyRestoreWhitelistEntries(const filesystem::path& sourceDir, const filesystem::path& targetDir, const vector<wstring>& whitelist) {
+		if (whitelist.empty()) return;
+		error_code ec;
+		if (!filesystem::exists(sourceDir, ec) || ec) return;
+
+		for (const auto& dirEntry : filesystem::recursive_directory_iterator(sourceDir, filesystem::directory_options::skip_permission_denied, ec)) {
+			if (ec) break;
+			if (!dirEntry.is_directory()) continue;
+			if (!IsPathOrAncestorInRestoreWhitelist(dirEntry.path(), sourceDir, whitelist)) continue;
+
+			filesystem::path relPath = filesystem::relative(dirEntry.path(), sourceDir, ec);
+			if (ec) continue;
+			filesystem::create_directories(targetDir / relPath, ec);
+		}
+
+		for (const auto& fileEntry : filesystem::recursive_directory_iterator(sourceDir, filesystem::directory_options::skip_permission_denied, ec)) {
+			if (ec) break;
+			if (!fileEntry.is_regular_file()) continue;
+			if (!IsPathOrAncestorInRestoreWhitelist(fileEntry.path(), sourceDir, whitelist)) continue;
+
+			filesystem::path relPath = filesystem::relative(fileEntry.path(), sourceDir, ec);
+			if (ec) continue;
+			filesystem::path destPath = targetDir / relPath;
+			filesystem::create_directories(destPath.parent_path(), ec);
+			if (filesystem::exists(destPath, ec) && !ec) {
+				continue;
+			}
+			filesystem::copy_file(fileEntry.path(), destPath, filesystem::copy_options::overwrite_existing, ec);
+		}
+	}
+
+	static bool TryCommitSafeRestoreWorkspace(const filesystem::path& targetDir, const filesystem::path& tempDir, const vector<wstring>& whitelist, string& errorMessage) {
+		errorMessage.clear();
+		try {
+			CleanupInternalRestoreMarkers(targetDir);
+			CopyRestoreWhitelistEntries(tempDir, targetDir, whitelist);
+			if (!tempDir.empty() && filesystem::exists(tempDir)) {
+				ClearReadonlyAttributesRecursively(tempDir);
+				filesystem::remove_all(tempDir);
+			}
+			return true;
+		}
+		catch (const exception& ex) {
+			errorMessage = ex.what();
+			return false;
+		}
+	}
+
+	static bool TryRollbackSafeRestoreWorkspace(const filesystem::path& targetDir, const filesystem::path& tempDir, string& errorMessage) {
+		errorMessage.clear();
+		try {
+			if (filesystem::exists(targetDir)) {
+				ClearReadonlyAttributesRecursively(targetDir);
+				filesystem::remove_all(targetDir);
+			}
+			if (!filesystem::exists(tempDir)) {
+				errorMessage = "Snapshot directory is missing.";
+				return false;
+			}
+			filesystem::rename(tempDir, targetDir);
+			return true;
+		}
+		catch (const exception& ex) {
+			errorMessage = ex.what();
+			return false;
+		}
+	}
+
+	static bool CreateDeletionOnlyArchive(const Config& config, const filesystem::path& archivePath, Console& console) {
+		wstringstream nameBuilder;
+		nameBuilder << L"MineBackup_DeleteOnly_" << chrono::steady_clock::now().time_since_epoch().count();
+		filesystem::path tempDir = filesystem::temp_directory_path() / nameBuilder.str();
+		bool success = false;
+		try {
+			filesystem::path internalDir = tempDir / kDeletedOnlyMarkerDir;
+			filesystem::create_directories(internalDir);
+			ofstream marker(internalDir / kDeletedOnlyMarkerFile, ios::binary | ios::trunc);
+			marker << MakeUtcTimestampString();
+			marker.close();
+
+			const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
+			wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath.wstring() + L"\" \"*\"";
+			success = RunCommandInBackground(command, console, config.useLowPriority, tempDir.wstring());
+		}
+		catch (const exception& ex) {
+			console.AddLog("[Error] Failed to create deletion-only archive: %s", ex.what());
+		}
+
+		error_code ec;
+		if (filesystem::exists(tempDir, ec) && !ec) {
+			ClearReadonlyAttributesRecursively(tempDir);
+			filesystem::remove_all(tempDir, ec);
+		}
+		return success;
+	}
+}
 
 void AddBackupToWESnapshots(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console) {
 	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
@@ -352,23 +881,8 @@ wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& sn
 	}
 }
 
-void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const map<wstring, size_t>& currentState) {
-	filesystem::create_directories(metadataPath);
-	filesystem::path metadataFile = metadataPath / L"metadata.json";
-
-	nlohmann::json metadata;
-	metadata["version"] = 1;
-	metadata["lastBackupFile"] = wstring_to_utf8(newBackupFile);
-	metadata["basedOnBackupFile"] = wstring_to_utf8(basedOnBackupFile);
-
-	nlohmann::json fileStates = nlohmann::json::object();
-	for (const auto& pair : currentState) {
-		fileStates[wstring_to_utf8(pair.first)] = pair.second;
-	}
-	metadata["fileStates"] = fileStates;
-
-	ofstream o(metadataFile, ios::trunc);
-	o << metadata.dump(2); // 两个空格缩进
+void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
+	UpdateMetadataFiles(metadataPath, newBackupFile, basedOnBackupFile, backupType, currentState, changeSet);
 }
 
 
@@ -628,10 +1142,11 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
     }
 
-    vector<filesystem::path> candidate_files;
-    BackupCheckResult checkResult;
-    map<wstring, size_t> currentState;
-    candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState);
+	vector<filesystem::path> candidate_files;
+	BackupCheckResult checkResult;
+	map<wstring, BackupFileState> currentState;
+	BackupChangeSet changeSet;
+	candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState, changeSet);
     if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
 		cleanupSnapshot();
@@ -661,6 +1176,29 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
     }
 
+    auto is_relative_blacklisted = [&](const wstring& relativePath) {
+		filesystem::path absolutePath = filesystem::path(sourcePath) / relativePath;
+		return is_blacklisted(absolutePath, sourcePath, originalSourcePath, config.blacklist);
+	};
+
+	for (auto it = currentState.begin(); it != currentState.end(); ) {
+		if (is_relative_blacklisted(it->first)) {
+			it = currentState.erase(it);
+		}
+		else {
+			++it;
+		}
+	}
+
+	auto filter_relative_changes = [&](vector<wstring>& paths) {
+		paths.erase(remove_if(paths.begin(), paths.end(), [&](const wstring& relativePath) {
+			return is_relative_blacklisted(relativePath);
+		}), paths.end());
+	};
+	filter_relative_changes(changeSet.addedFiles);
+	filter_relative_changes(changeSet.modifiedFiles);
+	filter_relative_changes(changeSet.deletedFiles);
+
     vector<filesystem::path> files_to_backup;
     for (const auto& file : candidate_files) {
         if (!is_blacklisted(file, sourcePath, originalSourcePath, config.blacklist)) {
@@ -668,38 +1206,48 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
     }
 
-    if (files_to_backup.empty()) {
+	if (!changeSet.HasChanges() && (config.skipIfUnchanged || (config.backupMode == 2 && !forceFullBackup))) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
 		cleanupSnapshot();
         return;
     }
 
-    filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
-    filesystem::create_directories(tempDir);
-	wstring filelist_path = (tempDir / (L"_filelist.txt")).wstring();
-
-	ofstream ofs{std::filesystem::path(filelist_path), ios::binary};
-	if (ofs.is_open()) {
-		for (const auto& file : files_to_backup) {
-			string utf8Path = wstring_to_utf8(filesystem::relative(file, sourcePath).wstring());
-			ofs.write(utf8Path.data(), static_cast<std::streamsize>(utf8Path.size()));
-			ofs.put('\n');
-		}
-		ofs.close();
-#ifdef _WIN32
-		{
-			HANDLE h = CreateFileW(filelist_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (h != INVALID_HANDLE_VALUE) {
-				FlushFileBuffers(h);
-				CloseHandle(h);
-			}
-		}
-#endif
-    } else {
-        console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
+	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
+	if (files_to_backup.empty() && !(config.backupMode == 2 && deletionOnlyChange && !forceFullBackup)) {
+		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
 		cleanupSnapshot();
-        return;
-    }
+		return;
+	}
+
+    filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
+	wstring filelist_path;
+	if (!files_to_backup.empty()) {
+		filesystem::create_directories(tempDir);
+		filelist_path = (tempDir / (L"_filelist.txt")).wstring();
+
+		ofstream ofs{std::filesystem::path(filelist_path), ios::binary};
+		if (ofs.is_open()) {
+			for (const auto& file : files_to_backup) {
+				string utf8Path = wstring_to_utf8(filesystem::relative(file, sourcePath).wstring());
+				ofs.write(utf8Path.data(), static_cast<std::streamsize>(utf8Path.size()));
+				ofs.put('\n');
+			}
+			ofs.close();
+#ifdef _WIN32
+			{
+				HANDLE h = CreateFileW(filelist_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+				if (h != INVALID_HANDLE_VALUE) {
+					FlushFileBuffers(h);
+					CloseHandle(h);
+				}
+			}
+#endif
+		} else {
+			console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
+			cleanupSnapshot();
+			return;
+		}
+	}
 
 	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
 
@@ -716,25 +1264,16 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     } else if (config.backupMode == 2) {
         backupTypeStr = L"Smart";
 
-        if (files_to_backup.empty()) {
-            console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-            if (config.hotBackup) // 清理快照
-                filesystem::remove_all(sourcePath);
-            return; // 没有变化，直接返回
-        }
-
-        console.AddLog(L("LOG_BACKUP_SMART_INFO"), files_to_backup.size());
+		console.AddLog(L("LOG_BACKUP_SMART_INFO"), files_to_backup.size() + changeSet.deletedFiles.size());
 
         // 智能备份需要找到它所基于的文件
         // 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
 		try {
-			nlohmann::json oldMetadata;
-			ifstream f(metadataFolder / L"metadata.json");
-			if (!f.good()) {
-				throw runtime_error("Cannot open metadata file");
+			BackupMetadataSummary summary;
+			if (!LoadBackupMetadataSummary(metadataFolder, summary)) {
+				throw runtime_error("Cannot load metadata summary");
 			}
-			oldMetadata = nlohmann::json::parse(f);
-			basedOnBackupFile = utf8_to_wstring(oldMetadata.at("lastBackupFile"));
+			basedOnBackupFile = summary.basedOnFullBackup.empty() ? summary.lastBackupFileName : summary.basedOnFullBackup;
 		} catch (const exception& e) {
 			console.AddLog("[Warning] Failed to read metadata for smart backup, forcing full backup: %s", e.what());
 			// 回退到完整备份
@@ -749,8 +1288,10 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
 		archivePath = (destinationFolder / (L"[Smart][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-            L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+		if (!deletionOnlyChange) {
+			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+		}
     } else if (config.backupMode == 3) {
         backupTypeStr = L"Overwrite";
         console.AddLog(L("LOG_OVERWRITE"));
@@ -781,10 +1322,19 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     }
 
 execute_backup:
-    // 在后台线程中执行命令
-    if (RunCommandInBackground(command, console, config.useLowPriority, sourcePath)) // 工作目录不能丢！
     {
-        console.AddLog(L("LOG_BACKUP_END_HEADER"));
+        // 在后台线程中执行命令
+        bool backupSucceeded = false;
+		if (backupTypeStr == L"Smart" && deletionOnlyChange) {
+			backupSucceeded = CreateDeletionOnlyArchive(config, archivePath, console);
+		}
+		else {
+			backupSucceeded = RunCommandInBackground(command, console, config.useLowPriority, sourcePath); // 工作目录不能丢！
+		}
+
+        if (backupSucceeded)
+        {
+            console.AddLog(L("LOG_BACKUP_END_HEADER"));
 
         // 备份文件大小检查 - 根据备份类型调整阈值
         try {
@@ -808,16 +1358,9 @@ execute_backup:
 		else
 			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 
-		UpdateMetadataFile(metadataFolder, filesystem::path(archivePath).filename().wstring(), basedOnBackupFile, currentState);
-		// 历史记录
-		if (config.backupMode != 3)
-			AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
 
         g_appState.realConfigIndex = -1;
-        // 广播一个成功事件
-        string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";file=" + wstring_to_utf8(filesystem::path(archivePath).filename().wstring());
-        BroadcastEvent(payload);
-
 
         if (config.backupMode == 3) { // 如果是覆写模式，修改一下文件名
             wstring oldName = latestBackupPath.filename().wstring();
@@ -838,32 +1381,42 @@ execute_backup:
                 filesystem::path newPath = latestBackupPath.parent_path() / newName;
                 filesystem::rename(latestBackupPath, newPath);
                 latestBackupPath = newPath;
+				archivePath = latestBackupPath.wstring();
+				completedBackupFile = latestBackupPath.filename().wstring();
             }
 			if (latestBackupPath.empty()) {
-				AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(archivePath).filename().wstring(), backupTypeStr, comment);
+				completedBackupFile = filesystem::path(archivePath).filename().wstring();
 			}
 			else {
 				RemoveHistoryEntry(folder.configIndex, oldName);
-				AddHistoryEntry(folder.configIndex, folder.name, filesystem::path(latestBackupPath).filename().wstring(), backupTypeStr, comment);
+				InvalidateBackupMetadata(config, folder.name, oldName, oldName, completedBackupFile);
 			}
         }
 
+		UpdateMetadataFile(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet);
+		AddHistoryEntry(folder.configIndex, folder.name, completedBackupFile, backupTypeStr, comment, folder.path);
+
+		// 广播一个成功事件
+		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";file=" + wstring_to_utf8(completedBackupFile);
+		BroadcastEvent(payload);
+
 
         // 云同步逻辑
-        if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
-            console.AddLog(L("CLOUD_SYNC_START"));
-            wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + folder.name + L"\" --progress";
-            // 另起一个线程来执行云同步，避免阻塞后续操作
-            // 注意：使用指针值捕获而非引用，避免console生命周期结束后悬垂引用
-            Console* consolePtr = &console;
-            thread([rclone_command, consolePtr, config]() {
-                RunCommandInBackground(rclone_command, *consolePtr, config.useLowPriority);
-                consolePtr->AddLog(L("CLOUD_SYNC_FINISH"));
-                }).detach();
+            if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
+				console.AddLog(L("CLOUD_SYNC_START"));
+				wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + folder.name + L"\" --progress";
+				// 另起一个线程来执行云同步，避免阻塞后续操作
+				// 注意：使用指针值捕获而非引用，避免console生命周期结束后悬垂引用
+				Console* consolePtr = &console;
+				thread([rclone_command, consolePtr, config]() {
+					RunCommandInBackground(rclone_command, *consolePtr, config.useLowPriority);
+					consolePtr->AddLog(L("CLOUD_SYNC_FINISH"));
+				}).detach();
+			}
         }
-    }
-    else {
-        BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+        else {
+            BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+        }
     }
 
     filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
@@ -921,13 +1474,277 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
 		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 		// 用特殊名字添加到历史
-		AddHistoryEntry(g_appState.currentConfigIndex, backupName, filesystem::path(archivePath).filename().wstring(), backupName, comment);
+		AddHistoryEntry(g_appState.currentConfigIndex, backupName, filesystem::path(archivePath).filename().wstring(), backupName, comment, othersPath.wstring());
 	}
 
 	console.AddLog(L("LOG_BACKUP_OTHERS_END"));
 }
 
-void DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
+	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
+	for (const auto& backup : archives) {
+		wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + backup.wstring() + L"\" -y";
+		if (!RunCommandInBackground(testCommand, console, config.useLowPriority)) {
+			console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());
+			return false;
+		}
+	}
+	console.AddLog(L("LOG_BACKUP_VERIFICATION_PASSED"));
+	return true;
+}
+
+static bool ApplyRestoreChain(const vector<filesystem::path>& backupsToApply, const filesystem::path& destinationFolder, const Config& config, Console& console, const wstring& filesToExtractStr = L"") {
+	for (size_t i = 0; i < backupsToApply.size(); ++i) {
+		const auto& backup = backupsToApply[i];
+		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
+		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y" + filesToExtractStr;
+		if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static RestoreChainResult BuildMetadataRestoreChain(const filesystem::path& metadataDir, const filesystem::path& backupDir, const filesystem::path& targetBackupPath) {
+	RestoreChainResult result;
+	BackupMetadataSummary summary;
+	if (!LoadBackupMetadataSummary(metadataDir, summary) || summary.records.empty()) {
+		result.status = RestoreChainStatus::METADATA_UNAVAILABLE;
+		return result;
+	}
+
+	map<wstring, BackupMetadataRecordIndex> recordMap;
+	for (const auto& record : summary.records) {
+		if (!record.archiveFileName.empty()) {
+			recordMap[record.archiveFileName] = record;
+		}
+	}
+
+	set<wstring> visited;
+	wstring current = targetBackupPath.filename().wstring();
+	while (!current.empty()) {
+		if (!visited.insert(current).second) {
+			result.status = RestoreChainStatus::INVALID;
+			result.chain.clear();
+			return result;
+		}
+
+		auto recordIt = recordMap.find(current);
+		if (recordIt == recordMap.end()) {
+			result.status = RestoreChainStatus::METADATA_UNAVAILABLE;
+			result.chain.clear();
+			return result;
+		}
+
+		filesystem::path currentArchive = backupDir / current;
+		if (!filesystem::exists(currentArchive)) {
+			result.status = RestoreChainStatus::INVALID;
+			result.chain.clear();
+			return result;
+		}
+
+		result.chain.push_back(currentArchive);
+		const auto& record = recordIt->second;
+		wstring recordType = record.backupType.empty() ? current : record.backupType;
+		if (!IsIncrementalBackupType(recordType)) {
+			break;
+		}
+
+		if (record.previousBackupFileName.empty()) {
+			result.status = RestoreChainStatus::MISSING_BASE_FULL;
+			result.chain.clear();
+			return result;
+		}
+		current = record.previousBackupFileName;
+	}
+
+	reverse(result.chain.begin(), result.chain.end());
+	if (result.chain.empty()) {
+		result.status = RestoreChainStatus::INVALID;
+		return result;
+	}
+
+	const wstring firstName = result.chain.front().filename().wstring();
+	auto firstRecordIt = recordMap.find(firstName);
+	const wstring firstType = firstRecordIt == recordMap.end() ? firstName : firstRecordIt->second.backupType;
+	if (!IsFullLikeBackupType(firstType)) {
+		result.chain.clear();
+		result.status = RestoreChainStatus::MISSING_BASE_FULL;
+		return result;
+	}
+
+	result.status = RestoreChainStatus::OK;
+	result.usedMetadata = true;
+	return result;
+}
+
+static vector<filesystem::path> BuildLegacyForwardRestoreChain(const filesystem::path& backupDir, const filesystem::path& targetBackupPath) {
+	vector<filesystem::path> backupsToApply;
+	const auto targetTime = filesystem::last_write_time(targetBackupPath);
+
+	if (targetBackupPath.filename().wstring().find(L"[Smart]") != wstring::npos) {
+		filesystem::path baseFullBackup;
+		auto baseFullTime = filesystem::file_time_type{};
+		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+			if (!entry.is_regular_file()) continue;
+			if (entry.path().filename().wstring().find(L"[Full]") == wstring::npos) continue;
+			auto entryTime = entry.last_write_time();
+			if (entryTime < targetTime && entryTime > baseFullTime) {
+				baseFullTime = entryTime;
+				baseFullBackup = entry.path();
+			}
+		}
+		if (baseFullBackup.empty()) {
+			return {};
+		}
+		backupsToApply.push_back(baseFullBackup);
+		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+			if (!entry.is_regular_file()) continue;
+			if (entry.path().filename().wstring().find(L"[Smart]") == wstring::npos) continue;
+			auto entryTime = entry.last_write_time();
+			if (entryTime > baseFullTime && entryTime <= targetTime) {
+				backupsToApply.push_back(entry.path());
+			}
+		}
+		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
+		});
+		return backupsToApply;
+	}
+
+	backupsToApply.push_back(targetBackupPath);
+	return backupsToApply;
+}
+
+static vector<filesystem::path> BuildReverseRestoreChain(const filesystem::path& backupDir, const filesystem::path& targetBackupPath) {
+	vector<filesystem::path> backupsToApply;
+	const auto targetTime = filesystem::last_write_time(targetBackupPath);
+	for (const auto& entry : filesystem::directory_iterator(backupDir)) {
+		if (!entry.is_regular_file()) continue;
+		if (entry.path().extension() != targetBackupPath.extension()) continue;
+		if (entry.last_write_time() >= targetTime) {
+			backupsToApply.push_back(entry.path());
+		}
+	}
+	sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
+		return filesystem::last_write_time(a) > filesystem::last_write_time(b);
+	});
+	return backupsToApply;
+}
+
+static bool TryBuildSmartRestorePlan(const filesystem::path& metadataDir, const vector<filesystem::path>& chain, SmartRestorePlan& outPlan) {
+	outPlan = SmartRestorePlan{};
+	if (chain.empty()) return false;
+
+	BackupChangeRecord baseRecord;
+	if (!LoadBackupChangeRecord(metadataDir, chain.front().filename().wstring(), baseRecord) || baseRecord.fullFileList.empty()) {
+		return false;
+	}
+
+	map<wstring, wstring> owners;
+	for (const auto& file : baseRecord.fullFileList) {
+		if (!file.empty()) owners[file] = chain.front().filename().wstring();
+	}
+
+	for (size_t i = 1; i < chain.size(); ++i) {
+		BackupChangeRecord record;
+		if (!LoadBackupChangeRecord(metadataDir, chain[i].filename().wstring(), record)) {
+			return false;
+		}
+
+		for (const auto& deleted : record.deletedFiles) {
+			owners.erase(deleted);
+		}
+		for (const auto& added : record.addedFiles) {
+			owners[added] = record.archiveFileName;
+		}
+		for (const auto& modified : record.modifiedFiles) {
+			owners[modified] = record.archiveFileName;
+		}
+
+		set<wstring> expected(record.fullFileList.begin(), record.fullFileList.end());
+		if (owners.size() != expected.size()) {
+			return false;
+		}
+		for (const auto& pair : owners) {
+			if (!expected.count(pair.first)) {
+				return false;
+			}
+		}
+	}
+
+	map<wstring, filesystem::path> archiveLookup;
+	map<wstring, size_t> archiveOrder;
+	for (size_t i = 0; i < chain.size(); ++i) {
+		archiveLookup[chain[i].filename().wstring()] = chain[i];
+		archiveOrder[chain[i].filename().wstring()] = i;
+	}
+
+	map<wstring, vector<wstring>> groupedFiles;
+	for (const auto& pair : owners) {
+		groupedFiles[pair.second].push_back(pair.first);
+	}
+
+	vector<SmartRestoreArchiveGroup> groups;
+	for (auto& pair : groupedFiles) {
+		auto archiveIt = archiveLookup.find(pair.first);
+		if (archiveIt == archiveLookup.end()) continue;
+		sort(pair.second.begin(), pair.second.end());
+		groups.push_back({ archiveIt->second, pair.second });
+	}
+	sort(groups.begin(), groups.end(), [&](const SmartRestoreArchiveGroup& a, const SmartRestoreArchiveGroup& b) {
+		return archiveOrder[a.archive.filename().wstring()] < archiveOrder[b.archive.filename().wstring()];
+	});
+
+	outPlan.chain = chain;
+	outPlan.archiveGroups = std::move(groups);
+	return true;
+}
+
+static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem::path& destinationFolder, const Config& config, Console& console) {
+	vector<SmartRestoreArchiveGroup> groups;
+	for (const auto& group : plan.archiveGroups) {
+		if (!group.files.empty()) {
+			groups.push_back(group);
+		}
+	}
+	if (groups.empty()) {
+		return true;
+	}
+
+	for (size_t i = 0; i < groups.size(); ++i) {
+		const auto& group = groups[i];
+		console.AddLog(L("RESTORE_STEPS"), i + 1, groups.size(), wstring_to_utf8(group.archive.filename().wstring()).c_str());
+
+		wstringstream fileNameBuilder;
+		fileNameBuilder << L"MineBackup_Restore_" << chrono::steady_clock::now().time_since_epoch().count() << L"_" << i << L".txt";
+		filesystem::path listFile = filesystem::temp_directory_path() / fileNameBuilder.str();
+		try {
+			ofstream out(listFile, ios::binary | ios::trunc);
+			for (const auto& file : group.files) {
+				string utf8Path = wstring_to_utf8(file);
+				out.write(utf8Path.data(), static_cast<std::streamsize>(utf8Path.size()));
+				out.put('\n');
+			}
+			out.close();
+
+			wstring command = L"\"" + config.zipPath + L"\" x \"" + group.archive.wstring() + L"\" @\"" + listFile.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y";
+			if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+				filesystem::remove(listFile);
+				return false;
+			}
+		}
+		catch (...) {
+			filesystem::remove(listFile);
+			return false;
+		}
+		filesystem::remove(listFile);
+	}
+
+	return true;
+}
+
+bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -937,8 +1754,13 @@ void DoRestore2(const Config& config, const wstring& worldName, const filesystem
 			L(FolderStateToI18nKey(opGuard.Existing())),
 			L(FolderStateToI18nKey(opGuard.Requested()))
 		);
-		return;
+		return false;
 	}
+
+	auto failRestore = [&](const string& reason) {
+		BroadcastEvent("event=restore_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
+		return false;
+	};
 
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
@@ -947,40 +1769,56 @@ void DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	if (!filesystem::exists(config.zipPath)) {
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
-		return;
+		return failRestore("seven_zip_not_found");
 	}
 
-	if (restoreMethod == 0) { // Clean Restore
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder.wstring()).c_str());
-		try {
-			if (filesystem::exists(destinationFolder)) {
-				filesystem::remove_all(destinationFolder);
+	vector<filesystem::path> backupsToApply = { fullBackupPath };
+	if (!ValidateRestoreArchives(backupsToApply, config, console)) {
+		return failRestore("archive_integrity_check_failed");
+	}
+
+	filesystem::path safeRestoreTempDir;
+	string workspaceError;
+	bool safeWorkspacePrepared = false;
+	if (restoreMethod == 0) {
+		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+			console.AddLog("[Error] Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+			return failRestore("snapshot_prepare_failed");
+		}
+		safeWorkspacePrepared = !safeRestoreTempDir.empty();
+	}
+	else {
+		error_code ec;
+		filesystem::create_directories(destinationFolder, ec);
+	}
+
+	bool restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console);
+	if (restoreSucceeded) {
+		CleanupInternalRestoreMarkers(destinationFolder);
+		if (safeWorkspacePrepared) {
+			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, restoreWhitelist, workspaceError)) {
+				restoreSucceeded = false;
+				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
-		catch (const filesystem::filesystem_error& e) {
-			console.AddLog("[ERROR] Failed to delete existing world folder: %s. Continuing with overwrite.", e.what());
+	}
+
+	if (!restoreSucceeded) {
+		if (safeWorkspacePrepared) {
+			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+				console.AddLog("[Error] Failed to rollback safe restore workspace: %s", workspaceError.c_str());
+			}
 		}
+		return failRestore("command_failed");
 	}
-
-	// 还原前验证备份文件的完整性
-	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
-	wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + fullBackupPath.wstring() + L"\" -y";
-	if (!RunCommandInBackground(testCommand, console, config.useLowPriority)) {
-		console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(fullBackupPath.filename().wstring()).c_str());
-		return; // 中止还原以保护数据
-	}
-	console.AddLog(L("LOG_BACKUP_VERIFICATION_PASSED"));
-
-	// For a manually selected file, we treat it as a single restore operation.
-	// Smart Restore logic does not apply as we don't know the history.
-	wstring command = L"\"" + config.zipPath + L"\" x \"" + fullBackupPath.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y";
-	RunCommandInBackground(command, console, config.useLowPriority);
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
+	BroadcastEvent("event=restore_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(fullBackupPath.filename().wstring()));
+	return true;
 }
 
 // restoreMethod: 0=Clean Restore, 1=Overwrite Restore, 2=从最新到选定反向覆盖还原
-void DoRestore(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+bool DoRestore(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -990,31 +1828,34 @@ void DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 			L(FolderStateToI18nKey(opGuard.Existing())),
 			L(FolderStateToI18nKey(opGuard.Requested()))
 		);
-		return;
+		return false;
 	}
+
+	auto failRestore = [&](const string& reason, const string& message = string()) {
+		if (!message.empty()) {
+			console.AddLog("[Error] %s", message.c_str());
+		}
+		BroadcastEvent("event=restore_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
+		return false;
+	};
 
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
 	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
 
-	// 检查7z.exe是否存在
 	if (!filesystem::exists(config.zipPath)) {
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
 		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
-		return;
+		return failRestore("seven_zip_not_found");
 	}
 
-	// 准备路径 - 使用跨平台方式
 	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
 	filesystem::path targetBackupPath = sourceDir / backupFile;
-
-	// 检查备份文件是否存在
-	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(sourceDir / backupFile)) {
+	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(targetBackupPath)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
-		return;
+		return failRestore("backup_not_found");
 	}
 
-	// 还原前检查世界是否正在运行
 #ifdef _WIN32
 	if (IsFileLocked(destinationFolder.wstring() + L"\\session.lock")) {
 		int msgboxID = MessageBoxW(
@@ -1025,80 +1866,46 @@ void DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		);
 		if (msgboxID == IDNO) {
 			console.AddLog("[Info] Restore cancelled by user due to active game session.");
-			return;
+			return failRestore("cancelled_active_world");
 		}
 	}
 #endif
 
-	// 收集所有相关的备份文件
+	const bool targetIsIncremental = IsIncrementalBackupType(backupFile);
+	const filesystem::path metadataDir = GetMetadataDirectory(config, worldName);
+	RestoreChainResult chainResult;
 	vector<filesystem::path> backupsToApply;
 
-	if (backupFile.find(L"[Smart]") != wstring::npos) { // 目标是增量备份
-		// 寻找基础的完整备份
-		filesystem::path baseFullBackup;
-		auto baseFullTime = filesystem::file_time_type{};
-
-		// 如果是正向还原，先找到它所基于的完整备份
-		if (restoreMethod == 1 || restoreMethod == 0) {
-			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
-					if (entry.last_write_time() < filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
-						baseFullTime = entry.last_write_time();
-						baseFullBackup = entry.path();
-					}
-				}
-			}
-
-			if (baseFullBackup.empty()) {
-				console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
-				return;
-			}
-
-			console.AddLog(L("LOG_BACKUP_SMART_FOUND"), wstring_to_utf8(baseFullBackup.filename().wstring()).c_str());
-			backupsToApply.push_back(baseFullBackup);
-			// 收集从基础备份到目标备份之间的所有增量备份
-			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-				if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Smart]") != wstring::npos) {
-					if (entry.last_write_time() > baseFullTime && entry.last_write_time() <= filesystem::last_write_time(targetBackupPath)) {
-						backupsToApply.push_back(entry.path());
-					}
-				}
-			}
+	if (restoreMethod == 2) {
+		backupsToApply = BuildReverseRestoreChain(sourceDir, targetBackupPath);
+		if (backupsToApply.empty()) {
+			console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
+			return failRestore("reverse_chain_not_found");
 		}
-		else if (restoreMethod == 2) {
-			// 反向还原，从最近的Smart备份开始，一直到目标备份
-			for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-				if (entry.is_regular_file()) { // 不需要区分Smart或Full，全部还原回去
-					if (entry.last_write_time() > filesystem::last_write_time(targetBackupPath)) {
-						backupsToApply.push_back(entry.path());
-					}
-				}
+	}
+	else if (targetIsIncremental) {
+		chainResult = BuildMetadataRestoreChain(metadataDir, sourceDir, targetBackupPath);
+		if (chainResult.status == RestoreChainStatus::OK) {
+			backupsToApply = chainResult.chain;
+		}
+		else {
+			if (restoreMethod == 0) {
+				console.AddLog("[Error] Exact Clean Restore for Smart backups requires valid metadata and an intact full base.");
+				return failRestore("exact_clean_restore_unavailable");
+			}
+
+			backupsToApply = BuildLegacyForwardRestoreChain(sourceDir, targetBackupPath);
+			if (backupsToApply.empty()) {
+				console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
+				return failRestore("restore_chain_not_found");
 			}
 		}
 	}
-	else { //当成完整备份处理
+	else {
 		backupsToApply.push_back(targetBackupPath);
 	}
 
-	// 格式: "C:\7z.exe" x "源压缩包路径" -o"目标文件夹路径" -y
-	// 'x' 表示带路径解压, '-o' 指定输出目录, '-y' 表示对所有提示回答“是”（例如覆盖文件）
-
-	if (restoreMethod == 2)
-	{
-		// 按时间逆序排序所有需要应用的备份
-		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
-			return filesystem::last_write_time(a) > filesystem::last_write_time(b);
-			});
-	}
-	else {
-		// 按时间顺序排序所有需要应用的备份
-		sort(backupsToApply.begin(), backupsToApply.end(), [](const auto& a, const auto& b) {
-			return filesystem::last_write_time(a) < filesystem::last_write_time(b);
-			});
-	}
-
 	wstring filesToExtractStr;
-	// 仅在自定义还原模式下构建文件列表
 	if (restoreMethod == 3 && !customRestoreList.empty()) {
 		console.AddLog(L("LOG_CUSTOM_RESTORE_START"));
 		stringstream ss(customRestoreList);
@@ -1112,65 +1919,64 @@ void DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		}
 	}
 
-	// 1.11.1 将这个清除步骤移动到后面了，避免没成功检索就直接删档
+	if (!ValidateRestoreArchives(backupsToApply, config, console)) {
+		return failRestore("archive_integrity_check_failed");
+	}
+
+	SmartRestorePlan smartRestorePlan;
+	const bool useExactSmartCleanRestore = restoreMethod == 0 && targetIsIncremental && chainResult.status == RestoreChainStatus::OK && chainResult.usedMetadata;
+	if (useExactSmartCleanRestore) {
+		if (!TryBuildSmartRestorePlan(metadataDir, backupsToApply, smartRestorePlan)) {
+			console.AddLog("[Error] Smart restore metadata is incomplete or inconsistent. Clean restore aborted to protect data.");
+			return failRestore("smart_restore_plan_invalid");
+		}
+	}
+
+	filesystem::path safeRestoreTempDir;
+	string workspaceError;
+	bool safeWorkspacePrepared = false;
 	if (restoreMethod == 0) {
-		console.AddLog(L("LOG_DELETING_EXISTING_WORLD"), wstring_to_utf8(destinationFolder.wstring()).c_str());
-		bool deletion_ok = true;
-		if (filesystem::exists(destinationFolder)) {
-			try {
-				for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-					// 使用 is_blacklisted 函数判断是否在白名单中
-					if (is_blacklisted(entry.path(), destinationFolder, destinationFolder, restoreWhitelist)) {
-						console.AddLog(L("LOG_SKIPPING_WHITELISTED_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
-						continue;
-					}
+		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+			console.AddLog("[Error] Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+			return failRestore("snapshot_prepare_failed");
+		}
+		safeWorkspacePrepared = !safeRestoreTempDir.empty();
+	}
+	else {
+		error_code ec;
+		filesystem::create_directories(destinationFolder, ec);
+	}
 
-					console.AddLog(L("LOG_DELETING_EXISTING_WORLD_ITEM"), wstring_to_utf8(entry.path().filename().wstring()).c_str());
-					error_code ec;
-					if (entry.is_directory()) {
-						filesystem::remove_all(entry.path(), ec);
-					}
-					else {
-						filesystem::remove(entry.path(), ec);
-					}
-					if (ec) {
-						console.AddLog(L("LOG_DELETION_ERROR"), wstring_to_utf8(entry.path().filename().wstring()).c_str(), ec.message().c_str());
-						deletion_ok = false; // 标记删除失败
-					}
-				}
-			}
-			catch (const filesystem::filesystem_error& e) {
-				console.AddLog("[Error] An exception occurred during pre-restore cleanup: %s.", e.what());
-				deletion_ok = false;
+	bool restoreSucceeded = false;
+	if (useExactSmartCleanRestore) {
+		restoreSucceeded = ApplySmartRestorePlan(smartRestorePlan, destinationFolder, config, console);
+	}
+	else {
+		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console, filesToExtractStr);
+	}
+
+	if (restoreSucceeded) {
+		CleanupInternalRestoreMarkers(destinationFolder);
+		if (safeWorkspacePrepared) {
+			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, restoreWhitelist, workspaceError)) {
+				restoreSucceeded = false;
+				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
-		if (!deletion_ok) {
-			console.AddLog(L("ERROR_CLEAN_RESTORE_FAILED"));
-			return; // 中止还原以保护数据
-		}
 	}
 
-	// 还原前验证所有备份文件的完整性
-	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
-	for (const auto& backup : backupsToApply) {
-		wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + backup.wstring() + L"\" -y";
-		if (!RunCommandInBackground(testCommand, console, config.useLowPriority)) {
-			console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());
-			return; // 中止还原以保护数据
+	if (!restoreSucceeded) {
+		if (safeWorkspacePrepared) {
+			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+				console.AddLog("[Error] Failed to rollback safe restore workspace: %s", workspaceError.c_str());
+			}
 		}
+		return failRestore("command_failed");
 	}
-	console.AddLog(L("LOG_BACKUP_VERIFICATION_PASSED"));
 
-	// 依次执行还原
-	for (size_t i = 0; i < backupsToApply.size(); ++i) {
-		const auto& backup = backupsToApply[i];
-		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
-		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y" + filesToExtractStr;
-		RunCommandInBackground(command, console, config.useLowPriority);
-	}
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
 	BroadcastEvent("event=restore_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile));
-	return;
+	return true;
 }
 
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console) {
@@ -1186,11 +1992,13 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 			if (filesystem::exists(path)) {
 				filesystem::remove(path);
 				console.AddLog("  - %s OK", wstring_to_utf8(path.filename().wstring()).c_str());
+				InvalidateBackupMetadata(config, entryToDelete.worldName, path.filename().wstring());
 				// 从历史记录中移除对应条目
 				RemoveHistoryEntry(configIndex, path.filename().wstring());
 			}
 			else {
 				console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+				InvalidateBackupMetadata(config, entryToDelete.worldName, path.filename().wstring());
 				RemoveHistoryEntry(configIndex, path.filename().wstring());
 			}
 		}
@@ -1310,6 +2118,8 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 				break;
 			}
 		}
+		SaveHistory();
+		InvalidateBackupMetadata(config, entryToDelete.worldName, entryToDelete.backupFile, nextEntry.backupFile, finalBackupFile);
 
 		filesystem::remove_all(tempExtractDir);
 		console.AddLog(L("LOG_SAFE_DELETE_SUCCESS"));
@@ -1581,7 +2391,13 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(targetBackup.filename().wstring()).c_str());
 
-	DoRestore(cfg, world.name, targetBackup.filename().wstring(), ref(console), 0, "");
+	const bool restoreSucceeded = DoRestore(cfg, world.name, targetBackup.filename().wstring(), ref(console), 0, "");
+	if (!restoreSucceeded) {
+		BroadcastEvent("event=restore_finished;status=failure;reason=restore_failed;world=" + wstring_to_utf8(world.name));
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
+		return;
+	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 

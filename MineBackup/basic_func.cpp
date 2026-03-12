@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <algorithm>
 using namespace std;
 
 bool IsPureASCII(const wstring& s) {
@@ -17,48 +18,43 @@ bool IsPureASCII(const wstring& s) {
 	return true;
 }
 
-// 计算文件的状态标识符（改为使用文件大小+修改时间的组合，避免读取整个文件内容）
-size_t CalculateFileState(const filesystem::path& filepath) {
+static BackupFileState CaptureFileState(const filesystem::path& filepath) {
+	BackupFileState state;
 	error_code ec;
-	if (!filesystem::exists(filepath, ec) || ec) return 0;
+	if (!filesystem::exists(filepath, ec) || ec) return state;
 	
-	uintmax_t fileSize = filesystem::file_size(filepath, ec);
-	if (ec) return 0;
+	state.size = filesystem::file_size(filepath, ec);
+	if (ec) return BackupFileState{};
 	
 	auto modTime = filesystem::last_write_time(filepath, ec);
-	if (ec) return 0;
-	
-	// 组合大小和时间生成唯一标识符
-	// 使用 file_time_type 的 time_since_epoch 获取时间戳
-	auto timeValue = modTime.time_since_epoch().count();
-	
-	// 使用简单但有效的哈希组合
-	size_t result = hash<uintmax_t>{}(fileSize);
-	result ^= hash<decltype(timeValue)>{}(timeValue) + 0x9e3779b9 + (result << 6) + (result >> 2);
-	return result;
+	if (ec) return BackupFileState{};
+
+	state.lastWriteTimeTicks = static_cast<long long>(modTime.time_since_epoch().count());
+	return state;
 }
 
-// 位于 basic_func.cpp
 vector<filesystem::path> GetChangedFiles(
 	const filesystem::path& worldPath,
 	const filesystem::path& metadataPath,
 	const filesystem::path& backupPath, // 需要传入备份路径以供验证
 	BackupCheckResult& out_result,
-	map<wstring, size_t>& out_currentState // 将当前状态传出，供后续保存
+	map<wstring, BackupFileState>& out_currentState,
+	BackupChangeSet& out_changeSet
 ) {
 	auto collectCurrentState = [&]() {
 		if (!filesystem::exists(worldPath)) return;
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CalculateFileState(entry.path());
+				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CaptureFileState(entry.path());
 			}
 		}
 	};
 
 	out_result = BackupCheckResult::NO_CHANGE;
 	out_currentState.clear();
+	out_changeSet = BackupChangeSet{};
 	vector<filesystem::path> changedFiles;
-	map<wstring, size_t> lastState;
+	map<wstring, BackupFileState> lastState;
 	filesystem::path metadataFile = metadataPath / L"metadata.json";
 
 	// 1. 读取并验证元数据
@@ -71,18 +67,37 @@ vector<filesystem::path> GetChangedFiles(
 
 	nlohmann::json metadata;
 	wstring lastBackupFile;
-	wstring basedOnBackupFile;
+	wstring basedOnFullBackup;
 	try {
 		ifstream f(metadataFile.c_str());
 		metadata = nlohmann::json::parse(f);
-		if (metadata.contains("lastBackupFile") && metadata.at("lastBackupFile").is_string()) {
+		if (metadata.contains("lastBackupFileName") && metadata.at("lastBackupFileName").is_string()) {
+			lastBackupFile = utf8_to_wstring(metadata.at("lastBackupFileName"));
+		}
+		else if (metadata.contains("lastBackupFile") && metadata.at("lastBackupFile").is_string()) {
 			lastBackupFile = utf8_to_wstring(metadata.at("lastBackupFile"));
 		}
-		if (metadata.contains("basedOnBackupFile") && metadata.at("basedOnBackupFile").is_string()) {
-			basedOnBackupFile = utf8_to_wstring(metadata.at("basedOnBackupFile"));
+
+		if (metadata.contains("basedOnFullBackup") && metadata.at("basedOnFullBackup").is_string()) {
+			basedOnFullBackup = utf8_to_wstring(metadata.at("basedOnFullBackup"));
 		}
+		else if (metadata.contains("basedOnBackupFile") && metadata.at("basedOnBackupFile").is_string()) {
+			basedOnFullBackup = utf8_to_wstring(metadata.at("basedOnBackupFile"));
+		}
+
+		if (!metadata.contains("fileStates") || !metadata.at("fileStates").is_object()) {
+			throw runtime_error("metadata missing fileStates object");
+		}
+
 		for (auto& [key, val] : metadata.at("fileStates").items()) {
-			lastState[utf8_to_wstring(key)] = val.get<size_t>();
+			if (!val.is_object()) {
+				throw runtime_error("legacy metadata file state format");
+			}
+
+			BackupFileState state;
+			state.size = val.value("size", static_cast<uintmax_t>(0));
+			state.lastWriteTimeTicks = val.value("lastWriteTimeTicks", static_cast<long long>(0));
+			lastState.emplace(utf8_to_wstring(key), state);
 		}
 	}
 	catch (const exception& e) {
@@ -101,7 +116,7 @@ vector<filesystem::path> GetChangedFiles(
 	}
 
 	// 3. 兼容旧链路：如果元数据记录了 basedOnBackupFile，也要求其存在
-	if (!basedOnBackupFile.empty() && !filesystem::exists(backupPath / basedOnBackupFile)) {
+	if (!basedOnFullBackup.empty() && !filesystem::exists(backupPath / basedOnFullBackup)) {
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
 		// 基准文件被用户删除，元数据失效，扫描所有文件以进行新的完整备份
 		collectCurrentState();
@@ -113,61 +128,41 @@ vector<filesystem::path> GetChangedFiles(
 		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
 			if (entry.is_regular_file()) {
 				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
-				size_t currentFileState = CalculateFileState(entry.path());
+				BackupFileState currentFileState = CaptureFileState(entry.path());
 				out_currentState[relativePath.wstring()] = currentFileState;
 
 				// 如果文件是新的，或者状态不同（大小或时间变化），则判定为已更改
-				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentFileState) {
+				auto lastIt = lastState.find(relativePath.wstring());
+				if (lastIt == lastState.end()) {
+					out_changeSet.addedFiles.push_back(relativePath.wstring());
+					changedFiles.push_back(entry.path());
+				}
+				else if (lastIt->second.size != currentFileState.size
+					|| lastIt->second.lastWriteTimeTicks != currentFileState.lastWriteTimeTicks) {
+					out_changeSet.modifiedFiles.push_back(relativePath.wstring());
 					changedFiles.push_back(entry.path());
 				}
 			}
 		}
 	}
 
-	if (!changedFiles.empty()) {
+	for (const auto& pair : lastState) {
+		if (out_currentState.find(pair.first) == out_currentState.end()) {
+			out_changeSet.deletedFiles.push_back(pair.first);
+		}
+	}
+
+	sort(out_changeSet.addedFiles.begin(), out_changeSet.addedFiles.end());
+	sort(out_changeSet.modifiedFiles.begin(), out_changeSet.modifiedFiles.end());
+	sort(out_changeSet.deletedFiles.begin(), out_changeSet.deletedFiles.end());
+
+	if (out_changeSet.HasChanges()) {
 		out_result = BackupCheckResult::CHANGES_DETECTED;
 	}
 
 	return changedFiles;
 }
 
-
-
-
-// 获取已更改的文件列表，并更新状态文件
-//wstring utf8_to_wstring(const string& str);
-//vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath) {
-//	vector<filesystem::path> changedFiles;
-//	map<wstring, size_t> lastState;
-//	filesystem::path stateFilePath = metadataPath / L"backup_state.txt";
-//	// 1. 读取上一次的状态
-//	ifstream stateFileIn(stateFilePath);
-//	if (stateFileIn.is_open()) {
-//		string path; // txt里千万不能有空格！
-//		size_t hash;
-//		while (stateFileIn >> path >> hash) {
-//			lastState[utf8_to_wstring(path)] = hash;
-//		}
-//		stateFileIn.close();
-//	}
-//
-//	// 2. 计算当前状态并与上次状态比较
-//	if (filesystem::exists(worldPath)) {
-//		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
-//			if (entry.is_regular_file()) {
-//				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
-//				size_t currentHash = CalculateFileHash(entry.path());
-//				currentState[relativePath.wstring()] = currentHash;
-//
-//				// 如果文件是新的，或者哈希值不同，则判定为已更改
-//				if (lastState.find(relativePath.wstring()) == lastState.end() || lastState[relativePath.wstring()] != currentHash) {
-//					changedFiles.push_back(entry.path());
-//				}
-//			}
-//		}
-//	}
-//	return changedFiles;
-//}
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList) {
 	for (const pair<wstring, wstring>& worldLi : worldList) {
 		if (world == worldLi.first)
@@ -175,8 +170,6 @@ bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& 
 	}
 	return true;
 }
-
-
 
 wstring SanitizeFileName(const wstring& input) {
 	wstring output = input;

@@ -139,6 +139,7 @@ struct SpecialConfig {
 
 struct HistoryEntry {
 	std::wstring timestamp_str;
+	std::wstring worldPath;
 	std::wstring worldName;
 	std::wstring backupFile;
 	std::wstring backupType;

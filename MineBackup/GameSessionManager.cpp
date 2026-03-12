@@ -136,7 +136,15 @@ void GameSessionWatcherThread() {
 				if (cfgIt != g_appState.configs.end() && world_idx < cfgIt->second.worlds.size()) {
 					Config backupConfig = cfgIt->second;
 					backupConfig.hotBackup = true; // 必须热备份
-					thread backup_thread(DoBackup, occupied_world, ref(console), L"OnStart");
+					MyFolder backupFolder = {
+						JoinPath(cfgIt->second.saveRoot, cfgIt->second.worlds[world_idx].first).wstring(),
+						cfgIt->second.worlds[world_idx].first,
+						cfgIt->second.worlds[world_idx].second,
+						backupConfig,
+						config_idx,
+						world_idx
+					};
+					thread backup_thread(DoBackup, backupFolder, ref(console), L"OnStart");
 					backup_thread.detach();
 				}
 			}

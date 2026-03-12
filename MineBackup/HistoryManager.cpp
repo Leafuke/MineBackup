@@ -3,79 +3,18 @@
 #include <fstream>
 #include <sstream>
 #include "AppState.h"
+#include "json.hpp"
 #include "text_to_text.h"
 #include <algorithm>
 #include <filesystem>
 using namespace std;
 
 void SetFileAttributesWin(const wstring& path, bool isHidden);
-// 将历史记录保存到 history.dat 文件
-// 文件结构：
-// [Config<id>]
-// Entry=<timestamp>|<worldName>|<backupFile>|<backupType>|<comment>
-void SaveHistory() {
-	const filesystem::path filename = L"history.dat"; // 使用 .dat 保存历史记录
-#ifdef _WIN32
-	SetFileAttributesWin(filename.wstring(), 0);
-#endif
-	ofstream out(filename, ios::binary);
-	if (!out.is_open()) return;
 
-	auto write_utf8 = [&out](const wstring& line) {
-		string utf8 = wstring_to_utf8(line);
-		out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
-	};
-
-	for (const auto& config_pair : g_appState.g_history) {
-		write_utf8(L"[Config" + to_wstring(config_pair.first) + L"]\n");
-		for (const auto& entry : config_pair.second) {
-			// 使用 | 作为分隔符
-			wstring line = L"Entry=" + entry.timestamp_str + L"|" + entry.worldName + L"|" + entry.backupFile + L"|" + entry.backupType + L"|" + entry.comment;
-			if (entry.isImportant) {
-				line += L"|important";
-			}
-			line += L"\n";
-			write_utf8(line);
-		}
-	}
-	out.close();
-#ifdef _WIN32
-	// 设置文件为隐藏属性
-	SetFileAttributesWin(filename.wstring(), 1);
-#endif
-}
-
-// 暂时不使用自动标记的方案
-//void UpdateAutoPinnedFullBackup(int configIndex, const wstring& worldName, const wstring& latestFullBackupFile) {
-//	if (!g_appState.g_history.count(configIndex)) return;
-//	bool changed = false;
-//	auto& history_vec = g_appState.g_history[configIndex];
-//	for (auto& entry : history_vec) {
-//		if (entry.worldName != worldName) continue;
-//		if (entry.backupFile == latestFullBackupFile) {
-//			if (!entry.isImportant || !entry.isAutoImportant) {
-//				entry.isImportant = true;
-//				entry.isAutoImportant = true;
-//				changed = true;
-//			}
-//		}
-//		else if (entry.isAutoImportant) {
-//			entry.isAutoImportant = false;
-//			entry.isImportant = false;
-//			changed = true;
-//		}
-//	}
-//	if (changed) {
-//		SaveHistory();
-//	}
-//}
-
-// 从文件加载历史记录
-void LoadHistory() {
-	const filesystem::path filename = L"history.dat";
+static bool LoadLegacyHistoryFile(const filesystem::path& filename) {
 	g_appState.g_history.clear();
 	ifstream in(filename, ios::binary);
-	if (!in.is_open()) return;
+	if (!in.is_open()) return false;
 
 	string line_utf8;
 	int current_config_id = -1;
@@ -92,44 +31,115 @@ void LoadHistory() {
 		}
 		else if (current_config_id != -1) {
 			auto pos = line.find(L'=');
-			if (pos != wstring::npos) {
-				wstring key = line.substr(0, pos);
-				wstring val = line.substr(pos + 1);
-				if (key == L"Entry") {
-					wstringstream ss(val);
-					wstring segment;
-					vector<wstring> segments;
-					while (getline(ss, segment, L'|')) {
-						segments.push_back(segment);
-					}
-					if (segments.size() >= 5) {
-						HistoryEntry entry;
-						entry.timestamp_str = segments[0];
-						entry.worldName = segments[1];
-						entry.backupFile = segments[2];
-						entry.backupType = segments[3];
-						entry.comment = segments[4];
-						entry.isImportant = (segments.size() >= 6 && segments[5] == L"important");
-						g_appState.g_history[current_config_id].push_back(entry);
-					}
-					else if (segments.size() == 4) { // 没有设置注释
-						HistoryEntry entry;
-						entry.timestamp_str = segments[0];
-						entry.worldName = segments[1];
-						entry.backupFile = segments[2];
-						entry.backupType = segments[3];
-						entry.comment = L"";
-						g_appState.g_history[current_config_id].push_back(entry);
-					}
-				}
+			if (pos == wstring::npos) continue;
+
+			wstring key = line.substr(0, pos);
+			wstring val = line.substr(pos + 1);
+			if (key != L"Entry") continue;
+
+			wstringstream ss(val);
+			wstring segment;
+			vector<wstring> segments;
+			while (getline(ss, segment, L'|')) {
+				segments.push_back(segment);
+			}
+
+			if (segments.size() >= 4) {
+				HistoryEntry entry;
+				entry.timestamp_str = segments[0];
+				entry.worldName = segments[1];
+				entry.backupFile = segments[2];
+				entry.backupType = segments[3];
+				entry.comment = segments.size() >= 5 ? segments[4] : L"";
+				entry.isImportant = (segments.size() >= 6 && segments[5] == L"important");
+				g_appState.g_history[current_config_id].push_back(entry);
 			}
 		}
+	}
+
+	return true;
+}
+
+// 将历史记录保存到 history.json 文件
+void SaveHistory() {
+	const filesystem::path filename = L"history.json";
+#ifdef _WIN32
+	SetFileAttributesWin(filename.wstring(), 0);
+#endif
+	ofstream out(filename, ios::binary | ios::trunc);
+	if (!out.is_open()) return;
+
+	nlohmann::json root = nlohmann::json::array();
+
+	for (const auto& config_pair : g_appState.g_history) {
+		for (const auto& entry : config_pair.second) {
+			nlohmann::json item;
+			item["configIndex"] = config_pair.first;
+			item["timestamp"] = wstring_to_utf8(entry.timestamp_str);
+			item["worldPath"] = wstring_to_utf8(entry.worldPath);
+			item["worldName"] = wstring_to_utf8(entry.worldName);
+			item["backupFile"] = wstring_to_utf8(entry.backupFile);
+			item["backupType"] = wstring_to_utf8(entry.backupType);
+			item["comment"] = wstring_to_utf8(entry.comment);
+			item["isImportant"] = entry.isImportant;
+			root.push_back(std::move(item));
+		}
+	}
+
+	out << root.dump(2);
+	out.close();
+#ifdef _WIN32
+	// 设置文件为隐藏属性
+	SetFileAttributesWin(filename.wstring(), 1);
+#endif
+}
+
+// 从文件加载历史记录
+void LoadHistory() {
+	const filesystem::path jsonFilename = L"history.json";
+	const filesystem::path legacyFilename = L"history.dat";
+	g_appState.g_history.clear();
+	if (filesystem::exists(jsonFilename)) {
+		try {
+			ifstream in(jsonFilename, ios::binary);
+			if (!in.is_open()) return;
+
+			nlohmann::json root = nlohmann::json::parse(in);
+			if (!root.is_array()) return;
+
+			for (const auto& item : root) {
+				if (!item.is_object()) continue;
+				int configIndex = item.value("configIndex", -1);
+				if (configIndex < 0) continue;
+
+				HistoryEntry entry;
+				entry.timestamp_str = utf8_to_wstring(item.value("timestamp", std::string{}));
+				entry.worldPath = utf8_to_wstring(item.value("worldPath", std::string{}));
+				entry.worldName = utf8_to_wstring(item.value("worldName", std::string{}));
+				entry.backupFile = utf8_to_wstring(item.value("backupFile", std::string{}));
+				entry.backupType = utf8_to_wstring(item.value("backupType", std::string{}));
+				entry.comment = utf8_to_wstring(item.value("comment", std::string{}));
+				entry.isImportant = item.value("isImportant", false);
+
+				if (!entry.worldName.empty() && !entry.backupFile.empty()) {
+					g_appState.g_history[configIndex].push_back(entry);
+				}
+			}
+			return;
+		}
+		catch (...) {
+			g_appState.g_history.clear();
+		}
+	}
+
+	if (filesystem::exists(legacyFilename) && LoadLegacyHistoryFile(legacyFilename)) {
+		SaveHistory();
 	}
 }
 
 
 // 添加一条历史记录条目
-void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment) {
+void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment, const wstring& worldPath) {
 	time_t now = time(0);
 	tm ltm;
 	localtime_s(&ltm, &now);
@@ -138,6 +148,7 @@ void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& b
 
 	HistoryEntry entry;
 	entry.timestamp_str = timeBuf;
+	entry.worldPath = worldPath;
 	entry.worldName = worldName;
 	entry.backupFile = backupFile;
 	entry.backupType = backupType;
