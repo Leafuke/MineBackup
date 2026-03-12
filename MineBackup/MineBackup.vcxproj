@@ -78,6 +78,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>Default</LanguageStandard_C>
+      <AdditionalIncludeDirectories>.;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -94,6 +95,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>Default</LanguageStandard_C>
+      <AdditionalIncludeDirectories>.;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -108,12 +110,12 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
-      <AdditionalIncludeDirectories>./imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>.\imgui\lib-vc2022-64</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>.\third_party\imgui\lib-vc2022-64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -125,84 +127,89 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>.\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>.\imgui\lib-vc2022-64</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>.\third_party\imgui\lib-vc2022-64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="AppState.cpp" />
-    <ClCompile Include="BackupManager.cpp" />
-    <ClCompile Include="basic_func.cpp" />
-    <ClCompile Include="Broadcast.cpp" />
-    <ClCompile Include="ConfigManager.cpp" />
-    <ClCompile Include="Console.cpp" />
-    <ClCompile Include="GameSessionManager.cpp" />
-    <ClCompile Include="HistoryManager.cpp" />
-    <ClCompile Include="HistoryUI.cpp" />
-    <ClCompile Include="i18n.cpp" />
-    <ClCompile Include="imgui\imgui.cpp" />
-    <ClCompile Include="imgui\imgui_draw.cpp" />
-    <ClCompile Include="imgui\imgui_impl_glfw.cpp" />
-    <ClCompile Include="imgui\imgui_impl_opengl3.cpp" />
-    <ClCompile Include="imgui\imgui_tables.cpp" />
-    <ClCompile Include="imgui\imgui_widgets.cpp" />
-    <ClCompile Include="KnotLink\OpenSocketResponser.cpp" />
-    <ClCompile Include="KnotLink\SignalSender.cpp" />
-    <ClCompile Include="MineBackup.cpp" />
-    <ClCompile Include="Platform_win.cpp" />
-    <ClCompile Include="SettingsUI.cpp" />
-    <ClCompile Include="SpecialMode.cpp" />
-    <ClCompile Include="WizardUI.cpp" />
-    <ClCompile Include="TaskSystem.cpp" />
-    <ClCompile Include="text_to_text.cpp" />
+    <ClCompile Include="src\app\AppState.cpp" />
+    <ClCompile Include="src\app\MineBackup.cpp" />
+    <ClCompile Include="src\core\BackupManager.cpp" />
+    <ClCompile Include="src\core\GameSessionManager.cpp" />
+    <ClCompile Include="src\core\HistoryManager.cpp" />
+    <ClCompile Include="src\core\SpecialMode.cpp" />
+    <ClCompile Include="src\core\TaskSystem.cpp" />
+    <ClCompile Include="src\infra\Broadcast.cpp" />
+    <ClCompile Include="src\infra\ConfigManager.cpp" />
+    <ClCompile Include="src\infra\Console.cpp" />
+    <ClCompile Include="src\infra\i18n.cpp" />
+    <ClCompile Include="src\platform\Platform_win.cpp" />
+    <ClCompile Include="src\ui\HistoryUI.cpp" />
+    <ClCompile Include="src\ui\SettingsUI.cpp" />
+    <ClCompile Include="src\ui\WizardUI.cpp" />
+    <ClCompile Include="src\utils\basic_func.cpp" />
+    <ClCompile Include="src\utils\text_to_text.cpp" />
+    <ClCompile Include="third_party\imgui\imgui.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_impl_glfw.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="third_party\KnotLink\OpenSocketResponser.cpp" />
+    <ClCompile Include="third_party\KnotLink\SignalSender.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="AppState.h" />
-    <ClInclude Include="BackupManager.h" />
-    <ClInclude Include="Broadcast.h" />
-    <ClInclude Include="ConfigManager.h" />
-    <ClInclude Include="Console.h" />
-    <ClInclude Include="DataModels.h" />
-    <ClInclude Include="Globals.h" />
-    <ClInclude Include="MainUI.h" />
-    <ClInclude Include="HistoryManager.h" />
-    <ClInclude Include="i18n.h" />
-    <ClInclude Include="IconsFontAwesome6.h" />
-    <ClInclude Include="imgui-all.h" />
-    <ClInclude Include="imgui\imconfig.h" />
-    <ClInclude Include="imgui\imgui.h" />
-    <ClInclude Include="imgui\imgui_impl_glfw.h" />
-    <ClInclude Include="imgui\imgui_impl_opengl3.h" />
-    <ClInclude Include="imgui\imgui_impl_opengl3_loader.h" />
-    <ClInclude Include="imgui\imgui_internal.h" />
-    <ClInclude Include="imgui\imgui_style.h" />
-    <ClInclude Include="imgui\imstb_rectpack.h" />
-    <ClInclude Include="imgui\imstb_textedit.h" />
-    <ClInclude Include="imgui\imstb_truetype.h" />
-    <ClInclude Include="json.hpp" />
-    <ClInclude Include="KnotLink\OpenSocketResponser.hpp" />
-    <ClInclude Include="KnotLink\SignalSender.hpp" />
-    <ClInclude Include="KnotLink\TcpClient.hpp" />
-    <ClInclude Include="PlatformCompat.h" />
-    <ClInclude Include="Platform_linux.h" />
-    <ClInclude Include="Platform_win.h" />
+    <ClInclude Include="src\app\AppState.h" />
+    <ClInclude Include="src\app\DataModels.h" />
+    <ClInclude Include="src\app\Globals.h" />
+    <ClInclude Include="src\app\MainUI.h" />
+    <ClInclude Include="src\core\BackupManager.h" />
+    <ClInclude Include="src\core\HistoryManager.h" />
+    <ClInclude Include="src\core\TaskSystem.h" />
+    <ClInclude Include="src\infra\Broadcast.h" />
+    <ClInclude Include="src\infra\ConfigManager.h" />
+    <ClInclude Include="src\infra\Console.h" />
+    <ClInclude Include="src\infra\i18n.h" />
+    <ClInclude Include="src\platform\PlatformCompat.h" />
+    <ClInclude Include="src\platform\Platform_linux.h" />
+    <ClInclude Include="src\platform\Platform_macos.h" />
+    <ClInclude Include="src\platform\Platform_win.h" />
+    <ClInclude Include="src\ui\IconsFontAwesome6.h" />
+    <ClInclude Include="src\ui\imgui-all.h" />
+    <ClInclude Include="src\ui\UIHelpers.h" />
+    <ClInclude Include="src\utils\text_to_text.h" />
+    <ClInclude Include="third_party\imgui\imconfig.h" />
+    <ClInclude Include="third_party\imgui\imgui.h" />
+    <ClInclude Include="third_party\imgui\imgui_impl_glfw.h" />
+    <ClInclude Include="third_party\imgui\imgui_impl_opengl3.h" />
+    <ClInclude Include="third_party\imgui\imgui_impl_opengl3_loader.h" />
+    <ClInclude Include="third_party\imgui\imgui_internal.h" />
+    <ClInclude Include="third_party\imgui\imgui_style.h" />
+    <ClInclude Include="third_party\imgui\imstb_rectpack.h" />
+    <ClInclude Include="third_party\imgui\imstb_textedit.h" />
+    <ClInclude Include="third_party\imgui\imstb_truetype.h" />
+    <ClInclude Include="third_party\json\json.hpp" />
+    <ClInclude Include="third_party\KnotLink\KnotLinkServer.hpp" />
+    <ClInclude Include="third_party\KnotLink\OpenSocketResponser.hpp" />
+    <ClInclude Include="third_party\KnotLink\OpenSocketResponser_posix.hpp" />
+    <ClInclude Include="third_party\KnotLink\SignalSender.hpp" />
+    <ClInclude Include="third_party\KnotLink\SignalSender_posix.hpp" />
+    <ClInclude Include="third_party\KnotLink\TcpClient.hpp" />
+    <ClInclude Include="third_party\KnotLink\TcpClient_posix.hpp" />
     <ClInclude Include="resource.h" />
-    <ClInclude Include="UIHelpers.h" />
-    <ClInclude Include="stb_image.h" />
-    <ClInclude Include="TaskSystem.h" />
-    <ClInclude Include="text_to_text.h" />
+    <ClInclude Include="third_party\stb\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MineBackup.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\7za.exe" />
+    <None Include="7za.exe" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="D:\Pictures\图标\mine10.ico" />

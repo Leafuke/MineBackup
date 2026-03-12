@@ -1,238 +1,268 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="源文件">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    <Filter Include="src\app">
+      <UniqueIdentifier>{34557DDC-C1AA-4AAB-A930-D5AA0013B0C1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="头文件">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    <Filter Include="src\core">
+      <UniqueIdentifier>{D19FA20F-3FA2-48AB-85EA-211877A4A4CC}</UniqueIdentifier>
     </Filter>
-    <Filter Include="imgui">
-      <UniqueIdentifier>{69a922c2-e554-4b72-a570-6340ae1403ec}</UniqueIdentifier>
+    <Filter Include="src\infra">
+      <UniqueIdentifier>{75C03B9A-8B11-4202-92A8-469B0D38E080}</UniqueIdentifier>
     </Filter>
-    <Filter Include="资源文件">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="src\platform">
+      <UniqueIdentifier>{35FE28D6-D26C-42CB-93E1-EF68EA0C7D5B}</UniqueIdentifier>
     </Filter>
-    <Filter Include="ImGui">
-      <UniqueIdentifier>{b634a282-a8b2-4715-be51-29d7d10434ac}</UniqueIdentifier>
+    <Filter Include="src\ui">
+      <UniqueIdentifier>{6D8DBDD0-96D4-4CEB-AD6E-9D7260EA971E}</UniqueIdentifier>
     </Filter>
-    <Filter Include="KnotLink">
-      <UniqueIdentifier>{f0e0f8f8-cd58-4b7f-b95a-55fee11b0d33}</UniqueIdentifier>
+    <Filter Include="src\utils">
+      <UniqueIdentifier>{1168FC11-6708-4C2D-BA71-CF4AC79D286D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="third_party\imgui">
+      <UniqueIdentifier>{FA97F0E0-DC4C-4D56-A64F-E67CE44C9AB1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="third_party\KnotLink">
+      <UniqueIdentifier>{B146B260-A6A7-4F34-B98F-66D370C7597A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="third_party\json">
+      <UniqueIdentifier>{78E4FF42-94D0-4C4D-AF01-0297258832EE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="third_party\stb">
+      <UniqueIdentifier>{89064A90-A00E-44D4-A6D9-E678C5718036}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="resources">
+      <UniqueIdentifier>{7B44FA14-0C85-4871-8A62-D64C232978A8}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="text_to_text.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\app\AppState.cpp">
+      <Filter>src\app</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui.cpp">
-      <Filter>ImGui</Filter>
+    <ClCompile Include="src\app\MineBackup.cpp">
+      <Filter>src\app</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_draw.cpp">
-      <Filter>ImGui</Filter>
+    <ClCompile Include="src\core\BackupManager.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_tables.cpp">
-      <Filter>ImGui</Filter>
+    <ClCompile Include="src\core\GameSessionManager.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_widgets.cpp">
-      <Filter>ImGui</Filter>
+    <ClCompile Include="src\core\HistoryManager.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="text_to_text.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\core\SpecialMode.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="basic_func.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\core\TaskSystem.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="HistoryManager.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\infra\Broadcast.cpp">
+      <Filter>src\infra</Filter>
     </ClCompile>
-    <ClCompile Include="MineBackup.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\infra\ConfigManager.cpp">
+      <Filter>src\infra</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_impl_glfw.cpp">
-      <Filter>imgui</Filter>
+    <ClCompile Include="src\infra\Console.cpp">
+      <Filter>src\infra</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_impl_opengl3.cpp">
-      <Filter>imgui</Filter>
+    <ClCompile Include="src\infra\i18n.cpp">
+      <Filter>src\infra</Filter>
     </ClCompile>
-    <ClCompile Include="BackupManager.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\platform\Platform_win.cpp">
+      <Filter>src\platform</Filter>
     </ClCompile>
-    <ClCompile Include="Platform_win.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\ui\HistoryUI.cpp">
+      <Filter>src\ui</Filter>
     </ClCompile>
-    <ClCompile Include="AppState.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\ui\SettingsUI.cpp">
+      <Filter>src\ui</Filter>
     </ClCompile>
-    <ClCompile Include="i18n.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\ui\WizardUI.cpp">
+      <Filter>src\ui</Filter>
     </ClCompile>
-    <ClCompile Include="ConfigManager.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\utils\basic_func.cpp">
+      <Filter>src\utils</Filter>
     </ClCompile>
-    <ClCompile Include="Console.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\utils\text_to_text.cpp">
+      <Filter>src\utils</Filter>
     </ClCompile>
-    <ClCompile Include="Broadcast.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="third_party\imgui\imgui.cpp">
+      <Filter>third_party\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="GameSessionManager.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
+      <Filter>third_party\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="KnotLink\OpenSocketResponser.cpp">
-      <Filter>KnotLink</Filter>
+    <ClCompile Include="third_party\imgui\imgui_impl_glfw.cpp">
+      <Filter>third_party\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="KnotLink\SignalSender.cpp">
-      <Filter>KnotLink</Filter>
+    <ClCompile Include="third_party\imgui\imgui_impl_opengl3.cpp">
+      <Filter>third_party\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="SettingsUI.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp">
+      <Filter>third_party\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="TaskSystem.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
+      <Filter>third_party\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="HistoryUI.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="third_party\KnotLink\OpenSocketResponser.cpp">
+      <Filter>third_party\KnotLink</Filter>
     </ClCompile>
-    <ClCompile Include="SpecialMode.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="WizardUI.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="third_party\KnotLink\SignalSender.cpp">
+      <Filter>third_party\KnotLink</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="i18n.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\app\AppState.h">
+      <Filter>src\app</Filter>
     </ClInclude>
-    <ClInclude Include="imgui-all.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\app\DataModels.h">
+      <Filter>src\app</Filter>
     </ClInclude>
-    <ClInclude Include="IconsFontAwesome6.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\app\Globals.h">
+      <Filter>src\app</Filter>
     </ClInclude>
-    <ClInclude Include="stb_image.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\app\MainUI.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\BackupManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\HistoryManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\TaskSystem.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\Broadcast.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\ConfigManager.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\Console.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\i18n.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\PlatformCompat.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Platform_linux.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Platform_macos.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Platform_win.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\IconsFontAwesome6.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\imgui-all.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UIHelpers.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\utils\text_to_text.h">
+      <Filter>src\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imconfig.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_impl_glfw.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_impl_opengl3.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_impl_opengl3_loader.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_internal.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_style.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_rectpack.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_textedit.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_truetype.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\json\json.hpp">
+      <Filter>third_party\json</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\KnotLink\KnotLinkServer.hpp">
+      <Filter>third_party\KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\KnotLink\OpenSocketResponser.hpp">
+      <Filter>third_party\KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\KnotLink\OpenSocketResponser_posix.hpp">
+      <Filter>third_party\KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\KnotLink\SignalSender.hpp">
+      <Filter>third_party\KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\KnotLink\SignalSender_posix.hpp">
+      <Filter>third_party\KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\KnotLink\TcpClient.hpp">
+      <Filter>third_party\KnotLink</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\KnotLink\TcpClient_posix.hpp">
+      <Filter>third_party\KnotLink</Filter>
     </ClInclude>
     <ClInclude Include="resource.h">
-      <Filter>头文件</Filter>
+      <Filter>resources</Filter>
     </ClInclude>
-    <ClInclude Include="imgui\imgui.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imgui_internal.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imstb_rectpack.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imstb_textedit.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imstb_truetype.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imconfig.h">
-      <Filter>ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="KnotLink\SignalSender.hpp">
-      <Filter>KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="KnotLink\TcpClient.hpp">
-      <Filter>KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="KnotLink\OpenSocketResponser.hpp">
-      <Filter>KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="json.hpp">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imgui_impl_opengl3.h">
-      <Filter>imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imgui_impl_glfw.h">
-      <Filter>imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imgui_impl_opengl3_loader.h">
-      <Filter>imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="Platform_win.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="text_to_text.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="AppState.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="ConfigManager.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Console.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Broadcast.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="HistoryManager.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="BackupManager.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Platform_linux.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="imgui\imgui_style.h">
-      <Filter>imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="TaskSystem.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="DataModels.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Globals.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="MainUI.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="PlatformCompat.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="UIHelpers.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="third_party\stb\stb_image.h">
+      <Filter>third_party\stb</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MineBackup.rc">
-      <Filter>资源文件</Filter>
+      <Filter>resources</Filter>
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\7za.exe" />
+    <None Include="7za.exe">
+      <Filter>resources</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="D:\Pictures\图标\mine10.ico">
-      <Filter>资源文件</Filter>
+      <Filter>resources</Filter>
     </Image>
     <Image Include="D:\Pictures\图标\mine20.ico">
-      <Filter>资源文件</Filter>
+      <Filter>resources</Filter>
     </Image>
     <Image Include="D:\Pictures\图标\mine30.ico">
-      <Filter>资源文件</Filter>
+      <Filter>resources</Filter>
     </Image>
     <Image Include="D:\Pictures\图标\mine40.ico">
-      <Filter>资源文件</Filter>
+      <Filter>resources</Filter>
     </Image>
   </ItemGroup>
   <ItemGroup>
-    <Font Include="..\fontawesome-sp.otf" />
+    <Font Include="..\fontawesome-sp.otf">
+      <Filter>resources</Filter>
+    </Font>
   </ItemGroup>
   <ItemGroup>
-    <Text Include="CustomTheme.txt" />
+    <Text Include="CustomTheme.txt">
+      <Filter>resources</Filter>
+    </Text>
   </ItemGroup>
 </Project>
