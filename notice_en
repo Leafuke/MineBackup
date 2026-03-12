@@ -1,14 +1,9 @@
 IMPORTANT NOTICE
 
+2026.3.12
+
+For Windows 10 and above users, it is recommended to prioritize the combination of [FolderRewind](https://github.com/Leafuke/FolderRewind) + [MineRewind Plugin](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft) — the Second Generation Time Machine features a more modern UI and more powerful functionalities, and it will be the main focus of future maintenance. Looking back at the first-generation Time Machine, MineBackup, I recognize that it indeed has many design shortcomings, which make it more difficult to maintain and extend. However, considering that many users are already using it, I will continue to maintain MineBackup, fixing critical bugs and security issues, but updates will often lag behind the second-generation Time Machine.
+
 2026.3.1
 FolderRewind Official Website is Now Live!
 https://folderrewind.top
-
-2026.2.23
-
-Starting from version 1.4.0, the overall user experience of the second-generation archive time machine FolderRewind has surpassed MineBackup. In future versions, Windows will prioritize the development and optimization of FolderRewind's features. 
-If you are currently using MineBackup, it is recommended to migrate to FolderRewind as soon as possible for a better experience. 
-If you choose to continue using MineBackup, that's fine too. MineBackup will continue to be maintained and updated in the foreseeable future.
-
-The second-generation archive time machine can be directly downloaded from the Microsoft Store by searching for "FolderRewind" or by downloading the offline installer package.
-Open source repository: https://github.com/Leafuke/FolderRewind

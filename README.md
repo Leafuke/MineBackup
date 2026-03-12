@@ -1,4 +1,6 @@
-# MineBackup — The Ultimate Backup Companion for Your Minecraft Worlds 🗂️💾
+[中文](README_zh.md) | **English**
+
+# MineBackup — The Ultimate Backup Companion for Your Minecraft Worlds 🗂️
 
 [![中文说明](https://img.shields.io/badge/README-中文-blue)](README_zh.md)
 [![Latest Release](https://img.shields.io/github/v/release/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/releases)
@@ -8,6 +10,12 @@
 
 > **Back up with confidence · Restore in seconds · Compress intelligently**  
 > Keep your Minecraft worlds safe — and yes, you can back up any folder on your PC, too.
+
+---
+
+**A Note Before You Begin**:
+
+For Windows 10 and above users, it is recommended to prioritize the combination of [FolderRewind](https://github.com/Leafuke/FolderRewind) + [MineRewind Plugin](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft) — the [Second Generation Time Machine](https://github.com/Leafuke/FolderRewind) features a more modern UI and more powerful functionalities, and it will be the main focus of future maintenance. Looking back at the first-generation Time Machine, MineBackup, I recognize that it indeed has many design shortcomings, which make it more difficult to maintain and extend. However, considering that many users are already using it, I will continue to maintain MineBackup, fixing critical bugs and security issues, but updates will often lag behind the second-generation Time Machine.
 
 ---
 
