@@ -1,6 +1,7 @@
 ﻿#define STB_IMAGE_IMPLEMENTATION
 #include "Broadcast.h"
 #include "Globals.h"
+#include "SettingsUI.h"
 #include "UIHelpers.h"
 #include "MainUI.h"
 #include "imgui-all.h"
@@ -39,50 +40,9 @@ inline int _getch() { return std::getchar(); }
 
 using namespace std;
 
-GLFWwindow* wc = nullptr;
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
-string CURRENT_VERSION = "1.13.1";
-atomic<bool> g_UpdateCheckDone(false);
-atomic<bool> g_NewVersionAvailable(false);
-atomic<bool> g_NoticeCheckDone(false);
-atomic<bool> g_NewNoticeAvailable(false);
-string g_LatestVersionStr;
-string g_ReleaseNotes;
-string g_NoticeContent;
-string g_NoticeUpdatedAt;
-string g_NoticeLastSeenVersion;
-int g_windowWidth = 1280, g_windowHeight = 800;
-float g_uiScale = 1.0f;
-
-int last_interval = 15;
-
-// 设置项变量（全局）
-ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-wstring Fontss;
-bool showSettings = false;
-bool isSilence = false, isSafeDelete = true;
-bool specialSetting = false;
-bool g_CheckForUpdates = true, g_ReceiveNotices = true, g_StopAutoBackupOnExit = false, g_RunOnStartup = false, g_AutoScanForWorlds = false, g_autoLogEnabled = true;
-bool g_SilentStartupToTray = false;
-bool showHistoryWindow = false;
-bool g_enableKnotLink = true;
-int g_hotKeyBackupId = 'S', g_hotKeyRestoreId = 'Z';
-
-// 关闭行为设置
-// 0 = 每次询问, 1 = 直接最小化到托盘, 2 = 直接退出
-int g_closeAction = 0;
-bool g_rememberCloseAction = false;
-bool g_showCloseConfirmDialog = false;
-
-atomic<bool> specialTasksRunning = false;
-atomic<bool> specialTasksComplete = false;
-thread g_exitWatcherThread;
-atomic<bool> g_stopExitWatcher(false);
-wstring g_worldToFocusInHistory = L"";
-vector<wstring> restoreWhitelist;
-
 wstring GetDefaultUIFontPath() {
 #ifdef _WIN32
 	// 动态获取 Windows 字体目录
@@ -266,7 +226,6 @@ bool Extract7zToTempFile(wstring& extractedPath);
 
 void GameSessionWatcherThread();
 
-void ShowSettingsWindowV2();
 string ProcessCommand(const string& commandStr, Console* console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
 void ConsoleLog(Console* console, const char* format, ...);
@@ -559,11 +518,11 @@ int main(int argc, char** argv)
 	int width, height, channels;
 	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
 	// unsigned char* pixels = stbi_load("icon.png", &width, &height, 0, 4); 
-	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(104), RT_GROUP_ICON);
+	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(104), (LPCWSTR)RT_GROUP_ICON);
 	HGLOBAL hMem = LoadResource(hInstance, hRes);
 	void* pMem = LockResource(hMem);
 	int nId = LookupIconIdFromDirectoryEx((PBYTE)pMem, TRUE, 0, 0, LR_DEFAULTCOLOR);
-	hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(nId), RT_ICON);
+	hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(nId), (LPCWSTR)RT_ICON);
 	hMem = LoadResource(hInstance, hRes);;
 	pMem = LockResource(hMem);
 

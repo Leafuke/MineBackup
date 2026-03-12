@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "Console.h"
 #include "AppState.h"
+#include "Globals.h"
 
 #include <atomic>
 #include <chrono>
@@ -24,18 +25,6 @@
 
 using namespace std;
 namespace fs = std::filesystem;
-
-extern atomic<bool> g_UpdateCheckDone;
-extern atomic<bool> g_NewVersionAvailable;
-extern atomic<bool> g_NoticeCheckDone;
-extern atomic<bool> g_NewNoticeAvailable;
-extern string g_LatestVersionStr;
-extern string g_ReleaseNotes;
-extern string g_NoticeContent;
-extern string g_NoticeUpdatedAt;
-extern string g_NoticeLastSeenVersion;
-extern string CURRENT_VERSION;
-extern AppState g_appState;
 
 static string ExtractLocalizedContent(const string& content) {
 	size_t sepPos = content.find("---");

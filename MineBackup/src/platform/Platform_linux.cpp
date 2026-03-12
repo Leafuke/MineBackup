@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "Console.h"
 #include "AppState.h"
+#include "Globals.h"
 #include <GLFW/glfw3.h>
 
 #include <X11/Xlib.h>
@@ -30,19 +31,6 @@
 
 using namespace std;
 namespace fs = std::filesystem;
-
-extern atomic<bool> g_UpdateCheckDone;
-extern atomic<bool> g_NewVersionAvailable;
-extern atomic<bool> g_NoticeCheckDone;
-extern atomic<bool> g_NewNoticeAvailable;
-extern string g_LatestVersionStr;
-extern string g_ReleaseNotes;
-extern string g_NoticeContent;
-extern string g_NoticeUpdatedAt;
-extern string g_NoticeLastSeenVersion;
-extern string CURRENT_VERSION;
-extern AppState g_appState;
-extern GLFWwindow* wc;
 
 // 根据当前语言从文本中提取对应部分
 // 文本格式: "中文内容\n---\n英文内容"

@@ -1,13 +1,12 @@
 ﻿#include "Broadcast.h"
 #include "BackupManager.h"
 #include "Console.h"
+#include "Globals.h"
 #include "text_to_text.h"
 #include <atomic>
 #include <filesystem>
 #include <mutex>
 using namespace std;
-extern atomic<bool> g_stopExitWatcher;
-extern bool g_StopAutoBackupOnExit;
 map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 
 bool IsFileLocked(const wstring& path);

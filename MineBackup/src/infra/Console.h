@@ -2,6 +2,7 @@
 #ifndef _CONSOLE_
 #define _CONSOLE_
 
+#include "Globals.h"
 #include "imgui/imgui.h"
 #include "AppState.h"
 #ifdef _WIN32
@@ -17,7 +18,6 @@
 #include <mutex>
 #include <fstream>
 #include <filesystem>
-extern bool isSilence;
 struct Console
 {
 	char                  InputBuf[CONSTANT1];

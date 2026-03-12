@@ -139,6 +139,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\app\AppState.cpp" />
+    <ClCompile Include="src\app\Globals.cpp" />
     <ClCompile Include="src\app\MineBackup.cpp" />
     <ClCompile Include="src\core\BackupManager.cpp" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
@@ -151,7 +152,10 @@
     <ClCompile Include="src\infra\i18n.cpp" />
     <ClCompile Include="src\platform\Platform_win.cpp" />
     <ClCompile Include="src\ui\HistoryUI.cpp" />
+    <ClCompile Include="src\ui\SettingsUIAppearance.cpp" />
+    <ClCompile Include="src\ui\SettingsUIConfig.cpp" />
     <ClCompile Include="src\ui\SettingsUI.cpp" />
+    <ClCompile Include="src\ui\SettingsUISpecial.cpp" />
     <ClCompile Include="src\ui\WizardUI.cpp" />
     <ClCompile Include="src\utils\basic_func.cpp" />
     <ClCompile Include="src\utils\text_to_text.cpp" />
@@ -170,6 +174,7 @@
     <ClInclude Include="src\app\Globals.h" />
     <ClInclude Include="src\app\MainUI.h" />
     <ClInclude Include="src\core\BackupManager.h" />
+    <ClInclude Include="src\core\BackupManagerRestore.inl" />
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\TaskSystem.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
@@ -181,6 +186,8 @@
     <ClInclude Include="src\platform\Platform_macos.h" />
     <ClInclude Include="src\platform\Platform_win.h" />
     <ClInclude Include="src\ui\IconsFontAwesome6.h" />
+    <ClInclude Include="src\ui\SettingsUI.h" />
+    <ClInclude Include="src\ui\SettingsUIPrivate.h" />
     <ClInclude Include="src\ui\imgui-all.h" />
     <ClInclude Include="src\ui\UIHelpers.h" />
     <ClInclude Include="src\utils\text_to_text.h" />

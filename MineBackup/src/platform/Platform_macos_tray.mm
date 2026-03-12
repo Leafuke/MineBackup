@@ -1,14 +1,12 @@
 #include "Platform_macos.h"
 #include "AppState.h"
+#include "Globals.h"
 #include "i18n.h"
 #include <GLFW/glfw3.h>
 #include <cctype>
 #include <cstdint>
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>
-
-extern GLFWwindow* wc;
-extern AppState g_appState;
 
 static NSStatusItem* g_statusItem = nil;
 static id g_statusHandler = nil;

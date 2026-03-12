@@ -1,5 +1,6 @@
 ﻿#include "ConfigManager.h"
 #include "AppState.h"
+#include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #ifdef _WIN32
@@ -81,26 +82,6 @@ static int NormalizeCompressionLevel(const wstring& method, int level) {
 }
 
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
-extern int g_hotKeyBackupId , g_hotKeyRestoreId;
-
-extern bool g_RunOnStartup;
-extern bool g_enableKnotLink;
-extern bool g_CheckForUpdates;
-extern bool g_ReceiveNotices;
-extern bool g_StopAutoBackupOnExit;
-extern bool g_SilentStartupToTray;
-extern bool isSilence;
-extern bool isSafeDelete;
-extern bool g_AutoScanForWorlds;
-extern bool g_autoLogEnabled;
-extern wstring Fontss;
-extern string g_NoticeLastSeenVersion;
-extern vector<wstring> restoreWhitelist;
-extern int last_interval;
-extern int g_windowHeight, g_windowWidth;
-extern float g_uiScale;
-extern int g_closeAction;
-extern bool g_rememberCloseAction;
 
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 bool IsFileLocked(const wstring& path);

@@ -28,6 +28,7 @@ HWND CreateHiddenWindow(HINSTANCE hInstance);
 void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);
 void ReStartApplication();
+std::string GetRegistryValue(const std::string& keyPath, const std::string& valueName);
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray = false);
 bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
 void CheckForNoticesThread();

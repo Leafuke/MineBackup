@@ -3,6 +3,7 @@
 #include "Platform_win.h"
 #include "text_to_text.h"
 #include "AppState.h"
+#include "Globals.h"
 #include "resource.h"
 #include "i18n.h"
 #include "Console.h"
@@ -26,20 +27,6 @@
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
-
-extern GLFWwindow* wc;
-
-extern atomic<bool> g_UpdateCheckDone;
-extern atomic<bool> g_NewVersionAvailable;
-extern atomic<bool> g_NoticeCheckDone;
-extern atomic<bool> g_NewNoticeAvailable;
-extern string g_LatestVersionStr;
-extern string g_ReleaseNotes;
-extern string g_NoticeContent;
-extern string g_NoticeUpdatedAt;
-extern string g_NoticeLastSeenVersion;
-extern string CURRENT_VERSION;
-extern int g_hotKeyBackupId, g_hotKeyRestoreId;
 
 NOTIFYICONDATA nid = { 0 };
 

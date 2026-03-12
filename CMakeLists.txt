@@ -26,6 +26,7 @@ set(GLFW_DIR ${IMGUI_DIR}/GLFW)
 
 set(SOURCES
     ${APP_DIR}/AppState.cpp
+    ${APP_DIR}/Globals.cpp
     ${APP_DIR}/MineBackup.cpp
     ${CORE_DIR}/BackupManager.cpp
     ${CORE_DIR}/GameSessionManager.cpp
@@ -38,6 +39,9 @@ set(SOURCES
     ${INFRA_DIR}/i18n.cpp
     ${UI_DIR}/HistoryUI.cpp
     ${UI_DIR}/SettingsUI.cpp
+    ${UI_DIR}/SettingsUIAppearance.cpp
+    ${UI_DIR}/SettingsUIConfig.cpp
+    ${UI_DIR}/SettingsUISpecial.cpp
     ${UI_DIR}/WizardUI.cpp
     ${UTILS_DIR}/basic_func.cpp
     ${UTILS_DIR}/text_to_text.cpp
@@ -55,6 +59,7 @@ set(HEADERS
     ${APP_DIR}/Globals.h
     ${APP_DIR}/MainUI.h
     ${CORE_DIR}/BackupManager.h
+    ${CORE_DIR}/BackupManagerRestore.inl
     ${CORE_DIR}/HistoryManager.h
     ${CORE_DIR}/TaskSystem.h
     ${INFRA_DIR}/Broadcast.h
@@ -66,6 +71,8 @@ set(HEADERS
     ${PLATFORM_DIR}/Platform_macos.h
     ${PLATFORM_DIR}/Platform_win.h
     ${UI_DIR}/IconsFontAwesome6.h
+    ${UI_DIR}/SettingsUI.h
+    ${UI_DIR}/SettingsUIPrivate.h
     ${UI_DIR}/UIHelpers.h
     ${UI_DIR}/imgui-all.h
     ${UTILS_DIR}/text_to_text.h
@@ -93,15 +100,32 @@ set(FONT_AWESOME_SP ${CMAKE_CURRENT_SOURCE_DIR}/fontawesome-sp.otf)
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
+if(WIN32)
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
 set(GLFW_TARGET "")
-find_package(glfw3 QUIET)
-if(glfw3_FOUND)
-    if(TARGET glfw)
-        set(GLFW_TARGET glfw)
-    elseif(TARGET glfw3::glfw)
-        set(GLFW_TARGET glfw3::glfw)
+
+if(WIN32)
+    set(GLFW_BUNDLED_LIB ${IMGUI_DIR}/lib-vc2022-64/glfw3.lib)
+    if(EXISTS ${GLFW_BUNDLED_LIB})
+        add_library(glfw_bundled STATIC IMPORTED)
+        set_target_properties(glfw_bundled PROPERTIES IMPORTED_LOCATION ${GLFW_BUNDLED_LIB})
+        target_include_directories(glfw_bundled INTERFACE ${GLFW_DIR})
+        set(GLFW_TARGET glfw_bundled)
+    endif()
+endif()
+
+if(GLFW_TARGET STREQUAL "")
+    find_package(glfw3 QUIET)
+    if(glfw3_FOUND)
+        if(TARGET glfw)
+            set(GLFW_TARGET glfw)
+        elseif(TARGET glfw3::glfw)
+            set(GLFW_TARGET glfw3::glfw)
+        endif()
     endif()
 endif()
 

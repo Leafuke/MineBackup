@@ -1,7 +1,6 @@
 ﻿#include "Broadcast.h"
 #include "AppState.h"
-
-extern std::string CURRENT_VERSION;
+#include "Globals.h"
 
 SignalSender* g_signalSender = nullptr;
 OpenSocketResponser* g_commandResponser = nullptr;

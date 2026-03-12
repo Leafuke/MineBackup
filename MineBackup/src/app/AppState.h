@@ -41,9 +41,6 @@ struct AppState {
 	std::atomic<HotRestoreState> hotkeyRestoreState = HotRestoreState::IDLE;
 
 	KnotLinkModInfo knotLinkMod;
-
-	// Settings
-	bool g_CheckForUpdates = true;
 };
 
 extern AppState g_appState;

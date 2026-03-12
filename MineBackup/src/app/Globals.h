@@ -6,66 +6,128 @@
 // 定义在 MineBackup.cpp 中，其他文件通过 #include "Globals.h" 访问
 
 #include "AppState.h"
-#include <string>
-#include <vector>
+#include "imgui.h"
 #include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
 
 // 前向声明
 struct GLFWwindow;
 struct ImVec4;
 
-// GLFW 窗口
-extern GLFWwindow* wc;
+struct AppWindowState {
+	GLFWwindow* handle = nullptr;
+	int width = 1280;
+	int height = 800;
+	float uiScale = 1.0f;
+	ImVec4 clearColor = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+};
 
-// 版本信息
-extern std::string CURRENT_VERSION;
+struct AppUpdateState {
+	std::atomic<bool> updateCheckDone{ false };
+	std::atomic<bool> newVersionAvailable{ false };
+	std::atomic<bool> noticeCheckDone{ false };
+	std::atomic<bool> newNoticeAvailable{ false };
+	std::string latestVersion;
+	std::string releaseNotes;
+	std::string noticeContent;
+	std::string noticeUpdatedAt;
+	std::string noticeLastSeenVersion;
+};
 
-// 更新/通知检查状态
-extern std::atomic<bool> g_UpdateCheckDone;
-extern std::atomic<bool> g_NewVersionAvailable;
-extern std::atomic<bool> g_NoticeCheckDone;
-extern std::atomic<bool> g_NewNoticeAvailable;
-extern std::string g_LatestVersionStr;
-extern std::string g_ReleaseNotes;
-extern std::string g_NoticeContent;
-extern std::string g_NoticeUpdatedAt;
-extern std::string g_NoticeLastSeenVersion;
+struct AppUiState {
+	std::wstring fontPath;
+	bool showSettings = false;
+	bool showHistoryWindow = false;
+	bool specialSetting = false;
+	int closeAction = 0;
+	bool rememberCloseAction = false;
+	bool showCloseConfirmDialog = false;
+	std::wstring worldToFocusInHistory;
+};
 
-// 窗口尺寸与 UI 缩放
-extern int g_windowWidth, g_windowHeight;
-extern float g_uiScale;
+struct AppSettingsState {
+	bool silence = false;
+	bool safeDelete = true;
+	bool checkForUpdates = true;
+	bool receiveNotices = true;
+	bool stopAutoBackupOnExit = false;
+	bool runOnStartup = false;
+	bool silentStartupToTray = false;
+	bool autoScanForWorlds = false;
+	bool autoLogEnabled = true;
+	bool enableKnotLink = true;
+	int hotKeyBackupId = 'S';
+	int hotKeyRestoreId = 'Z';
+	int lastIntervalMinutes = 15;
+	std::vector<std::wstring> restoreWhitelist;
+};
 
-// 自动备份间隔
-extern int last_interval;
+struct SpecialTaskRuntimeState {
+	std::atomic<bool> tasksRunning{ false };
+	std::atomic<bool> tasksComplete{ false };
+	std::thread exitWatcherThread;
+	std::atomic<bool> stopExitWatcher{ false };
+};
 
-// 设置项变量
-extern ImVec4 clear_color;
-extern std::wstring Fontss;
-extern bool showSettings;
-extern bool isSilence, isSafeDelete;
-extern bool specialSetting;
-extern bool g_CheckForUpdates, g_ReceiveNotices, g_StopAutoBackupOnExit;
-extern bool g_RunOnStartup, g_AutoScanForWorlds, g_autoLogEnabled;
-extern bool showHistoryWindow;
-extern bool g_enableKnotLink;
-extern int g_hotKeyBackupId, g_hotKeyRestoreId;
+struct AppGlobalState {
+	std::string currentVersion = "1.13.1";
+	AppWindowState window;
+	AppUpdateState update;
+	AppUiState ui;
+	AppSettingsState settings;
+	SpecialTaskRuntimeState specialTasks;
+};
 
-// 关闭行为设置
-extern int g_closeAction;
-extern bool g_rememberCloseAction;
-extern bool g_showCloseConfirmDialog;
+extern AppGlobalState g_globals;
 
-// 特殊模式控制
-extern std::atomic<bool> specialTasksRunning;
-extern std::atomic<bool> specialTasksComplete;
-extern std::thread g_exitWatcherThread;
-extern std::atomic<bool> g_stopExitWatcher;
+inline GLFWwindow*& wc = g_globals.window.handle;
+inline std::string& CURRENT_VERSION = g_globals.currentVersion;
 
-// 历史窗口
-extern std::wstring g_worldToFocusInHistory;
+inline std::atomic<bool>& g_UpdateCheckDone = g_globals.update.updateCheckDone;
+inline std::atomic<bool>& g_NewVersionAvailable = g_globals.update.newVersionAvailable;
+inline std::atomic<bool>& g_NoticeCheckDone = g_globals.update.noticeCheckDone;
+inline std::atomic<bool>& g_NewNoticeAvailable = g_globals.update.newNoticeAvailable;
+inline std::string& g_LatestVersionStr = g_globals.update.latestVersion;
+inline std::string& g_ReleaseNotes = g_globals.update.releaseNotes;
+inline std::string& g_NoticeContent = g_globals.update.noticeContent;
+inline std::string& g_NoticeUpdatedAt = g_globals.update.noticeUpdatedAt;
+inline std::string& g_NoticeLastSeenVersion = g_globals.update.noticeLastSeenVersion;
 
-// 还原白名单
-extern std::vector<std::wstring> restoreWhitelist;
+inline int& g_windowWidth = g_globals.window.width;
+inline int& g_windowHeight = g_globals.window.height;
+inline float& g_uiScale = g_globals.window.uiScale;
+inline ImVec4& clear_color = g_globals.window.clearColor;
+
+inline int& last_interval = g_globals.settings.lastIntervalMinutes;
+inline std::wstring& Fontss = g_globals.ui.fontPath;
+inline bool& showSettings = g_globals.ui.showSettings;
+inline bool& showHistoryWindow = g_globals.ui.showHistoryWindow;
+inline bool& specialSetting = g_globals.ui.specialSetting;
+inline int& g_closeAction = g_globals.ui.closeAction;
+inline bool& g_rememberCloseAction = g_globals.ui.rememberCloseAction;
+inline bool& g_showCloseConfirmDialog = g_globals.ui.showCloseConfirmDialog;
+inline std::wstring& g_worldToFocusInHistory = g_globals.ui.worldToFocusInHistory;
+
+inline bool& isSilence = g_globals.settings.silence;
+inline bool& isSafeDelete = g_globals.settings.safeDelete;
+inline bool& g_CheckForUpdates = g_globals.settings.checkForUpdates;
+inline bool& g_ReceiveNotices = g_globals.settings.receiveNotices;
+inline bool& g_StopAutoBackupOnExit = g_globals.settings.stopAutoBackupOnExit;
+inline bool& g_RunOnStartup = g_globals.settings.runOnStartup;
+inline bool& g_SilentStartupToTray = g_globals.settings.silentStartupToTray;
+inline bool& g_AutoScanForWorlds = g_globals.settings.autoScanForWorlds;
+inline bool& g_autoLogEnabled = g_globals.settings.autoLogEnabled;
+inline bool& g_enableKnotLink = g_globals.settings.enableKnotLink;
+inline int& g_hotKeyBackupId = g_globals.settings.hotKeyBackupId;
+inline int& g_hotKeyRestoreId = g_globals.settings.hotKeyRestoreId;
+inline std::vector<std::wstring>& restoreWhitelist = g_globals.settings.restoreWhitelist;
+
+inline std::atomic<bool>& specialTasksRunning = g_globals.specialTasks.tasksRunning;
+inline std::atomic<bool>& specialTasksComplete = g_globals.specialTasks.tasksComplete;
+inline std::thread& g_exitWatcherThread = g_globals.specialTasks.exitWatcherThread;
+inline std::atomic<bool>& g_stopExitWatcher = g_globals.specialTasks.stopExitWatcher;
 
 // i18n
 extern const char* lang_codes[2];
