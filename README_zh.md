@@ -1,4 +1,4 @@
-# MineBackup — 存档时光机 🗂️💾
+# MineBackup — 存档时光机 🗂️
 
 [![中文说明](https://img.shields.io/badge/README-中文-blue)](README_zh.md)
 [![Latest Release](https://img.shields.io/github/v/release/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/releases)
@@ -8,6 +8,13 @@
 
 > **轻松备份 · 快速还原 · 智能压缩**  
 > 为你的 Minecraft 世界存档、游戏数据，甚至电脑上的任何文件夹提供一键保护。  
+
+
+---
+
+**写在前面**：
+
+针对 Windows10 以上的用户，建议优先考虑 [FolderRewind](https://github.com/Leafuke/FolderRewind) + [MineRewind插件](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft) 的组合——[二代时光机](https://github.com/Leafuke/FolderRewind)具有更现代的UI和更强大的功能，并且是将来主要的维护对象。一代时光机 MineBackup 在我现在看来，确实存在许多设计上的不足，这导致它更难以维护和扩展。不过考虑到已经有不少用户在使用它，所以我会继续维护 MineBackup，修复一些关键的 bug 和安全问题，但往往会滞后于二代时光机。
 
 ---
 
@@ -90,7 +97,7 @@ cd MineBackup
 
 * **报告问题 / 提交建议**：[GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
 * **多语言支持**：翻译 [`i18n.h`](MineBackup/i18n.cpp)，让更多玩家用上自己的语言。
-* **文档改进**：访问 [官方文档](https://folderrewind.top) 提交改进建议。这是二代时光机的官网，未来也会增加对一代时光机的文档支持。
+* **文档改进**：访问 [官方文档](https://folderrewind.top) 提交改进建议。
 
 ---
 
@@ -101,12 +108,6 @@ cd MineBackup
 * [**stb**](https://github.com/nothings/stb) — 图片加载
 * [**KnotLink**](https://github.com/hxh230802/KnotLink) — 程序间消息通信框架
 * [**Font-Awesome**](https://github.com/FortAwesome/Font-Awesome) - Icons
-
----
-
-## 📜 告示
-
-下一代 MineBackup - [FolderRewind](https://github.com/Leafuke/FolderRewind) 已经正式发布。它具有更好的通用性和更现代化的界面。现在，对于Windows用户，它是一个更好的选择。
 
 ---
 
