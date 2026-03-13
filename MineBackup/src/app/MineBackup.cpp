@@ -9,13 +9,7 @@
 #include "i18n.h"
 #include "AppState.h"
 #include "TaskSystem.h"
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
+#include "PlatformCompat.h"
 #include "Console.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
@@ -216,13 +210,8 @@ static void glfw_error_callback(int error, const char* description)
 void CheckForConfigConflicts();
 bool IsPureASCII(const wstring& s);
 wstring SanitizeFileName(const wstring& input);
-void CheckForNoticesThread();
-
-void OpenLinkInBrowser(const wstring& url);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
-bool ExtractFontToTempFile(wstring& extractedPath);
-bool Extract7zToTempFile(wstring& extractedPath);
 
 void GameSessionWatcherThread();
 
@@ -244,20 +233,6 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	GetModuleFileNameW(NULL, exePath, MAX_PATH);
 	SetCurrentDirectoryW(filesystem::path(exePath).parent_path().c_str());
 
-	LoadConfigs("config.ini");
-
-	if (g_autoLogEnabled)
-	{
-		time_t now = time(0);
-		char time_buf[100];
-		ctime_s(time_buf, sizeof(time_buf), &now);
-		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
-	}
-
-	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
-	CreateTrayIcon(hwnd_hidden, hInstance);
-	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-	RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
 #else
 int main(int argc, char** argv)
 {
@@ -274,7 +249,22 @@ int main(int argc, char** argv)
 	#ifdef __APPLE__
 	SetWorkingDirectoryToExecutable();
 	#endif
+#endif
 	LoadConfigs("config.ini");
+
+#ifdef _WIN32
+	if (g_autoLogEnabled)
+	{
+		time_t now = time(0);
+		char time_buf[100];
+		ctime_s(time_buf, sizeof(time_buf), &now);
+		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
+	}
+
+	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
+	CreateTrayIcon(hwnd_hidden, hInstance);
+	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+	RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
 #endif
 
 
@@ -518,7 +508,7 @@ int main(int argc, char** argv)
 	int width, height, channels;
 	// 为了跨平台，更好的方式是直接加载一个png文件 - 写cmake的时候再替换吧
 	// unsigned char* pixels = stbi_load("icon.png", &width, &height, 0, 4); 
-	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(104), (LPCWSTR)RT_GROUP_ICON);
+	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(102), (LPCWSTR)RT_GROUP_ICON);
 	HGLOBAL hMem = LoadResource(hInstance, hRes);
 	void* pMem = LockResource(hMem);
 	int nId = LookupIconIdFromDirectoryEx((PBYTE)pMem, TRUE, 0, 0, LR_DEFAULTCOLOR);

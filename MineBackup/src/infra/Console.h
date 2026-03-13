@@ -5,13 +5,7 @@
 #include "Globals.h"
 #include "imgui/imgui.h"
 #include "AppState.h"
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
+#include "PlatformCompat.h"
 #include "i18n.h"
 #include "text_to_text.h"
 

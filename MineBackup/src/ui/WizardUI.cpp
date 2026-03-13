@@ -6,20 +6,13 @@
 #include "AppState.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
+#include "PlatformCompat.h"
 
 using namespace std;
 
 // 前向声明 MineBackup.cpp 中保留的函数
 void ApplyTheme(const int& themeId);
 wstring GetDefaultUIFontPath();
-string GetRegistryValue(const string& keyPath, const string& valueName);
 
 void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtracted, const wstring& g_7zTempPath) {
 	// 首次启动向导使用的静态变量

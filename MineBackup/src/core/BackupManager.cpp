@@ -7,6 +7,7 @@
 #include "Console.h"
 #include "HistoryManager.h"
 #include "json.hpp"
+#include "PlatformCompat.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -134,11 +135,6 @@ private:
 wstring SanitizeFileName(const wstring& input);
 vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, const filesystem::path& metadataPath, const filesystem::path& backupPath, BackupCheckResult& out_result, map<wstring, BackupFileState>& out_currentState, BackupChangeSet& out_changeSet);
 bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
-bool IsFileLocked(const wstring& path);
-
-
-
-wstring GetDocumentsPath();
 
 namespace {
 	constexpr const wchar_t* kDeletedOnlyMarkerDir = L"__MineBackup_Internal";
@@ -795,7 +791,7 @@ void AddBackupToWESnapshots(const Config& config, const wstring& worldName, cons
 	string line;
 	bool key_found = false;
 	string new_line = "snapshots-dir=" + wstring_to_utf8(we_base_path.wstring());
-	replace(new_line.begin(), new_line.end(), L'\\', L'/');
+	replace(new_line.begin(), new_line.end(), '\\', '/');
 
 	while (getline(infile, line)) {
 		if (line.rfind("snapshots-dir=", 0) == 0) {
@@ -1759,10 +1755,8 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		// 工作目录应为原始世界路径，以确保压缩包内路径正确
 		if (RunCommandInBackground(command, console, tempConfig.useLowPriority, worldPath)) {
 			console.AddLog(L("LOG_EXPORT_SUCCESS"), wstring_to_utf8(outputPath).c_str());
-#ifdef _WIN32
 			wstring cmd = L"/select,\"" + outputPath + L"\"";
-			ShellExecuteW(NULL, L"open", L"explorer.exe", cmd.c_str(), NULL, SW_SHOWNORMAL);
-#endif
+			OpenFolderWithFocus(filesystem::path(outputPath).parent_path().wstring(), cmd);
 		}
 		else {
 			console.AddLog(L("LOG_EXPORT_FAILED"));

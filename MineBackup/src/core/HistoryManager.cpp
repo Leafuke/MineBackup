@@ -5,11 +5,10 @@
 #include "AppState.h"
 #include "json.hpp"
 #include "text_to_text.h"
+#include "PlatformCompat.h"
 #include <algorithm>
 #include <filesystem>
 using namespace std;
-
-void SetFileAttributesWin(const wstring& path, bool isHidden);
 
 static bool LoadLegacyHistoryFile(const filesystem::path& filename) {
 	g_appState.g_history.clear();

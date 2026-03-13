@@ -3,13 +3,12 @@
 #include "Console.h"
 #include "Globals.h"
 #include "text_to_text.h"
+#include "PlatformCompat.h"
 #include <atomic>
 #include <filesystem>
 #include <mutex>
 using namespace std;
 map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
-
-bool IsFileLocked(const wstring& path);
 
 MyFolder GetOccupiedWorld() {
 	//lock_guard<mutex> lock(g_appState.configsMutex);

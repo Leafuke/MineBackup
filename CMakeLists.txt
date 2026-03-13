@@ -27,7 +27,6 @@ set(GLFW_DIR ${IMGUI_DIR}/GLFW)
 set(SOURCES
     ${APP_DIR}/AppState.cpp
     ${APP_DIR}/Globals.cpp
-    ${APP_DIR}/MineBackup.cpp
     ${CORE_DIR}/BackupManager.cpp
     ${CORE_DIR}/GameSessionManager.cpp
     ${CORE_DIR}/HistoryManager.cpp
@@ -45,6 +44,13 @@ set(SOURCES
     ${UI_DIR}/WizardUI.cpp
     ${UTILS_DIR}/basic_func.cpp
     ${UTILS_DIR}/text_to_text.cpp
+)
+
+set(MAIN_SOURCES
+    ${APP_DIR}/MineBackup.cpp
+)
+
+set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
@@ -92,13 +98,14 @@ set(HEADERS
     ${GLFW_DIR}/glfw3native.h
 )
 
-set(RESOURCES
-    ${SOURCE_DIR}/MineBackup.rc
+add_library(minebackup_third_party_imgui STATIC ${IMGUI_SOURCES})
+target_include_directories(minebackup_third_party_imgui PUBLIC
+    ${IMGUI_DIR}
+    ${GLFW_DIR}
 )
 
-set(FONT_AWESOME_SP ${CMAKE_CURRENT_SOURCE_DIR}/fontawesome-sp.otf)
-
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+add_library(minebackup_core STATIC ${SOURCES} ${HEADERS})
+add_executable(${PROJECT_NAME} ${MAIN_SOURCES} ${HEADERS})
 
 if(WIN32)
     set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -184,30 +191,31 @@ if(APPLE AND GLFW_TARGET STREQUAL "")
 endif()
 
 if(WIN32)
-    target_sources(${PROJECT_NAME} PRIVATE
+    target_sources(minebackup_core PRIVATE
         ${PLATFORM_DIR}/Platform_win.cpp
         ${KNOTLINK_DIR}/OpenSocketResponser.cpp
         ${KNOTLINK_DIR}/SignalSender.cpp
     )
 elseif(APPLE)
-    target_sources(${PROJECT_NAME} PRIVATE
+    target_sources(minebackup_core PRIVATE
         ${PLATFORM_DIR}/Platform_macos.cpp
         ${PLATFORM_DIR}/Platform_macos_tray.mm
     )
     set_source_files_properties(${PLATFORM_DIR}/Platform_macos_tray.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     # KnotLink POSIX 版本使用 header-only 实现
 else()
-    target_sources(${PROJECT_NAME} PRIVATE ${PLATFORM_DIR}/Platform_linux.cpp)
+    target_sources(minebackup_core PRIVATE ${PLATFORM_DIR}/Platform_linux.cpp)
 endif()
 
 # 若使用 MinGW 需要链接 libglfw3.a 而不是 glfw3.lib
-target_link_libraries(${PROJECT_NAME} PRIVATE
+target_link_libraries(minebackup_core PUBLIC
     OpenGL::GL
     ${GLFW_TARGET}
     Threads::Threads
+    minebackup_third_party_imgui
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE
+target_include_directories(minebackup_core PUBLIC
     ${SOURCE_DIR}
     ${APP_DIR}
     ${CORE_DIR}
@@ -222,11 +230,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${STB_DIR}
 )
 
+target_link_libraries(${PROJECT_NAME} PRIVATE minebackup_core)
+
 if(WIN32)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/MineBackup.rc)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
-    target_link_libraries(${PROJECT_NAME} PRIVATE dwmapi)
+    target_link_libraries(minebackup_core PUBLIC ws2_32 winhttp dwmapi)
 endif()
 
 if(UNIX AND NOT APPLE AND NOT WIN32)
@@ -235,20 +243,20 @@ if(UNIX AND NOT APPLE AND NOT WIN32)
         pkg_check_modules(APPINDICATOR3 QUIET appindicator3-0.1)
         pkg_check_modules(GTK3 QUIET gtk+-3.0)
         if(APPINDICATOR3_FOUND AND GTK3_FOUND)
-            target_compile_definitions(${PROJECT_NAME} PRIVATE MB_HAVE_APPINDICATOR)
-            target_include_directories(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_INCLUDE_DIRS} ${GTK3_INCLUDE_DIRS})
-            target_link_libraries(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_LIBRARIES} ${GTK3_LIBRARIES})
-            target_compile_options(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_CFLAGS_OTHER} ${GTK3_CFLAGS_OTHER})
+            target_compile_definitions(minebackup_core PRIVATE MB_HAVE_APPINDICATOR)
+            target_include_directories(minebackup_core PRIVATE ${APPINDICATOR3_INCLUDE_DIRS} ${GTK3_INCLUDE_DIRS})
+            target_link_libraries(minebackup_core PUBLIC ${APPINDICATOR3_LIBRARIES} ${GTK3_LIBRARIES})
+            target_compile_options(minebackup_core PRIVATE ${APPINDICATOR3_CFLAGS_OTHER} ${GTK3_CFLAGS_OTHER})
         endif()
     endif()
     find_package(X11 REQUIRED)
     if(X11_FOUND)
-        target_link_libraries(${PROJECT_NAME} PRIVATE X11)
+        target_link_libraries(minebackup_core PUBLIC X11)
     endif()
 endif()
 
 if(APPLE)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
+    target_link_libraries(minebackup_core PUBLIC
         "-framework Cocoa"
         "-framework Carbon"
         "-framework IOKit"
@@ -258,7 +266,7 @@ if(APPLE)
     )
     find_library(ICONV_LIB iconv)
     if(ICONV_LIB)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${ICONV_LIB})
+        target_link_libraries(minebackup_core PUBLIC ${ICONV_LIB})
     endif()
 endif()
 

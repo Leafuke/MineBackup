@@ -3,13 +3,7 @@
 #include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
+#include "PlatformCompat.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -84,7 +78,6 @@ static int NormalizeCompressionLevel(const wstring& method, int level) {
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
-bool IsFileLocked(const wstring& path);
 
 int CreateNewSpecialConfig(const string& name_hint) {
 	int newId = nextConfigId++;

@@ -13,13 +13,7 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
+#include "PlatformCompat.h"
 
 using namespace std;
 
@@ -308,7 +302,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine();
 		if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"))) {
 			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
-			ShellExecuteW(NULL, L"open", L"explorer.exe", cmd.c_str(), NULL, SW_SHOWNORMAL);
+			OpenFolderWithFocus(backup_path.parent_path().wstring(), cmd);
 		}
 		ImGui::SameLine();
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {

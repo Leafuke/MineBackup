@@ -251,9 +251,6 @@
     <ClInclude Include="third_party\KnotLink\TcpClient_posix.hpp">
       <Filter>third_party\KnotLink</Filter>
     </ClInclude>
-    <ClInclude Include="resource.h">
-      <Filter>resources</Filter>
-    </ClInclude>
     <ClInclude Include="third_party\stb\stb_image.h">
       <Filter>third_party\stb</Filter>
     </ClInclude>
@@ -269,21 +266,15 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="D:\Pictures\图标\mine10.ico">
+    <Image Include="Assets\icons\mine10.ico">
       <Filter>resources</Filter>
     </Image>
-    <Image Include="D:\Pictures\图标\mine20.ico">
-      <Filter>resources</Filter>
-    </Image>
-    <Image Include="D:\Pictures\图标\mine30.ico">
-      <Filter>resources</Filter>
-    </Image>
-    <Image Include="D:\Pictures\图标\mine40.ico">
+    <Image Include="Assets\icons\mine30.ico">
       <Filter>resources</Filter>
     </Image>
   </ItemGroup>
   <ItemGroup>
-    <Font Include="..\fontawesome-sp.otf">
+    <Font Include="Assets\fontawesome-sp.otf">
       <Filter>resources</Filter>
     </Font>
   </ItemGroup>

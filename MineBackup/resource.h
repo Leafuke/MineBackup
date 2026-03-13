@@ -4,9 +4,7 @@
 //
 #define IDR_EXE1                        101
 #define IDI_ICON1                       102
-#define IDI_ICON2                       103
 #define IDI_ICON3                       104
-#define IDI_ICON4                       105
 #define IDR_FONTS1                      111
 
 // Next default values for new objects

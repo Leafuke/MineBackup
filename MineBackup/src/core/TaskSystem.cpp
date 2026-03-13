@@ -4,9 +4,9 @@
 #include "Console.h"
 #include "i18n.h"
 #include "text_to_text.h"
+#include "PlatformCompat.h"
 
 #ifdef _WIN32
-#include "Platform_win.h"
 #include <windows.h>
 #include <winsvc.h>
 #pragma comment(lib, "advapi32.lib")

@@ -13,13 +13,10 @@
 #include <sstream>
 #include <thread>
 
+#include "PlatformCompat.h"
+
 #ifdef _WIN32
-#include "Platform_win.h"
 #include <windows.h>
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
 #endif
 
 inline float CalcButtonWidth(const char* text, float minWidth = 80.0f, float padding = 20.0f) {

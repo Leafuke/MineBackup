@@ -110,7 +110,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
-      <AdditionalIncludeDirectories>.;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -127,7 +127,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>.;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
@@ -209,7 +209,6 @@
     <ClInclude Include="third_party\KnotLink\SignalSender_posix.hpp" />
     <ClInclude Include="third_party\KnotLink\TcpClient.hpp" />
     <ClInclude Include="third_party\KnotLink\TcpClient_posix.hpp" />
-    <ClInclude Include="resource.h" />
     <ClInclude Include="third_party\stb\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
@@ -219,13 +218,11 @@
     <None Include="7za.exe" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="D:\Pictures\图标\mine10.ico" />
-    <Image Include="D:\Pictures\图标\mine20.ico" />
-    <Image Include="D:\Pictures\图标\mine30.ico" />
-    <Image Include="D:\Pictures\图标\mine40.ico" />
+    <Image Include="Assets\icons\mine10.ico" />
+    <Image Include="Assets\icons\mine30.ico" />
   </ItemGroup>
   <ItemGroup>
-    <Font Include="..\fontawesome-sp.otf" />
+    <Font Include="Assets\fontawesome-sp.otf" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CustomTheme.txt" />

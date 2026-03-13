@@ -234,4 +234,12 @@ inline void ShellExecuteW(HWND, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, int) {
 
 #endif // !_WIN32
 
+#if defined(_WIN32)
+#include "Platform_win.h"
+#elif defined(__APPLE__)
+#include "Platform_macos.h"
+#else
+#include "Platform_linux.h"
+#endif
+
 #endif // PLATFORM_COMPAT_H

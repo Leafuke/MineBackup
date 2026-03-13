@@ -9,13 +9,7 @@
 #include "BackupManager.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
+#include "PlatformCompat.h"
 
 #ifdef _WIN32
 #include <conio.h>
@@ -363,11 +357,7 @@ void RunSpecialMode(int configId) {
 				g_appState.specialConfigs[configId].autoExecute = false;
 				SaveConfigs();
 				ConsoleLog(&console, L("INFO_SWITCHING_TO_GUI_MODE"));
-#ifdef _WIN32
-				wchar_t selfPath[MAX_PATH];
-				GetModuleFileNameW(NULL, selfPath, MAX_PATH); // 获得程序路径
-				ShellExecuteW(NULL, L"open", selfPath, NULL, NULL, SW_SHOWNORMAL); // 开启
-#endif
+				ReStartApplication();
 			}
 		}
 

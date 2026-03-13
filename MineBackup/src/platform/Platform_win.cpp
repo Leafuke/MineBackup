@@ -183,7 +183,11 @@ void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance) {
 	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	nid.uCallbackMessage = WM_USER + 1;
 	nid.hIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICON3), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
+#ifdef UNICODE
 	wcscpy_s(nid.szTip, L"MineBackup");
+#else
+	strcpy_s(nid.szTip, "MineBackup");
+#endif
 	Shell_NotifyIcon(NIM_ADD, &nid);
 }
 void RemoveTrayIcon() {
