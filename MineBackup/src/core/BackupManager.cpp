@@ -485,22 +485,61 @@ namespace {
 	static bool TryPrepareSafeRestoreWorkspace(const filesystem::path& targetDir, filesystem::path& tempDir, string& errorMessage) {
 		tempDir.clear();
 		errorMessage.clear();
-		try {
-			error_code ec;
-			if (!filesystem::exists(targetDir, ec) || ec) {
-				filesystem::create_directories(targetDir);
-				return true;
-			}
+		error_code ec;
+		const bool targetExists = filesystem::exists(targetDir, ec);
+		if (ec) {
+			errorMessage = "Failed to inspect restore target: " + ec.message();
+			return false;
+		}
 
-			tempDir = CreateSafeRestoreTempDirectoryPath(targetDir);
-			filesystem::rename(targetDir, tempDir);
-			filesystem::create_directories(targetDir);
+		if (!targetExists) {
+			filesystem::create_directories(targetDir, ec);
+			if (ec) {
+				errorMessage = "Failed to create restore target: " + ec.message();
+				return false;
+			}
 			return true;
+		}
+
+		try {
+			tempDir = CreateSafeRestoreTempDirectoryPath(targetDir);
 		}
 		catch (const exception& ex) {
 			errorMessage = ex.what();
 			return false;
 		}
+
+		filesystem::rename(targetDir, tempDir, ec);
+		if (ec) {
+			errorMessage = "Failed to move restore target to snapshot: " + ec.message();
+			tempDir.clear();
+			return false;
+		}
+
+		filesystem::create_directories(targetDir, ec);
+		if (!ec) {
+			return true;
+		}
+
+		const string createError = ec.message();
+
+		// Best-effort rollback when workspace preparation fails after snapshot move.
+		error_code cleanupEc;
+		if (filesystem::exists(targetDir, cleanupEc) && !cleanupEc) {
+			ClearReadonlyAttributesRecursively(targetDir);
+			filesystem::remove_all(targetDir, cleanupEc);
+		}
+
+		error_code rollbackEc;
+		filesystem::rename(tempDir, targetDir, rollbackEc);
+		if (rollbackEc) {
+			errorMessage = "Failed to create clean workspace (" + createError + "), rollback also failed: " + rollbackEc.message();
+			return false;
+		}
+
+		tempDir.clear();
+		errorMessage = "Failed to create clean workspace: " + createError;
+		return false;
 	}
 
 	static bool IsInRestoreWhitelist(const filesystem::path& entryPath, const filesystem::path& rootDir, const vector<wstring>& whitelist) {
@@ -615,22 +654,34 @@ namespace {
 
 	static bool TryRollbackSafeRestoreWorkspace(const filesystem::path& targetDir, const filesystem::path& tempDir, string& errorMessage) {
 		errorMessage.clear();
-		try {
-			if (filesystem::exists(targetDir)) {
-				ClearReadonlyAttributesRecursively(targetDir);
-				filesystem::remove_all(targetDir);
-			}
-			if (!filesystem::exists(tempDir)) {
-				errorMessage = "Snapshot directory is missing.";
-				return false;
-			}
-			filesystem::rename(tempDir, targetDir);
-			return true;
-		}
-		catch (const exception& ex) {
-			errorMessage = ex.what();
+
+		error_code ec;
+		if (tempDir.empty()) {
+			errorMessage = "Snapshot directory path is empty.";
 			return false;
 		}
+
+		if (!filesystem::exists(tempDir, ec) || ec) {
+			errorMessage = "Snapshot directory is missing.";
+			return false;
+		}
+
+		if (filesystem::exists(targetDir, ec) && !ec) {
+			ClearReadonlyAttributesRecursively(targetDir);
+			filesystem::remove_all(targetDir, ec);
+			if (ec) {
+				errorMessage = "Failed to clean restore target before rollback: " + ec.message();
+				return false;
+			}
+		}
+
+		filesystem::rename(tempDir, targetDir, ec);
+		if (ec) {
+			errorMessage = "Failed to restore snapshot: " + ec.message();
+			return false;
+		}
+
+		return true;
 	}
 
 	static bool CreateDeletionOnlyArchive(const Config& config, const filesystem::path& archivePath, Console& console) {
@@ -1553,48 +1604,104 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 	filesystem::path pathToMergeInto = backupDir / nextEntry.backupFile;
 	console.AddLog(L("LOG_SAFE_DELETE_MERGE_INFO"), wstring_to_utf8(entryToDelete.backupFile).c_str(), wstring_to_utf8(nextEntry.backupFile).c_str());
 
+	if (!filesystem::exists(pathToDelete)) {
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+		DoDeleteBackup(config, entryToDelete, configIndex, console);
+		return;
+	}
 
-	filesystem::path tempExtractDir;
+	if (!filesystem::exists(pathToMergeInto)) {
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(nextEntry.backupFile).c_str());
+		DoDeleteBackup(config, entryToDelete, configIndex, console);
+		return;
+	}
+
+	const auto original_mod_time = filesystem::last_write_time(pathToMergeInto);
+	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
+
+	filesystem::path tempRootBase;
 	if (config.snapshotPath.size() >= 2 && filesystem::exists(config.snapshotPath)) {
-		tempExtractDir = filesystem::path(NormalizeSeparators(config.snapshotPath)) / L"MineBackup_Merge";
+		tempRootBase = filesystem::path(NormalizeSeparators(config.snapshotPath));
 	}
 	else {
-		tempExtractDir = filesystem::temp_directory_path() / L"MineBackup_Merge";
+		tempRootBase = filesystem::temp_directory_path();
 	}
 
+	wstringstream suffixBuilder;
+	suffixBuilder << chrono::steady_clock::now().time_since_epoch().count();
+	const filesystem::path tempRoot = tempRootBase / (L"MineBackup_Merge_" + suffixBuilder.str());
+	const filesystem::path mergeWorkspace = tempRoot / L"merge_workspace";
+	const filesystem::path rebuiltArchive = tempRoot / (L"rebuilt." + config.zipFormat);
+	const filesystem::path originalTargetBackup = tempRoot / (L"target_backup." + config.zipFormat);
+
+	bool replacedTargetArchive = false;
+	filesystem::path finalArchivePath = pathToMergeInto;
+	wstring finalBackupType = nextEntry.backupType;
+	wstring finalBackupFile = nextEntry.backupFile;
+
 	try {
-		filesystem::remove_all(tempExtractDir);
-		filesystem::create_directories(tempExtractDir);
+		filesystem::create_directories(mergeWorkspace);
+		filesystem::copy_file(pathToMergeInto, originalTargetBackup, filesystem::copy_options::overwrite_existing);
 
 		console.AddLog(L("LOG_SAFE_DELETE_STEP_1"));
-		wstring cmdExtract = L"\"" + config.zipPath + L"\" x \"" + pathToDelete.wstring() + L"\" -o\"" + tempExtractDir.wstring() + L"\" -y";
-		if (!RunCommandInBackground(cmdExtract, console, config.useLowPriority)) {
-			throw runtime_error("Failed to extract source archive.");
+		wstring cmdExtractDeleted = L"\"" + config.zipPath + L"\" x \"" + pathToDelete.wstring() + L"\" -o\"" + mergeWorkspace.wstring() + L"\" -y";
+		if (!RunCommandInBackground(cmdExtractDeleted, console, config.useLowPriority)) {
+			throw runtime_error("Failed to extract deleted archive.");
 		}
 
 		console.AddLog(L("LOG_SAFE_DELETE_STEP_2"));
-		auto original_mod_time = filesystem::last_write_time(pathToMergeInto);
-
-		wstring cmdMerge = L"\"" + config.zipPath + L"\" a \"" + pathToMergeInto.wstring() + L"\" .\\*";
-		if (!RunCommandInBackground(cmdMerge, console, config.useLowPriority, tempExtractDir.wstring())) {
-			filesystem::last_write_time(pathToMergeInto, original_mod_time);
-			throw runtime_error("Failed to merge files into the target archive.");
+		wstring cmdExtractNext = L"\"" + config.zipPath + L"\" x \"" + pathToMergeInto.wstring() + L"\" -o\"" + mergeWorkspace.wstring() + L"\" -y";
+		if (!RunCommandInBackground(cmdExtractNext, console, config.useLowPriority)) {
+			throw runtime_error("Failed to extract target archive.");
 		}
-		filesystem::last_write_time(pathToMergeInto, original_mod_time);
 
-		filesystem::path finalArchivePath = pathToMergeInto;
-		wstring finalBackupType = nextEntry.backupType;
-		wstring finalBackupFile = nextEntry.backupFile;
+		error_code markerEc;
+		filesystem::path markerDir = mergeWorkspace / kDeletedOnlyMarkerDir;
+		if (filesystem::exists(markerDir, markerEc) && !markerEc) {
+			filesystem::remove_all(markerDir, markerEc);
+		}
+
+		wstring cmdRebuild = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod +
+			L" -mx=" + to_wstring(normalizedZipLevel) +
+			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) +
+			L" \"" + rebuiltArchive.wstring() + L"\" \"*\"";
+		if (!RunCommandInBackground(cmdRebuild, console, config.useLowPriority, mergeWorkspace.wstring())) {
+			throw runtime_error("Failed to rebuild merged archive.");
+		}
+
+		error_code ec;
+		if (filesystem::exists(pathToMergeInto, ec) && !ec) {
+			filesystem::remove(pathToMergeInto, ec);
+			if (ec) {
+				throw runtime_error("Failed to replace original target archive.");
+			}
+		}
+
+		filesystem::rename(rebuiltArchive, pathToMergeInto, ec);
+		if (ec) {
+			ec.clear();
+			filesystem::copy_file(rebuiltArchive, pathToMergeInto, filesystem::copy_options::overwrite_existing, ec);
+			if (ec) {
+				throw runtime_error("Failed to deploy rebuilt target archive.");
+			}
+			error_code cleanupEc;
+			filesystem::remove(rebuiltArchive, cleanupEc);
+		}
+		replacedTargetArchive = true;
 
 		if (entryToDelete.backupType == L"Full") {
 			console.AddLog(L("LOG_SAFE_DELETE_STEP_3"));
 			finalBackupType = L"Full";
+
 			wstring newFilename = nextEntry.backupFile;
 			size_t pos = newFilename.find(L"[Smart]");
 			if (pos != wstring::npos) {
 				newFilename.replace(pos, 7, L"[Full]");
 				finalBackupFile = newFilename;
 				filesystem::path newPath = backupDir / newFilename;
+				if (newPath != pathToMergeInto && filesystem::exists(newPath)) {
+					throw runtime_error("Cannot rename merged archive because destination filename already exists.");
+				}
 				filesystem::rename(pathToMergeInto, newPath);
 				finalArchivePath = newPath;
 				console.AddLog(L("LOG_SAFE_DELETE_RENAMED"), wstring_to_utf8(newFilename).c_str());
@@ -1602,6 +1709,12 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		}
 		else {
 			console.AddLog(L("LOG_SAFE_DELETE_STEP_3_SKIP"));
+		}
+
+		error_code timeEc;
+		filesystem::last_write_time(finalArchivePath, original_mod_time, timeEc);
+		if (timeEc) {
+			console.AddLog("[Warning] Failed to preserve merged archive timestamp: %s", timeEc.message().c_str());
 		}
 
 		console.AddLog(L("LOG_SAFE_DELETE_STEP_4"));
@@ -1615,17 +1728,41 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 				break;
 			}
 		}
+
 		SaveHistory();
 		InvalidateBackupMetadata(config, entryToDelete.worldName, entryToDelete.backupFile, nextEntry.backupFile, finalBackupFile);
 
-		filesystem::remove_all(tempExtractDir);
+		error_code cleanupEc;
+		filesystem::remove_all(tempRoot, cleanupEc);
 		console.AddLog(L("LOG_SAFE_DELETE_SUCCESS"));
-
 	}
 	catch (const exception& e) {
+		if (replacedTargetArchive) {
+			error_code restoreEc;
+			if (filesystem::exists(finalArchivePath, restoreEc) && !restoreEc) {
+				filesystem::remove(finalArchivePath, restoreEc);
+			}
+			if (finalArchivePath != pathToMergeInto) {
+				error_code extraRemoveEc;
+				if (filesystem::exists(pathToMergeInto, extraRemoveEc) && !extraRemoveEc) {
+					filesystem::remove(pathToMergeInto, extraRemoveEc);
+				}
+			}
+
+			restoreEc.clear();
+			filesystem::copy_file(originalTargetBackup, pathToMergeInto, filesystem::copy_options::overwrite_existing, restoreEc);
+			if (restoreEc) {
+				console.AddLog("[Warning] Failed to restore original archive after safe-delete failure: %s", restoreEc.message().c_str());
+			}
+			else {
+				error_code timeEc;
+				filesystem::last_write_time(pathToMergeInto, original_mod_time, timeEc);
+			}
+		}
+
 		console.AddLog(L("LOG_SAFE_DELETE_FATAL_ERROR"), e.what());
 		error_code ec;
-		filesystem::remove_all(tempExtractDir, ec); // 使用不抛异常版本
+		filesystem::remove_all(tempRoot, ec);
 	}
 }
 

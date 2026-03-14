@@ -2008,15 +2008,18 @@ int main(int argc, char** argv)
 							ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 							ImGui::Separator();
 							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(CalcButtonWidth(L("BUTTON_STOP_AUTOBACKUP")), 0))) {
-								lock_guard<mutex> lock(g_appState.task_mutex);
-								if (g_appState.g_active_auto_backups.count(taskKey)) {
-									// 1. 设置停止标志
-									g_appState.g_active_auto_backups.at(taskKey).stop_flag = true;
-									// 2. 等待线程结束
-									if (g_appState.g_active_auto_backups.at(taskKey).worker.joinable())
-										g_appState.g_active_auto_backups.at(taskKey).worker.join();
-									// 3. 从管理器中移除
-									g_appState.g_active_auto_backups.erase(taskKey);
+								std::thread workerToJoin;
+								{
+									lock_guard<mutex> lock(g_appState.task_mutex);
+									auto it = g_appState.g_active_auto_backups.find(taskKey);
+									if (it != g_appState.g_active_auto_backups.end()) {
+										it->second.stop_flag = true;
+										workerToJoin = std::move(it->second.worker);
+										g_appState.g_active_auto_backups.erase(it);
+									}
+								}
+								if (workerToJoin.joinable()) {
+									workerToJoin.join();
 								}
 								ImGui::CloseCurrentPopup();
 							}
@@ -2120,11 +2123,21 @@ int main(int argc, char** argv)
 
 	// 清理
 	BroadcastEvent("event=app_shutdown");
-	lock_guard<mutex> lock(g_appState.task_mutex);
-	for (auto& pair : g_appState.g_active_auto_backups) {
-		pair.second.stop_flag = true; // 通知线程停止
-		if (pair.second.worker.joinable()) {
-			pair.second.worker.join(); // 等待线程执行完毕
+	std::vector<std::thread> workersToJoin;
+	{
+		lock_guard<mutex> lock(g_appState.task_mutex);
+		workersToJoin.reserve(g_appState.g_active_auto_backups.size());
+		for (auto& pair : g_appState.g_active_auto_backups) {
+			pair.second.stop_flag = true;
+			if (pair.second.worker.joinable()) {
+				workersToJoin.emplace_back(std::move(pair.second.worker));
+			}
+		}
+		g_appState.g_active_auto_backups.clear();
+	}
+	for (auto& worker : workersToJoin) {
+		if (worker.joinable()) {
+			worker.join();
 		}
 	}
 	for (auto const& [key, val] : g_worldIconTextures) {

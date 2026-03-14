@@ -300,6 +300,12 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	bool safeWorkspacePrepared = false;
 	if (restoreMethod == 0) {
 		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+			if (!safeRestoreTempDir.empty()) {
+				string rollbackError;
+				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
+					console.AddLog("[Error] Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
+				}
+			}
 			console.AddLog("[Error] Failed to prepare safe restore workspace: %s", workspaceError.c_str());
 			return failRestore("snapshot_prepare_failed");
 		}
@@ -454,6 +460,12 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	bool safeWorkspacePrepared = false;
 	if (restoreMethod == 0) {
 		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+			if (!safeRestoreTempDir.empty()) {
+				string rollbackError;
+				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
+					console.AddLog("[Error] Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
+				}
+			}
 			console.AddLog("[Error] Failed to prepare safe restore workspace: %s", workspaceError.c_str());
 			return failRestore("snapshot_prepare_failed");
 		}

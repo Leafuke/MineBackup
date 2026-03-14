@@ -294,29 +294,29 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		// 释放 configsMutex 后再获取 task_mutex，避免持有 configsMutex 时 join 工作线程导致死锁
 		lock.unlock();
 
-		// 使用互斥锁保护访问
-		std::lock_guard<std::mutex> task_lock(g_appState.task_mutex);
+		std::thread workerToJoin;
+		{
+			// 使用互斥锁保护访问
+			std::lock_guard<std::mutex> task_lock(g_appState.task_mutex);
 
-		// 查找指定的任务
-		auto it = g_appState.g_active_auto_backups.find(taskKey);
-		if (it == g_appState.g_active_auto_backups.end()) {
-			std::string error_msg = "ERROR:No active auto-backup task found for this world.";
-			BroadcastEvent(error_msg);
-			return error_msg;
+			// 查找指定的任务
+			auto it = g_appState.g_active_auto_backups.find(taskKey);
+			if (it == g_appState.g_active_auto_backups.end()) {
+				std::string error_msg = "ERROR:No active auto-backup task found for this world.";
+				BroadcastEvent(error_msg);
+				return error_msg;
+			}
+
+			// 发送停止信号并摘出线程句柄，避免持锁 join 导致死锁
+			console->AddLog("[KnotLink] Received command to stop auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
+			it->second.stop_flag = true;
+			workerToJoin = std::move(it->second.worker);
+			g_appState.g_active_auto_backups.erase(it);
 		}
 
-		// 发送停止信号并等待线程结束
-		console->AddLog("[KnotLink] Received command to stop auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
-
-		// a. 设置原子停止标记为true，通知线程应该退出了
-		it->second.stop_flag = true;
-
-		// b. 等待线程执行完毕
-		if (it->second.worker.joinable())
-			it->second.worker.join();
-
-		// c. 从任务列表中移除该任务
-		g_appState.g_active_auto_backups.erase(it);
+		if (workerToJoin.joinable()) {
+			workerToJoin.join();
+		}
 
 		// 构造成功信息并广播事件
 		std::string success_msg = "OK:Auto-backup task for world '" + wstring_to_utf8(world_name) + "' has been stopped.";
