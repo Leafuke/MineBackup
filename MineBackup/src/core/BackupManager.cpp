@@ -139,6 +139,24 @@ bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::pat
 namespace {
 	constexpr const wchar_t* kDeletedOnlyMarkerDir = L"__MineBackup_Internal";
 	constexpr const wchar_t* kDeletedOnlyMarkerFile = L"__DeletedOnly.marker";
+	const vector<wstring> kForcedBackupBlacklistRules = {
+		L"regex:(^|[\\\\/])session\\.lock$",
+		L"regex:(^|[\\\\/])lock$",
+		L"regex:(^|[\\\\/]).*\\.lock$"
+	};
+
+	static vector<wstring> BuildEffectiveBackupBlacklist(const vector<wstring>& userBlacklist) {
+		vector<wstring> effective = userBlacklist;
+		for (const auto& forcedRule : kForcedBackupBlacklistRules) {
+			const bool exists = any_of(effective.begin(), effective.end(), [&](const wstring& item) {
+				return _wcsicmp(item.c_str(), forcedRule.c_str()) == 0;
+				});
+			if (!exists) {
+				effective.push_back(forcedRule);
+			}
+		}
+		return effective;
+	}
 
 	struct BackupMetadataRecordIndex {
 		wstring archiveFileName;
@@ -698,7 +716,7 @@ namespace {
 
 			const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
 			wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath.wstring() + L"\" \"*\"";
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath.wstring() + L"\" \"*\"";
 			success = RunCommandInBackground(command, console, config.useLowPriority, tempDir.wstring());
 		}
 		catch (const exception& ex) {
@@ -876,56 +894,6 @@ void AddBackupToWESnapshots(const Config& config, const wstring& worldName, cons
 	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
 }
 
-// 创建快照，用于热备份
-wstring CreateWorldSnapshot(const filesystem::path& worldPath, const wstring& snapshotPath, Console& console) {
-	try {
-		// 创建一个唯一的临时目录
-		filesystem::path tempDir;
-		if (snapshotPath.size() >= 2 && filesystem::exists(snapshotPath)) {
-			tempDir = filesystem::path(NormalizeSeparators(snapshotPath)) / L"MineBackup_Snapshot" / worldPath.filename();
-		}
-		else {
-			tempDir = filesystem::temp_directory_path() / L"MineBackup_Snapshot" / worldPath.filename();
-		}
-
-		// 如果旧的临时目录存在，先清理掉
-		if (filesystem::exists(tempDir)) {
-			error_code ec_remove;
-			filesystem::remove_all(tempDir, ec_remove);
-			if (ec_remove) {
-				console.AddLog("[Error] Failed to clean up old snapshot directory: %s", ec_remove.message().c_str());
-				// 即使清理失败也尝试继续，后续的创建可能会失败并被捕获
-			}
-		}
-		filesystem::create_directories(tempDir);
-		console.AddLog(L("LOG_BACKUP_HOT_INFO"));
-
-		// 递归复制，并尝试忽略单个文件错误
-		auto copyOptions = filesystem::copy_options::recursive | filesystem::copy_options::overwrite_existing;
-		error_code ec;
-		filesystem::copy(worldPath, tempDir, copyOptions, ec);
-
-		if (ec) {
-			// 虽然发生了错误（可能是某个文件被锁定了），但大部分文件可能已经复制成功
-			console.AddLog(L("LOG_BACKUP_HOT_INFO2"), ec.message().c_str());
-			wstring xcopyCmd = L"xcopy \"" + worldPath.wstring() + L"\" \"" + tempDir.wstring() + L"\" /s /e /y /c";
-			RunCommandInBackground(xcopyCmd, console, false);
-		}
-		else {
-			console.AddLog(L("LOG_BACKUP_HOT_INFO3"), wstring_to_utf8(tempDir.wstring()).c_str());
-		}
-		// 增加短暂延时，确保文件系统操作（特别是 xcopy）完全完成
-		this_thread::sleep_for(chrono::milliseconds(500));
-
-		return tempDir.wstring();
-
-	}
-	catch (const filesystem::filesystem_error& e) {
-		console.AddLog(L("LOG_BACKUP_HOT_INFO4"), e.what());
-		return L"";
-	}
-}
-
 void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
 	UpdateMetadataFiles(metadataPath, newBackupFile, basedOnBackupFile, backupType, currentState, changeSet);
 }
@@ -1049,7 +1017,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 	wstring originalSourcePath = folder.path;
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
-	bool snapshotUsed = false;
+	const vector<wstring> effectiveBlacklist = BuildEffectiveBackupBlacklist(config.blacklist);
 	filesystem::path destinationFolder = JoinPath(config.backupPath, folder.name);
 	filesystem::path metadataFolder = JoinPath(config.backupPath, L"_metadata");
 	metadataFolder /= folder.name;
@@ -1078,7 +1046,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         return;
     }
 
-	// 检测到 level.dat 被锁定，则强制启用热备份
+	// 检测到 level.dat 被锁定，启用热备份握手并依赖 7z -ssw 直接从原世界路径压缩
 
     if (config.hotBackup || IsFileLocked(sourcePath + L"/level.dat")) {
         // 在热备份前，先检查联动模组是否存在
@@ -1116,26 +1084,8 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 				return;
             }
         }
-
-        // 创建快照
-        wstring snapshotPath = CreateWorldSnapshot(sourcePath, config.snapshotPath, console);
-        if (!snapshotPath.empty()) {
-            sourcePath = snapshotPath;
-			snapshotUsed = true;
-            this_thread::sleep_for(chrono::milliseconds(200));
-        } else {
-            console.AddLog(L("LOG_ERROR_SNAPSHOT"));
-            return;
-        }
+		console.AddLog("[Info] Snapshot copy is disabled. Using 7-Zip -ssw to back up from live world files.");
     }
-
-	auto cleanupSnapshot = [&]() {
-		if (!snapshotUsed || sourcePath == folder.path) return;
-		console.AddLog(L("LOG_CLEAN_SNAPSHOT"));
-		error_code ec;
-		filesystem::remove_all(sourcePath, ec);
-		if (ec) console.AddLog(L("LOG_WARNING_CLEAN_SNAPSHOT"), ec.message().c_str());
-	};
 
     bool forceFullBackup = true;
     if (filesystem::exists(destinationFolder)) {
@@ -1194,7 +1144,6 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState, changeSet);
     if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		cleanupSnapshot();
         return;
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
         console.AddLog(L("LOG_METADATA_INVALID"));
@@ -1216,14 +1165,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         } catch (const filesystem::filesystem_error& e) {
             console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-			cleanupSnapshot();
             return;
         }
     }
 
     auto is_relative_blacklisted = [&](const wstring& relativePath) {
 		filesystem::path absolutePath = filesystem::path(sourcePath) / relativePath;
-		return is_blacklisted(absolutePath, sourcePath, originalSourcePath, config.blacklist);
+		return is_blacklisted(absolutePath, sourcePath, originalSourcePath, effectiveBlacklist);
 	};
 
 	for (auto it = currentState.begin(); it != currentState.end(); ) {
@@ -1246,21 +1194,19 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
     vector<filesystem::path> files_to_backup;
     for (const auto& file : candidate_files) {
-        if (!is_blacklisted(file, sourcePath, originalSourcePath, config.blacklist)) {
+		if (!is_blacklisted(file, sourcePath, originalSourcePath, effectiveBlacklist)) {
             files_to_backup.push_back(file);
         }
     }
 
 	if (!changeSet.HasChanges() && (config.skipIfUnchanged || (config.backupMode == 2 && !forceFullBackup))) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		cleanupSnapshot();
         return;
     }
 
 	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
 	if (files_to_backup.empty() && !(config.backupMode == 2 && deletionOnlyChange && !forceFullBackup)) {
 		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		cleanupSnapshot();
 		return;
 	}
 
@@ -1289,7 +1235,6 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 #endif
 		} else {
 			console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
-			cleanupSnapshot();
 			return;
 		}
 	}
@@ -1304,7 +1249,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		backupTypeStr = L"Full";
 		archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
 		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
     } else if (config.backupMode == 2) {
         backupTypeStr = L"Smart";
@@ -1325,7 +1270,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 			backupTypeStr = L"Full";
 			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
 			basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
 			goto execute_backup;
 		}
@@ -1335,7 +1280,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 		if (!deletionOnlyChange) {
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" @" + filelist_path;
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
 		}
     } else if (config.backupMode == 3) {
         backupTypeStr = L"Overwrite";
@@ -1354,14 +1299,14 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
         if (found) {
             console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = L"\"" + config.zipPath + L"\" u \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(normalizedZipLevel);
+			command = L"\"" + config.zipPath + L"\" u -ssw \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(normalizedZipLevel);
             archivePath = latestBackupPath.wstring(); // 记录被更新的文件
         }
         else {
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) + L" -m0=" + config.zipMethod +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -spf \"" + archivePath + L"\"" + L" \"" + NormalizeSeparators(sourcePath) + L"/*\"";
+				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw -spf \"" + archivePath + L"\"" + L" \"" + NormalizeSeparators(sourcePath) + L"/*\"";
             // -spf 强制使用完整路径，-spf2 使用相对路径
         }
     }
@@ -1463,9 +1408,6 @@ execute_backup:
             BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
         }
     }
-
-    filesystem::remove(filesystem::temp_directory_path() / L"MineBackup_Snapshot" / L"7z.txt");
-	cleanupSnapshot();
 }
 void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wstring& comment, Console& console) {
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
@@ -1514,7 +1456,7 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 
 	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
 	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
+		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
 		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
@@ -1664,7 +1606,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		wstring cmdRebuild = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod +
 			L" -mx=" + to_wstring(normalizedZipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) +
-			L" \"" + rebuiltArchive.wstring() + L"\" \"*\"";
+			L" -ssw \"" + rebuiltArchive.wstring() + L"\" \"*\"";
 		if (!RunCommandInBackground(cmdRebuild, console, config.useLowPriority, mergeWorkspace.wstring())) {
 			throw runtime_error("Failed to rebuild merged archive.");
 		}
@@ -1887,7 +1829,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		// 构建并执行 7z 命令
 		const int normalizedZipLevel = NormalizeCompressionLevel(tempConfig.zipMethod, tempConfig.zipLevel);
 		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-			L" \"" + outputPath + L"\"" + L" @" + filelist_path;
+			L" -ssw \"" + outputPath + L"\"" + L" @" + filelist_path;
 
 		// 工作目录应为原始世界路径，以确保压缩包内路径正确
 		if (RunCommandInBackground(command, console, tempConfig.useLowPriority, worldPath)) {
