@@ -386,6 +386,8 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 					initialConfig.fontPath = GetDefaultUIFontPath();
 				}
 				g_appState.specialConfigs.clear();
+				g_CoreValidationPending.store(true);
+				g_CoreValidationPassed.store(false);
 
 				// 4. 保存到文件并切换到主应用界面
 				SaveConfigs();

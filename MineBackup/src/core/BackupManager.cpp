@@ -473,6 +473,166 @@ namespace {
 		filesystem::remove(metadataDir / L"metadata.json", ec);
 	}
 
+	static vector<wstring> ToSortedVector(const set<wstring>& values) {
+		return vector<wstring>(values.begin(), values.end());
+	}
+
+	static bool TryRepairMetadataAfterSafeDelete(
+		const Config& config,
+		const wstring& worldName,
+		const wstring& deletedBackupFile,
+		const wstring& mergedOldFile,
+		const wstring& mergedFinalFile,
+		const wstring& mergedBackupType,
+		string& errorMessage
+	) {
+		errorMessage.clear();
+		filesystem::path metadataDir = GetMetadataDirectory(config, worldName);
+
+		BackupMetadataSummary summary;
+		if (!LoadBackupMetadataSummary(metadataDir, summary)) {
+			errorMessage = "Cannot load metadata summary.";
+			return false;
+		}
+
+		BackupChangeRecord deletedRecord;
+		if (!LoadBackupChangeRecord(metadataDir, deletedBackupFile, deletedRecord)) {
+			errorMessage = "Cannot load deleted backup metadata record.";
+			return false;
+		}
+
+		BackupChangeRecord mergedRecord;
+		if (!LoadBackupChangeRecord(metadataDir, mergedOldFile, mergedRecord)) {
+			errorMessage = "Cannot load merged target metadata record.";
+			return false;
+		}
+
+		set<wstring> fullAfterDeleted(deletedRecord.fullFileList.begin(), deletedRecord.fullFileList.end());
+		set<wstring> fullBeforeDeleted = fullAfterDeleted;
+		for (const auto& path : deletedRecord.addedFiles) {
+			fullBeforeDeleted.erase(path);
+		}
+		for (const auto& path : deletedRecord.deletedFiles) {
+			fullBeforeDeleted.insert(path);
+		}
+
+		set<wstring> fullAfterMerged(mergedRecord.fullFileList.begin(), mergedRecord.fullFileList.end());
+
+		set<wstring> mergedAdded;
+		set<wstring> mergedDeleted;
+		set_difference(
+			fullAfterMerged.begin(), fullAfterMerged.end(),
+			fullBeforeDeleted.begin(), fullBeforeDeleted.end(),
+			inserter(mergedAdded, mergedAdded.end())
+		);
+		set_difference(
+			fullBeforeDeleted.begin(), fullBeforeDeleted.end(),
+			fullAfterMerged.begin(), fullAfterMerged.end(),
+			inserter(mergedDeleted, mergedDeleted.end())
+		);
+
+		set<wstring> modifiedCandidates;
+		modifiedCandidates.insert(deletedRecord.modifiedFiles.begin(), deletedRecord.modifiedFiles.end());
+		modifiedCandidates.insert(mergedRecord.modifiedFiles.begin(), mergedRecord.modifiedFiles.end());
+		for (const auto& path : mergedRecord.addedFiles) {
+			if (fullBeforeDeleted.count(path) > 0 && fullAfterMerged.count(path) > 0) {
+				modifiedCandidates.insert(path);
+			}
+		}
+
+		set<wstring> mergedModified;
+		for (const auto& path : modifiedCandidates) {
+			if (fullBeforeDeleted.count(path) == 0 || fullAfterMerged.count(path) == 0) continue;
+			if (mergedAdded.count(path) > 0 || mergedDeleted.count(path) > 0) continue;
+			mergedModified.insert(path);
+		}
+
+		BackupChangeRecord repaired = mergedRecord;
+		repaired.archiveFileName = mergedFinalFile;
+		repaired.backupType = mergedBackupType;
+		repaired.createdAtUtc = mergedRecord.createdAtUtc.empty() ? utf8_to_wstring(MakeUtcTimestampString()) : mergedRecord.createdAtUtc;
+
+		if (IsIncrementalBackupType(mergedBackupType)) {
+			repaired.previousBackupFileName = deletedRecord.previousBackupFileName;
+			repaired.basedOnFullBackup = !deletedRecord.basedOnFullBackup.empty() ? deletedRecord.basedOnFullBackup : mergedRecord.basedOnFullBackup;
+			repaired.addedFiles = ToSortedVector(mergedAdded);
+			repaired.deletedFiles = ToSortedVector(mergedDeleted);
+			repaired.modifiedFiles = ToSortedVector(mergedModified);
+		}
+		else {
+			repaired.previousBackupFileName.clear();
+			repaired.basedOnFullBackup = mergedFinalFile;
+			repaired.addedFiles = ToSortedVector(fullAfterMerged);
+			repaired.deletedFiles.clear();
+			repaired.modifiedFiles.clear();
+		}
+		repaired.fullFileList = ToSortedVector(fullAfterMerged);
+
+		SaveBackupChangeRecord(metadataDir, repaired);
+
+		error_code ec;
+		filesystem::remove(GetMetadataRecordPath(metadataDir, deletedBackupFile), ec);
+		if (mergedOldFile != mergedFinalFile) {
+			ec.clear();
+			filesystem::remove(GetMetadataRecordPath(metadataDir, mergedOldFile), ec);
+		}
+
+		vector<BackupMetadataRecordIndex> repairedRecords;
+		repairedRecords.reserve(summary.records.size());
+		for (auto record : summary.records) {
+			if (_wcsicmp(record.archiveFileName.c_str(), deletedBackupFile.c_str()) == 0) {
+				continue;
+			}
+
+			if (_wcsicmp(record.archiveFileName.c_str(), mergedOldFile.c_str()) == 0) {
+				record.archiveFileName = mergedFinalFile;
+				record.backupType = repaired.backupType;
+				record.basedOnFullBackup = repaired.basedOnFullBackup;
+				record.previousBackupFileName = repaired.previousBackupFileName;
+				record.createdAtUtc = repaired.createdAtUtc;
+			}
+
+			if (_wcsicmp(record.previousBackupFileName.c_str(), deletedBackupFile.c_str()) == 0) {
+				record.previousBackupFileName = mergedFinalFile;
+			}
+			if (mergedOldFile != mergedFinalFile && _wcsicmp(record.previousBackupFileName.c_str(), mergedOldFile.c_str()) == 0) {
+				record.previousBackupFileName = mergedFinalFile;
+			}
+
+			if (_wcsicmp(record.basedOnFullBackup.c_str(), deletedBackupFile.c_str()) == 0) {
+				record.basedOnFullBackup = mergedFinalFile;
+			}
+			if (mergedOldFile != mergedFinalFile && _wcsicmp(record.basedOnFullBackup.c_str(), mergedOldFile.c_str()) == 0) {
+				record.basedOnFullBackup = mergedFinalFile;
+			}
+
+			repairedRecords.push_back(std::move(record));
+		}
+
+		summary.records = std::move(repairedRecords);
+		sort(summary.records.begin(), summary.records.end(), [](const BackupMetadataRecordIndex& a, const BackupMetadataRecordIndex& b) {
+			if (a.createdAtUtc != b.createdAtUtc) return a.createdAtUtc < b.createdAtUtc;
+			return a.archiveFileName < b.archiveFileName;
+		});
+
+		if (_wcsicmp(summary.lastBackupFileName.c_str(), deletedBackupFile.c_str()) == 0) {
+			summary.lastBackupFileName = mergedFinalFile;
+		}
+		if (_wcsicmp(summary.lastBackupFileName.c_str(), mergedOldFile.c_str()) == 0) {
+			summary.lastBackupFileName = mergedFinalFile;
+		}
+
+		if (_wcsicmp(summary.basedOnFullBackup.c_str(), deletedBackupFile.c_str()) == 0) {
+			summary.basedOnFullBackup = mergedFinalFile;
+		}
+		if (mergedOldFile != mergedFinalFile && _wcsicmp(summary.basedOnFullBackup.c_str(), mergedOldFile.c_str()) == 0) {
+			summary.basedOnFullBackup = mergedFinalFile;
+		}
+
+		SaveBackupMetadataSummary(metadataDir, summary);
+		return true;
+	}
+
 	static void ClearReadonlyAttributesRecursively(const filesystem::path& dir) {
 		error_code ec;
 		if (!filesystem::exists(dir, ec) || ec) return;
@@ -979,7 +1139,24 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 				}
 			}
 			else {
-				fs::remove(file_to_delete);
+				bool deletedThroughHistory = false;
+				if (history_available && console) {
+					for (const auto& entry : history_it->second) {
+						if (entry.worldName == file_to_delete.path().parent_path().filename().wstring() && entry.backupFile == file_to_delete.path().filename().wstring()) {
+							int mutableConfigIndex = configIndex;
+							DoDeleteBackup(config, entry, mutableConfigIndex, *console);
+							deletedThroughHistory = true;
+							break;
+						}
+					}
+				}
+
+				if (!deletedThroughHistory) {
+					fs::remove(file_to_delete);
+					InvalidateBackupMetadata(config, file_to_delete.path().parent_path().filename().wstring(), file_to_delete.path().filename().wstring());
+					RemoveHistoryEntry(configIndex, file_to_delete.path().filename().wstring());
+					SaveHistory();
+				}
 			}
 			if (console) console->AddLog(L("LOG_DELETE_OLD_BACKUP"), wstring_to_utf8(file_to_delete.path().filename().wstring()).c_str());
 		}
@@ -1199,7 +1376,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
     }
 
-	if (!changeSet.HasChanges() && (config.skipIfUnchanged || (config.backupMode == 2 && !forceFullBackup))) {
+	if (!forceFullBackup && !changeSet.HasChanges() && (config.skipIfUnchanged || config.backupMode == 2)) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
         return;
     }
@@ -1672,7 +1849,20 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		}
 
 		SaveHistory();
-		InvalidateBackupMetadata(config, entryToDelete.worldName, entryToDelete.backupFile, nextEntry.backupFile, finalBackupFile);
+
+		string metadataError;
+		if (!TryRepairMetadataAfterSafeDelete(
+			config,
+			entryToDelete.worldName,
+			entryToDelete.backupFile,
+			nextEntry.backupFile,
+			finalBackupFile,
+			finalBackupType,
+			metadataError
+		)) {
+			console.AddLog("[Warning] Failed to repair metadata after safe-delete (%s). Falling back to metadata invalidation.", metadataError.c_str());
+			InvalidateBackupMetadata(config, entryToDelete.worldName, entryToDelete.backupFile, nextEntry.backupFile, finalBackupFile);
+		}
 
 		error_code cleanupEc;
 		filesystem::remove_all(tempRoot, cleanupEc);

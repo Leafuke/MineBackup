@@ -15,6 +15,7 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
+#include "CoreValidation.h"
 
 #ifdef _WIN32
 #include <conio.h>
@@ -725,6 +726,10 @@ int main(int argc, char** argv)
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
+		if (!showConfigWizard && g_appState.showMainApp && g_CoreValidationPending.load() && !g_CoreValidationRunning.load()) {
+			StartCoreValidationAsync(true, console);
+		}
+
 		if (showConfigWizard) {
 			ShowConfigWizard(showConfigWizard, errorShow, sevenZipExtracted, g_7zTempPath);
 		}
@@ -939,6 +944,16 @@ int main(int argc, char** argv)
 				}
 
 				if (ImGui::BeginMenu(L("MENU_TOOLS"))) {
+					const bool validationRunning = g_CoreValidationRunning.load();
+					if (validationRunning) ImGui::BeginDisabled();
+					if (ImGui::MenuItem(L("MENU_CORE_VALIDATION"))) {
+						StartCoreValidationAsync(false, console);
+					}
+					if (validationRunning) ImGui::EndDisabled();
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+						ImGui::SetTooltip("%s", validationRunning ? L("TIP_CORE_VALIDATION_RUNNING") : L("TIP_CORE_VALIDATION"));
+					}
+					ImGui::Separator();
 					if (ImGui::MenuItem(L("HISTORY_BUTTON"))) { showHistoryWindow = true; }
 					ImGui::Separator();
 					if (ImGui::MenuItem(L("BUTTON_BACKUP_MODS"))) { ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE")); }

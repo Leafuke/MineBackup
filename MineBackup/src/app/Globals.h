@@ -58,10 +58,16 @@ struct AppSettingsState {
 	bool autoScanForWorlds = false;
 	bool autoLogEnabled = true;
 	bool enableKnotLink = true;
+	std::atomic<bool> coreValidationPending{ false };
+	std::atomic<bool> coreValidationPassed{ false };
 	int hotKeyBackupId = 'S';
 	int hotKeyRestoreId = 'Z';
 	int lastIntervalMinutes = 15;
 	std::vector<std::wstring> restoreWhitelist;
+};
+
+struct CoreValidationRuntimeState {
+	std::atomic<bool> running{ false };
 };
 
 struct SpecialTaskRuntimeState {
@@ -78,6 +84,7 @@ struct AppGlobalState {
 	AppUiState ui;
 	AppSettingsState settings;
 	SpecialTaskRuntimeState specialTasks;
+	CoreValidationRuntimeState coreValidation;
 };
 
 extern AppGlobalState g_globals;
@@ -120,6 +127,8 @@ inline bool& g_SilentStartupToTray = g_globals.settings.silentStartupToTray;
 inline bool& g_AutoScanForWorlds = g_globals.settings.autoScanForWorlds;
 inline bool& g_autoLogEnabled = g_globals.settings.autoLogEnabled;
 inline bool& g_enableKnotLink = g_globals.settings.enableKnotLink;
+inline std::atomic<bool>& g_CoreValidationPending = g_globals.settings.coreValidationPending;
+inline std::atomic<bool>& g_CoreValidationPassed = g_globals.settings.coreValidationPassed;
 inline int& g_hotKeyBackupId = g_globals.settings.hotKeyBackupId;
 inline int& g_hotKeyRestoreId = g_globals.settings.hotKeyRestoreId;
 inline std::vector<std::wstring>& restoreWhitelist = g_globals.settings.restoreWhitelist;
@@ -128,6 +137,7 @@ inline std::atomic<bool>& specialTasksRunning = g_globals.specialTasks.tasksRunn
 inline std::atomic<bool>& specialTasksComplete = g_globals.specialTasks.tasksComplete;
 inline std::thread& g_exitWatcherThread = g_globals.specialTasks.exitWatcherThread;
 inline std::atomic<bool>& g_stopExitWatcher = g_globals.specialTasks.stopExitWatcher;
+inline std::atomic<bool>& g_CoreValidationRunning = g_globals.coreValidation.running;
 
 // i18n
 extern const char* lang_codes[2];

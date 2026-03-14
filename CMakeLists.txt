@@ -28,6 +28,7 @@ set(SOURCES
     ${APP_DIR}/AppState.cpp
     ${APP_DIR}/Globals.cpp
     ${CORE_DIR}/BackupManager.cpp
+    ${CORE_DIR}/CoreValidation.cpp
     ${CORE_DIR}/GameSessionManager.cpp
     ${CORE_DIR}/HistoryManager.cpp
     ${CORE_DIR}/SpecialMode.cpp
@@ -66,6 +67,7 @@ set(HEADERS
     ${APP_DIR}/MainUI.h
     ${CORE_DIR}/BackupManager.h
     ${CORE_DIR}/BackupManagerRestore.inl
+    ${CORE_DIR}/CoreValidation.h
     ${CORE_DIR}/HistoryManager.h
     ${CORE_DIR}/TaskSystem.h
     ${INFRA_DIR}/Broadcast.h

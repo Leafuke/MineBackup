@@ -54,6 +54,9 @@
     <ClCompile Include="src\core\BackupManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\CoreValidation.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\GameSessionManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -147,6 +150,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\BackupManagerRestore.inl">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\CoreValidation.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\HistoryManager.h">
