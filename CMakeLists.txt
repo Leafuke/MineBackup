@@ -10,26 +10,48 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/MineBackup)
-set(IMGUI_DIR ${SOURCE_DIR}/imgui)
-set(KNOTLINK_DIR ${SOURCE_DIR}/KnotLink)
-set(GLFW_DIR ${SOURCE_DIR}/imgui/GLFW)
+set(SRC_DIR ${SOURCE_DIR}/src)
+set(APP_DIR ${SRC_DIR}/app)
+set(CORE_DIR ${SRC_DIR}/core)
+set(INFRA_DIR ${SRC_DIR}/infra)
+set(PLATFORM_DIR ${SRC_DIR}/platform)
+set(UI_DIR ${SRC_DIR}/ui)
+set(UTILS_DIR ${SRC_DIR}/utils)
+set(THIRD_PARTY_DIR ${SOURCE_DIR}/third_party)
+set(IMGUI_DIR ${THIRD_PARTY_DIR}/imgui)
+set(KNOTLINK_DIR ${THIRD_PARTY_DIR}/KnotLink)
+set(JSON_DIR ${THIRD_PARTY_DIR}/json)
+set(STB_DIR ${THIRD_PARTY_DIR}/stb)
+set(GLFW_DIR ${IMGUI_DIR}/GLFW)
 
 set(SOURCES
-    ${SOURCE_DIR}/MineBackup.cpp
-    ${SOURCE_DIR}/BackupManager.cpp
-    ${SOURCE_DIR}/AppState.cpp
-    ${SOURCE_DIR}/ConfigManager.cpp
-    ${SOURCE_DIR}/Console.cpp
-    ${SOURCE_DIR}/Broadcast.cpp
-    ${SOURCE_DIR}/GameSessionManager.cpp
-    ${SOURCE_DIR}/HistoryManager.cpp
-    ${SOURCE_DIR}/HistoryUI.cpp
-    ${SOURCE_DIR}/SettingsUI.cpp
-    ${SOURCE_DIR}/SpecialMode.cpp
-    ${SOURCE_DIR}/WizardUI.cpp
-    ${SOURCE_DIR}/basic_func.cpp
-    ${SOURCE_DIR}/i18n.cpp
-    ${SOURCE_DIR}/text_to_text.cpp
+    ${APP_DIR}/AppState.cpp
+    ${APP_DIR}/Globals.cpp
+    ${CORE_DIR}/BackupManager.cpp
+    ${CORE_DIR}/CoreValidation.cpp
+    ${CORE_DIR}/GameSessionManager.cpp
+    ${CORE_DIR}/HistoryManager.cpp
+    ${CORE_DIR}/SpecialMode.cpp
+    ${CORE_DIR}/TaskSystem.cpp
+    ${INFRA_DIR}/Broadcast.cpp
+    ${INFRA_DIR}/ConfigManager.cpp
+    ${INFRA_DIR}/Console.cpp
+    ${INFRA_DIR}/i18n.cpp
+    ${UI_DIR}/HistoryUI.cpp
+    ${UI_DIR}/SettingsUI.cpp
+    ${UI_DIR}/SettingsUIAppearance.cpp
+    ${UI_DIR}/SettingsUIConfig.cpp
+    ${UI_DIR}/SettingsUISpecial.cpp
+    ${UI_DIR}/WizardUI.cpp
+    ${UTILS_DIR}/basic_func.cpp
+    ${UTILS_DIR}/text_to_text.cpp
+)
+
+set(MAIN_SOURCES
+    ${APP_DIR}/MineBackup.cpp
+)
+
+set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
@@ -39,23 +61,31 @@ set(SOURCES
 )
 
 set(HEADERS
-    ${SOURCE_DIR}/AppState.h
-    ${SOURCE_DIR}/BackupManager.h
-    ${SOURCE_DIR}/Broadcast.h
-    ${SOURCE_DIR}/ConfigManager.h
-    ${SOURCE_DIR}/Console.h
-    ${SOURCE_DIR}/DataModels.h
-    ${SOURCE_DIR}/Globals.h
-    ${SOURCE_DIR}/HistoryManager.h
-    ${SOURCE_DIR}/MainUI.h
-    ${SOURCE_DIR}/PlatformCompat.h
-    ${SOURCE_DIR}/Platform_win.h
-    ${SOURCE_DIR}/Platform_linux.h
-    ${SOURCE_DIR}/Platform_macos.h
-    ${SOURCE_DIR}/UIHelpers.h
-    ${SOURCE_DIR}/text_to_text.h
-    ${SOURCE_DIR}/i18n.h
-    ${SOURCE_DIR}/json.hpp
+    ${APP_DIR}/AppState.h
+    ${APP_DIR}/DataModels.h
+    ${APP_DIR}/Globals.h
+    ${APP_DIR}/MainUI.h
+    ${CORE_DIR}/BackupManager.h
+    ${CORE_DIR}/BackupManagerRestore.inl
+    ${CORE_DIR}/CoreValidation.h
+    ${CORE_DIR}/HistoryManager.h
+    ${CORE_DIR}/TaskSystem.h
+    ${INFRA_DIR}/Broadcast.h
+    ${INFRA_DIR}/ConfigManager.h
+    ${INFRA_DIR}/Console.h
+    ${INFRA_DIR}/i18n.h
+    ${PLATFORM_DIR}/PlatformCompat.h
+    ${PLATFORM_DIR}/Platform_linux.h
+    ${PLATFORM_DIR}/Platform_macos.h
+    ${PLATFORM_DIR}/Platform_win.h
+    ${UI_DIR}/IconsFontAwesome6.h
+    ${UI_DIR}/SettingsUI.h
+    ${UI_DIR}/SettingsUIPrivate.h
+    ${UI_DIR}/UIHelpers.h
+    ${UI_DIR}/imgui-all.h
+    ${UTILS_DIR}/text_to_text.h
+    ${JSON_DIR}/json.hpp
+    ${STB_DIR}/stb_image.h
     ${IMGUI_DIR}/imgui.h
     ${IMGUI_DIR}/imgui_internal.h
     ${IMGUI_DIR}/imstb_rectpack.h
@@ -70,23 +100,41 @@ set(HEADERS
     ${GLFW_DIR}/glfw3native.h
 )
 
-set(RESOURCES
-    ${SOURCE_DIR}/MineBackup.rc
+add_library(minebackup_third_party_imgui STATIC ${IMGUI_SOURCES})
+target_include_directories(minebackup_third_party_imgui PUBLIC
+    ${IMGUI_DIR}
+    ${GLFW_DIR}
 )
 
-set(FONT_AWESOME_SP ${CMAKE_CURRENT_SOURCE_DIR}/fontawesome-sp.otf)
+add_library(minebackup_core STATIC ${SOURCES} ${HEADERS})
+add_executable(${PROJECT_NAME} ${MAIN_SOURCES} ${HEADERS})
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+if(WIN32)
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
 
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
 set(GLFW_TARGET "")
-find_package(glfw3 QUIET)
-if(glfw3_FOUND)
-    if(TARGET glfw)
-        set(GLFW_TARGET glfw)
-    elseif(TARGET glfw3::glfw)
-        set(GLFW_TARGET glfw3::glfw)
+
+if(WIN32)
+    set(GLFW_BUNDLED_LIB ${IMGUI_DIR}/lib-vc2022-64/glfw3.lib)
+    if(EXISTS ${GLFW_BUNDLED_LIB})
+        add_library(glfw_bundled STATIC IMPORTED)
+        set_target_properties(glfw_bundled PROPERTIES IMPORTED_LOCATION ${GLFW_BUNDLED_LIB})
+        target_include_directories(glfw_bundled INTERFACE ${GLFW_DIR})
+        set(GLFW_TARGET glfw_bundled)
+    endif()
+endif()
+
+if(GLFW_TARGET STREQUAL "")
+    find_package(glfw3 QUIET)
+    if(glfw3_FOUND)
+        if(TARGET glfw)
+            set(GLFW_TARGET glfw)
+        elseif(TARGET glfw3::glfw)
+            set(GLFW_TARGET glfw3::glfw)
+        endif()
     endif()
 endif()
 
@@ -145,40 +193,50 @@ if(APPLE AND GLFW_TARGET STREQUAL "")
 endif()
 
 if(WIN32)
-    target_sources(${PROJECT_NAME} PRIVATE
-        ${SOURCE_DIR}/Platform_win.cpp
+    target_sources(minebackup_core PRIVATE
+        ${PLATFORM_DIR}/Platform_win.cpp
         ${KNOTLINK_DIR}/OpenSocketResponser.cpp
         ${KNOTLINK_DIR}/SignalSender.cpp
     )
 elseif(APPLE)
-    target_sources(${PROJECT_NAME} PRIVATE
-        ${SOURCE_DIR}/Platform_macos.cpp
-        ${SOURCE_DIR}/Platform_macos_tray.mm
+    target_sources(minebackup_core PRIVATE
+        ${PLATFORM_DIR}/Platform_macos.cpp
+        ${PLATFORM_DIR}/Platform_macos_tray.mm
     )
-    set_source_files_properties(${SOURCE_DIR}/Platform_macos_tray.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    set_source_files_properties(${PLATFORM_DIR}/Platform_macos_tray.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     # KnotLink POSIX 版本使用 header-only 实现
 else()
-    target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/Platform_linux.cpp)
+    target_sources(minebackup_core PRIVATE ${PLATFORM_DIR}/Platform_linux.cpp)
 endif()
 
 # 若使用 MinGW 需要链接 libglfw3.a 而不是 glfw3.lib
-target_link_libraries(${PROJECT_NAME} PRIVATE
+target_link_libraries(minebackup_core PUBLIC
     OpenGL::GL
     ${GLFW_TARGET}
     Threads::Threads
+    minebackup_third_party_imgui
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE
+target_include_directories(minebackup_core PUBLIC
     ${SOURCE_DIR}
+    ${APP_DIR}
+    ${CORE_DIR}
+    ${INFRA_DIR}
+    ${PLATFORM_DIR}
+    ${UI_DIR}
+    ${UTILS_DIR}
+    ${THIRD_PARTY_DIR}
     ${IMGUI_DIR}
     ${KNOTLINK_DIR}
+    ${JSON_DIR}
+    ${STB_DIR}
 )
+
+target_link_libraries(${PROJECT_NAME} PRIVATE minebackup_core)
 
 if(WIN32)
     target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/MineBackup.rc)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
-    target_link_libraries(${PROJECT_NAME} PRIVATE dwmapi)
+    target_link_libraries(minebackup_core PUBLIC ws2_32 winhttp dwmapi)
 endif()
 
 if(UNIX AND NOT APPLE AND NOT WIN32)
@@ -187,20 +245,20 @@ if(UNIX AND NOT APPLE AND NOT WIN32)
         pkg_check_modules(APPINDICATOR3 QUIET appindicator3-0.1)
         pkg_check_modules(GTK3 QUIET gtk+-3.0)
         if(APPINDICATOR3_FOUND AND GTK3_FOUND)
-            target_compile_definitions(${PROJECT_NAME} PRIVATE MB_HAVE_APPINDICATOR)
-            target_include_directories(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_INCLUDE_DIRS} ${GTK3_INCLUDE_DIRS})
-            target_link_libraries(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_LIBRARIES} ${GTK3_LIBRARIES})
-            target_compile_options(${PROJECT_NAME} PRIVATE ${APPINDICATOR3_CFLAGS_OTHER} ${GTK3_CFLAGS_OTHER})
+            target_compile_definitions(minebackup_core PRIVATE MB_HAVE_APPINDICATOR)
+            target_include_directories(minebackup_core PRIVATE ${APPINDICATOR3_INCLUDE_DIRS} ${GTK3_INCLUDE_DIRS})
+            target_link_libraries(minebackup_core PUBLIC ${APPINDICATOR3_LIBRARIES} ${GTK3_LIBRARIES})
+            target_compile_options(minebackup_core PRIVATE ${APPINDICATOR3_CFLAGS_OTHER} ${GTK3_CFLAGS_OTHER})
         endif()
     endif()
     find_package(X11 REQUIRED)
     if(X11_FOUND)
-        target_link_libraries(${PROJECT_NAME} PRIVATE X11)
+        target_link_libraries(minebackup_core PUBLIC X11)
     endif()
 endif()
 
 if(APPLE)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
+    target_link_libraries(minebackup_core PUBLIC
         "-framework Cocoa"
         "-framework Carbon"
         "-framework IOKit"
@@ -210,7 +268,7 @@ if(APPLE)
     )
     find_library(ICONV_LIB iconv)
     if(ICONV_LIB)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${ICONV_LIB})
+        target_link_libraries(minebackup_core PUBLIC ${ICONV_LIB})
     endif()
 endif()
 

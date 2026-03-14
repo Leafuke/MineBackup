@@ -367,7 +367,9 @@ FodyWeavers.xsd
 *.otf
 *.exe
 history.dat
+history.json
 build/
+References/
 .DS_Store
 
 !MineBackup/Assets/fontawesome-sp.otf
