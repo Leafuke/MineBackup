@@ -78,7 +78,7 @@ struct SpecialTaskRuntimeState {
 };
 
 struct AppGlobalState {
-	std::string currentVersion = "1.13.1";
+	std::string currentVersion = "1.14.0";
 	AppWindowState window;
 	AppUpdateState update;
 	AppUiState ui;

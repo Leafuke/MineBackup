@@ -1,6 +1,5 @@
 # MineBackup — 存档时光机 🗂️
 
-[![中文说明](https://img.shields.io/badge/README-中文-blue)](README_zh.md)
 [![Latest Release](https://img.shields.io/github/v/release/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/releases)
 [![Issues](https://img.shields.io/github/issues/Leafuke/MineBackup?style=flat-square)](https://github.com/Leafuke/MineBackup/issues)
 
@@ -14,7 +13,9 @@
 
 **写在前面**：
 
-针对 Windows10 以上的用户，建议优先考虑 [FolderRewind](https://github.com/Leafuke/FolderRewind) + [MineRewind插件](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft) 的组合——[二代时光机](https://github.com/Leafuke/FolderRewind)具有更现代的UI和更强大的功能，并且是将来主要的维护对象。一代时光机 MineBackup 在我现在看来，确实存在许多设计上的不足，这导致它更难以维护和扩展。不过考虑到已经有不少用户在使用它，所以我会继续维护 MineBackup，修复一些关键的 bug 和安全问题，但往往会滞后于二代时光机。
+1.14.0 版本存在许多**破坏性更改**，升级到这个版本后，务必点击“工具”菜单栏中的“核心功能自动校验”来验证当前版本在你的电脑上能正常运行。并且，非常建议进行几次备份和还原测试，确保一切正常后再正式使用。
+
+针对 Windows10 以上的用户，建议优先考虑 [FolderRewind](https://github.com/Leafuke/FolderRewind) + [MineRewind插件](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft) 的组合——[二代时光机](https://github.com/Leafuke/FolderRewind)具有更现代的UI和更强大的功能，并且是将来主要的维护对象。不过考虑到已经有不少用户在使用它，所以我会继续维护 MineBackup，修复一些关键的 bug 和安全问题，但往往会滞后于二代时光机。
 
 ---
 
