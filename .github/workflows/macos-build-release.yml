@@ -13,7 +13,7 @@ jobs:
     - name: Install dependencies
       run: |
         brew update
-        brew install glfw
+        # removed brew install glfw to force static fallback in CMake
 
     - name: Configure CMake
       run: cmake -DCMAKE_BUILD_TYPE=Release .

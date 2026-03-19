@@ -101,6 +101,9 @@ set(HEADERS
 )
 
 add_library(minebackup_third_party_imgui STATIC ${IMGUI_SOURCES})
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(minebackup_third_party_imgui PRIVATE -fno-strict-aliasing)
+endif()
 target_include_directories(minebackup_third_party_imgui PUBLIC
     ${IMGUI_DIR}
     ${GLFW_DIR}
