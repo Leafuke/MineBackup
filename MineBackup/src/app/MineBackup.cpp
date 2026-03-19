@@ -598,27 +598,34 @@ int main(int argc, char** argv)
 	if (!Fontss.empty() && filesystem::exists(Fontss)) {
 		ImFontConfig fontCfg;
 		fontCfg.PixelSnapH = true;
+		ImFont* mainFont = nullptr;
 		if (g_CurrentLang == "zh_CN") {
 			fontCfg.OversampleH = 1;  // CJK 鍏ㄥ瓧绗﹂泦瀛楁暟澶氾紝闄嶄綆杩囬噰鏍疯妭鐪佺汗鐞嗗唴瀛?
 			fontCfg.OversampleV = 1;
-			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesChineseFull());
+			mainFont = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesChineseFull());
 		} else {
-			io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesDefault());
+			mainFont = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesDefault());
+		}
+		
+		if (!mainFont) {
+			io.Fonts->AddFontDefaultVector();
 		}
 	} else {
 		io.Fonts->AddFontDefaultVector();
 	}
 
 	// 准备合并图标字体
-	ImFontConfig config2;
-	config2.MergeMode = true;
-	config2.PixelSnapH = true;
-	config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
-	// 定义要从图标字体中加载的图标范围
-	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+	if (!g_FontTempPath.empty() && filesystem::exists(g_FontTempPath)) {
+		ImFontConfig config2;
+		config2.MergeMode = true;
+		config2.PixelSnapH = true;
+		config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
+		// 定义要从图标字体中加载的图标范围
+		static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
-	// 加载并合并
-	io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
+		// 加载并合并
+		io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
+	}
 
 	// 构建字体图谱
 	io.Fonts->Build();
