@@ -421,33 +421,15 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
         exeDir / "fontawesome-sp.otf",
         exeDir / "fa-solid-900.ttf",
         exeDir / "fa-regular-400.ttf",
+        exeDir / "Assets" / "fontawesome-sp.otf",
         exeDir / "../Resources/fontawesome-sp.otf",  // For .app bundles
         exeDir / "../Resources/fa-solid-900.ttf",
-        exeDir / "../Resources/fa-regular-400.ttf"
+        exeDir / "../Resources/fa-regular-400.ttf",
+        exeDir / "../Resources/Assets/fontawesome-sp.otf"
     };
     
     for (const auto& p : bundledCandidates) {
         if (CopyBundledFontToTemp(p, extractedPath)) return true;
-    }
-    
-    const char* sysCandidates[] = {
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/SFNS.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        nullptr
-    };
-    
-    for (const char** p = sysCandidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
     }
     
     return false;

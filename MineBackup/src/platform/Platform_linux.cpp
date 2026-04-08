@@ -544,25 +544,13 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
     const fs::path bundledCandidates[] = {
         exeDir / "fontawesome-sp.otf",
         exeDir / "fa-solid-900.ttf",
-        exeDir / "fa-regular-400.ttf"
+        exeDir / "fa-regular-400.ttf",
+        exeDir / "Assets" / "fontawesome-sp.otf"
     };
     for (const auto& p : bundledCandidates) {
         if (CopyBundledFontToTemp(p, extractedPath)) return true;
     }
 
-    const char* sysCandidates[] = {
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        nullptr
-    };
-    for (const char** p = sysCandidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
-    }
     return false;
 }
 
