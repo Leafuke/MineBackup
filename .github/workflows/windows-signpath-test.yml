@@ -1,0 +1,83 @@
+name: Windows Build and Sign (SignPath Test)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-sign:
+    runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Build Release x64
+      shell: pwsh
+      run: |
+        msbuild .\MineBackup.sln /p:Configuration=Release /p:Platform=x64 /m
+
+    - name: Collect unsigned executable
+      shell: pwsh
+      run: |
+        $candidates = @(
+          '.\x64\Release\MineBackup.exe',
+          '.\MineBackup\x64\Release\MineBackup.exe',
+          '.\Release\MineBackup.exe'
+        )
+
+        $exePath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $exePath) {
+          $found = Get-ChildItem -Path . -Filter MineBackup.exe -Recurse -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($found) {
+            $exePath = $found.FullName
+          }
+        }
+
+        if (-not $exePath) {
+          throw 'MineBackup.exe not found after build.'
+        }
+
+        New-Item -ItemType Directory -Path .\out\unsigned -Force | Out-Null
+        Copy-Item -Path $exePath -Destination .\out\unsigned\MineBackup.exe -Force
+        Write-Host "Unsigned artifact: $exePath"
+
+    - name: Upload unsigned artifact
+      id: upload_unsigned
+      uses: actions/upload-artifact@v4
+      with:
+        name: minebackup-unsigned
+        path: .\out\unsigned\MineBackup.exe
+
+    - name: Submit SignPath signing request
+      id: signpath
+      uses: signpath/github-action-submit-signing-request@v2
+      with:
+        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+        signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG_TEST }}
+        artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+        github-artifact-id: ${{ steps.upload_unsigned.outputs.artifact-id }}
+        wait-for-completion: true
+        output-artifact-directory: .\out\signed
+
+    - name: Print SignPath links
+      shell: pwsh
+      run: |
+        Write-Host "Signing Request ID: ${{ steps.signpath.outputs.signing-request-id }}"
+        Write-Host "Signing Request URL: ${{ steps.signpath.outputs.signing-request-web-url }}"
+        Write-Host "Signed Download URL: ${{ steps.signpath.outputs.signed-artifact-download-url }}"
+
+    - name: Upload signed artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: minebackup-signed-test
+        path: .\out\signed

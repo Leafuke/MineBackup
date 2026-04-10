@@ -95,6 +95,25 @@ cd MineBackup
 
 ---
 
+## Code signing policy
+
+<table>
+  <tr>
+    <td>
+      <img alt="SignPath" src="https://signpath.org/assets/favicon-50x50.png" />
+    </td>
+    <td>
+    Free code signing on Windows provided by <a href="https://signpath.io">SignPath.io</a>, certficate by <a href="https://signpath.org/">SignPath Foundation</a>
+    </td>
+  </tr> 
+</table>
+
+- Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+- Committers and reviewers: [Members team](https://github.com/Leafuke/MineBackup/graphs/contributors)
+- Approvers: [Leafuke](https://github.com/Leafuke)
+
+---
+
 ## 🤝 Contributing & Support
 
 * **Report bugs / request features:** [GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
