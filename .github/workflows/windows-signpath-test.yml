@@ -1,0 +1,126 @@
+name: Windows Build and Sign (SignPath Test)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-sign:
+    runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Ensure embedded 7za.exe is available
+      shell: pwsh
+      run: |
+        $target7za = '.\MineBackup\7za.exe'
+        if (Test-Path $target7za) {
+          Write-Host 'Found existing MineBackup\7za.exe in repository workspace.'
+          exit 0
+        }
+
+        New-Item -ItemType Directory -Path .\tools -Force | Out-Null
+        $installerPath = '.\tools\7zip-zstd-x64.exe'
+        $installDir = "$env:RUNNER_TEMP\7zipzstd"
+        $releaseUrl = 'https://github.com/mcmilk/7-Zip-zstd/releases/download/v25.01-v1.5.7-R4/7z25.01-zstd-x64.exe'
+        $expectedSha256 = '5a55a8b6abb09d4b5ddd64c95f22a5270cb46752fb7a5353073508922b141596'
+
+        Write-Host "Downloading $releaseUrl"
+        Invoke-WebRequest -Uri $releaseUrl -OutFile $installerPath
+
+        $actualSha256 = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha256 -ne $expectedSha256) {
+          throw "7-Zip-zstd installer hash mismatch. Expected $expectedSha256, got $actualSha256"
+        }
+
+        if (Test-Path $installDir) {
+          Remove-Item -Path $installDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+
+        # NSIS-style silent install.
+        $args = @('/S', "/D=$installDir")
+        $proc = Start-Process -FilePath $installerPath -ArgumentList $args -Wait -PassThru
+        if ($proc.ExitCode -ne 0) {
+          throw "7-Zip-zstd installer exited with code $($proc.ExitCode)"
+        }
+
+        $found7za = Get-ChildItem -Path $installDir -Filter 7za.exe -Recurse -File | Select-Object -First 1
+        if (-not $found7za) {
+          throw '7za.exe not found after installing 7-Zip-zstd.'
+        }
+
+        Copy-Item -Path $found7za.FullName -Destination $target7za -Force
+        Write-Host "Prepared embedded 7za.exe from: $($found7za.FullName)"
+
+    - name: Build Release x64
+      shell: pwsh
+      run: |
+        msbuild .\MineBackup.sln /p:Configuration=Release /p:Platform=x64 /m
+
+    - name: Collect unsigned executable
+      shell: pwsh
+      run: |
+        $candidates = @(
+          '.\x64\Release\MineBackup.exe',
+          '.\MineBackup\x64\Release\MineBackup.exe',
+          '.\Release\MineBackup.exe'
+        )
+
+        $exePath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $exePath) {
+          $found = Get-ChildItem -Path . -Filter MineBackup.exe -Recurse -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($found) {
+            $exePath = $found.FullName
+          }
+        }
+
+        if (-not $exePath) {
+          throw 'MineBackup.exe not found after build.'
+        }
+
+        New-Item -ItemType Directory -Path .\out\unsigned -Force | Out-Null
+        Copy-Item -Path $exePath -Destination .\out\unsigned\MineBackup.exe -Force
+        Write-Host "Unsigned artifact: $exePath"
+
+    - name: Upload unsigned artifact
+      id: upload_unsigned
+      uses: actions/upload-artifact@v4
+      with:
+        name: minebackup-unsigned
+        path: .\out\unsigned\MineBackup.exe
+
+    - name: Submit SignPath signing request
+      id: signpath
+      uses: signpath/github-action-submit-signing-request@v2
+      with:
+        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+        signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG_TEST }}
+        artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+        github-artifact-id: ${{ steps.upload_unsigned.outputs.artifact-id }}
+        wait-for-completion: true
+        output-artifact-directory: .\out\signed
+
+    - name: Print SignPath links
+      shell: pwsh
+      run: |
+        Write-Host "Signing Request ID: ${{ steps.signpath.outputs.signing-request-id }}"
+        Write-Host "Signing Request URL: ${{ steps.signpath.outputs.signing-request-web-url }}"
+        Write-Host "Signed Download URL: ${{ steps.signpath.outputs.signed-artifact-download-url }}"
+
+    - name: Upload signed artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: minebackup-signed-test
+        path: .\out\signed

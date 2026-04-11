@@ -600,7 +600,7 @@ int main(int argc, char** argv)
 		fontCfg.PixelSnapH = true;
 		ImFont* mainFont = nullptr;
 		if (g_CurrentLang == "zh_CN") {
-			fontCfg.OversampleH = 1;  // CJK 鍏ㄥ瓧绗﹂泦瀛楁暟澶氾紝闄嶄綆杩囬噰鏍疯妭鐪佺汗鐞嗗唴瀛?
+			fontCfg.OversampleH = 1;
 			fontCfg.OversampleV = 1;
 			mainFont = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesChineseFull());
 		} else {
