@@ -106,7 +106,8 @@ jobs:
         api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
         organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
         project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-        signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG_TEST }}
+        # SignPath review requires using the SignPath-provided test policy.
+        signing-policy-slug: test-signing
         artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
         github-artifact-id: ${{ steps.upload_unsigned.outputs.artifact-id }}
         wait-for-completion: true
@@ -115,6 +116,7 @@ jobs:
     - name: Print SignPath links
       shell: pwsh
       run: |
+        Write-Host "Signing Policy Slug: test-signing"
         Write-Host "Signing Request ID: ${{ steps.signpath.outputs.signing-request-id }}"
         Write-Host "Signing Request URL: ${{ steps.signpath.outputs.signing-request-web-url }}"
         Write-Host "Signed Download URL: ${{ steps.signpath.outputs.signed-artifact-download-url }}"
