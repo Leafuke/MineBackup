@@ -1,4 +1,4 @@
-#include "SettingsUI.h"
+﻿#include "SettingsUI.h"
 #include "SettingsUIPrivate.h"
 
 using namespace std;

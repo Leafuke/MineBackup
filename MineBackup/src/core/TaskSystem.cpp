@@ -1,4 +1,4 @@
-#include "TaskSystem.h"
+﻿#include "TaskSystem.h"
 #include "AppState.h"
 #include "BackupManager.h"
 #include "Console.h"

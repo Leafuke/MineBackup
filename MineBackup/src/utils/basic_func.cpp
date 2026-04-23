@@ -100,7 +100,7 @@ vector<filesystem::path> GetChangedFiles(
 			lastState.emplace(utf8_to_wstring(key), state);
 		}
 	}
-	catch (const exception& e) {
+	catch (const exception&) {
 		// 元数据文件损坏或格式错误
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
 		// 同样需要扫描所有文件
@@ -252,7 +252,7 @@ bool is_blacklisted(
 					return true;
 				}
 			}
-			catch (const regex_error& e) {
+			catch (const regex_error&) {
 				//console.AddLog("[Error] Invalid regex in blacklist: %s. Error: %s", wstring_to_utf8(rule_orig).c_str(), e.what());
 			}
 		}

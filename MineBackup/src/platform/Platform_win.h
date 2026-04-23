@@ -4,7 +4,7 @@
 #include <iostream>
 #include <windows.h>
 #include <string>
-class Console;
+struct Console;
 enum class LogLevel {
     Info,
     Warning,

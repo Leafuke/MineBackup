@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef MAIN_UI_H
 #define MAIN_UI_H
 

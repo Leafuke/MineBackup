@@ -1,4 +1,4 @@
-// HistoryUI.cpp — 历史记录窗口
+﻿// HistoryUI.cpp — 历史记录窗口
 // 从 MineBackup.cpp 拆分出，包含 ShowHistoryWindow() 函数
 
 #include "Globals.h"

@@ -1,4 +1,4 @@
-// SpecialMode.cpp — 特殊模式（控制台模式）执行逻辑
+﻿// SpecialMode.cpp — 特殊模式（控制台模式）执行逻辑
 // 从 MineBackup.cpp 拆分出，包含 RunSpecialMode() 函数
 
 #include "Broadcast.h"

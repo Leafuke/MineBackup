@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #ifndef _PLATFORM_MACOS_H
 #define _PLATFORM_MACOS_H
 #include <iostream>
 #include <string>
 #include <filesystem>
 
-class Console;
+struct Console;
 
 void CheckForUpdatesThread();
 std::wstring SelectFileDialog();

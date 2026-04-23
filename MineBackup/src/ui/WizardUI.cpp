@@ -1,4 +1,4 @@
-#include "Globals.h"
+﻿#include "Globals.h"
 #include "UIHelpers.h"
 #include "imgui-all.h"
 #include "imgui_style.h"

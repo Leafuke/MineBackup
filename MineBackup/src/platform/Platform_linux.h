@@ -5,7 +5,7 @@
 #include <string>
 #include <filesystem>
 
-class Console;
+struct Console;
 // Linux stub implementations used when building on non-Windows platforms.
 void CheckForUpdatesThread();
 std::wstring SelectFileDialog();

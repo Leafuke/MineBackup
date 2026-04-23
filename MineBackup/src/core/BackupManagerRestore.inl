@@ -1,4 +1,4 @@
-static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
+﻿static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
 	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
 	for (const auto& backup : archives) {
 		wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + backup.wstring() + L"\" -y";
