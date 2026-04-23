@@ -74,6 +74,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
+      <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -91,6 +92,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
+      <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -106,6 +108,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
+      <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -124,6 +127,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
+      <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -142,6 +146,7 @@
     <ClCompile Include="src\app\Globals.cpp" />
     <ClCompile Include="src\app\MineBackup.cpp" />
     <ClCompile Include="src\core\BackupManager.cpp" />
+    <ClCompile Include="src\core\CloudSyncService.cpp" />
     <ClCompile Include="src\core\CoreValidation.cpp" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
     <ClCompile Include="src\core\HistoryManager.cpp" />
@@ -175,6 +180,7 @@
     <ClInclude Include="src\app\Globals.h" />
     <ClInclude Include="src\app\MainUI.h" />
     <ClInclude Include="src\core\BackupManager.h" />
+    <ClInclude Include="src\core\CloudSyncService.h" />
     <ClInclude Include="src\core\BackupManagerRestore.inl" />
     <ClInclude Include="src\core\CoreValidation.h" />
     <ClInclude Include="src\core\HistoryManager.h" />

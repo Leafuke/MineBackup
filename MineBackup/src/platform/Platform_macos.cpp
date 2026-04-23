@@ -508,3 +508,15 @@ bool RunCommandInBackground(const std::wstring& command, Console& console, bool 
     console.AddLog(L("LOG_ERROR_CMD_FAILED"), WEXITSTATUS(ret));
     return false;
 }
+
+bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory) {
+    (void)timeoutSeconds;
+    timedOut = false;
+    errorMessage.clear();
+    bool success = RunCommandInBackground(command, console, useLowPriority, workingDirectory);
+    exitCode = success ? 0 : 1;
+    if (!success) {
+        errorMessage = "Command failed.";
+    }
+    return success;
+}

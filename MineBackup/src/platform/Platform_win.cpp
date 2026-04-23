@@ -832,3 +832,72 @@ bool RunCommandInBackground(const wstring& command, Console& console, bool useLo
 	CloseHandle(pi.hThread);
 	return success;
 }
+
+bool RunCommandWithResult(const wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, string& errorMessage, const wstring& workingDirectory) {
+	exitCode = -1;
+	timedOut = false;
+	errorMessage.clear();
+
+	vector<wchar_t> cmd_line(command.begin(), command.end());
+	cmd_line.push_back(L'\0');
+
+	STARTUPINFOW si = {};
+	PROCESS_INFORMATION pi = {};
+	si.cb = sizeof(si);
+	si.dwFlags |= STARTF_USESHOWWINDOW;
+	si.wShowWindow = SW_HIDE;
+
+	DWORD creationFlags = CREATE_NO_WINDOW;
+	if (useLowPriority) {
+		creationFlags |= BELOW_NORMAL_PRIORITY_CLASS;
+	}
+
+	const wchar_t* pWorkingDir = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
+	console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
+
+	if (!CreateProcessW(NULL, cmd_line.data(), NULL, NULL, FALSE, creationFlags, NULL, pWorkingDir, &si, &pi)) {
+		DWORD err = GetLastError();
+		errorMessage = "CreateProcess failed: " + to_string(err);
+		console.AddLog(L("LOG_ERROR_CREATE_PROCESS"), err);
+		return false;
+	}
+
+	DWORD waitMs = INFINITE;
+	if (timeoutSeconds > 0) {
+		waitMs = static_cast<DWORD>(timeoutSeconds) * 1000U;
+	}
+
+	DWORD waitResult = WaitForSingleObject(pi.hProcess, waitMs);
+	if (waitResult == WAIT_TIMEOUT) {
+		timedOut = true;
+		errorMessage = "Command timed out.";
+		TerminateProcess(pi.hProcess, 124);
+		exitCode = 124;
+		console.AddLog("[Error] %s", errorMessage.c_str());
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
+		return false;
+	}
+
+	DWORD processExitCode = 0;
+	if (!GetExitCodeProcess(pi.hProcess, &processExitCode)) {
+		errorMessage = "Failed to get process exit code.";
+		console.AddLog(L("LOG_ERROR_GET_EXIT_CODE"));
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
+		return false;
+	}
+
+	exitCode = static_cast<int>(processExitCode);
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+
+	if (exitCode == 0) {
+		console.AddLog(L("LOG_SUCCESS_CMD"));
+		return true;
+	}
+
+	console.AddLog(L("LOG_ERROR_CMD_FAILED"), exitCode);
+	errorMessage = "Command failed with exit code " + to_string(exitCode) + ".";
+	return false;
+}

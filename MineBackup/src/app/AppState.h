@@ -17,6 +17,15 @@
 #include <ctime>
 #include <sys/stat.h>
 
+struct CloudTaskRuntimeState {
+	std::atomic<bool> busy{ false };
+	std::atomic<int> progress{ 0 };
+	int activeConfigIndex = -1;
+	std::wstring statusText;
+	std::wstring lastMessage;
+	std::mutex mutex;
+};
+
 struct AppState {
 
 	bool done = false;
@@ -41,6 +50,7 @@ struct AppState {
 	std::atomic<HotRestoreState> hotkeyRestoreState = HotRestoreState::IDLE;
 
 	KnotLinkModInfo knotLinkMod;
+	CloudTaskRuntimeState cloudTask;
 };
 
 extern AppState g_appState;

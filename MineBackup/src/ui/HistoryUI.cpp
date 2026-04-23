@@ -13,6 +13,7 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
+#include "CloudSyncService.h"
 #include "PlatformCompat.h"
 
 using namespace std;
@@ -65,6 +66,32 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	if (ImGui::Button(L("HISTORY_CLEAN_INVALID"))) {
 		ImGui::OpenPopup(L("HISTORY_CONFIRM_CLEAN_TITLE"));
 	}
+	ImGui::SameLine();
+	if (!CanUseCloudActions(cfg)) ImGui::BeginDisabled();
+	if (ImGui::Button(L("HISTORY_CLOUD_ANALYZE"))) {
+		Config configCopy = cfg;
+		const int configIndex = tempCurrentConfigIndex;
+		thread([configCopy, configIndex]() {
+			AnalyzeCloudHistory(configCopy, configIndex, console);
+		}).detach();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_HISTORY"))) {
+		Config configCopy = cfg;
+		const int configIndex = tempCurrentConfigIndex;
+		thread([configCopy, configIndex]() {
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly, console);
+		}).detach();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_ALL"))) {
+		Config configCopy = cfg;
+		const int configIndex = tempCurrentConfigIndex;
+		thread([configCopy, configIndex]() {
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups, console);
+		}).detach();
+	}
+	if (!CanUseCloudActions(cfg)) ImGui::EndDisabled();
 
 	// 清理确认弹窗
 	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -93,6 +120,17 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	}
 
 	ImGui::Separator();
+	{
+		lock_guard<mutex> cloudLock(g_appState.cloudTask.mutex);
+		if ((g_appState.cloudTask.activeConfigIndex == tempCurrentConfigIndex && (!g_appState.cloudTask.statusText.empty() || !g_appState.cloudTask.lastMessage.empty()))
+			|| !g_appState.cloudTask.lastMessage.empty()) {
+			ImGui::TextWrapped("%s", wstring_to_utf8(g_appState.cloudTask.statusText).c_str());
+			if (!g_appState.cloudTask.lastMessage.empty()) {
+				ImGui::TextWrapped("%s", wstring_to_utf8(g_appState.cloudTask.lastMessage).c_str());
+			}
+			ImGui::Separator();
+		}
+	}
 
 	// --- 主体布局：左右分栏 ---
 	float list_width = ImGui::GetContentRegionAvail().x * 0.45f;
@@ -304,6 +342,26 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
 			OpenFolderWithFocus(backup_path.parent_path().wstring(), cmd);
 		}
+		ImGui::SameLine();
+		if (!CanUseCloudActions(cfg)) ImGui::BeginDisabled();
+		if (ImGui::Button(L("HISTORY_BUTTON_UPLOAD_CLOUD"))) {
+			const Config configCopy = cfg;
+			const HistoryEntry entryCopy = *selected_entry;
+			const int configIndex = tempCurrentConfigIndex;
+			thread([configCopy, configIndex, entryCopy]() {
+				UploadHistoryEntry(configCopy, configIndex, entryCopy, console);
+			}).detach();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(L("HISTORY_BUTTON_DOWNLOAD_CLOUD"))) {
+			const Config configCopy = cfg;
+			const HistoryEntry entryCopy = *selected_entry;
+			const int configIndex = tempCurrentConfigIndex;
+			thread([configCopy, configIndex, entryCopy]() {
+				DownloadHistoryEntry(configCopy, configIndex, entryCopy, console);
+			}).detach();
+		}
+		if (!CanUseCloudActions(cfg)) ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 			selected_entry->isImportant = !selected_entry->isImportant;

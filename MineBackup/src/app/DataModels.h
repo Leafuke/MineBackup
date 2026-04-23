@@ -45,10 +45,32 @@ struct Config {
 	bool cloudSyncEnabled = false;
 	std::wstring rclonePath;
 	std::wstring rcloneRemotePath;
+	int cloudSyncMode = 0; // 0: 仅同步历史, 1: 同步历史和备份包
+	std::wstring cloudWorkingDirectory;
+	int cloudTimeoutSeconds = 600;
+	int cloudRetryCount = 0;
+	bool cloudSyncHistoryAfterUpload = true;
+	bool cloudAutoDownloadBeforeRestore = true;
+	std::wstring cloudLastRunUtc;
+	int cloudLastExitCode = 0;
+	std::wstring cloudLastErrorMessage;
 	std::wstring snapshotPath;
 	std::wstring othersPath;
 	bool enableWEIntegration = false;
 	std::wstring weSnapshotPath = L"";
+};
+
+enum class CloudSyncMode {
+	HistoryOnly = 0,
+	HistoryAndBackups = 1
+};
+
+struct CloudCommandResult {
+	bool success = false;
+	int exitCode = -1;
+	bool timedOut = false;
+	std::wstring message;
+	std::wstring detail;
 };
 
 struct AutomatedTask {
@@ -145,6 +167,44 @@ struct HistoryEntry {
 	std::wstring backupType;
 	std::wstring comment;
 	bool isImportant = false;
+	bool isCloudArchived = false;
+	std::wstring cloudArchivedAtUtc;
+	std::wstring cloudArchiveRemotePath;
+	std::wstring cloudMetadataRecordRemotePath;
+	std::wstring cloudMetadataStateRemotePath;
+};
+
+struct CloudHistoryAnalysisResult {
+	bool success = false;
+	std::wstring message;
+	int totalRemoteEntries = 0;
+	int matchedEntries = 0;
+	int importableEntries = 0;
+	int unmappedEntries = 0;
+	int ambiguousEntries = 0;
+	std::vector<HistoryEntry> mappedItems;
+};
+
+struct CloudSyncResult {
+	bool success = false;
+	std::wstring message;
+	int importedHistoryCount = 0;
+	int duplicateHistoryCount = 0;
+	int recoveredBackupCount = 0;
+	CloudHistoryAnalysisResult analysis;
+};
+
+struct CloudActiveHistoryEntry {
+	std::wstring worldPath;
+	std::wstring worldName;
+	std::wstring backupFile;
+	std::wstring timestamp;
+};
+
+struct CloudActiveHistoryManifest {
+	std::wstring configName;
+	std::wstring updatedAtUtc;
+	std::vector<CloudActiveHistoryEntry> entries;
 };
 
 struct AutoBackupTask {

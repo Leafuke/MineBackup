@@ -6,6 +6,7 @@
 #include "i18n.h"
 #include "Console.h"
 #include "HistoryManager.h"
+#include "CloudSyncService.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -1568,18 +1569,8 @@ execute_backup:
 		BroadcastEvent(payload);
 
 
-        // 云同步逻辑
-            if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
-				console.AddLog(L("CLOUD_SYNC_START"));
-				wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + folder.name + L"\" --progress";
-				// 另起一个线程来执行云同步，避免阻塞后续操作
-				// 注意：使用指针值捕获而非引用，避免console生命周期结束后悬垂引用
-				Console* consolePtr = &console;
-				thread([rclone_command, consolePtr, config]() {
-					RunCommandInBackground(rclone_command, *consolePtr, config.useLowPriority);
-					consolePtr->AddLog(L("CLOUD_SYNC_FINISH"));
-				}).detach();
-			}
+		// 云存档统一交给 CloudSyncService 处理，避免 UI 和核心逻辑各自拼接 rclone 命令。
+		QueueUploadAfterBackup(config, folder.configIndex, folder, completedBackupFile, comment, console);
         }
         else {
             BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");

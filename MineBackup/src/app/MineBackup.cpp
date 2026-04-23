@@ -15,6 +15,7 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
+#include "CloudSyncService.h"
 #include "CoreValidation.h"
 
 #ifdef _WIN32
@@ -785,11 +786,15 @@ int main(int argc, char** argv)
 					ImGui::Separator();
 					// 导出历史记录
 					if (ImGui::MenuItem(L("MENU_EXPORT_HISTORY"))) {
-						wstring exportPath = SelectSaveFileDialog(L"history_export.dat", L"DAT Files (*.dat)\0*.dat\0All Files (*.*)\0*.*\0");
+						wstring exportPath = SelectSaveFileDialog(L"history_export.json", L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0");
 						if (!exportPath.empty()) {
 							try {
-								filesystem::copy_file(L"history.dat", exportPath, filesystem::copy_options::overwrite_existing);
-								console.AddLog(L("LOG_HISTORY_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+								if (ExportHistoryToFile(exportPath)) {
+									console.AddLog(L("LOG_HISTORY_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+								}
+								else {
+									console.AddLog("[Error] Failed to export history.");
+								}
 							} catch (const exception& e) {
 								console.AddLog("[Error] Failed to export history: %s", e.what());
 							}
@@ -846,9 +851,13 @@ int main(int argc, char** argv)
 					float histBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(histBtnW, 0))) {
 						try {
-							filesystem::copy_file(pendingImportPath, L"history.dat", filesystem::copy_options::overwrite_existing);
-							LoadHistory();
-							console.AddLog(L("LOG_HISTORY_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+							if (ImportHistoryFromFile(pendingImportPath, g_appState.currentConfigIndex, true)) {
+								LoadHistory();
+								console.AddLog(L("LOG_HISTORY_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+							}
+							else {
+								console.AddLog("[Error] Failed to import history.");
+							}
 						} catch (const exception& e) {
 							console.AddLog("[Error] Failed to import history: %s", e.what());
 						}
@@ -1883,17 +1892,14 @@ int main(int argc, char** argv)
 
 
 						if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
-							// 云同步逻辑
-							const Config& config = g_appState.configs[displayWorlds[selectedWorldIndex].baseConfigIndex];
-							if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
-								console.AddLog(L("CLOUD_SYNC_START"));
-								wstring localBackupPath = JoinPath(config.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
-								wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + localBackupPath + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
-								// 另起一个线程来执行云同步，避免阻塞后续操作
-								thread([rclone_command, config]() {
-									RunCommandInBackground(rclone_command, console, config.useLowPriority);
-									console.AddLog(L("CLOUD_SYNC_FINISH"));
-									}).detach();
+							const int baseConfigIndex = displayWorlds[selectedWorldIndex].baseConfigIndex;
+							const Config configCopy = g_appState.configs[baseConfigIndex];
+							vector<HistoryEntry> worldHistory = GetHistoryEntriesForWorld(baseConfigIndex, displayWorlds[selectedWorldIndex].name);
+							if (!worldHistory.empty() && CanUseCloudActions(configCopy)) {
+								const HistoryEntry latestEntry = worldHistory.back();
+								thread([configCopy, baseConfigIndex, latestEntry]() {
+									UploadHistoryEntry(configCopy, baseConfigIndex, latestEntry, console);
+								}).detach();
 							}
 							else {
 								console.AddLog(L("CLOUD_SYNC_INVALID"));

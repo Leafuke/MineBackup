@@ -178,6 +178,15 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
 				else if (key == L"RclonePath") cur->rclonePath = val;
 				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
+				else if (key == L"CloudSyncMode") cur->cloudSyncMode = stoi(val);
+				else if (key == L"CloudWorkingDirectory") cur->cloudWorkingDirectory = val;
+				else if (key == L"CloudTimeoutSeconds") cur->cloudTimeoutSeconds = stoi(val);
+				else if (key == L"CloudRetryCount") cur->cloudRetryCount = stoi(val);
+				else if (key == L"CloudSyncHistoryAfterUpload") cur->cloudSyncHistoryAfterUpload = (val != L"0");
+				else if (key == L"CloudAutoDownloadBeforeRestore") cur->cloudAutoDownloadBeforeRestore = (val != L"0");
+				else if (key == L"CloudLastRunUtc") cur->cloudLastRunUtc = val;
+				else if (key == L"CloudLastExitCode") cur->cloudLastExitCode = stoi(val);
+				else if (key == L"CloudLastErrorMessage") cur->cloudLastErrorMessage = val;
 				else if (key == L"SnapshotPath") cur->snapshotPath = val;
 				else if (key == L"OtherPath") cur->othersPath = val;
 				else if (key == L"EnableWEIntegration") cur->enableWEIntegration = (val != L"0");
@@ -361,6 +370,12 @@ void LoadConfigs(const string& filename) {
 	for (auto& kv : g_appState.configs) {
 		Config& cfg = kv.second;
 		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
+		if (cfg.cloudSyncMode < static_cast<int>(CloudSyncMode::HistoryOnly)
+			|| cfg.cloudSyncMode > static_cast<int>(CloudSyncMode::HistoryAndBackups)) {
+			cfg.cloudSyncMode = static_cast<int>(CloudSyncMode::HistoryOnly);
+		}
+		if (cfg.cloudTimeoutSeconds <= 0) cfg.cloudTimeoutSeconds = 600;
+		if (cfg.cloudRetryCount < 0) cfg.cloudRetryCount = 0;
 	}
 
 	for (auto& kv : g_appState.specialConfigs) {
@@ -440,6 +455,15 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"CloudSyncEnabled=" << (c.cloudSyncEnabled ? 1 : 0) << L"\n";
 		buffer << L"RclonePath=" << c.rclonePath << L"\n";
 		buffer << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
+		buffer << L"CloudSyncMode=" << c.cloudSyncMode << L"\n";
+		buffer << L"CloudWorkingDirectory=" << c.cloudWorkingDirectory << L"\n";
+		buffer << L"CloudTimeoutSeconds=" << c.cloudTimeoutSeconds << L"\n";
+		buffer << L"CloudRetryCount=" << c.cloudRetryCount << L"\n";
+		buffer << L"CloudSyncHistoryAfterUpload=" << (c.cloudSyncHistoryAfterUpload ? 1 : 0) << L"\n";
+		buffer << L"CloudAutoDownloadBeforeRestore=" << (c.cloudAutoDownloadBeforeRestore ? 1 : 0) << L"\n";
+		buffer << L"CloudLastRunUtc=" << c.cloudLastRunUtc << L"\n";
+		buffer << L"CloudLastExitCode=" << c.cloudLastExitCode << L"\n";
+		buffer << L"CloudLastErrorMessage=" << c.cloudLastErrorMessage << L"\n";
 		buffer << L"SnapshotPath=" << c.snapshotPath << L"\n";
 		buffer << L"OtherPath=" << c.othersPath << L"\n";
 		buffer << L"EnableWEIntegration=" << (c.enableWEIntegration ? 1 : 0) << L"\n";
