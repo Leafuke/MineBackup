@@ -1,5 +1,6 @@
 ﻿#include "i18n.h"
 #include "text_to_text.h"
+#include <cstdarg>
 std::string g_CurrentLang = "en_US";
 static const std::unordered_map<std::string, Utf8Value>* g_CurrentLangMap = nullptr;
 const char* lang_codes[2] = { "zh_CN", "en_US" };
@@ -423,7 +424,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{"MENU_GITHUB", u8"访问 GitHub"},
 		{ "MENU_ISSUE", u8"漏洞反馈 & 功能建议" },
 		{"MENU_ABOUT", u8"关于 MineBackup"},
-		{ "ABOUT_DESCRIPTION", u8"一个为 Minecraft 玩家设计的轻量、强大且开源的存档备份工具。\n\n快捷键:\nAlt+Ctrl+%s - 备份正在运行的世界\nAlt+Ctrl+%s - 还原正在运行的世界到最近的备份" },
+		{ "ABOUT_DESCRIPTION", u8"一个为 Minecraft 玩家设计的轻量、强大且开源的存档备份工具。\n\n快捷键:\nAlt+Ctrl+%c - 备份正在运行的世界\nAlt+Ctrl+%c - 还原正在运行的世界到最近的备份" },
 		{ "ABOUT_AUTHOR", u8"作者: Leafuke" },
 		{ "ABOUT_VISIT_GITHUB", u8"访问 GitHub 仓库" },
 		{ "ABOUT_VISIT_BILIBILI", u8"访问 Bilibili 主页" },
@@ -434,10 +435,10 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "ABOUT_QQ_GROUP", u8"反馈/讨论群: 1071542709"},
 		{ "ABOUT_LICENSE_HEADER", u8"许可证" },
 		{ "ABOUT_LICENSE_TYPE", u8"GPL-3.0 License" },
-		{ "ABOUT_LICENSE_COPYRIGHT", u8"Copyright (c) 2025 Leafuke" },
+		{ "ABOUT_LICENSE_COPYRIGHT", u8"Copyright (c) 2026 Leafuke" },
 		{ "ABOUT_LICENSE_TEXT", u8"本软件永久免费，如果您遇到收费，请立刻与我联系。" },
 		{ "GROUP_CLOUD_SYNC", u8"云同步设置" },
-		{ "ENABLE_CLOUD_SYNC", u8"启用备份后云同步" },
+		{ "ENABLE_CLOUD_SYNC", u8"备份后自动上传云存档" },
 		{ "RCLONE_PATH_LABEL", u8"rclone.exe 路径" },
 		{ "BUTTON_SELECT_RCLONE", u8"选择 rclone.exe" },
 		{ "RCLONE_REMOTE_PATH_LABEL", u8"Rclone 远程路径" },
@@ -480,6 +481,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "CLOUD_NOT_ENABLED", u8"当前配置未启用云存档。" },
 		{ "CLOUD_CONFIG_INVALID", u8"云存档配置不完整，请检查 rclone 路径与远程路径。" },
 		{ "CLOUD_RCLONE_NOT_FOUND", u8"未找到可用的 rclone 可执行文件。" },
+		{ "CLOUD_WORKDIR_MISSING", u8"云命令工作目录不存在。" },
 		{ "CLOUD_TASK_COMPLETED", u8"云任务已完成。" },
 		{ "CLOUD_TIMEOUT", u8"云命令执行超时（%d 秒）。" },
 		{ "CLOUD_COMMAND_FAILED_WITH_CODE", u8"云命令执行失败，退出码：%d" },
@@ -489,6 +491,9 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "CLOUD_LOCAL_ARCHIVE_MISSING", u8"本地备份包不存在，无法上传到云端。" },
 		{ "CLOUD_UPLOAD_FAILED", u8"上传云存档失败：%s" },
 		{ "CLOUD_UPLOAD_SUCCEEDED", u8"上传云存档成功：%s" },
+		{ "CLOUD_UPLOAD_FOLDER_FAILED", u8"上传备份文件夹失败：%s" },
+		{ "CLOUD_UPLOAD_FOLDER_SUCCEEDED", u8"上传备份文件夹成功：%s" },
+		{ "CLOUD_BACKGROUND_HISTORY_SYNC_DONE", u8"[云存档] 本地变更后已同步历史：%s" },
 		{ "CLOUD_METADATA_PARTIAL", u8"备份包已同步，但元数据未完全同步。" },
 		{ "CLOUD_NO_REMOTE_COPY", u8"当前历史记录没有可用的云端副本。" },
 		{ "CLOUD_DOWNLOAD_FAILED", u8"下载云存档失败：%s" },
@@ -590,6 +595,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "HISTORY_LABEL_STATUS", u8"状态" },
 		{ "HISTORY_STATUS_OK", u8"正常" },
 		{ "HISTORY_STATUS_MISSING", u8"文件丢失" },
+		{ "HISTORY_STATUS_CLOUD_ONLY", u8"仅云端" },
 		{ "HISTORY_STATUS_SMALL", u8"文件大小异常 (<10KB)" },
 		{ "HISTORY_GROUP_ACTIONS", u8"操作" },
 		{ "HISTORY_BUTTON_RESTORE", u8"还原" },
@@ -610,7 +616,11 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "HISTORY_RENAME_POPUP_TITLE", u8"重命名备份" },
 		{ "HISTORY_RENAME_POPUP_MSG", u8"输入新的文件名 (请保留正确的扩展名):" },
 		{ "HISTORY_DELETE_POPUP_TITLE", u8"确认删除备份" },
-		{ "HISTORY_DELETE_POPUP_MSG", u8"您确定要永久删除备份文件 '%s' 吗？\n此操作将同时从磁盘和历史记录中移除它，且无法撤销！\n如果你希望将合并当前备份至最近备份，请点击“确认删除并合并”" },
+		{ "HISTORY_DELETE_POPUP_MSG", u8"请选择如何删除备份 '%s'。" },
+		{ "HISTORY_DELETE_MODE_HISTORY_ONLY", u8"仅删除历史记录" },
+		{ "HISTORY_DELETE_MODE_LOCAL_ONLY", u8"仅删除本地文件" },
+		{ "HISTORY_DELETE_MODE_LOCAL_AND_HISTORY", u8"删除本地文件和历史记录" },
+		{ "HISTORY_DELETE_USE_SAFE_DELETE", u8"Smart 备份使用安全删除/合并" },
 		{ "HISTORY_EDIT_COMMENT_TIP", u8"点击编辑注释" },
 		{ "HELP_DOCUMENT", u8"在线帮助文档" },
 		{"NO_RUNNINGTIME", u8"缺少 VC++2015-2022 运行时库，请前往微软官网安装后重试！\nlearn.microsoft.com/zh-cn/cpp/windows/latest-supported-vc-redist?view=msvc-170"},
@@ -1190,10 +1200,10 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "ABOUT_QQ_GROUP", "Feedback/Discussion Group: 1071542709" },
 		{ "ABOUT_LICENSE_HEADER", "License" },
 		{ "ABOUT_LICENSE_TYPE", "GPL-3.0 License" },
-		{ "ABOUT_LICENSE_COPYRIGHT", "Copyright (c) 2025 Leafuke" },
+		{ "ABOUT_LICENSE_COPYRIGHT", "Copyright (c) 2026 Leafuke" },
 		{ "ABOUT_LICENSE_TEXT", "This software is free of charge." },
 		{ "GROUP_CLOUD_SYNC", "Cloud Sync Settings" },
-		{ "ENABLE_CLOUD_SYNC", "Enable cloud sync after backup" },
+		{ "ENABLE_CLOUD_SYNC", "Auto-upload cloud archive after backup" },
 		{ "RCLONE_PATH_LABEL", "rclone.exe Path" },
 		{ "BUTTON_SELECT_RCLONE", "Select rclone.exe" },
 		{ "RCLONE_REMOTE_PATH_LABEL", "Rclone Remote Path" },
@@ -1236,6 +1246,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "CLOUD_NOT_ENABLED", "Cloud archive is not enabled for this configuration." },
 		{ "CLOUD_CONFIG_INVALID", "Cloud archive configuration is incomplete. Please check the rclone path and remote path." },
 		{ "CLOUD_RCLONE_NOT_FOUND", "No usable rclone executable was found." },
+		{ "CLOUD_WORKDIR_MISSING", "The cloud command working directory does not exist." },
 		{ "CLOUD_TASK_COMPLETED", "Cloud task completed." },
 		{ "CLOUD_TIMEOUT", "Cloud command timed out (%d seconds)." },
 		{ "CLOUD_COMMAND_FAILED_WITH_CODE", "Cloud command failed with exit code %d." },
@@ -1245,6 +1256,9 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "CLOUD_LOCAL_ARCHIVE_MISSING", "The local archive does not exist and cannot be uploaded." },
 		{ "CLOUD_UPLOAD_FAILED", "Cloud upload failed: %s" },
 		{ "CLOUD_UPLOAD_SUCCEEDED", "Cloud upload succeeded: %s" },
+		{ "CLOUD_UPLOAD_FOLDER_FAILED", "Failed to upload backup folder: %s" },
+		{ "CLOUD_UPLOAD_FOLDER_SUCCEEDED", "Backup folder uploaded: %s" },
+		{ "CLOUD_BACKGROUND_HISTORY_SYNC_DONE", "[Cloud Archive] History synchronized after local change: %s" },
 		{ "CLOUD_METADATA_PARTIAL", "The archive was synchronized, but metadata was only partially synchronized." },
 		{ "CLOUD_NO_REMOTE_COPY", "This history item has no available cloud copy." },
 		{ "CLOUD_DOWNLOAD_FAILED", "Cloud download failed: %s" },
@@ -1349,6 +1363,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "HISTORY_LABEL_STATUS", "Status" },
 		{ "HISTORY_STATUS_OK", "OK" },
 		{ "HISTORY_STATUS_MISSING", "File Missing" },
+		{ "HISTORY_STATUS_CLOUD_ONLY", "Cloud Only" },
 		{ "HISTORY_STATUS_SMALL", "Unusual file size (<10KB)" },
 		{ "HISTORY_GROUP_ACTIONS", "Actions" },
 		{ "HISTORY_BUTTON_RESTORE", "Restore..." },
@@ -1369,7 +1384,11 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "HISTORY_RENAME_POPUP_TITLE", "Rename Backup" },
 		{ "HISTORY_RENAME_POPUP_MSG", "Enter the new filename (please keep the correct extension):" },
 		{ "HISTORY_DELETE_POPUP_TITLE", "Confirm Backup Deletion" },
-		{ "HISTORY_DELETE_POPUP_MSG", "Are you sure you want to permanently delete '%s'?\nThis cannot be undone!\nTo merge this backup into the next one, click 'Combine & Delete'." },
+		{ "HISTORY_DELETE_POPUP_MSG", "Choose how to delete backup '%s'." },
+		{ "HISTORY_DELETE_MODE_HISTORY_ONLY", "Delete history record only" },
+		{ "HISTORY_DELETE_MODE_LOCAL_ONLY", "Delete local file only" },
+		{ "HISTORY_DELETE_MODE_LOCAL_AND_HISTORY", "Delete local file and history" },
+		{ "HISTORY_DELETE_USE_SAFE_DELETE", "Use safe delete/merge for Smart backups" },
 		{ "HISTORY_EDIT_COMMENT_TIP", "Click to edit the comment for this backup" },
 		{ "HELP_DOCUMENT", "Help Document (zh-cn)" },
 		{ "NO_RUNNINGTIME", "VC++2015-2022 Runtime Missing. Please install and restart.\nlearn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170" },
@@ -1542,4 +1561,14 @@ void SetLanguage(const std::string& lang) {
     g_CurrentLang = lang;
     auto it = g_LangTable.find(lang);
     g_CurrentLangMap = (it != g_LangTable.end()) ? &it->second : nullptr;
+}
+
+std::wstring MineFormatMessage(const char* key, ...) {
+	char buffer[2048];
+	va_list args;
+	va_start(args, key);
+	vsnprintf(buffer, sizeof(buffer), L(key), args);
+	va_end(args);
+	buffer[sizeof(buffer) - 1] = '\0';
+	return utf8_to_wstring(buffer);
 }

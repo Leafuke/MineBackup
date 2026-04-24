@@ -1637,6 +1637,46 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 
 #include "BackupManagerRestore.inl"
 
+static bool DeleteLocalArchiveOnly(const Config& config, const HistoryEntry& entryToDelete, Console& console) {
+	filesystem::path pathToDelete = JoinPath(config.backupPath, entryToDelete.worldName) / entryToDelete.backupFile;
+	try {
+		if (filesystem::exists(pathToDelete)) {
+			filesystem::remove(pathToDelete);
+			console.AddLog("  - %s OK", wstring_to_utf8(pathToDelete.filename().wstring()).c_str());
+			return true;
+		}
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+		return false;
+	}
+	catch (const filesystem::filesystem_error& e) {
+		console.AddLog(L("LOG_ERROR_DELETE_BACKUP"), wstring_to_utf8(pathToDelete.filename().wstring()).c_str(), e.what());
+		return false;
+	}
+}
+
+void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelete, int configIndex, BackupDeleteMode mode, bool useSafeDelete, Console& console) {
+	if (mode == BackupDeleteMode::HistoryOnly) {
+		// 仅删除历史：保留本地文件，常用于清理误导入或不再需要展示的云历史。
+		RemoveHistoryEntry(configIndex, entryToDelete.worldName, entryToDelete.backupFile);
+		SaveHistory();
+		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "history deletion", console);
+		return;
+	}
+
+	if (mode == BackupDeleteMode::LocalArchiveOnly) {
+		DeleteLocalArchiveOnly(config, entryToDelete, console);
+		return;
+	}
+
+	if (useSafeDelete && entryToDelete.backupType.find(L"Smart") != wstring::npos) {
+		DoSafeDeleteBackup(config, entryToDelete, configIndex, console);
+	}
+	else {
+		int mutableConfigIndex = configIndex;
+		DoDeleteBackup(config, entryToDelete, mutableConfigIndex, console);
+	}
+}
+
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console) {
 	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
@@ -1652,12 +1692,12 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 				console.AddLog("  - %s OK", wstring_to_utf8(path.filename().wstring()).c_str());
 				InvalidateBackupMetadata(config, entryToDelete.worldName, path.filename().wstring());
 				// 从历史记录中移除对应条目
-				RemoveHistoryEntry(configIndex, path.filename().wstring());
+				RemoveHistoryEntry(configIndex, entryToDelete.worldName, path.filename().wstring());
 			}
 			else {
 				console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 				InvalidateBackupMetadata(config, entryToDelete.worldName, path.filename().wstring());
-				RemoveHistoryEntry(configIndex, path.filename().wstring());
+				RemoveHistoryEntry(configIndex, entryToDelete.worldName, path.filename().wstring());
 			}
 		}
 		catch (const filesystem::filesystem_error& e) {
@@ -1665,6 +1705,7 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 		}
 	}
 	SaveHistory(); // 保存历史记录的更改
+	QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "backup deletion", console);
 }
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
@@ -1829,7 +1870,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 
 		console.AddLog(L("LOG_SAFE_DELETE_STEP_4"));
 		filesystem::remove(pathToDelete);
-		RemoveHistoryEntry(configIndex, entryToDelete.backupFile);
+		RemoveHistoryEntry(configIndex, entryToDelete.worldName, entryToDelete.backupFile);
 
 		for (auto& entry : g_appState.g_history[configIndex]) {
 			if (entry.worldName == nextEntry.worldName && entry.backupFile == nextEntry.backupFile) {
@@ -1840,6 +1881,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		}
 
 		SaveHistory();
+		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "safe delete", console);
 
 		string metadataError;
 		if (!TryRepairMetadataAfterSafeDelete(

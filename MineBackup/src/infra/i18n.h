@@ -20,4 +20,6 @@ extern const char* langs[2];
 const char* L(const char* key);
 void SetLanguage(const std::string& lang);
 
+std::wstring MineFormatMessage(const char* key, ...);
+
 #endif // !_i18n

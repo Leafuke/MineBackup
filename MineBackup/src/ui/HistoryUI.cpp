@@ -227,6 +227,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 		filesystem::path backup_path = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / selected_entry->worldName / selected_entry->backupFile;
 		bool file_exists = filesystem::exists(backup_path);
+		const bool has_cloud_copy = HasHistoryCloudCopy(*selected_entry);
 
 		// 详细信息表格
 		if (ImGui::BeginTable("DetailsTable", 2, ImGuiTableFlags_SizingFixedFit)) {
@@ -245,6 +246,9 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				bool is_small = filesystem::file_size(backup_path) < 10240;
 				ImGui::TextColored(is_small ? ImVec4(1.0f, 0.9f, 0.6f, 1.0f) : ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "%s", L(is_small ? "HISTORY_STATUS_SMALL" : "HISTORY_STATUS_OK"));
 			}
+			else if (has_cloud_copy) {
+				ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "%s", L("HISTORY_STATUS_CLOUD_ONLY"));
+			}
 			else {
 				ImGui::TextDisabled("%s", L("HISTORY_STATUS_MISSING"));
 			}
@@ -260,10 +264,13 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}
 
 		ImGui::SeparatorText(L("HISTORY_GROUP_ACTIONS"));
-		if (!file_exists) ImGui::BeginDisabled();
+		const bool canUseCloud = CanUseCloudActions(cfg);
+		const bool canRestore = file_exists || (has_cloud_copy && cfg.cloudAutoDownloadBeforeRestore && canUseCloud);
+		if (!canRestore) ImGui::BeginDisabled();
 		if (ImGui::Button(L("HISTORY_BUTTON_RESTORE"))) {
 			ImGui::OpenPopup("##CONFIRM_RESTORE");
 		}
+		if (!canRestore) ImGui::EndDisabled();
 		if (ImGui::BeginPopupModal("##CONFIRM_RESTORE", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			//history_restore = false;
 			ImGui::SeparatorText(L("SELECTED_BACKUP_DETAILS"));
@@ -338,12 +345,14 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::EndPopup();
 		}
 		ImGui::SameLine();
+		if (!file_exists) ImGui::BeginDisabled();
 		if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"))) {
 			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
 			OpenFolderWithFocus(backup_path.parent_path().wstring(), cmd);
 		}
+		if (!file_exists) ImGui::EndDisabled();
 		ImGui::SameLine();
-		if (!CanUseCloudActions(cfg)) ImGui::BeginDisabled();
+		if (!canUseCloud || !file_exists) ImGui::BeginDisabled();
 		if (ImGui::Button(L("HISTORY_BUTTON_UPLOAD_CLOUD"))) {
 			const Config configCopy = cfg;
 			const HistoryEntry entryCopy = *selected_entry;
@@ -352,7 +361,9 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				UploadHistoryEntry(configCopy, configIndex, entryCopy, console);
 			}).detach();
 		}
+		if (!canUseCloud || !file_exists) ImGui::EndDisabled();
 		ImGui::SameLine();
+		if (!canUseCloud || !has_cloud_copy) ImGui::BeginDisabled();
 		if (ImGui::Button(L("HISTORY_BUTTON_DOWNLOAD_CLOUD"))) {
 			const Config configCopy = cfg;
 			const HistoryEntry entryCopy = *selected_entry;
@@ -361,24 +372,22 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				DownloadHistoryEntry(configCopy, configIndex, entryCopy, console);
 			}).detach();
 		}
-		if (!CanUseCloudActions(cfg)) ImGui::EndDisabled();
+		if (!canUseCloud || !has_cloud_copy) ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 			selected_entry->isImportant = !selected_entry->isImportant;
 			SaveHistory();
 		}
 		// -----------
-		if (!cfg.enableWEIntegration) ImGui::BeginDisabled();
+		if (!cfg.enableWEIntegration || !file_exists) ImGui::BeginDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_ADD_TO_WE"))) {
 			thread we_thread(AddBackupToWESnapshots, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console));
 			we_thread.detach();
 		}
 
-		if (!cfg.enableWEIntegration) ImGui::EndDisabled();
+		if (!cfg.enableWEIntegration || !file_exists) ImGui::EndDisabled();
 		// -----------
-		if (!file_exists) ImGui::EndDisabled();
-
 
 		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
@@ -392,28 +401,42 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 		// --- 删除确认弹窗 ---
 		if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+			static int deleteMode = 2;
+			static bool safeDeleteSelected = true;
+			if (ImGui::IsWindowAppearing()) {
+				filesystem::path deletePath = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / entry_to_delete->worldName / entry_to_delete->backupFile;
+				deleteMode = filesystem::exists(deletePath) ? 2 : 0;
+				safeDeleteSelected = isSafeDelete && entry_to_delete->backupType.find(L"Smart") != wstring::npos;
+			}
+
 			ImGui::TextWrapped(L("HISTORY_DELETE_POPUP_MSG"), wstring_to_utf8(entry_to_delete->backupFile).c_str());
 			ImGui::Separator();
-			// 计算三个按钮的一致宽度
-			float delBtnW1 = ImGui::CalcTextSize(L("BUTTON_OK")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
-			float delBtnW2 = ImGui::CalcTextSize(L("CONFIRM_SAFEDELETE")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
-			float delBtnW3 = ImGui::CalcTextSize(L("BUTTON_CANCEL")).x + ImGui::GetStyle().FramePadding.x * 2 + 20.0f;
-			float deleteBtnWidth = max(max(delBtnW1, delBtnW2), max(delBtnW3, 100.0f));
+			ImGui::RadioButton(L("HISTORY_DELETE_MODE_HISTORY_ONLY"), &deleteMode, 0);
+			bool deleteLocalFileExists = filesystem::exists(filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / entry_to_delete->worldName / entry_to_delete->backupFile);
+			if (!deleteLocalFileExists) ImGui::BeginDisabled();
+			ImGui::RadioButton(L("HISTORY_DELETE_MODE_LOCAL_ONLY"), &deleteMode, 1);
+			ImGui::RadioButton(L("HISTORY_DELETE_MODE_LOCAL_AND_HISTORY"), &deleteMode, 2);
+			if (!deleteLocalFileExists) ImGui::EndDisabled();
+
+			const bool canSafeDelete = deleteMode == 2 && entry_to_delete->backupType.find(L"Smart") != wstring::npos;
+			if (!canSafeDelete) ImGui::BeginDisabled();
+			ImGui::Checkbox(L("HISTORY_DELETE_USE_SAFE_DELETE"), &safeDeleteSelected);
+			if (!canSafeDelete) ImGui::EndDisabled();
+
+			ImGui::Separator();
+			float deleteBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 			if (ImGui::Button(L("BUTTON_OK"), ImVec2(deleteBtnWidth, 0))) {
-				filesystem::path path_to_delete = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / entry_to_delete->worldName / entry_to_delete->backupFile;
-				DoDeleteBackup(g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
-				is_comment_editing = false;
-				ImGui::CloseCurrentPopup();
-			}
-			ImGui::SameLine();
-			if (ImGui::Button(L("CONFIRM_SAFEDELETE"), ImVec2(deleteBtnWidth, 0))) {
-				if (entry_to_delete->backupType.find(L"Smart") != wstring::npos) {
-					thread safe_delete_thread(DoSafeDeleteBackup, g_appState.configs[tempCurrentConfigIndex], *entry_to_delete, tempCurrentConfigIndex, ref(console));
-					safe_delete_thread.detach();
-				}
-				else {
-					MessageBoxWin("Error", "Not a [Smart] Backup", 2);
-				}
+				HistoryEntry entryCopy = *entry_to_delete;
+				Config configCopy = g_appState.configs[tempCurrentConfigIndex];
+				int configIndex = tempCurrentConfigIndex;
+				BackupDeleteMode selectedMode = deleteMode == 0
+					? BackupDeleteMode::HistoryOnly
+					: (deleteMode == 1 ? BackupDeleteMode::LocalArchiveOnly : BackupDeleteMode::LocalArchiveAndHistory);
+				const bool useSafeDeleteForThread = safeDeleteSelected;
+				thread deleteThread([configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread]() mutable {
+					DeleteBackupWithMode(configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread, console);
+				});
+				deleteThread.detach();
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();
 			}

@@ -39,15 +39,7 @@ namespace {
 		wstring metadataRecordRemotePath;
 	};
 
-	wstring FormatMessage(const char* key, ...) {
-		char buffer[2048];
-		va_list args;
-		va_start(args, key);
-		vsnprintf(buffer, sizeof(buffer), L(key), args);
-		va_end(args);
-		buffer[sizeof(buffer) - 1] = '\0';
-		return utf8_to_wstring(buffer);
-	}
+	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult);
 
 	wstring GetUtcTimestampString() {
 		auto now = chrono::system_clock::now();
@@ -88,6 +80,14 @@ namespace {
 			result += segment;
 		}
 		return result;
+	}
+
+	wstring GetConfigCloudSegment(const Config& config, int configIndex = -1) {
+		wstring name = utf8_to_wstring(config.name);
+		if (name.empty() && configIndex >= 0) {
+			name = L"Config" + to_wstring(configIndex);
+		}
+		return name.empty() ? L"DefaultConfig" : name;
 	}
 
 	bool IsCommandPathConfigured(const wstring& executablePath) {
@@ -148,16 +148,16 @@ namespace {
 	}
 
 	bool EnsureCloudConfigured(const Config& config, CloudCommandResult& outResult) {
-		if (!config.cloudSyncEnabled) {
-			outResult = MakeConfigErrorResult("CLOUD_NOT_ENABLED");
-			return false;
-		}
 		if (config.rclonePath.empty() || config.rcloneRemotePath.empty()) {
 			outResult = MakeConfigErrorResult("CLOUD_CONFIG_INVALID");
 			return false;
 		}
 		if (!IsCommandPathConfigured(config.rclonePath)) {
 			outResult = MakeConfigErrorResult("CLOUD_RCLONE_NOT_FOUND");
+			return false;
+		}
+		if (!config.cloudWorkingDirectory.empty() && !filesystem::exists(config.cloudWorkingDirectory)) {
+			outResult = MakeConfigErrorResult("CLOUD_WORKDIR_MISSING", config.cloudWorkingDirectory);
 			return false;
 		}
 		return true;
@@ -171,7 +171,7 @@ namespace {
 		paths.metadataRecordLocalPath = paths.metadataDir / (entry.backupFile + L".json");
 
 		const wstring archiveRoot = AppendRemotePath(config.rcloneRemotePath, {
-			kCloudArchivesDirName,
+			GetConfigCloudSegment(config),
 			entry.worldName
 		});
 		paths.archiveRemotePath = entry.cloudArchiveRemotePath.empty()
@@ -188,6 +188,13 @@ namespace {
 
 	wstring BuildRcloneCopyToCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
 		return QuoteCommandArg(config.rclonePath) + L" copyto "
+			+ QuoteCommandArg(sourcePath) + L" "
+			+ QuoteCommandArg(destinationPath)
+			+ L" --progress";
+	}
+
+	wstring BuildRcloneCopyCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
+		return QuoteCommandArg(config.rclonePath) + L" copy "
 			+ QuoteCommandArg(sourcePath) + L" "
 			+ QuoteCommandArg(destinationPath)
 			+ L" --progress";
@@ -227,8 +234,8 @@ namespace {
 			}
 
 			result.message = timedOut
-				? FormatMessage("CLOUD_TIMEOUT", config.cloudTimeoutSeconds)
-				: FormatMessage("CLOUD_COMMAND_FAILED_WITH_CODE", exitCode);
+				? MineFormatMessage("CLOUD_TIMEOUT", config.cloudTimeoutSeconds)
+				: MineFormatMessage("CLOUD_COMMAND_FAILED_WITH_CODE", exitCode);
 			result.detail = utf8_to_wstring(errorMessage);
 
 			if (attempt < retryCount) {
@@ -298,6 +305,14 @@ namespace {
 		return manifest;
 	}
 
+	wstring BuildActiveManifestRemotePath(const Config& config) {
+		return AppendRemotePath(config.rcloneRemotePath, {
+			GetConfigCloudSegment(config),
+			kCloudStateDirName,
+			kCloudActiveHistoryFileName
+		});
+	}
+
 	nlohmann::json SerializeManifest(const CloudActiveHistoryManifest& manifest) {
 		nlohmann::json root;
 		root["configName"] = wstring_to_utf8(manifest.configName);
@@ -312,6 +327,59 @@ namespace {
 			root["entries"].push_back(std::move(item));
 		}
 		return root;
+	}
+
+	bool TryParseManifest(const nlohmann::json& root, CloudActiveHistoryManifest& manifest) {
+		if (!root.is_object()) return false;
+		manifest = CloudActiveHistoryManifest{};
+		manifest.configName = utf8_to_wstring(root.value("configName", string{}));
+		manifest.updatedAtUtc = utf8_to_wstring(root.value("updatedAtUtc", string{}));
+		const auto entriesIt = root.find("entries");
+		if (entriesIt == root.end() || !entriesIt->is_array()) return true;
+		for (const auto& item : *entriesIt) {
+			if (!item.is_object()) continue;
+			CloudActiveHistoryEntry entry;
+			entry.worldPath = utf8_to_wstring(item.value("worldPath", string{}));
+			entry.worldName = utf8_to_wstring(item.value("worldName", string{}));
+			entry.backupFile = utf8_to_wstring(item.value("backupFile", string{}));
+			entry.timestamp = utf8_to_wstring(item.value("timestamp", string{}));
+			if (!entry.worldName.empty() && !entry.backupFile.empty()) {
+				manifest.entries.push_back(std::move(entry));
+			}
+		}
+		return true;
+	}
+
+	bool ManifestContainsHistoryItem(const CloudActiveHistoryManifest& manifest, const HistoryEntry& entry) {
+		for (const auto& item : manifest.entries) {
+			if (item.backupFile != entry.backupFile) continue;
+			if (!item.timestamp.empty() && !entry.timestamp_str.empty() && item.timestamp != entry.timestamp_str) continue;
+			if (item.worldName == entry.worldName || (!item.worldPath.empty() && item.worldPath == entry.worldPath)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool HasRemotePrefix(const wstring& value, const wstring& root) {
+		if (value.empty() || root.empty()) return false;
+		const wstring normalizedValue = NormalizeRemotePath(value);
+		const wstring normalizedRoot = NormalizeRemotePath(root);
+		return normalizedValue == normalizedRoot
+			|| normalizedValue.rfind(normalizedRoot + L"/", 0) == 0;
+	}
+
+	bool BelongsToConfiguration(const Config& config, const HistoryEntry& entry) {
+		const wstring configRoot = AppendRemotePath(config.rcloneRemotePath, { GetConfigCloudSegment(config) });
+		if (HasRemotePrefix(entry.cloudArchiveRemotePath, configRoot)
+			|| HasRemotePrefix(entry.cloudMetadataRecordRemotePath, configRoot)
+			|| HasRemotePrefix(entry.cloudMetadataStateRemotePath, configRoot)) {
+			return true;
+		}
+		for (const auto& world : config.worlds) {
+			if (entry.worldName == world.first) return true;
+		}
+		return false;
 	}
 
 	CloudCommandResult UploadConfigurationHistorySnapshotNoLock(const Config& config, int configIndex, Console& console) {
@@ -329,10 +397,31 @@ namespace {
 		};
 
 		CloudCommandResult result;
-		if (!ExportHistoryToFile(tempHistoryPath.wstring(), configIndex)) {
+		CloudCommandResult remoteLoadResult;
+		vector<HistoryEntry> mergedEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, remoteLoadResult);
+		if (!remoteLoadResult.success) {
+			// 远端首次没有 history.json 时，下载会失败；这里按空历史继续上传本配置快照。
+			mergedEntries.clear();
+		}
+		mergedEntries.erase(
+			remove_if(mergedEntries.begin(), mergedEntries.end(), [&](const HistoryEntry& entry) {
+				return BelongsToConfiguration(config, entry);
+			}),
+			mergedEntries.end());
+		vector<HistoryEntry> localEntries = GetHistoryEntriesForConfig(configIndex);
+		mergedEntries.insert(mergedEntries.end(), localEntries.begin(), localEntries.end());
+
+		ofstream historyOut(tempHistoryPath, ios::binary | ios::trunc);
+		if (!historyOut.is_open()) {
 			cleanupTempFiles();
 			return MakeConfigErrorResult("CLOUD_HISTORY_EXPORT_FAILED");
 		}
+		nlohmann::json historyRoot = nlohmann::json::array();
+		for (const auto& entry : mergedEntries) {
+			historyRoot.push_back(SerializeHistoryEntryForCloud(entry));
+		}
+		historyOut << historyRoot.dump(2);
+		historyOut.close();
 
 		ofstream manifestOut(tempManifestPath, ios::binary | ios::trunc);
 		if (!manifestOut.is_open()) {
@@ -352,10 +441,7 @@ namespace {
 			return result;
 		}
 
-		const wstring manifestRemotePath = AppendRemotePath(config.rcloneRemotePath, {
-			kCloudStateDirName,
-			kCloudActiveHistoryFileName
-		});
+		const wstring manifestRemotePath = BuildActiveManifestRemotePath(config);
 		CloudCommandResult manifestResult = ExecuteCommandWithRetry(config, configIndex, console,
 			BuildRcloneCopyToCommand(config, tempManifestPath.wstring(), manifestRemotePath),
 			"CLOUD_STATUS_UPLOADING_HISTORY",
@@ -394,7 +480,7 @@ namespace {
 			"CLOUD_STATUS_UPLOADING_ARCHIVE",
 			40);
 		if (!result.success) {
-			result.message = FormatMessage("CLOUD_UPLOAD_FAILED", wstring_to_utf8(entry.backupFile).c_str());
+			result.message = MineFormatMessage("CLOUD_UPLOAD_FAILED", wstring_to_utf8(entry.backupFile).c_str());
 			return result;
 		}
 
@@ -445,7 +531,7 @@ namespace {
 		result.success = true;
 		result.exitCode = 0;
 		result.message = warningMessage.empty()
-			? FormatMessage("CLOUD_UPLOAD_SUCCEEDED", wstring_to_utf8(entry.backupFile).c_str())
+			? MineFormatMessage("CLOUD_UPLOAD_SUCCEEDED", wstring_to_utf8(entry.backupFile).c_str())
 			: warningMessage;
 		return result;
 	}
@@ -473,7 +559,7 @@ namespace {
 			"CLOUD_STATUS_DOWNLOADING_ARCHIVE",
 			45);
 		if (!result.success) {
-			result.message = FormatMessage("CLOUD_DOWNLOAD_FAILED", wstring_to_utf8(entry.backupFile).c_str());
+			result.message = MineFormatMessage("CLOUD_DOWNLOAD_FAILED", wstring_to_utf8(entry.backupFile).c_str());
 			return result;
 		}
 
@@ -513,7 +599,7 @@ namespace {
 		result.success = true;
 		result.exitCode = 0;
 		result.message = warningMessage.empty()
-			? FormatMessage("CLOUD_DOWNLOAD_SUCCEEDED", wstring_to_utf8(entry.backupFile).c_str())
+			? MineFormatMessage("CLOUD_DOWNLOAD_SUCCEEDED", wstring_to_utf8(entry.backupFile).c_str())
 			: warningMessage;
 		return result;
 	}
@@ -557,6 +643,36 @@ namespace {
 		return entries;
 	}
 
+	bool TryLoadActiveManifestNoLock(const Config& config, int configIndex, Console& console, CloudActiveHistoryManifest& outManifest) {
+		const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_active_history", L".json");
+		CloudCommandResult result = ExecuteCommandWithRetry(
+			config,
+			configIndex,
+			console,
+			BuildRcloneCopyToCommand(config, BuildActiveManifestRemotePath(config), tempPath.wstring()),
+			"CLOUD_STATUS_ANALYZING",
+			30);
+		if (!result.success) {
+			error_code ec;
+			filesystem::remove(tempPath, ec);
+			return false;
+		}
+
+		bool ok = false;
+		try {
+			ifstream in(tempPath, ios::binary);
+			nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
+			ok = !root.is_discarded() && TryParseManifest(root, outManifest);
+		}
+		catch (...) {
+			ok = false;
+		}
+
+		error_code ec;
+		filesystem::remove(tempPath, ec);
+		return ok;
+	}
+
 	wstring NormalizeWorldPathKey(const wstring& input) {
 		filesystem::path path = filesystem::path(input).lexically_normal();
 		wstring key = path.wstring();
@@ -569,7 +685,7 @@ namespace {
 		return key;
 	}
 
-	bool HasLocalBackupOrMetadata(const Config& config, const HistoryEntry& entry) {
+	bool HasLocalBackupOrMetadataInternal(const Config& config, const HistoryEntry& entry) {
 		const HistoryCloudPaths paths = BuildHistoryPaths(config, entry);
 		if (!filesystem::exists(paths.archiveLocalPath)) {
 			return false;
@@ -584,6 +700,14 @@ namespace {
 bool CanUseCloudActions(const Config& config) {
 	CloudCommandResult result;
 	return EnsureCloudConfigured(config, result);
+}
+
+bool HasHistoryCloudCopy(const HistoryEntry& entry) {
+	return entry.isCloudArchived && !entry.cloudArchiveRemotePath.empty();
+}
+
+bool HasLocalBackupOrMetadata(const Config& config, const HistoryEntry& entry) {
+	return HasLocalBackupOrMetadataInternal(config, entry);
 }
 
 int ResolveConfigIndexForCloud(const Config& config) {
@@ -636,6 +760,25 @@ bool QueueUploadAfterBackup(const Config& config, int configIndex, const MyFolde
 	return true;
 }
 
+bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int configIndex, const char* reason, Console& console) {
+	if (!config.cloudSyncEnabled || !CanUseCloudActions(config)) {
+		return false;
+	}
+
+	const Config configCopy = config;
+	thread([configCopy, configIndex, reason, &console]() {
+		unique_lock<mutex> lock(g_cloudMutex);
+		SetCloudRuntimeState(configIndex, true, 5, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_HISTORY")));
+		CloudCommandResult result = UploadConfigurationHistorySnapshotNoLock(configCopy, configIndex, console);
+		UpdateConfigCloudLastResult(configIndex, result);
+		if (result.success && reason && *reason) {
+			console.AddLog(L("CLOUD_BACKGROUND_HISTORY_SYNC_DONE"), reason);
+		}
+		SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
+	}).detach();
+	return true;
+}
+
 CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configIndex, Console& console) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_ANALYZING")));
@@ -661,7 +804,12 @@ CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configI
 	}
 
 	analysis.totalRemoteEntries = static_cast<int>(remoteEntries.size());
+	CloudActiveHistoryManifest activeManifest;
+	const bool hasActiveManifest = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest);
 	for (auto remoteEntry : remoteEntries) {
+		if (hasActiveManifest && !ManifestContainsHistoryItem(activeManifest, remoteEntry)) {
+			continue;
+		}
 		vector<int> matches;
 		if (!remoteEntry.worldPath.empty()) {
 			const wstring pathKey = NormalizeWorldPathKey(remoteEntry.worldPath);
@@ -699,7 +847,7 @@ CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configI
 	}
 
 	analysis.success = true;
-	analysis.message = FormatMessage(
+	analysis.message = MineFormatMessage(
 		"CLOUD_ANALYSIS_SUMMARY",
 		analysis.totalRemoteEntries,
 		analysis.matchedEntries,
@@ -773,8 +921,8 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 	syncResult.duplicateHistoryCount = duplicates;
 	syncResult.recoveredBackupCount = recoveredCount;
 	syncResult.message = (mode == CloudSyncMode::HistoryAndBackups)
-		? FormatMessage("CLOUD_SYNC_DOWNLOADED_SUMMARY", imported, duplicates, recoveredCount)
-		: FormatMessage("CLOUD_SYNC_HISTORY_SUMMARY", imported, duplicates);
+		? MineFormatMessage("CLOUD_SYNC_DOWNLOADED_SUMMARY", imported, duplicates, recoveredCount)
+		: MineFormatMessage("CLOUD_SYNC_HISTORY_SUMMARY", imported, duplicates);
 
 	CloudCommandResult result;
 	result.success = true;
@@ -803,13 +951,109 @@ CloudCommandResult DownloadHistoryEntry(const Config& config, int configIndex, c
 	return result;
 }
 
+CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int configIndex, const wstring& worldName, Console& console) {
+	unique_lock<mutex> lock(g_cloudMutex);
+	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_ARCHIVE")));
+
+	CloudCommandResult configError;
+	if (!EnsureCloudConfigured(config, configError)) {
+		UpdateConfigCloudLastResult(configIndex, configError);
+		SetCloudRuntimeState(configIndex, false, 100, configError.message, configError.message);
+		return configError;
+	}
+
+	const filesystem::path backupDir = filesystem::path(config.backupPath) / worldName;
+	if (!filesystem::exists(backupDir)) {
+		CloudCommandResult result = MakeConfigErrorResult("CLOUD_LOCAL_ARCHIVE_MISSING", backupDir.wstring());
+		UpdateConfigCloudLastResult(configIndex, result);
+		SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
+		return result;
+	}
+
+	const wstring remoteWorldRoot = AppendRemotePath(config.rcloneRemotePath, {
+		GetConfigCloudSegment(config),
+		worldName
+	});
+	CloudCommandResult result = ExecuteCommandWithRetry(
+		config,
+		configIndex,
+		console,
+		BuildRcloneCopyCommand(config, backupDir.wstring(), remoteWorldRoot),
+		"CLOUD_STATUS_UPLOADING_ARCHIVE",
+		40);
+	if (!result.success) {
+		result.message = MineFormatMessage("CLOUD_UPLOAD_FOLDER_FAILED", wstring_to_utf8(worldName).c_str());
+		UpdateConfigCloudLastResult(configIndex, result);
+		SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
+		return result;
+	}
+
+	wstring warningMessage;
+	const filesystem::path metadataDir = filesystem::path(config.backupPath) / L"_metadata" / worldName;
+	if (filesystem::exists(metadataDir)) {
+		CloudCommandResult metadataResult = ExecuteCommandWithRetry(
+			config,
+			configIndex,
+			console,
+			BuildRcloneCopyCommand(config, metadataDir.wstring(), AppendRemotePath(remoteWorldRoot, { kCloudMetadataDirName })),
+			"CLOUD_STATUS_UPLOADING_METADATA",
+			70);
+		if (!metadataResult.success) {
+			warningMessage = utf8_to_wstring(L("CLOUD_METADATA_PARTIAL"));
+		}
+	}
+
+	// 目录上传后，逐条标记已有本地文件的云端路径，后续即使只删本地文件也能从云端找回。
+	for (const auto& entry : GetHistoryEntriesForWorld(configIndex, worldName)) {
+		HistoryCloudPaths paths = BuildHistoryPaths(config, entry);
+		if (!filesystem::exists(paths.archiveLocalPath)) continue;
+		UpdateHistoryCloudState(
+			configIndex,
+			entry.worldName,
+			entry.backupFile,
+			true,
+			GetUtcTimestampString(),
+			paths.archiveRemotePath,
+			paths.metadataRecordRemotePath,
+			paths.metadataStateRemotePath);
+	}
+
+	CloudCommandResult historyResult = UploadConfigurationHistorySnapshotNoLock(config, configIndex, console);
+	if (!historyResult.success) {
+		warningMessage = historyResult.message;
+	}
+
+	result.success = true;
+	result.exitCode = 0;
+	result.message = warningMessage.empty()
+		? MineFormatMessage("CLOUD_UPLOAD_FOLDER_SUCCEEDED", wstring_to_utf8(worldName).c_str())
+		: warningMessage;
+	UpdateConfigCloudLastResult(configIndex, result);
+	SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
+	return result;
+}
+
 bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const HistoryEntry& targetEntry, Console& console) {
-	if (!config.cloudSyncEnabled || !config.cloudAutoDownloadBeforeRestore) {
+	if (!config.cloudAutoDownloadBeforeRestore || !CanUseCloudActions(config)) {
 		return false;
 	}
 
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_DOWNLOADING_ARCHIVE")));
+
+	CloudCommandResult remoteLoadResult;
+	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, remoteLoadResult);
+	if (remoteLoadResult.success) {
+		CloudActiveHistoryManifest activeManifest;
+		const bool hasActiveManifest = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest);
+		for (const auto& remoteEntry : remoteEntries) {
+			if (hasActiveManifest && !ManifestContainsHistoryItem(activeManifest, remoteEntry)) continue;
+			if (remoteEntry.worldName == targetEntry.worldName) {
+				UpsertHistoryEntry(configIndex, remoteEntry, false);
+			}
+		}
+		SaveHistory();
+	}
 
 	vector<HistoryEntry> worldEntries = GetHistoryEntriesForWorld(configIndex, targetEntry.worldName);
 	if (worldEntries.empty()) {

@@ -207,6 +207,19 @@ void RemoveHistoryEntry(int configIndex, const wstring& backupFileToRemove) {
 	}
 }
 
+void RemoveHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFileToRemove) {
+	if (g_appState.g_history.count(configIndex)) {
+		auto& history_vec = g_appState.g_history[configIndex];
+		history_vec.erase(
+			remove_if(history_vec.begin(), history_vec.end(),
+				[&](const HistoryEntry& entry) {
+					return entry.worldName == worldName && entry.backupFile == backupFileToRemove;
+				}),
+			history_vec.end()
+		);
+	}
+}
+
 bool ExportHistoryToFile(const wstring& destinationPath, int configIndex) {
 	ofstream out{ filesystem::path(destinationPath), ios::binary | ios::trunc };
 	if (!out.is_open()) return false;
@@ -379,10 +392,19 @@ bool UpdateHistoryCloudState(
 	}
 
 	entry->isCloudArchived = isCloudArchived;
-	if (!archivedAtUtc.empty()) entry->cloudArchivedAtUtc = archivedAtUtc;
-	if (!archiveRemotePath.empty()) entry->cloudArchiveRemotePath = archiveRemotePath;
-	if (!metadataRecordRemotePath.empty()) entry->cloudMetadataRecordRemotePath = metadataRecordRemotePath;
-	if (!metadataStateRemotePath.empty()) entry->cloudMetadataStateRemotePath = metadataStateRemotePath;
+	if (isCloudArchived) {
+		if (!archivedAtUtc.empty()) entry->cloudArchivedAtUtc = archivedAtUtc;
+		if (!archiveRemotePath.empty()) entry->cloudArchiveRemotePath = archiveRemotePath;
+		if (!metadataRecordRemotePath.empty()) entry->cloudMetadataRecordRemotePath = metadataRecordRemotePath;
+		if (!metadataStateRemotePath.empty()) entry->cloudMetadataStateRemotePath = metadataStateRemotePath;
+	}
+	else {
+		// 取消云归档时同步清空远端路径，避免 UI 继续显示“可从云下载”。
+		entry->cloudArchivedAtUtc.clear();
+		entry->cloudArchiveRemotePath.clear();
+		entry->cloudMetadataRecordRemotePath.clear();
+		entry->cloudMetadataStateRemotePath.clear();
+	}
 	SaveHistory();
 	return true;
 }

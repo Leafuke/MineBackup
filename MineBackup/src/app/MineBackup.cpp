@@ -983,7 +983,7 @@ int main(int argc, char** argv)
 						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/issues");
 					}
 					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
-						OpenLinkInBrowser(L"https://docs.qq.com/doc/DUUp4UVZOYmZWcm5M");
+						OpenLinkInBrowser(L"https://folderrewind.top/docs/guides/minebackup-v1/overview");
 					}
 					if (ImGui::MenuItem(L("SPONSOR_ME"))) {
 						OpenLinkInBrowser(L"https://afdian.com/a/MineBackup");
@@ -1183,7 +1183,7 @@ int main(int argc, char** argv)
 			{
 				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
 				ImGui::Separator();
-				ImGui::TextWrapped("%s %c %c", L("ABOUT_DESCRIPTION"), (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId);
+				ImGui::TextWrapped("%s", wstring_to_u8string(MineFormatMessage("ABOUT_DESCRIPTION", (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId)).c_str());
 				ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1894,11 +1894,10 @@ int main(int argc, char** argv)
 						if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
 							const int baseConfigIndex = displayWorlds[selectedWorldIndex].baseConfigIndex;
 							const Config configCopy = g_appState.configs[baseConfigIndex];
-							vector<HistoryEntry> worldHistory = GetHistoryEntriesForWorld(baseConfigIndex, displayWorlds[selectedWorldIndex].name);
-							if (!worldHistory.empty() && CanUseCloudActions(configCopy)) {
-								const HistoryEntry latestEntry = worldHistory.back();
-								thread([configCopy, baseConfigIndex, latestEntry]() {
-									UploadHistoryEntry(configCopy, baseConfigIndex, latestEntry, console);
+							const wstring worldName = displayWorlds[selectedWorldIndex].name;
+							if (CanUseCloudActions(configCopy)) {
+								thread([configCopy, baseConfigIndex, worldName]() {
+									UploadWorldBackupFolderToCloud(configCopy, baseConfigIndex, worldName, console);
 								}).detach();
 							}
 							else {
