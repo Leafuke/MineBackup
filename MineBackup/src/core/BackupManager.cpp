@@ -42,6 +42,15 @@ static inline void ToLowerInPlace(wstring& s) {
 #endif
 }
 
+static inline bool IsAsciiOnlyPath(const wstring& value) {
+	for (wchar_t ch : value) {
+		if (static_cast<unsigned int>(ch) > 127u) {
+			return false;
+		}
+	}
+	return true;
+}
+
 static inline int NormalizeCompressionLevel(const wstring& method, int level) {
 	int minLevel = 1;
 	int maxLevel = 9;
@@ -943,6 +952,11 @@ namespace {
 
 void AddBackupToWESnapshots(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console) {
 	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
+	if (config.enableWEIntegration && !config.weSnapshotPath.empty() && !IsAsciiOnlyPath(config.weSnapshotPath)) {
+		console.AddLog(L("ERROR_NON_ASCII_PATH"));
+		console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
+		return;
+	}
 
 	// 创建快照路径
 	filesystem::path we_base_path = config.weSnapshotPath;

@@ -950,8 +950,6 @@ int main(int argc, char** argv)
 						ImGui::EndMenu();
 					}
 					ImGui::Separator();
-					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
 					ImGui::Separator();
 					if (ImGui::MenuItem(L("DETAILED_SETTINGS_BUTTON"))) {

@@ -2,6 +2,21 @@
 
 using namespace std;
 
+static bool IsAsciiOnlyPath(const wstring& value) {
+	for (wchar_t ch : value) {
+		if (static_cast<unsigned int>(ch) > 127u) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool IsWEIntegrationPathValidForSave(const Config& cfg) {
+	if (!cfg.enableWEIntegration) return true;
+	if (cfg.weSnapshotPath.empty()) return true;
+	return IsAsciiOnlyPath(cfg.weSnapshotPath);
+}
+
 void DrawConfigManagementPanel() {
 	ImGui::SeparatorText(L("CONFIG_MANAGEMENT"));
 
@@ -236,6 +251,54 @@ void DrawPathSettings(Config& cfg) {
 		cfg.snapshotPath = utf8_to_wstring(snapshotPathBuf);
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SNAPSHOT_PATH"));
+}
+
+void DrawModIntegrationSettings(Config& cfg) {
+	ImGui::SeparatorText(L("GROUP_MINEBACKUP_MOD_INTEGRATION"));
+	ImGui::TextWrapped("%s", L("TIP_MINEBACKUP_MOD_INTEGRATION_SUMMARY"));
+	ImGui::Spacing();
+
+	ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
+
+	if (ImGui::Button(L("MOD_LINK_MINEBACKUP_MODRINTH"), ImVec2(-1, 0))) {
+		OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+	}
+	if (ImGui::Button(L("MOD_LINK_KNOTLINK_HOME"), ImVec2(-1, 0))) {
+		OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
+	}
+	if (ImGui::Button(L("MOD_LINK_KNOTLINK_DOWNLOAD"), ImVec2(-1, 0))) {
+		OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/hxh230802/KnotLink/releases/download/v1.0.0/KnotLinkService-1.0.0.0-Installer.exe");
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_KNOTLINK_DOWNLOAD_LINK"));
+
+	ImGui::Spacing();
+	ImGui::SeparatorText(L("GROUP_WE_INTEGRATION"));
+	ImGui::TextWrapped("%s", L("TIP_WE_INTEGRATION_SUMMARY"));
+	ImGui::Spacing();
+
+	ImGui::Checkbox(L("ENABLE_WE_INTEGRATION"), &cfg.enableWEIntegration);
+
+	char weSnapshotPathBuf[256];
+	strncpy_s(weSnapshotPathBuf, wstring_to_utf8(cfg.weSnapshotPath).c_str(), sizeof(weSnapshotPathBuf));
+	ImGui::Text("%s", L("WE_SNAPSHOT_PATH_LABEL"));
+	if (ImGui::Button(L("BUTTON_SELECT_WE_SNAPSHOT_DIR"))) {
+		wstring sel = SelectFolderDialog();
+		if (!sel.empty()) {
+			cfg.weSnapshotPath = sel;
+		}
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(-1);
+	if (ImGui::InputText("##WESnapshotPath", weSnapshotPathBuf, 256)) {
+		cfg.weSnapshotPath = utf8_to_wstring(weSnapshotPathBuf);
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_WE_SNAPSHOT_PATH"));
+
+	ImGui::TextDisabled("%s", L("WE_ASCII_PATH_REQUIRED"));
+	if (!IsWEIntegrationPathValidForSave(cfg)) {
+		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", L("ERROR_NON_ASCII_PATH"));
+	}
 }
 
 void DrawWorldManagement(Config& cfg) {
