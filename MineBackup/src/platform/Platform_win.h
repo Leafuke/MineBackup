@@ -4,7 +4,7 @@
 #include <iostream>
 #include <windows.h>
 #include <string>
-class Console;
+struct Console;
 enum class LogLevel {
     Info,
     Warning,
@@ -38,5 +38,6 @@ bool IsFileLocked(const std::wstring& path);
 std::string GetRegistryValue(const std::string& keyPath, const std::string& valueName);
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray = false);
 bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
+bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory = L"");
 void CheckForNoticesThread();
 #endif // !_PLATFORM_WIN_H

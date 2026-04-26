@@ -54,6 +54,9 @@
     <ClCompile Include="src\core\BackupManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\CloudSyncService.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\CoreValidation.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -147,6 +150,9 @@
       <Filter>src\app</Filter>
     </ClInclude>
     <ClInclude Include="src\core\BackupManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\CloudSyncService.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\BackupManagerRestore.inl">

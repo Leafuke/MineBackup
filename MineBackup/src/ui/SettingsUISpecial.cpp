@@ -1,4 +1,4 @@
-#include "SettingsUIPrivate.h"
+﻿#include "SettingsUIPrivate.h"
 
 using namespace std;
 
@@ -189,7 +189,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_MONTH"), &task.schedMonth);
 			ImGui::SameLine(); ImGui::Text("/"); ImGui::SameLine();
 			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_DAY"), &task.schedDay);
-			ImGui::SameLine(); ImGui::TextDisabled("(0=Every)");
+			ImGui::SameLine(); ImGui::TextDisabled("%s", L("SCHED_EVERY_HINT"));
 
 			task.schedHour = max(0, min(23, task.schedHour));
 			task.schedMinute = max(0, min(59, task.schedMinute));
@@ -324,8 +324,6 @@ void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
 
 		if (ImGui::BeginTabItem(L("TAB_BACKUP_OVERRIDES"))) {
 			ImGui::Spacing();
-			ImGui::Checkbox(L("IS_HOT_BACKUP"), &spCfg.hotBackup);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_HOT_BACKUP"));
 			ImGui::Checkbox(L("BACKUP_ON_START"), &spCfg.backupOnGameStart);
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BACKUP_ON_START"));
 			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);

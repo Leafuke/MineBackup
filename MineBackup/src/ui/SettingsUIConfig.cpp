@@ -1,6 +1,21 @@
-#include "SettingsUIPrivate.h"
+﻿#include "SettingsUIPrivate.h"
 
 using namespace std;
+
+static bool IsAsciiOnlyPath(const wstring& value) {
+	for (wchar_t ch : value) {
+		if (static_cast<unsigned int>(ch) > 127u) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool IsWEIntegrationPathValidForSave(const Config& cfg) {
+	if (!cfg.enableWEIntegration) return true;
+	if (cfg.weSnapshotPath.empty()) return true;
+	return IsAsciiOnlyPath(cfg.weSnapshotPath);
+}
 
 void DrawConfigManagementPanel() {
 	ImGui::SeparatorText(L("CONFIG_MANAGEMENT"));
@@ -134,6 +149,8 @@ void DrawConfigManagementPanel() {
 						g_appState.configs[new_index].saveRoot.clear();
 						g_appState.configs[new_index].backupPath.clear();
 						g_appState.configs[new_index].worlds.clear();
+						EnsureDefaultBackupBlacklist(g_appState.configs[new_index].blacklist);
+						EnsureDefaultRestoreWhitelist();
 					}
 					g_appState.currentConfigIndex = new_index;
 					specialSetting = false;
@@ -236,6 +253,54 @@ void DrawPathSettings(Config& cfg) {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SNAPSHOT_PATH"));
 }
 
+void DrawModIntegrationSettings(Config& cfg) {
+	ImGui::SeparatorText(L("GROUP_MINEBACKUP_MOD_INTEGRATION"));
+	ImGui::TextWrapped("%s", L("TIP_MINEBACKUP_MOD_INTEGRATION_SUMMARY"));
+	ImGui::Spacing();
+
+	ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
+
+	if (ImGui::Button(L("MOD_LINK_MINEBACKUP_MODRINTH"), ImVec2(-1, 0))) {
+		OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+	}
+	if (ImGui::Button(L("MOD_LINK_KNOTLINK_HOME"), ImVec2(-1, 0))) {
+		OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
+	}
+	if (ImGui::Button(L("MOD_LINK_KNOTLINK_DOWNLOAD"), ImVec2(-1, 0))) {
+		OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/hxh230802/KnotLink/releases/download/v1.0.0/KnotLinkService-1.0.0.0-Installer.exe");
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_KNOTLINK_DOWNLOAD_LINK"));
+
+	ImGui::Spacing();
+	ImGui::SeparatorText(L("GROUP_WE_INTEGRATION"));
+	ImGui::TextWrapped("%s", L("TIP_WE_INTEGRATION_SUMMARY"));
+	ImGui::Spacing();
+
+	ImGui::Checkbox(L("ENABLE_WE_INTEGRATION"), &cfg.enableWEIntegration);
+
+	char weSnapshotPathBuf[256];
+	strncpy_s(weSnapshotPathBuf, wstring_to_utf8(cfg.weSnapshotPath).c_str(), sizeof(weSnapshotPathBuf));
+	ImGui::Text("%s", L("WE_SNAPSHOT_PATH_LABEL"));
+	if (ImGui::Button(L("BUTTON_SELECT_WE_SNAPSHOT_DIR"))) {
+		wstring sel = SelectFolderDialog();
+		if (!sel.empty()) {
+			cfg.weSnapshotPath = sel;
+		}
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(-1);
+	if (ImGui::InputText("##WESnapshotPath", weSnapshotPathBuf, 256)) {
+		cfg.weSnapshotPath = utf8_to_wstring(weSnapshotPathBuf);
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_WE_SNAPSHOT_PATH"));
+
+	ImGui::TextDisabled("%s", L("WE_ASCII_PATH_REQUIRED"));
+	if (!IsWEIntegrationPathValidForSave(cfg)) {
+		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", L("ERROR_NON_ASCII_PATH"));
+	}
+}
+
 void DrawWorldManagement(Config& cfg) {
 	if (ImGui::Button(L("BUTTON_SCAN_SAVES"))) {
 		cfg.worlds.clear();
@@ -254,7 +319,6 @@ void DrawWorldManagement(Config& cfg) {
 		ImGui::TableSetupColumn("##Actions", ImGuiTableColumnFlags_WidthFixed, 60);
 		ImGui::TableHeadersRow();
 
-		static int itemToDelete = -1;
 		for (size_t i = 0; i < cfg.worlds.size(); ++i) {
 			ImGui::TableNextRow();
 			ImGui::PushID(static_cast<int>(i));
@@ -274,16 +338,16 @@ void DrawWorldManagement(Config& cfg) {
 				cfg.worlds[i].second = utf8_to_wstring(desc);
 
 			ImGui::TableSetColumnIndex(2);
-			if (ImGui::Button("X", ImVec2(-1, 0))) {
-				itemToDelete = static_cast<int>(i);
+			const bool hidden = (cfg.worlds[i].second == L"#");
+			if (ImGui::Button(hidden ? ICON_FA_EYE : ICON_FA_EYE_SLASH, ImVec2(-1, 0))) {
+				// 描述为 # 时，主界面会隐藏该世界；再次点击恢复为空描述。
+				cfg.worlds[i].second = hidden ? L"" : L"#";
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", hidden ? L("TIP_SHOW_WORLD") : L("TIP_HIDE_WORLD"));
 			}
 
 			ImGui::PopID();
-		}
-
-		if (itemToDelete >= 0 && itemToDelete < static_cast<int>(cfg.worlds.size())) {
-			cfg.worlds.erase(cfg.worlds.begin() + itemToDelete);
-			itemToDelete = -1;
 		}
 
 		ImGui::EndTable();
@@ -307,20 +371,7 @@ void DrawBackupBehavior(Config& cfg) {
 	ImGui::RadioButton(L("BUTTOM_BACKUP_MODE_OVERWRITE"), &cfg.backupMode, 3);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_OVERWRITE_BACKUP"));
 
-	ImGui::Text("%s", L("BACKUP_NAMING")); ImGui::SameLine();
-	int folder_name_choice = cfg.folderNameType;
-	if (ImGui::RadioButton(L("NAME_BY_WORLD"), &folder_name_choice, 0)) { cfg.folderNameType = 0; } ImGui::SameLine();
-	if (ImGui::RadioButton(L("NAME_BY_DESC"), &folder_name_choice, 1)) { cfg.folderNameType = 1; }
-
-	ImGui::Spacing();
-	ImGui::Separator();
-	ImGui::Spacing();
-
 	if (ImGui::BeginTable("BackupOptions", 2)) {
-		ImGui::TableNextColumn();
-		ImGui::Checkbox(L("IS_HOT_BACKUP"), &cfg.hotBackup);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_HOT_BACKUP"));
-
 		ImGui::TableNextColumn();
 		ImGui::Checkbox(L("BACKUP_ON_START"), &cfg.backupOnGameStart);
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BACKUP_ON_START"));
@@ -383,6 +434,26 @@ void DrawBackupBehavior(Config& cfg) {
 	}
 }
 
+static void DrawRuleListBox(const char* listId, vector<wstring>& rules, int& selectedItem, const char* emptyKey) {
+	if (ImGui::BeginListBox(listId, ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing()))) {
+		if (rules.empty()) {
+			ImGui::TextDisabled("%s", L(emptyKey));
+		}
+		else {
+			for (int n = 0; n < static_cast<int>(rules.size()); n++) {
+				string label = wstring_to_utf8(rules[n]);
+				if (ImGui::Selectable(label.c_str(), selectedItem == n)) {
+					selectedItem = n;
+				}
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("%s", label.c_str());
+				}
+			}
+		}
+		ImGui::EndListBox();
+	}
+}
+
 void DrawBlacklistSettings(Config& cfg) {
 	if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
 		wstring sel = SelectFileDialog();
@@ -395,21 +466,21 @@ void DrawBlacklistSettings(Config& cfg) {
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_ADD_REGEX_BLACKLIST"))) {
-		ImGui::OpenPopup("Add Regex Rule");
+		ImGui::OpenPopup(L("ADD_REGEX_RULE_TITLE"));
 	}
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 		ImGui::SetTooltip("%s", L("TIP_USE_REGEX"));
 
 	static int sel_bl_item = -1;
 	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item != -1) {
+	if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item >= 0 && sel_bl_item < static_cast<int>(cfg.blacklist.size())) {
 		cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item);
 		sel_bl_item = -1;
 	}
 
-	if (ImGui::BeginPopupModal("Add Regex Rule", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+	if (ImGui::BeginPopupModal(L("ADD_REGEX_RULE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		static char regex_buf[256] = "regex:";
-		ImGui::InputText("Regex Pattern", regex_buf, IM_ARRAYSIZE(regex_buf));
+		ImGui::InputText(L("REGEX_PATTERN_LABEL"), regex_buf, IM_ARRAYSIZE(regex_buf));
 		ImGui::Separator();
 		float regexBtnW = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(regexBtnW, 0))) {
@@ -425,23 +496,17 @@ void DrawBlacklistSettings(Config& cfg) {
 		ImGui::EndPopup();
 	}
 
-	if (ImGui::BeginListBox("##blacklist", ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing()))) {
-		if (cfg.blacklist.empty()) {
-			ImGui::TextDisabled("No items in blacklist");
-		}
-		else {
-			for (int n = 0; n < static_cast<int>(cfg.blacklist.size()); n++) {
-				string label = wstring_to_utf8(cfg.blacklist[n]);
-				if (ImGui::Selectable(label.c_str(), sel_bl_item == n)) {
-					sel_bl_item = n;
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("%s", label.c_str());
-				}
-			}
-		}
-		ImGui::EndListBox();
+	static char blacklist_add_buf[256] = "";
+	const float addRuleWidth = CalcButtonWidth(L("BUTTON_ADD_RULE"));
+	ImGui::SetNextItemWidth((std::max)(80.0f, ImGui::GetContentRegionAvail().x - addRuleWidth - ImGui::GetStyle().ItemSpacing.x));
+	ImGui::InputTextWithHint("##blacklist_add", L("RULE_TEXT_HINT"), blacklist_add_buf, IM_ARRAYSIZE(blacklist_add_buf));
+	ImGui::SameLine();
+	if (ImGui::Button(L("BUTTON_ADD_RULE"), ImVec2(addRuleWidth, 0)) && strlen(blacklist_add_buf) > 0) {
+		cfg.blacklist.push_back(utf8_to_wstring(blacklist_add_buf));
+		strcpy_s(blacklist_add_buf, "");
 	}
+
+	DrawRuleListBox("##blacklist", cfg.blacklist, sel_bl_item, "BLACKLIST_EMPTY");
 }
 
 void DrawRestoreBehavior(Config& cfg) {
@@ -452,32 +517,21 @@ void DrawRestoreBehavior(Config& cfg) {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RESTORE_WHITELIST"));
 
 	static char whitelist_add_buf[256] = "";
-	ImGui::InputTextWithHint("##whitelist_add", "file_or_folder_name", whitelist_add_buf, IM_ARRAYSIZE(whitelist_add_buf));
+	const float addWhitelistRuleWidth = CalcButtonWidth(L("BUTTON_ADD_RULE"));
+	ImGui::SetNextItemWidth((std::max)(80.0f, ImGui::GetContentRegionAvail().x - addWhitelistRuleWidth - ImGui::GetStyle().ItemSpacing.x));
+	ImGui::InputTextWithHint("##whitelist_add", L("RULE_TEXT_HINT"), whitelist_add_buf, IM_ARRAYSIZE(whitelist_add_buf));
 	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_ADD_WHITELIST")) && strlen(whitelist_add_buf) > 0) {
+	if (ImGui::Button(L("BUTTON_ADD_RULE"), ImVec2(addWhitelistRuleWidth, 0)) && strlen(whitelist_add_buf) > 0) {
 		restoreWhitelist.push_back(utf8_to_wstring(whitelist_add_buf));
 		strcpy_s(whitelist_add_buf, "");
 	}
 
 	static int sel_wl_item = -1;
 	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_REMOVE_WHITELIST")) && sel_wl_item != -1) {
+	if (ImGui::Button(L("BUTTON_REMOVE_WHITELIST")) && sel_wl_item >= 0 && sel_wl_item < static_cast<int>(restoreWhitelist.size())) {
 		restoreWhitelist.erase(restoreWhitelist.begin() + sel_wl_item);
 		sel_wl_item = -1;
 	}
 
-	if (ImGui::BeginListBox("##whitelist", ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing()))) {
-		if (restoreWhitelist.empty()) {
-			ImGui::TextDisabled("Whitelist is empty.");
-		}
-		else {
-			for (int n = 0; n < static_cast<int>(restoreWhitelist.size()); n++) {
-				string label = wstring_to_utf8(restoreWhitelist[n]);
-				if (ImGui::Selectable(label.c_str(), sel_wl_item == n)) {
-					sel_wl_item = n;
-				}
-			}
-		}
-		ImGui::EndListBox();
-	}
+	DrawRuleListBox("##whitelist", restoreWhitelist, sel_wl_item, "WHITELIST_EMPTY");
 }

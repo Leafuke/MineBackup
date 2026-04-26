@@ -6,6 +6,8 @@
 #include "i18n.h"
 #include "Console.h"
 #include "HistoryManager.h"
+#include "CloudSyncService.h"
+#include "ConfigManager.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -16,6 +18,7 @@
 #include <unordered_map>
 #include <cwctype>
 #include <set>
+#include <regex>
 using namespace std;
 
 enum class FolderState {
@@ -37,6 +40,15 @@ static inline void ToLowerInPlace(wstring& s) {
 #else
 	(void)s;
 #endif
+}
+
+static inline bool IsAsciiOnlyPath(const wstring& value) {
+	for (wchar_t ch : value) {
+		if (static_cast<unsigned int>(ch) > 127u) {
+			return false;
+		}
+	}
+	return true;
 }
 
 static inline int NormalizeCompressionLevel(const wstring& method, int level) {
@@ -720,34 +732,80 @@ namespace {
 		return false;
 	}
 
+	static wstring ToLowerSlash(wstring value) {
+		transform(value.begin(), value.end(), value.begin(), ::towlower);
+		replace(value.begin(), value.end(), L'\\', L'/');
+		return value;
+	}
+
+	static void TrimTrailingSlash(wstring& value) {
+		while (!value.empty() && (value.back() == L'/' || value.back() == L'\\')) {
+			value.pop_back();
+		}
+	}
+
+	static bool PathEqualsOrUnder(const wstring& path, const wstring& rule) {
+		if (rule.empty()) return false;
+		if (path == rule) return true;
+		return path.size() > rule.size()
+			&& path.rfind(rule, 0) == 0
+			&& path[rule.size()] == L'/';
+	}
+
+	static bool PathHasSegment(const wstring& path, const wstring& segment) {
+		if (segment.empty() || segment.find(L'/') != wstring::npos) return false;
+		size_t start = 0;
+		while (start <= path.size()) {
+			size_t end = path.find(L'/', start);
+			wstring current = path.substr(start, end == wstring::npos ? wstring::npos : end - start);
+			if (current == segment) return true;
+			if (end == wstring::npos) break;
+			start = end + 1;
+		}
+		return false;
+	}
+
 	static bool IsInRestoreWhitelist(const filesystem::path& entryPath, const filesystem::path& rootDir, const vector<wstring>& whitelist) {
-		wstring entryName = entryPath.filename().wstring();
-		wstring entryPathLower = entryPath.wstring();
-		transform(entryPathLower.begin(), entryPathLower.end(), entryPathLower.begin(), ::towlower);
+		wstring entryNameLower = ToLowerSlash(entryPath.filename().wstring());
+		wstring entryPathLower = ToLowerSlash(entryPath.wstring());
 
 		wstring relativePathLower;
 		error_code ec;
 		filesystem::path relativePath = filesystem::relative(entryPath, rootDir, ec);
 		if (!ec) {
-			relativePathLower = relativePath.wstring();
-			transform(relativePathLower.begin(), relativePathLower.end(), relativePathLower.begin(), ::towlower);
+			relativePathLower = ToLowerSlash(relativePath.wstring());
 		}
 
 		for (const auto& ruleOrig : whitelist) {
 			if (ruleOrig.empty()) continue;
-			wstring rule = ruleOrig;
-			transform(rule.begin(), rule.end(), rule.begin(), ::towlower);
+			if (ruleOrig.rfind(L"regex:", 0) == 0) {
+				try {
+					wregex pattern(ruleOrig.substr(6), regex_constants::icase | regex_constants::ECMAScript);
+					if (regex_search(entryPath.wstring(), pattern) ||
+						(!relativePath.empty() && regex_search(relativePath.wstring(), pattern))) {
+						return true;
+					}
+				}
+				catch (const regex_error&) {
+				}
+				continue;
+			}
 
-			if (!entryName.empty()) {
-				wstring entryNameLower = entryName;
-				transform(entryNameLower.begin(), entryNameLower.end(), entryNameLower.begin(), ::towlower);
-				if (entryNameLower == rule) {
+			wstring rule = ToLowerSlash(ruleOrig);
+			TrimTrailingSlash(rule);
+
+			if (entryNameLower == rule || PathEqualsOrUnder(relativePathLower, rule) || PathHasSegment(relativePathLower, rule)) {
+				return true;
+			}
+
+			filesystem::path rulePath(ruleOrig);
+			if (rulePath.is_absolute()) {
+				wstring rulePathLower = ToLowerSlash(rulePath.wstring());
+				TrimTrailingSlash(rulePathLower);
+				if (PathEqualsOrUnder(entryPathLower, rulePathLower)) {
 					return true;
 				}
 			}
-
-			if (entryPathLower.find(rule) != wstring::npos) return true;
-			if (!relativePathLower.empty() && relativePathLower.find(rule) != wstring::npos) return true;
 		}
 		return false;
 	}
@@ -894,6 +952,11 @@ namespace {
 
 void AddBackupToWESnapshots(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console) {
 	console.AddLog(L("LOG_WE_INTEGRATION_START"), wstring_to_utf8(worldName).c_str());
+	if (config.enableWEIntegration && !config.weSnapshotPath.empty() && !IsAsciiOnlyPath(config.weSnapshotPath)) {
+		console.AddLog(L("ERROR_NON_ASCII_PATH"));
+		console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
+		return;
+	}
 
 	// 创建快照路径
 	filesystem::path we_base_path = config.weSnapshotPath;
@@ -1225,7 +1288,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 	// 检测到 level.dat 被锁定，启用热备份握手并依赖 7z -ssw 直接从原世界路径压缩
 
-    if (config.hotBackup || IsFileLocked(sourcePath + L"/level.dat")) {
+    if (IsFileLocked(sourcePath + L"/level.dat") || IsFileLocked(sourcePath + L"/session.lock")) {
         // 在热备份前，先检查联动模组是否存在
         bool modAvailable = PerformModHandshake("backup", wstring_to_utf8(folder.name));
 
@@ -1262,7 +1325,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         }
 		console.AddLog("[Info] Snapshot copy is disabled. Using 7-Zip -ssw to back up from live world files.");
-    }
+	}
 
     bool forceFullBackup = true;
     if (filesystem::exists(destinationFolder)) {
@@ -1568,18 +1631,8 @@ execute_backup:
 		BroadcastEvent(payload);
 
 
-        // 云同步逻辑
-            if (config.cloudSyncEnabled && !config.rclonePath.empty() && !config.rcloneRemotePath.empty()) {
-				console.AddLog(L("CLOUD_SYNC_START"));
-				wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + archivePath + L"\" \"" + config.rcloneRemotePath + L"/" + folder.name + L"\" --progress";
-				// 另起一个线程来执行云同步，避免阻塞后续操作
-				// 注意：使用指针值捕获而非引用，避免console生命周期结束后悬垂引用
-				Console* consolePtr = &console;
-				thread([rclone_command, consolePtr, config]() {
-					RunCommandInBackground(rclone_command, *consolePtr, config.useLowPriority);
-					consolePtr->AddLog(L("CLOUD_SYNC_FINISH"));
-				}).detach();
-			}
+		// 云存档统一交给 CloudSyncService 处理，避免 UI 和核心逻辑各自拼接 rclone 命令。
+		QueueUploadAfterBackup(config, folder.configIndex, folder, completedBackupFile, comment, console);
         }
         else {
             BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
@@ -1646,6 +1699,46 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 
 #include "BackupManagerRestore.inl"
 
+static bool DeleteLocalArchiveOnly(const Config& config, const HistoryEntry& entryToDelete, Console& console) {
+	filesystem::path pathToDelete = JoinPath(config.backupPath, entryToDelete.worldName) / entryToDelete.backupFile;
+	try {
+		if (filesystem::exists(pathToDelete)) {
+			filesystem::remove(pathToDelete);
+			console.AddLog("  - %s OK", wstring_to_utf8(pathToDelete.filename().wstring()).c_str());
+			return true;
+		}
+		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+		return false;
+	}
+	catch (const filesystem::filesystem_error& e) {
+		console.AddLog(L("LOG_ERROR_DELETE_BACKUP"), wstring_to_utf8(pathToDelete.filename().wstring()).c_str(), e.what());
+		return false;
+	}
+}
+
+void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelete, int configIndex, BackupDeleteMode mode, bool useSafeDelete, Console& console) {
+	if (mode == BackupDeleteMode::HistoryOnly) {
+		// 仅删除历史：保留本地文件，常用于清理误导入或不再需要展示的云历史。
+		RemoveHistoryEntry(configIndex, entryToDelete.worldName, entryToDelete.backupFile);
+		SaveHistory();
+		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "history deletion", console);
+		return;
+	}
+
+	if (mode == BackupDeleteMode::LocalArchiveOnly) {
+		DeleteLocalArchiveOnly(config, entryToDelete, console);
+		return;
+	}
+
+	if (useSafeDelete && entryToDelete.backupType.find(L"Smart") != wstring::npos) {
+		DoSafeDeleteBackup(config, entryToDelete, configIndex, console);
+	}
+	else {
+		int mutableConfigIndex = configIndex;
+		DoDeleteBackup(config, entryToDelete, mutableConfigIndex, console);
+	}
+}
+
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console) {
 	console.AddLog(L("LOG_PRE_TO_DELETE"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 
@@ -1661,12 +1754,12 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 				console.AddLog("  - %s OK", wstring_to_utf8(path.filename().wstring()).c_str());
 				InvalidateBackupMetadata(config, entryToDelete.worldName, path.filename().wstring());
 				// 从历史记录中移除对应条目
-				RemoveHistoryEntry(configIndex, path.filename().wstring());
+				RemoveHistoryEntry(configIndex, entryToDelete.worldName, path.filename().wstring());
 			}
 			else {
 				console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(entryToDelete.backupFile).c_str());
 				InvalidateBackupMetadata(config, entryToDelete.worldName, path.filename().wstring());
-				RemoveHistoryEntry(configIndex, path.filename().wstring());
+				RemoveHistoryEntry(configIndex, entryToDelete.worldName, path.filename().wstring());
 			}
 		}
 		catch (const filesystem::filesystem_error& e) {
@@ -1674,6 +1767,7 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 		}
 	}
 	SaveHistory(); // 保存历史记录的更改
+	QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "backup deletion", console);
 }
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
@@ -1838,7 +1932,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 
 		console.AddLog(L("LOG_SAFE_DELETE_STEP_4"));
 		filesystem::remove(pathToDelete);
-		RemoveHistoryEntry(configIndex, entryToDelete.backupFile);
+		RemoveHistoryEntry(configIndex, entryToDelete.worldName, entryToDelete.backupFile);
 
 		for (auto& entry : g_appState.g_history[configIndex]) {
 			if (entry.worldName == nextEntry.worldName && entry.backupFile == nextEntry.backupFile) {
@@ -1849,6 +1943,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		}
 
 		SaveHistory();
+		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "safe delete", console);
 
 		string metadataError;
 		if (!TryRepairMetadataAfterSafeDelete(

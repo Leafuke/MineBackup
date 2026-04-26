@@ -1,4 +1,4 @@
-#include "CoreValidation.h"
+﻿#include "CoreValidation.h"
 
 #include "BackupManager.h"
 #include "ConfigManager.h"
@@ -25,10 +25,6 @@ namespace {
 	constexpr const wchar_t* kLimitWorldName = L"__CoreValidationLimit";
 
 	using WorldState = map<wstring, string>;
-
-	static string Msg(const char* key) {
-		return string(L(key));
-	}
 
 	static string MsgFmt(const char* key, const string& arg) {
 		char buffer[4096] = {};
@@ -188,7 +184,6 @@ namespace {
 		cfg.maxSmartBackupsPerFull = max(3, templateConfig.maxSmartBackupsPerFull);
 		cfg.backupMode = backupMode;
 		cfg.keepCount = keepCount;
-		cfg.hotBackup = false;
 		cfg.backupBefore = false;
 		cfg.blacklist.clear();
 		cfg.worlds = {
@@ -217,7 +212,7 @@ namespace {
 			}
 		}
 
-		error = Msg("VAL_ERR_NO_7Z_CONFIG");
+		error = L("VAL_ERR_NO_7Z_CONFIG");
 		return false;
 	}
 
@@ -244,20 +239,20 @@ namespace {
 				FILE_ATTRIBUTE_NORMAL,
 				nullptr);
 			if (handle_ == INVALID_HANDLE_VALUE) {
-				error = Msg("VAL_ERR_SHARED_OPEN");
+				error = L("VAL_ERR_SHARED_OPEN");
 				return false;
 			}
 
 			LARGE_INTEGER start{};
 			if (!SetFilePointerEx(handle_, start, nullptr, FILE_BEGIN) || !SetEndOfFile(handle_)) {
-				error = Msg("VAL_ERR_SHARED_TRUNCATE");
+				error = L("VAL_ERR_SHARED_TRUNCATE");
 				Close();
 				return false;
 			}
 
 			DWORD written = 0;
 			if (!WriteFile(handle_, content.data(), static_cast<DWORD>(content.size()), &written, nullptr) || written != content.size()) {
-				error = Msg("VAL_ERR_SHARED_WRITE");
+				error = L("VAL_ERR_SHARED_WRITE");
 				Close();
 				return false;
 			}
@@ -267,7 +262,7 @@ namespace {
 #else
 			stream_.open(filePath, ios::binary | ios::in | ios::out | ios::trunc);
 			if (!stream_.is_open()) {
-				error = Msg("VAL_ERR_SHARED_OPEN_STREAM");
+				error = L("VAL_ERR_SHARED_OPEN_STREAM");
 				return false;
 			}
 			stream_.write(content.data(), static_cast<streamsize>(content.size()));
@@ -354,7 +349,7 @@ namespace {
 
 	static bool AssertLockArtifactsAbsent(ValidationContext& ctx, const filesystem::path& worldPath) {
 		const vector<filesystem::path> disallowed = {
-			worldPath / L"session.lock",
+			// worldPath / L"session.lock", // session.lock 在默认还原白名单中。
 			worldPath / L"LOCK",
 			worldPath / L"locks" / L"runtime.lock"
 		};
@@ -366,12 +361,12 @@ namespace {
 				return false;
 			}
 		}
-		ctx.Info(Msg("VAL_INFO_LOCK_FILES_EXCLUDED"));
+		ctx.Info(L("VAL_INFO_LOCK_FILES_EXCLUDED"));
 		return true;
 	}
 
 	static bool RunSmartBackupScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
-		ctx.Info(Msg("VAL_INFO_SCENARIO_SMART"));
+		ctx.Info(L("VAL_INFO_SCENARIO_SMART"));
 
 		const filesystem::path saveRoot = sandboxRoot / L"worlds";
 		const filesystem::path backupRoot = sandboxRoot / L"backups";
@@ -413,16 +408,16 @@ namespace {
 		world.config.skipIfUnchanged = false;
 		DoBackup(world, ctx.console, L"CoreValidation_Base");
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 1, Msg("VAL_OK_INITIAL_FULL_CREATED"), Msg("VAL_ERR_INITIAL_FULL_NOT_CREATED"))) return false;
-		if (!ctx.Require(historyEntries[0].backupType == L"Full", Msg("VAL_OK_FIRST_TYPE_FULL"), Msg("VAL_ERR_FIRST_TYPE_NOT_FULL"))) return false;
+		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_INITIAL_FULL_CREATED"), L("VAL_ERR_INITIAL_FULL_NOT_CREATED"))) return false;
+		if (!ctx.Require(historyEntries[0].backupType == L"Full", L("VAL_OK_FIRST_TYPE_FULL"), L("VAL_ERR_FIRST_TYPE_NOT_FULL"))) return false;
 		const wstring fullBackupFile = historyEntries[0].backupFile;
-		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 1, Msg("VAL_OK_ARCHIVE_COUNT_AFTER_FIRST"), Msg("VAL_ERR_ARCHIVE_COUNT_AFTER_FIRST"))) return false;
+		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 1, L("VAL_OK_ARCHIVE_COUNT_AFTER_FIRST"), L("VAL_ERR_ARCHIVE_COUNT_AFTER_FIRST"))) return false;
 
 		world.config.skipIfUnchanged = true;
 		SleepForUniqueBackupName();
 		DoBackup(world, ctx.console, L"CoreValidation_NoChange");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 1, Msg("VAL_OK_SKIP_NO_CHANGE"), Msg("VAL_ERR_NO_CHANGE_CREATED"))) return false;
+		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_SKIP_NO_CHANGE"), L("VAL_ERR_NO_CHANGE_CREATED"))) return false;
 
 		world.config.skipIfUnchanged = false;
 		SleepForUniqueBackupName();
@@ -432,14 +427,14 @@ namespace {
 		string lockError;
 		if (!ctx.Require(
 			sharedWriteHandle.OpenAndRewrite(worldPath / L"region" / L"0.0.mca", state2.at(L"region/0.0.mca"), lockError),
-			Msg("VAL_OK_SHARED_LOCK_CREATED"),
+			L("VAL_OK_SHARED_LOCK_CREATED"),
 			MsgFmt("VAL_ERR_SHARED_LOCK_CREATE_FAILED", lockError)
 		)) return false;
 		DoBackup(world, ctx.console, L"CoreValidation_Smart_Locked");
 		sharedWriteHandle.Close();
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 2, Msg("VAL_OK_FIRST_SMART_CREATED"), Msg("VAL_ERR_FIRST_SMART_NOT_CREATED"))) return false;
-		if (!ctx.Require(historyEntries.back().backupType == L"Smart", Msg("VAL_OK_FIRST_SMART_TYPE"), Msg("VAL_ERR_FIRST_SMART_TYPE"))) return false;
+		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_FIRST_SMART_CREATED"), L("VAL_ERR_FIRST_SMART_NOT_CREATED"))) return false;
+		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_FIRST_SMART_TYPE"), L("VAL_ERR_FIRST_SMART_TYPE"))) return false;
 		const wstring firstSmartBackupFile = historyEntries.back().backupFile;
 
 		SleepForUniqueBackupName();
@@ -449,53 +444,53 @@ namespace {
 		RemoveIfExists(worldPath / L"to_delete.txt");
 		DoBackup(world, ctx.console, L"CoreValidation_Smart_Delete");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 3, Msg("VAL_OK_SECOND_SMART_CREATED"), Msg("VAL_ERR_SECOND_SMART_NOT_CREATED"))) return false;
+		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SECOND_SMART_CREATED"), L("VAL_ERR_SECOND_SMART_NOT_CREATED"))) return false;
 		const wstring secondSmartBackupFile = historyEntries.back().backupFile;
 
 		SleepForUniqueBackupName();
 		RemoveIfExists(worldPath / L"data" / L"fresh.txt");
 		DoBackup(world, ctx.console, L"CoreValidation_DeleteOnly");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 4, Msg("VAL_OK_DELETION_ONLY_CREATED"), Msg("VAL_ERR_DELETION_ONLY_NOT_CREATED"))) return false;
+		if (!ctx.Require(historyEntries.size() == 4, L("VAL_OK_DELETION_ONLY_CREATED"), L("VAL_ERR_DELETION_ONLY_NOT_CREATED"))) return false;
 		const wstring latestBackupFile = historyEntries.back().backupFile;
-		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 4, Msg("VAL_OK_ARCHIVE_COUNT_BEFORE_RESTORE"), Msg("VAL_ERR_ARCHIVE_COUNT_BEFORE_RESTORE"))) return false;
+		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 4, L("VAL_OK_ARCHIVE_COUNT_BEFORE_RESTORE"), L("VAL_ERR_ARCHIVE_COUNT_BEFORE_RESTORE"))) return false;
 
 		WriteTextFile(worldPath / L"notes.txt", "corrupted-before-clean-restore\n");
 		WriteTextFile(worldPath / L"manual_only.txt", "should-be-removed\n");
 		WriteTextFile(worldPath / L"session.lock", "should-not-survive-restore\n");
 		WriteTextFile(worldPath / L"locks" / L"runtime.lock", "should-not-survive-restore\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, fullBackupFile, ctx.console, 0, ""), Msg("VAL_OK_RESTORE_FULL_SUCCESS"), Msg("VAL_ERR_RESTORE_FULL_FAILED"))) return false;
+		if (!ctx.Require(DoRestore(cfg, world.name, fullBackupFile, ctx.console, 0, ""), L("VAL_OK_RESTORE_FULL_SUCCESS"), L("VAL_ERR_RESTORE_FULL_FAILED"))) return false;
 		string diff;
-		if (!ctx.Require(CompareWorldState(state1, CaptureWorldState(worldPath), diff), Msg("VAL_OK_RESTORE_FULL_MATCH"), MsgFmt("VAL_ERR_RESTORE_FULL_MISMATCH", diff))) return false;
+		if (!ctx.Require(CompareWorldState(state1, CaptureWorldState(worldPath), diff), L("VAL_OK_RESTORE_FULL_MATCH"), MsgFmt("VAL_ERR_RESTORE_FULL_MISMATCH", diff))) return false;
 		if (!AssertLockArtifactsAbsent(ctx, worldPath)) return false;
 
 		WriteTextFile(worldPath / L"notes.txt", "custom-restore-target\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, secondSmartBackupFile, ctx.console, 3, "notes.txt"), Msg("VAL_OK_CUSTOM_RESTORE_SUCCESS"), Msg("VAL_ERR_CUSTOM_RESTORE_FAILED"))) return false;
+		if (!ctx.Require(DoRestore(cfg, world.name, secondSmartBackupFile, ctx.console, 3, "notes.txt"), L("VAL_OK_CUSTOM_RESTORE_SUCCESS"), L("VAL_ERR_CUSTOM_RESTORE_FAILED"))) return false;
 		WorldState customExpected = state1;
 		customExpected[L"notes.txt"] = state3.at(L"notes.txt");
-		if (!ctx.Require(CompareWorldState(customExpected, CaptureWorldState(worldPath), diff), Msg("VAL_OK_CUSTOM_RESTORE_MATCH"), MsgFmt("VAL_ERR_CUSTOM_RESTORE_MISMATCH", diff))) return false;
+		if (!ctx.Require(CompareWorldState(customExpected, CaptureWorldState(worldPath), diff), L("VAL_OK_CUSTOM_RESTORE_MATCH"), MsgFmt("VAL_ERR_CUSTOM_RESTORE_MISMATCH", diff))) return false;
 
 		const auto safeDeleteTarget = find_if(historyEntries.begin(), historyEntries.end(), [&](const HistoryEntry& entry) {
 			return entry.backupFile == firstSmartBackupFile;
 		});
-		if (!ctx.Require(safeDeleteTarget != historyEntries.end(), Msg("VAL_OK_SAFEDELETE_TARGET_FOUND"), Msg("VAL_ERR_SAFEDELETE_TARGET_NOT_FOUND"))) return false;
+		if (!ctx.Require(safeDeleteTarget != historyEntries.end(), L("VAL_OK_SAFEDELETE_TARGET_FOUND"), L("VAL_ERR_SAFEDELETE_TARGET_NOT_FOUND"))) return false;
 		DoSafeDeleteBackup(cfg, *safeDeleteTarget, kValidationConfigIndex, ctx.console);
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 3, Msg("VAL_OK_SAFEDELETE_HISTORY_SIZE"), Msg("VAL_ERR_SAFEDELETE_HISTORY_SIZE"))) return false;
-		if (!ctx.Require(!filesystem::exists(filesystem::path(cfg.backupPath) / world.name / firstSmartBackupFile), Msg("VAL_OK_SAFEDELETE_ARCHIVE_REMOVED"), Msg("VAL_ERR_SAFEDELETE_ARCHIVE_PRESENT"))) return false;
+		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SAFEDELETE_HISTORY_SIZE"), L("VAL_ERR_SAFEDELETE_HISTORY_SIZE"))) return false;
+		if (!ctx.Require(!filesystem::exists(filesystem::path(cfg.backupPath) / world.name / firstSmartBackupFile), L("VAL_OK_SAFEDELETE_ARCHIVE_REMOVED"), L("VAL_ERR_SAFEDELETE_ARCHIVE_PRESENT"))) return false;
 
 		WriteTextFile(worldPath / L"notes.txt", "corrupted-before-final-restore\n");
 		WriteTextFile(worldPath / L"manual_only.txt", "should-be-removed-again\n");
 		WriteTextFile(worldPath / L"LOCK", "should-not-survive-restore\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, latestBackupFile, ctx.console, 0, ""), Msg("VAL_OK_FINAL_RESTORE_SUCCESS"), Msg("VAL_ERR_FINAL_RESTORE_FAILED"))) return false;
-		if (!ctx.Require(CompareWorldState(state4, CaptureWorldState(worldPath), diff), Msg("VAL_OK_FINAL_RESTORE_MATCH"), MsgFmt("VAL_ERR_FINAL_RESTORE_MISMATCH", diff))) return false;
+		if (!ctx.Require(DoRestore(cfg, world.name, latestBackupFile, ctx.console, 0, ""), L("VAL_OK_FINAL_RESTORE_SUCCESS"), L("VAL_ERR_FINAL_RESTORE_FAILED"))) return false;
+		if (!ctx.Require(CompareWorldState(state4, CaptureWorldState(worldPath), diff), L("VAL_OK_FINAL_RESTORE_MATCH"), MsgFmt("VAL_ERR_FINAL_RESTORE_MISMATCH", diff))) return false;
 		if (!AssertLockArtifactsAbsent(ctx, worldPath)) return false;
 
 		return true;
 	}
 
 	static bool RunKeepCountScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
-		ctx.Info(Msg("VAL_INFO_SCENARIO_LIMIT"));
+		ctx.Info(L("VAL_INFO_SCENARIO_LIMIT"));
 
 		const filesystem::path saveRoot = sandboxRoot / L"worlds";
 		const filesystem::path backupRoot = sandboxRoot / L"backups";
@@ -512,35 +507,35 @@ namespace {
 		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v1", 240));
 		DoBackup(world, ctx.console, L"CoreValidation_Limit_1");
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 1, Msg("VAL_OK_LIMIT_FIRST_CREATED"), Msg("VAL_ERR_LIMIT_FIRST_FAILED"))) return false;
+		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_LIMIT_FIRST_CREATED"), L("VAL_ERR_LIMIT_FIRST_FAILED"))) return false;
 		const wstring oldestBackupFile = historyEntries.front().backupFile;
 
 		SleepForUniqueBackupName();
 		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v2", 260));
 		DoBackup(world, ctx.console, L"CoreValidation_Limit_2");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(historyEntries.size() == 2, Msg("VAL_OK_LIMIT_SECOND_CREATED"), Msg("VAL_ERR_LIMIT_SECOND_FAILED"))) return false;
-		if (!ctx.Require(historyEntries.back().backupType == L"Smart", Msg("VAL_OK_LIMIT_SECOND_IS_SMART"), Msg("VAL_ERR_LIMIT_SECOND_NOT_SMART"))) return false;
+		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_LIMIT_SECOND_CREATED"), L("VAL_ERR_LIMIT_SECOND_FAILED"))) return false;
+		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_SECOND_IS_SMART"), L("VAL_ERR_LIMIT_SECOND_NOT_SMART"))) return false;
 
 		SleepForUniqueBackupName();
 		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v3", 280));
 		DoBackup(world, ctx.console, L"CoreValidation_Limit_3");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
-		if (!ctx.Require(!historyEntries.empty() && historyEntries.back().backupType == L"Smart", Msg("VAL_OK_LIMIT_THIRD_IS_SMART"), Msg("VAL_ERR_LIMIT_THIRD_NOT_SMART"))) return false;
+		if (!ctx.Require(!historyEntries.empty() && historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_THIRD_IS_SMART"), L("VAL_ERR_LIMIT_THIRD_NOT_SMART"))) return false;
 		auto archives = GetBackupFilesForWorld(cfg, world.name);
-		if (!ctx.Require(archives.size() == 2, Msg("VAL_OK_LIMIT_PRUNE_DISK"), Msg("VAL_ERR_LIMIT_PRUNE_DISK"))) return false;
-		if (!ctx.Require(historyEntries.size() == 2, Msg("VAL_OK_LIMIT_PRUNE_HISTORY"), Msg("VAL_ERR_LIMIT_PRUNE_HISTORY"))) return false;
+		if (!ctx.Require(archives.size() == 2, L("VAL_OK_LIMIT_PRUNE_DISK"), L("VAL_ERR_LIMIT_PRUNE_DISK"))) return false;
+		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_LIMIT_PRUNE_HISTORY"), L("VAL_ERR_LIMIT_PRUNE_HISTORY"))) return false;
 		const bool oldestRemoved = none_of(historyEntries.begin(), historyEntries.end(), [&](const HistoryEntry& entry) {
 			return entry.backupFile == oldestBackupFile;
 		});
-		if (!ctx.Require(oldestRemoved, Msg("VAL_OK_LIMIT_OLDEST_REMOVED"), Msg("VAL_ERR_LIMIT_OLDEST_PRESENT"))) return false;
+		if (!ctx.Require(oldestRemoved, L("VAL_OK_LIMIT_OLDEST_REMOVED"), L("VAL_ERR_LIMIT_OLDEST_PRESENT"))) return false;
 
 		return true;
 	}
 
 	static bool RunCoreValidation(Console& console, bool automatic) {
 		ValidationContext ctx{ console, automatic };
-		ctx.Info(automatic ? Msg("VAL_INFO_START_AUTO") : Msg("VAL_INFO_START_MANUAL"));
+		ctx.Info(automatic ? L("VAL_INFO_START_AUTO") : L("VAL_INFO_START_MANUAL"));
 
 		Config templateConfig;
 		string resolveError;
@@ -572,7 +567,7 @@ namespace {
 
 		const bool passed = ctx.failures.empty();
 		if (passed) {
-			ctx.Info(Msg("VAL_INFO_COMPLETED"));
+			ctx.Info(L("VAL_INFO_COMPLETED"));
 		}
 		else {
 			ctx.console.AddLog("[Error] [Validation] %s", MsgFmt("VAL_ERR_FINISHED_WITH_COUNT", static_cast<int>(ctx.failures.size())).c_str());

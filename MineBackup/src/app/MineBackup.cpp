@@ -15,6 +15,7 @@
 #include "text_to_text.h"
 #include "HistoryManager.h"
 #include "BackupManager.h"
+#include "CloudSyncService.h"
 #include "CoreValidation.h"
 
 #ifdef _WIN32
@@ -670,6 +671,7 @@ int main(int argc, char** argv)
 				g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
 				g_appState.configs[index].saveRoot = (entry.path() / "saves").wstring();
 				g_appState.configs[index].worlds.clear();
+				EnsureDefaultBackupBlacklist(g_appState.configs[index].blacklist);
 			}
 		}
 	}
@@ -785,11 +787,15 @@ int main(int argc, char** argv)
 					ImGui::Separator();
 					// 导出历史记录
 					if (ImGui::MenuItem(L("MENU_EXPORT_HISTORY"))) {
-						wstring exportPath = SelectSaveFileDialog(L"history_export.dat", L"DAT Files (*.dat)\0*.dat\0All Files (*.*)\0*.*\0");
+						wstring exportPath = SelectSaveFileDialog(L"history_export.json", L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0");
 						if (!exportPath.empty()) {
 							try {
-								filesystem::copy_file(L"history.dat", exportPath, filesystem::copy_options::overwrite_existing);
-								console.AddLog(L("LOG_HISTORY_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+								if (ExportHistoryToFile(exportPath)) {
+									console.AddLog(L("LOG_HISTORY_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+								}
+								else {
+									console.AddLog("[Error] Failed to export history.");
+								}
 							} catch (const exception& e) {
 								console.AddLog("[Error] Failed to export history: %s", e.what());
 							}
@@ -846,9 +852,13 @@ int main(int argc, char** argv)
 					float histBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(histBtnW, 0))) {
 						try {
-							filesystem::copy_file(pendingImportPath, L"history.dat", filesystem::copy_options::overwrite_existing);
-							LoadHistory();
-							console.AddLog(L("LOG_HISTORY_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+							if (ImportHistoryFromFile(pendingImportPath, g_appState.currentConfigIndex, true)) {
+								LoadHistory();
+								console.AddLog(L("LOG_HISTORY_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+							}
+							else {
+								console.AddLog("[Error] Failed to import history.");
+							}
 						} catch (const exception& e) {
 							console.AddLog("[Error] Failed to import history: %s", e.what());
 						}
@@ -940,8 +950,6 @@ int main(int argc, char** argv)
 						ImGui::EndMenu();
 					}
 					ImGui::Separator();
-					ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
 					ImGui::Separator();
 					if (ImGui::MenuItem(L("DETAILED_SETTINGS_BUTTON"))) {
@@ -962,8 +970,6 @@ int main(int argc, char** argv)
 					}
 					ImGui::Separator();
 					if (ImGui::MenuItem(L("HISTORY_BUTTON"))) { showHistoryWindow = true; }
-					ImGui::Separator();
-					if (ImGui::MenuItem(L("BUTTON_BACKUP_MODS"))) { ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE")); }
 					ImGui::EndMenu();
 				}
 				if (ImGui::BeginMenu(L("MENU_HELP"))) {
@@ -974,7 +980,7 @@ int main(int argc, char** argv)
 						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/issues");
 					}
 					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
-						OpenLinkInBrowser(L"https://docs.qq.com/doc/DUUp4UVZOYmZWcm5M");
+						OpenLinkInBrowser(L"https://folderrewind.top/docs/guides/minebackup-v1/overview");
 					}
 					if (ImGui::MenuItem(L("SPONSOR_ME"))) {
 						OpenLinkInBrowser(L"https://afdian.com/a/MineBackup");
@@ -1023,11 +1029,11 @@ int main(int argc, char** argv)
 						ImGui::SameLine();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(180, 0))) {
 #ifdef _WIN32
-							OpenLinkInBrowser(L"https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
+							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
 #elif defined(__APPLE__)
-							OpenLinkInBrowser(L"https://gh-proxy.com/github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
+							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
 #else
-							OpenLinkInBrowser(L"https://gh-proxy.com/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
+							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
 #endif
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
@@ -1174,7 +1180,7 @@ int main(int argc, char** argv)
 			{
 				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
 				ImGui::Separator();
-				ImGui::TextWrapped("%s %c %c", L("ABOUT_DESCRIPTION"), (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId);
+				ImGui::TextWrapped("%s", wstring_to_u8string(MineFormatMessage("ABOUT_DESCRIPTION", (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId)).c_str());
 				ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1198,6 +1204,12 @@ int main(int argc, char** argv)
 					OpenLinkInBrowser(L"https://github.com/Leafuke/FolderRewind");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_FOLDERREWIND_TIP"));
+				if (ImGui::Button(L("ABOUT_VISIT_MINEBACKUP-MOD")))
+				{
+					OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+				}
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_MINEBACKUP-MOD_TIP"));	
+				
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				ImGui::Text(L("ABOUT_QQ_GROUP"));
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1443,6 +1455,8 @@ int main(int argc, char** argv)
 									g_appState.configs[new_index].saveRoot.clear();
 									g_appState.configs[new_index].backupPath.clear();
 									g_appState.configs[new_index].worlds.clear();
+									EnsureDefaultBackupBlacklist(g_appState.configs[new_index].blacklist);
+									EnsureDefaultRestoreWhitelist();
 								}
 								g_appState.currentConfigIndex = new_index;
 								specialSetting = false;
@@ -1883,17 +1897,13 @@ int main(int argc, char** argv)
 
 
 						if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
-							// 云同步逻辑
-							const Config& config = g_appState.configs[displayWorlds[selectedWorldIndex].baseConfigIndex];
-							if (!config.rclonePath.empty() && !config.rcloneRemotePath.empty() && filesystem::exists(config.rclonePath)) {
-								console.AddLog(L("CLOUD_SYNC_START"));
-								wstring localBackupPath = JoinPath(config.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
-								wstring rclone_command = L"\"" + config.rclonePath + L"\" copy \"" + localBackupPath + L"\" \"" + config.rcloneRemotePath + L"\" --progress";
-								// 另起一个线程来执行云同步，避免阻塞后续操作
-								thread([rclone_command, config]() {
-									RunCommandInBackground(rclone_command, console, config.useLowPriority);
-									console.AddLog(L("CLOUD_SYNC_FINISH"));
-									}).detach();
+							const int baseConfigIndex = displayWorlds[selectedWorldIndex].baseConfigIndex;
+							const Config configCopy = g_appState.configs[baseConfigIndex];
+							const wstring worldName = displayWorlds[selectedWorldIndex].name;
+							if (CanUseCloudActions(configCopy)) {
+								thread([configCopy, baseConfigIndex, worldName]() {
+									UploadWorldBackupFolderToCloud(configCopy, baseConfigIndex, worldName, console);
+								}).detach();
 							}
 							else {
 								console.AddLog(L("CLOUD_SYNC_INVALID"));
@@ -2095,7 +2105,7 @@ int main(int argc, char** argv)
 			}
 			ImGui::End();
 
-			if (ImGui::Begin(L("CONSOLE_TITLE"))) {
+			if (ImGui::Begin(L("CONSOLE_TITLE"), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 				console.DrawEmbedded();
 			}
 			ImGui::End();

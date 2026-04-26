@@ -28,6 +28,7 @@ set(SOURCES
     ${APP_DIR}/AppState.cpp
     ${APP_DIR}/Globals.cpp
     ${CORE_DIR}/BackupManager.cpp
+    ${CORE_DIR}/CloudSyncService.cpp
     ${CORE_DIR}/CoreValidation.cpp
     ${CORE_DIR}/GameSessionManager.cpp
     ${CORE_DIR}/HistoryManager.cpp
@@ -66,6 +67,7 @@ set(HEADERS
     ${APP_DIR}/Globals.h
     ${APP_DIR}/MainUI.h
     ${CORE_DIR}/BackupManager.h
+    ${CORE_DIR}/CloudSyncService.h
     ${CORE_DIR}/BackupManagerRestore.inl
     ${CORE_DIR}/CoreValidation.h
     ${CORE_DIR}/HistoryManager.h
@@ -104,6 +106,9 @@ add_library(minebackup_third_party_imgui STATIC ${IMGUI_SOURCES})
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(minebackup_third_party_imgui PRIVATE -fno-strict-aliasing)
 endif()
+if(MSVC)
+    target_compile_options(minebackup_third_party_imgui PRIVATE /FS)
+endif()
 target_include_directories(minebackup_third_party_imgui PUBLIC
     ${IMGUI_DIR}
     ${GLFW_DIR}
@@ -111,6 +116,10 @@ target_include_directories(minebackup_third_party_imgui PUBLIC
 
 add_library(minebackup_core STATIC ${SOURCES} ${HEADERS})
 add_executable(${PROJECT_NAME} ${MAIN_SOURCES} ${HEADERS})
+if(MSVC)
+    target_compile_options(minebackup_core PRIVATE /FS)
+    target_compile_options(${PROJECT_NAME} PRIVATE /FS)
+endif()
 
 if(WIN32)
     set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)

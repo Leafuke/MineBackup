@@ -1,4 +1,6 @@
 #include "SettingsUIPrivate.h"
+#include "HistoryManager.h"
+#include "CloudSyncService.h"
 
 using namespace std;
 
@@ -156,25 +158,154 @@ void DrawAppearanceSettings(Config& cfg) {
 }
 
 void DrawCloudSyncSettings(Config& cfg) {
+	const int configIndex = g_appState.currentConfigIndex;
+
 	ImGui::Checkbox(L("ENABLE_CLOUD_SYNC"), &cfg.cloudSyncEnabled);
 
-	ImGui::BeginDisabled(!cfg.cloudSyncEnabled);
-
-	char rclonePathBuf[256];
+	char rclonePathBuf[260];
 	strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
 	ImGui::Text("%s", L("RCLONE_PATH_LABEL"));
+	if (ImGui::Button(L("BUTTON_SELECT_RCLONE"))) {
+		wstring selected = SelectFileDialog();
+		if (!selected.empty()) {
+			cfg.rclonePath = selected;
+			strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
+		}
+	}
+	ImGui::SameLine();
 	ImGui::SetNextItemWidth(-1);
-	ImGui::InputText("##RclonePath", rclonePathBuf, 256);
-	cfg.rclonePath = utf8_to_wstring(rclonePathBuf);
+	if (ImGui::InputText("##RclonePath", rclonePathBuf, sizeof(rclonePathBuf))) {
+		cfg.rclonePath = utf8_to_wstring(rclonePathBuf);
+	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_PATH"));
 
-	char remotePathBuf[256];
+	char remotePathBuf[260];
 	strncpy_s(remotePathBuf, wstring_to_utf8(cfg.rcloneRemotePath).c_str(), sizeof(remotePathBuf));
 	ImGui::Text("%s", L("RCLONE_REMOTE_PATH_LABEL"));
 	ImGui::SetNextItemWidth(-1);
-	ImGui::InputText("##RemotePath", remotePathBuf, 256);
-	cfg.rcloneRemotePath = utf8_to_wstring(remotePathBuf);
+	if (ImGui::InputText("##RemotePath", remotePathBuf, sizeof(remotePathBuf))) {
+		cfg.rcloneRemotePath = utf8_to_wstring(remotePathBuf);
+	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_REMOTE_PATH"));
 
-	ImGui::EndDisabled();
+	char workDirBuf[260];
+	strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));
+	ImGui::Text("%s", L("CLOUD_WORKDIR_LABEL"));
+	if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
+		wstring selected = SelectFolderDialog();
+		if (!selected.empty()) {
+			cfg.cloudWorkingDirectory = selected;
+			strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));
+		}
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(-1);
+	if (ImGui::InputText("##CloudWorkDir", workDirBuf, sizeof(workDirBuf))) {
+		cfg.cloudWorkingDirectory = utf8_to_wstring(workDirBuf);
+	}
+
+	const char* syncModes[] = {
+		L("CLOUD_MODE_HISTORY_ONLY"),
+		L("CLOUD_MODE_HISTORY_AND_BACKUPS")
+	};
+	ImGui::Text("%s", L("CLOUD_SYNC_MODE_LABEL"));
+	ImGui::SetNextItemWidth(260);
+	ImGui::Combo("##CloudSyncMode", &cfg.cloudSyncMode, syncModes, IM_ARRAYSIZE(syncModes));
+
+	ImGui::SetNextItemWidth(160);
+	ImGui::InputInt(L("CLOUD_TIMEOUT_SECONDS"), &cfg.cloudTimeoutSeconds);
+	if (cfg.cloudTimeoutSeconds < 10) cfg.cloudTimeoutSeconds = 10;
+	ImGui::SetNextItemWidth(160);
+	ImGui::InputInt(L("CLOUD_RETRY_COUNT"), &cfg.cloudRetryCount);
+	if (cfg.cloudRetryCount < 0) cfg.cloudRetryCount = 0;
+	if (cfg.cloudRetryCount > 5) cfg.cloudRetryCount = 5;
+
+	ImGui::Checkbox(L("CLOUD_SYNC_HISTORY_AFTER_UPLOAD"), &cfg.cloudSyncHistoryAfterUpload);
+	ImGui::Checkbox(L("CLOUD_AUTO_DOWNLOAD_BEFORE_RESTORE"), &cfg.cloudAutoDownloadBeforeRestore);
+
+	ImGui::Spacing();
+	ImGui::SeparatorText(L("CLOUD_STATUS_HEADER"));
+	{
+		lock_guard<mutex> cloudLock(g_appState.cloudTask.mutex);
+		ImGui::Text("%s", L("CLOUD_LAST_STATUS"));
+		ImGui::SameLine();
+		ImGui::TextWrapped("%s", g_appState.cloudTask.statusText.empty()
+			? L("CLOUD_STATUS_IDLE")
+			: wstring_to_utf8(g_appState.cloudTask.statusText).c_str());
+		ImGui::Text("%s", L("CLOUD_LAST_MESSAGE"));
+		ImGui::SameLine();
+		ImGui::TextWrapped("%s", g_appState.cloudTask.lastMessage.empty()
+			? L("CLOUD_STATUS_NONE")
+			: wstring_to_utf8(g_appState.cloudTask.lastMessage).c_str());
+	}
+	ImGui::Text("%s", L("CLOUD_LAST_RUN_LABEL"));
+	ImGui::SameLine();
+	ImGui::TextWrapped("%s", cfg.cloudLastRunUtc.empty() ? L("CLOUD_STATUS_NONE") : wstring_to_utf8(cfg.cloudLastRunUtc).c_str());
+	ImGui::Text("%s", L("CLOUD_LAST_EXIT_CODE_LABEL"));
+	ImGui::SameLine();
+	ImGui::Text("%d", cfg.cloudLastExitCode);
+	if (!cfg.cloudLastErrorMessage.empty()) {
+		ImGui::TextWrapped("%s", wstring_to_utf8(cfg.cloudLastErrorMessage).c_str());
+	}
+
+	ImGui::Spacing();
+	ImGui::SeparatorText(L("CLOUD_ACTIONS_HEADER"));
+	const bool canRunCloudActions = CanUseCloudActions(cfg);
+	if (!canRunCloudActions) ImGui::BeginDisabled();
+	if (ImGui::Button(L("CLOUD_ANALYZE_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy, configIndex]() {
+			AnalyzeCloudHistory(configCopy, configIndex, console);
+		}).detach();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("CLOUD_SYNC_HISTORY_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy, configIndex]() {
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly, console);
+		}).detach();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("CLOUD_SYNC_ALL_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy, configIndex]() {
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups, console);
+		}).detach();
+	}
+
+	if (ImGui::Button(L("CLOUD_UPLOAD_HISTORY_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy, configIndex]() {
+			UploadConfigurationHistorySnapshot(configCopy, configIndex, console);
+		}).detach();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("CLOUD_EXPORT_CONFIG_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy]() {
+			ExportConfigToCloud(configCopy, console);
+		}).detach();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("CLOUD_IMPORT_CONFIG_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy]() {
+			ImportConfigFromCloud(configCopy, console);
+		}).detach();
+	}
+
+	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy, configIndex]() {
+			ExportHistoryToCloud(configCopy, configIndex, console);
+		}).detach();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("CLOUD_IMPORT_HISTORY_BUTTON"))) {
+		const Config configCopy = cfg;
+		thread([configCopy, configIndex]() {
+			ImportHistoryFromCloud(configCopy, configIndex, true, console);
+		}).detach();
+	}
+	if (!canRunCloudActions) ImGui::EndDisabled();
 }

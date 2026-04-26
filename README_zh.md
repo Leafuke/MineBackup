@@ -13,8 +13,6 @@
 
 **写在前面**：
 
-1.14.0 版本存在许多**破坏性更改**，升级到这个版本后，务必点击“工具”菜单栏中的“核心功能自动校验”来验证当前版本在你的电脑上能正常运行。并且，非常建议进行几次备份和还原测试，确保一切正常后再正式使用。
-
 针对 Windows10 以上的用户，建议优先考虑 [FolderRewind](https://github.com/Leafuke/FolderRewind) + [MineRewind插件](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft) 的组合——[二代时光机](https://github.com/Leafuke/FolderRewind)具有更现代的UI和更强大的功能，并且是将来主要的维护对象。不过考虑到已经有不少用户在使用它，所以我会继续维护 MineBackup，修复一些关键的 bug 和安全问题，但往往会滞后于二代时光机。
 
 ---
@@ -94,25 +92,6 @@ cd MineBackup
 
 ---
 
-## 代码签名策略
-
-<table>
-  <tr>
-    <td>
-      <img alt="SignPath" src="https://signpath.org/assets/favicon-50x50.png" />
-    </td>
-    <td>
-    Free code signing on Windows provided by <a href="https://signpath.io">SignPath.io</a>, certficate by <a href="https://signpath.org/">SignPath Foundation</a>
-    </td>
-  </tr> 
-</table>
-
-- 由 [SignPath.io](https://about.signpath.io/) 提供免费代码签名，由 [SignPath Foundation](https://signpath.org/) 提供证书。
-- 提交者和审阅者：[团队成员](https://github.com/Leafuke/MineBackup/graphs/contributors)
-- 审批人：[Leafuke](https://github.com/Leafuke)
-
----
-
 ## 🤝 贡献与支持
 
 * **报告问题 / 提交建议**：[GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
@@ -123,10 +102,11 @@ cd MineBackup
 
 ## 📄 项目依赖
 
-* [**7-Zip**](https://github.com/ip7z/7zip) — 压缩核心（7z.exe）
+* [**7-Zip**](https://github.com/ip7z/7zip) — 压缩核心
+* [**7-Zip-zstd**](https://github.com/mcmilk/7-Zip-zstd) - Zstd 压缩支持
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI 框架
 * [**stb**](https://github.com/nothings/stb) — 图片加载
-* [**KnotLink**](https://github.com/hxh230802/KnotLink) — 程序间消息通信框架
+* [**KnotLink**](https://github.com/hxh230802/KnotLink) — 程序间消息通信框架，由 @hxh230802 开发
 * [**Font-Awesome**](https://github.com/FortAwesome/Font-Awesome) - Icons
 
 ---

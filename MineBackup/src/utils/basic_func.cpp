@@ -100,7 +100,7 @@ vector<filesystem::path> GetChangedFiles(
 			lastState.emplace(utf8_to_wstring(key), state);
 		}
 	}
-	catch (const exception& e) {
+	catch (const exception&) {
 		// 元数据文件损坏或格式错误
 		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
 		// 同样需要扫描所有文件
@@ -211,6 +211,39 @@ string find_json_value(const string& json, const string& key) {
 	return json.substr(start_pos, end_pos - start_pos);
 }
 
+static wstring ToLowerSlash(wstring value) {
+	transform(value.begin(), value.end(), value.begin(), ::towlower);
+	replace(value.begin(), value.end(), L'\\', L'/');
+	return value;
+}
+
+static void TrimTrailingSlash(wstring& value) {
+	while (!value.empty() && (value.back() == L'/' || value.back() == L'\\')) {
+		value.pop_back();
+	}
+}
+
+static bool PathEqualsOrUnder(const wstring& path, const wstring& rule) {
+	if (rule.empty()) return false;
+	if (path == rule) return true;
+	return path.size() > rule.size()
+		&& path.rfind(rule, 0) == 0
+		&& path[rule.size()] == L'/';
+}
+
+static bool PathHasSegment(const wstring& path, const wstring& segment) {
+	if (segment.empty() || segment.find(L'/') != wstring::npos) return false;
+	size_t start = 0;
+	while (start <= path.size()) {
+		size_t end = path.find(L'/', start);
+		wstring current = path.substr(start, end == wstring::npos ? wstring::npos : end - start);
+		if (current == segment) return true;
+		if (end == wstring::npos) break;
+		start = end + 1;
+	}
+	return false;
+}
+
 /**
  * @brief 检查文件路径是否符合黑名单规则（支持普通字符串和正则表达式）
  * @param file_to_check 待检查的文件的完整路径
@@ -226,15 +259,14 @@ bool is_blacklisted(
 	const filesystem::path& original_world_root,
 	const vector<wstring>& blacklist)
 {
-	// 将路径转换为小写以进行不区分大小写的字符串比较
-	wstring file_path_lower = file_to_check.wstring();
-	transform(file_path_lower.begin(), file_path_lower.end(), file_path_lower.begin(), ::towlower);
+	// 普通规则按路径段/相对路径匹配，避免父路径或 -Temp 目录名造成误命中。
+	wstring file_path_lower = ToLowerSlash(file_to_check.wstring());
 
 	// 获取相对于当前备份源的相对路径
 	error_code ec;
 	filesystem::path relative_path_obj = filesystem::relative(file_to_check, backup_source_root, ec);
-	wstring relative_path_lower = ec ? L"" : relative_path_obj.wstring();
-	transform(relative_path_lower.begin(), relative_path_lower.end(), relative_path_lower.begin(), ::towlower);
+	wstring relative_path_lower = ec ? L"" : ToLowerSlash(relative_path_obj.wstring());
+	wstring file_name_lower = ToLowerSlash(file_to_check.filename().wstring());
 
 
 	for (const auto& rule_orig : blacklist) {
@@ -252,33 +284,38 @@ bool is_blacklisted(
 					return true;
 				}
 			}
-			catch (const regex_error& e) {
+			catch (const regex_error&) {
 				//console.AddLog("[Error] Invalid regex in blacklist: %s. Error: %s", wstring_to_utf8(rule_orig).c_str(), e.what());
 			}
 		}
 		else { // 普通字符串规则
-			// 规则可能是绝对路径或相对路径片段
-			// 1. 检查是否直接匹配完整路径
-			if (file_path_lower.find(rule) != wstring::npos) {
+			replace(rule.begin(), rule.end(), L'\\', L'/');
+			TrimTrailingSlash(rule);
+
+			if (file_name_lower == rule || PathEqualsOrUnder(relative_path_lower, rule) || PathHasSegment(relative_path_lower, rule)) {
 				return true;
 			}
 
-			// 2. 为了处理热备份，如果规则是绝对路径，我们需要将其动态映射到快照路径
+			// 如果规则是绝对路径，同时支持当前源路径和从原世界路径映射后的源路径。
 			filesystem::path rule_path(rule_orig);
 			if (rule_path.is_absolute()) {
+				wstring rule_path_lower = ToLowerSlash(rule_path.wstring());
+				TrimTrailingSlash(rule_path_lower);
+				if (PathEqualsOrUnder(file_path_lower, rule_path_lower)) {
+					return true;
+				}
+
 				// 检查规则路径是否在原始世界路径之下
 				auto res = mismatch(original_world_root.begin(), original_world_root.end(), rule_path.begin());
 				if (res.first == original_world_root.end()) {
-					// 是的，规则是原始世界的一个子路径。现在我们构建它在快照中的对应路径。
 					error_code rel_ec;
 					filesystem::path rule_relative_to_world = filesystem::relative(rule_path, original_world_root, rel_ec);
 					if (!rel_ec) {
 						filesystem::path remapped_rule_path = backup_source_root / rule_relative_to_world;
-						wstring remapped_rule_lower = remapped_rule_path.wstring();
-						transform(remapped_rule_lower.begin(), remapped_rule_lower.end(), remapped_rule_lower.begin(), ::towlower);
+						wstring remapped_rule_lower = ToLowerSlash(remapped_rule_path.wstring());
+						TrimTrailingSlash(remapped_rule_lower);
 
-						// 检查文件是否位于重映射后的黑名单路径下
-						if (file_path_lower.rfind(remapped_rule_lower, 0) == 0) {
+						if (PathEqualsOrUnder(file_path_lower, remapped_rule_lower)) {
 							return true;
 						}
 					}

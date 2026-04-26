@@ -93,24 +93,6 @@ cd MineBackup
 
 ````
 
----
-
-## Code signing policy
-
-<table>
-  <tr>
-    <td>
-      <img alt="SignPath" src="https://signpath.org/assets/favicon-50x50.png" />
-    </td>
-    <td>
-    Free code signing on Windows provided by <a href="https://signpath.io">SignPath.io</a>, certficate by <a href="https://signpath.org/">SignPath Foundation</a>
-    </td>
-  </tr> 
-</table>
-
-- Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-- Committers and reviewers: [Members team](https://github.com/Leafuke/MineBackup/graphs/contributors)
-- Approvers: [Leafuke](https://github.com/Leafuke)
 
 ---
 
@@ -124,7 +106,8 @@ cd MineBackup
 
 ## 📄 Project References
 
-* [**7-Zip**](https://github.com/ip7z/7zip) — Compression core (7z.exe)
+* [**7-Zip**](https://github.com/ip7z/7zip) — Compression core
+* [**7-Zip-zstd**](https://github.com/mcmilk/7-Zip-zstd) - Zstd support
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI framework
 * [**stb**](https://github.com/nothings/stb) — Image loading
 * [**KnotLink**](https://github.com/hxh230802/KnotLink) — Lightweight inter-process messaging

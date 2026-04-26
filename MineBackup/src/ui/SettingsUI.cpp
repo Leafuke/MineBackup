@@ -1,10 +1,11 @@
-#include "SettingsUI.h"
+﻿#include "SettingsUI.h"
 #include "SettingsUIPrivate.h"
 
 using namespace std;
 
 void ShowSettingsWindowV2() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
+    bool canSaveSettings = true;
     
     if (!ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_NoDocking)) {
         ImGui::End();
@@ -35,6 +36,7 @@ void ShowSettingsWindowV2() {
             g_appState.currentConfigIndex = g_appState.configs.begin()->first;
         }
         Config& cfg = g_appState.configs[g_appState.currentConfigIndex];
+        canSaveSettings = IsWEIntegrationPathValidForSave(cfg);
 
         // 配置名称
         char nameBuf[128];
@@ -84,6 +86,13 @@ void ShowSettingsWindowV2() {
                 ImGui::EndTabItem();
             }
 
+            // 模组联动
+            if (ImGui::BeginTabItem(L("TAB_MOD_INTEGRATION"))) {
+                ImGui::Spacing();
+                DrawModIntegrationSettings(cfg);
+                ImGui::EndTabItem();
+            }
+
             // 外观
             if (ImGui::BeginTabItem(L("TAB_APPEARANCE"))) {
                 ImGui::Spacing();
@@ -93,17 +102,25 @@ void ShowSettingsWindowV2() {
 
             ImGui::EndTabBar();
         }
+
+        canSaveSettings = IsWEIntegrationPathValidForSave(cfg);
     }
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
+    if (!canSaveSettings) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", L("ERROR_NON_ASCII_PATH"));
+    }
+
     // 保存按钮
+    if (!canSaveSettings) ImGui::BeginDisabled();
     if (ImGui::Button(L("BUTTON_SAVE_AND_CLOSE"), ImVec2(CalcButtonWidth(L("BUTTON_SAVE_AND_CLOSE")), 0))) {
         SaveConfigs();
         showSettings = false;
     }
+    if (!canSaveSettings) ImGui::EndDisabled();
 
     ImGui::End();
 }

@@ -1,4 +1,4 @@
-static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
+﻿static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
 	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
 	for (const auto& backup : archives) {
 		wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + backup.wstring() + L"\" -y";
@@ -320,7 +320,8 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		if (safeWorkspacePrepared) {
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, restoreWhitelist, workspaceError)) {
+			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
+			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
 				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
@@ -354,12 +355,15 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		return false;
 	}
 
-	auto failRestore = [&](const string& reason, const string& message = string()) {
+	auto failRestoreWithMessage = [&](const string& reason, const string& message) {
 		if (!message.empty()) {
 			console.AddLog("[Error] %s", message.c_str());
 		}
 		BroadcastEvent("event=restore_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
 		return false;
+	};
+	auto failRestore = [&](const string& reason) {
+		return failRestoreWithMessage(reason, string{});
 	};
 
 	console.AddLog(L("LOG_RESTORE_START_HEADER"));
@@ -374,6 +378,17 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 
 	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
 	filesystem::path targetBackupPath = sourceDir / backupFile;
+	const int resolvedConfigIndex = ResolveConfigIndexForCloud(config);
+	HistoryEntry targetHistoryEntry;
+	const bool hasHistoryEntry = resolvedConfigIndex >= 0
+		&& TryGetHistoryEntry(resolvedConfigIndex, worldName, backupFile, targetHistoryEntry);
+
+	// 云存档补链发生在本地存在性校验之前：
+	// 这样本地缺包、增量链缺失元数据时，都可以先尝试从云端补齐。
+	if (hasHistoryEntry && config.cloudAutoDownloadBeforeRestore) {
+		EnsureRestoreChainAvailable(config, resolvedConfigIndex, targetHistoryEntry, console);
+	}
+
 	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(targetBackupPath)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return failRestore("backup_not_found");
@@ -487,7 +502,8 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		if (safeWorkspacePrepared) {
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, restoreWhitelist, workspaceError)) {
+			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
+			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
 				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}

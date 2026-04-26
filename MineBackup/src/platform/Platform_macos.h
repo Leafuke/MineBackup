@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #ifndef _PLATFORM_MACOS_H
 #define _PLATFORM_MACOS_H
 #include <iostream>
 #include <string>
 #include <filesystem>
 
-class Console;
+struct Console;
 
 void CheckForUpdatesThread();
 std::wstring SelectFileDialog();
@@ -34,6 +34,7 @@ bool Extract7zToTempFile(std::wstring& extractedPath);
 bool ExtractFontToTempFile(std::wstring& extractedPath);
 bool IsFileLocked(const std::wstring& path);
 bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
+bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory = L"");
 void CheckForNoticesThread();
 
 #endif // !_PLATFORM_MACOS_H

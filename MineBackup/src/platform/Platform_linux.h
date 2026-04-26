@@ -5,7 +5,7 @@
 #include <string>
 #include <filesystem>
 
-class Console;
+struct Console;
 // Linux stub implementations used when building on non-Windows platforms.
 void CheckForUpdatesThread();
 std::wstring SelectFileDialog();
@@ -35,5 +35,6 @@ bool Extract7zToTempFile(std::wstring& extractedPath);
 bool ExtractFontToTempFile(std::wstring& extractedPath);
 bool IsFileLocked(const std::wstring& path);
 bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory = L"");
+bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory = L"");
 void CheckForNoticesThread();
 #endif // !_PLATFORM_LINUX_H

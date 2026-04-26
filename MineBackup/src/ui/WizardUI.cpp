@@ -1,4 +1,4 @@
-#include "Globals.h"
+﻿#include "Globals.h"
 #include "UIHelpers.h"
 #include "imgui-all.h"
 #include "imgui_style.h"
@@ -325,6 +325,8 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
 				initialConfig.backupPath = utf8_to_wstring(backupPath);
 				initialConfig.zipPath = utf8_to_wstring(zipPath);
+				EnsureDefaultBackupBlacklist(initialConfig.blacklist);
+				EnsureDefaultRestoreWhitelist();
 #ifndef _WIN32
 				replace(initialConfig.saveRoot.begin(), initialConfig.saveRoot.end(), L'\\', L'/');
 				replace(initialConfig.backupPath.begin(), initialConfig.backupPath.end(), L'\\', L'/');
@@ -375,7 +377,6 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				initialConfig.zipLevel = 5;
 				initialConfig.keepCount = 0;
 				initialConfig.backupMode = 1;
-				initialConfig.hotBackup = true;
 				initialConfig.backupBefore = false;
 				initialConfig.skipIfUnchanged = true;
 				initialConfig.theme = themeId;

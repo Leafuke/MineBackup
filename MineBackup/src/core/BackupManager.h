@@ -39,6 +39,14 @@ bool DoRestore(const Config& config, const std::wstring& worldName, const std::w
 void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, const std::wstring& backupFile = L"");
 void DoOthersBackup(const Config& config, std::filesystem::path backupWhat, const std::wstring& comment, Console& console);
 void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, std::atomic<bool>& stop_flag);
+
+enum class BackupDeleteMode {
+	HistoryOnly = 0,
+	LocalArchiveOnly = 1,
+	LocalArchiveAndHistory = 2
+};
+
+void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelete, int configIndex, BackupDeleteMode mode, bool useSafeDelete, Console& console);
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console);
 void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console);
 void AddBackupToWESnapshots(const Config& config, const std::wstring& worldName, const std::wstring& backupFile, Console& console);
