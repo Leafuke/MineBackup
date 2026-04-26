@@ -529,7 +529,6 @@ std::vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 			if (sp.keepCount > 0) dw.effectiveConfig.keepCount = sp.keepCount;
 			if (sp.cpuThreads > 0) dw.effectiveConfig.cpuThreads = sp.cpuThreads;
 			dw.effectiveConfig.useLowPriority = sp.useLowPriority;
-			dw.effectiveConfig.hotBackup = sp.hotBackup;
 			dw.effectiveConfig.blacklist = sp.blacklist;
 
 			out.push_back(dw);
@@ -555,7 +554,6 @@ std::vector<DisplayWorld> BuildDisplayWorldsForSelection() {
 		if (sp.keepCount > 0) dw.effectiveConfig.keepCount = sp.keepCount;
 		if (sp.cpuThreads > 0) dw.effectiveConfig.cpuThreads = sp.cpuThreads;
 		dw.effectiveConfig.useLowPriority = sp.useLowPriority;
-		dw.effectiveConfig.hotBackup = sp.hotBackup;
 		dw.effectiveConfig.blacklist = sp.blacklist;
 
 		out.push_back(dw);

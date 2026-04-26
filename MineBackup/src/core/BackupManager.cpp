@@ -7,6 +7,7 @@
 #include "Console.h"
 #include "HistoryManager.h"
 #include "CloudSyncService.h"
+#include "ConfigManager.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -17,6 +18,7 @@
 #include <unordered_map>
 #include <cwctype>
 #include <set>
+#include <regex>
 using namespace std;
 
 enum class FolderState {
@@ -721,34 +723,80 @@ namespace {
 		return false;
 	}
 
+	static wstring ToLowerSlash(wstring value) {
+		transform(value.begin(), value.end(), value.begin(), ::towlower);
+		replace(value.begin(), value.end(), L'\\', L'/');
+		return value;
+	}
+
+	static void TrimTrailingSlash(wstring& value) {
+		while (!value.empty() && (value.back() == L'/' || value.back() == L'\\')) {
+			value.pop_back();
+		}
+	}
+
+	static bool PathEqualsOrUnder(const wstring& path, const wstring& rule) {
+		if (rule.empty()) return false;
+		if (path == rule) return true;
+		return path.size() > rule.size()
+			&& path.rfind(rule, 0) == 0
+			&& path[rule.size()] == L'/';
+	}
+
+	static bool PathHasSegment(const wstring& path, const wstring& segment) {
+		if (segment.empty() || segment.find(L'/') != wstring::npos) return false;
+		size_t start = 0;
+		while (start <= path.size()) {
+			size_t end = path.find(L'/', start);
+			wstring current = path.substr(start, end == wstring::npos ? wstring::npos : end - start);
+			if (current == segment) return true;
+			if (end == wstring::npos) break;
+			start = end + 1;
+		}
+		return false;
+	}
+
 	static bool IsInRestoreWhitelist(const filesystem::path& entryPath, const filesystem::path& rootDir, const vector<wstring>& whitelist) {
-		wstring entryName = entryPath.filename().wstring();
-		wstring entryPathLower = entryPath.wstring();
-		transform(entryPathLower.begin(), entryPathLower.end(), entryPathLower.begin(), ::towlower);
+		wstring entryNameLower = ToLowerSlash(entryPath.filename().wstring());
+		wstring entryPathLower = ToLowerSlash(entryPath.wstring());
 
 		wstring relativePathLower;
 		error_code ec;
 		filesystem::path relativePath = filesystem::relative(entryPath, rootDir, ec);
 		if (!ec) {
-			relativePathLower = relativePath.wstring();
-			transform(relativePathLower.begin(), relativePathLower.end(), relativePathLower.begin(), ::towlower);
+			relativePathLower = ToLowerSlash(relativePath.wstring());
 		}
 
 		for (const auto& ruleOrig : whitelist) {
 			if (ruleOrig.empty()) continue;
-			wstring rule = ruleOrig;
-			transform(rule.begin(), rule.end(), rule.begin(), ::towlower);
+			if (ruleOrig.rfind(L"regex:", 0) == 0) {
+				try {
+					wregex pattern(ruleOrig.substr(6), regex_constants::icase | regex_constants::ECMAScript);
+					if (regex_search(entryPath.wstring(), pattern) ||
+						(!relativePath.empty() && regex_search(relativePath.wstring(), pattern))) {
+						return true;
+					}
+				}
+				catch (const regex_error&) {
+				}
+				continue;
+			}
 
-			if (!entryName.empty()) {
-				wstring entryNameLower = entryName;
-				transform(entryNameLower.begin(), entryNameLower.end(), entryNameLower.begin(), ::towlower);
-				if (entryNameLower == rule) {
+			wstring rule = ToLowerSlash(ruleOrig);
+			TrimTrailingSlash(rule);
+
+			if (entryNameLower == rule || PathEqualsOrUnder(relativePathLower, rule) || PathHasSegment(relativePathLower, rule)) {
+				return true;
+			}
+
+			filesystem::path rulePath(ruleOrig);
+			if (rulePath.is_absolute()) {
+				wstring rulePathLower = ToLowerSlash(rulePath.wstring());
+				TrimTrailingSlash(rulePathLower);
+				if (PathEqualsOrUnder(entryPathLower, rulePathLower)) {
 					return true;
 				}
 			}
-
-			if (entryPathLower.find(rule) != wstring::npos) return true;
-			if (!relativePathLower.empty() && relativePathLower.find(rule) != wstring::npos) return true;
 		}
 		return false;
 	}
@@ -1226,7 +1274,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 	// 检测到 level.dat 被锁定，启用热备份握手并依赖 7z -ssw 直接从原世界路径压缩
 
-    if (config.hotBackup || IsFileLocked(sourcePath + L"/level.dat")) {
+    if (IsFileLocked(sourcePath + L"/level.dat") || IsFileLocked(sourcePath + L"/session.lock")) {
         // 在热备份前，先检查联动模组是否存在
         bool modAvailable = PerformModHandshake("backup", wstring_to_utf8(folder.name));
 
@@ -1263,7 +1311,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         }
 		console.AddLog("[Info] Snapshot copy is disabled. Using 7-Zip -ssw to back up from live world files.");
-    }
+	}
 
     bool forceFullBackup = true;
     if (filesystem::exists(destinationFolder)) {

@@ -671,6 +671,7 @@ int main(int argc, char** argv)
 				g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
 				g_appState.configs[index].saveRoot = (entry.path() / "saves").wstring();
 				g_appState.configs[index].worlds.clear();
+				EnsureDefaultBackupBlacklist(g_appState.configs[index].blacklist);
 			}
 		}
 	}
@@ -1207,6 +1208,12 @@ int main(int argc, char** argv)
 					OpenLinkInBrowser(L"https://github.com/Leafuke/FolderRewind");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_FOLDERREWIND_TIP"));
+				if (ImGui::Button(L("ABOUT_VISIT_MINEBACKUP-MOD")))
+				{
+					OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+				}
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_MINEBACKUP-MOD_TIP"));	
+				
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				ImGui::Text(L("ABOUT_QQ_GROUP"));
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1452,6 +1459,8 @@ int main(int argc, char** argv)
 									g_appState.configs[new_index].saveRoot.clear();
 									g_appState.configs[new_index].backupPath.clear();
 									g_appState.configs[new_index].worlds.clear();
+									EnsureDefaultBackupBlacklist(g_appState.configs[new_index].blacklist);
+									EnsureDefaultRestoreWhitelist();
 								}
 								g_appState.currentConfigIndex = new_index;
 								specialSetting = false;
@@ -2100,7 +2109,7 @@ int main(int argc, char** argv)
 			}
 			ImGui::End();
 
-			if (ImGui::Begin(L("CONSOLE_TITLE"))) {
+			if (ImGui::Begin(L("CONSOLE_TITLE"), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 				console.DrawEmbedded();
 			}
 			ImGui::End();

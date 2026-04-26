@@ -1,4 +1,4 @@
-#include "CoreValidation.h"
+﻿#include "CoreValidation.h"
 
 #include "BackupManager.h"
 #include "ConfigManager.h"
@@ -188,7 +188,6 @@ namespace {
 		cfg.maxSmartBackupsPerFull = max(3, templateConfig.maxSmartBackupsPerFull);
 		cfg.backupMode = backupMode;
 		cfg.keepCount = keepCount;
-		cfg.hotBackup = false;
 		cfg.backupBefore = false;
 		cfg.blacklist.clear();
 		cfg.worlds = {

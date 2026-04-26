@@ -107,10 +107,9 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		}
 		const auto& cfg = g_appState.configs[config_idx];
 		BroadcastEvent("event=get_config;config=" + to_string(config_idx) + ";name=" + cfg.name +
-			";backup_mode=" + to_string(cfg.backupMode) + ";hot_backup=" + (cfg.hotBackup ? "true" : "false") +
-			";keep_count=" + to_string(cfg.keepCount));
+			";backup_mode=" + to_string(cfg.backupMode) + ";keep_count=" + to_string(cfg.keepCount));
 		return "OK:name=" + cfg.name + ";backup_mode=" + to_string(cfg.backupMode) +
-			";hot_backup=" + (cfg.hotBackup ? "true" : "false") + ";keep_count=" + to_string(cfg.keepCount);
+			";keep_count=" + to_string(cfg.keepCount);
 	}
 	else if (command == "SET_CONFIG") {
 		int config_idx;
@@ -124,7 +123,6 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		string response_msg = "OK:Set " + key + " to " + value;
 
 		if (key == "backup_mode") cfg.backupMode = stoi(value);
-		else if (key == "hot_backup") cfg.hotBackup = (value == "true");
 		else return "ERROR:Unknown key '" + key + "'.";
 
 		SaveConfigs(); // 保存更改

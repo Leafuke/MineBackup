@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <algorithm>
 using namespace std;
 
 static wstring GetDefaultFontPath() {
@@ -79,10 +80,62 @@ static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 
 bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
 
+static bool ContainsRuleIgnoreCase(const vector<wstring>& rules, const wstring& rule) {
+	return any_of(rules.begin(), rules.end(), [&](const wstring& item) {
+		return _wcsicmp(item.c_str(), rule.c_str()) == 0;
+		});
+}
+
+vector<wstring> DefaultBackupBlacklist() {
+	return {
+		L"session.lock",
+		L"voxy",
+		L"DistantHorizons.sqlite",
+		L"DistantHorizons.sqlite-shm",
+		L"DistantHorizons.sqlite-wal"
+	};
+}
+
+vector<wstring> DefaultRestoreWhitelist() {
+	return {
+		L"session.lock",
+		L"xaeromap.txt",
+		L"soul_archive.json",
+		L"voxy",
+		L"DistantHorizons.sqlite",
+		L"DistantHorizons.sqlite-shm",
+		L"DistantHorizons.sqlite-wal"
+	};
+}
+
+void EnsureDefaultBackupBlacklist(vector<wstring>& blacklist) {
+	for (const auto& item : DefaultBackupBlacklist()) {
+		if (!ContainsRuleIgnoreCase(blacklist, item)) {
+			blacklist.push_back(item);
+		}
+	}
+}
+
+void EnsureDefaultRestoreWhitelist() {
+	if (!restoreWhitelist.empty() && ContainsRuleIgnoreCase(restoreWhitelist, L"session.lock")) return;
+	restoreWhitelist = DefaultRestoreWhitelist();
+}
+
+vector<wstring> BuildEffectiveRestoreWhitelist(const vector<wstring>& userWhitelist) {
+	vector<wstring> effective = userWhitelist;
+	// session.lock 不能被还原覆盖；UI 可移除显示项，但运行时始终保护它。
+	if (!ContainsRuleIgnoreCase(effective, L"session.lock")) {
+		effective.push_back(L"session.lock");
+	}
+	return effective;
+}
+
 int CreateNewSpecialConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	SpecialConfig sp;
 	sp.name = name_hint;
+	EnsureDefaultBackupBlacklist(sp.blacklist);
+	EnsureDefaultRestoreWhitelist();
 	g_appState.specialConfigs[newId] = sp;
 	return newId;
 }
@@ -95,7 +148,8 @@ int CreateNewNormalConfig(const string& name_hint) {
 	new_cfg.saveRoot.clear();
 	new_cfg.backupPath.clear();
 	new_cfg.worlds.clear();
-	// 其他默认值可在此设置
+	EnsureDefaultBackupBlacklist(new_cfg.blacklist);
+	EnsureDefaultRestoreWhitelist();
 	g_appState.configs[newId] = new_cfg;
 	return newId;
 }
@@ -104,6 +158,7 @@ void LoadConfigs(const string& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
+	restoreWhitelist.clear();
 	ifstream in(filename.c_str(), ios::binary);
 	if (!in.is_open()) return;
 	string line1;
@@ -111,7 +166,6 @@ void LoadConfigs(const string& filename) {
 	// cur作为一个指针，指向 g_appState.configs 这个全局 map<int, Config> 中的元素 Config
 	Config* cur = nullptr;
 	SpecialConfig* spCur = nullptr;
-	bool restoreWhiteList = false;
 
 	while (getline(in, line1)) {
 		line = utf8_to_wstring(line1);
@@ -166,9 +220,7 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"KeepCount") cur->keepCount = stoi(val);
 				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
-				else if (key == L"HotBackup") cur->hotBackup = (val != L"0");
 				else if (key == L"SilenceMode") isSilence = (val != L"0");
-				else if (key == L"BackupNaming") cur->folderNameType = stoi(val);
 				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
@@ -235,7 +287,6 @@ void LoadConfigs(const string& filename) {
 				else if (key == L"KeepCount") spCur->keepCount = stoi(val);
 				else if (key == L"CpuThreads") spCur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") spCur->useLowPriority = (val != L"0");
-				else if (key == L"HotBackup") spCur->hotBackup = (val != L"0");
 				else if (key == L"BackupOnStart") spCur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
 				// 新版统一任务系统
@@ -316,7 +367,6 @@ void LoadConfigs(const string& filename) {
 					g_SilentStartupToTray = (val != L"0");
 				}
 				else if (key == L"RestoreWhitelistItem") {
-					restoreWhiteList = true;
 					restoreWhitelist.push_back(val);
 				}
 				else if (key == L"WindowWidth") {
@@ -359,14 +409,6 @@ void LoadConfigs(const string& filename) {
 			}
 		}
 	}
-	if (!restoreWhiteList) {
-		restoreWhitelist.push_back(L"fake_player.gca.json");
-		restoreWhitelist.push_back(L"xaeromap.txt");
-		restoreWhitelist.push_back(L"soul_archive.json");
-		restoreWhitelist.push_back(L"level.dat");
-		restoreWhitelist.push_back(L"level.dat_old");
-	}
-
 	for (auto& kv : g_appState.configs) {
 		Config& cfg = kv.second;
 		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
@@ -444,11 +486,9 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"KeepCount=" << c.keepCount << L"\n";
 		buffer << L"SmartBackup=" << c.backupMode << L"\n";
 		buffer << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
-		buffer << L"HotBackup=" << (c.hotBackup ? 1 : 0) << L"\n";
 		buffer << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		buffer << L"Theme=" << c.theme << L"\n";
 		buffer << L"Font=" << c.fontPath << L"\n";
-		buffer << L"BackupNaming=" << c.folderNameType << L"\n";
 		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		buffer << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		buffer << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
@@ -511,7 +551,6 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"KeepCount=" << sc.keepCount << L"\n";
 		buffer << L"CpuThreads=" << sc.cpuThreads << L"\n";
 		buffer << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
-		buffer << L"HotBackup=" << (sc.hotBackup ? 1 : 0) << L"\n";
 		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
 		buffer << L"Theme=" << sc.theme << L"\n";
 		// 服务模式配置

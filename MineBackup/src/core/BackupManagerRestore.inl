@@ -320,7 +320,8 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		if (safeWorkspacePrepared) {
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, restoreWhitelist, workspaceError)) {
+			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
+			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
 				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
@@ -501,7 +502,8 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		if (safeWorkspacePrepared) {
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, restoreWhitelist, workspaceError)) {
+			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
+			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
 				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}

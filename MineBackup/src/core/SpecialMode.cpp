@@ -116,7 +116,6 @@ void RunSpecialMode(int configId) {
 						}
 
 						// 合并特殊配置的参数
-						taskConfig.hotBackup = spCfg.hotBackup;
 						taskConfig.zipLevel = spCfg.zipLevel;
 						if (spCfg.keepCount > 0) taskConfig.keepCount = spCfg.keepCount;
 						if (spCfg.cpuThreads > 0) taskConfig.cpuThreads = spCfg.cpuThreads;
@@ -261,7 +260,6 @@ void RunSpecialMode(int configId) {
 			// 创建任务专用配置（合并基础配置和特殊设置）
 			Config taskConfig = g_appState.configs[task.configIndex];
 			const auto& worldData = taskConfig.worlds[task.worldIndex];
-			taskConfig.hotBackup = spCfg.hotBackup;
 			taskConfig.zipLevel = spCfg.zipLevel;
 			taskConfig.keepCount = spCfg.keepCount;
 			taskConfig.cpuThreads = spCfg.cpuThreads;

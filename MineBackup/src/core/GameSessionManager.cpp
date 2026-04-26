@@ -133,7 +133,6 @@ void GameSessionWatcherThread() {
 				auto cfgIt = g_appState.configs.find(config_idx);
 				if (cfgIt != g_appState.configs.end() && world_idx < cfgIt->second.worlds.size()) {
 					Config backupConfig = cfgIt->second;
-					backupConfig.hotBackup = true; // 必须热备份
 					MyFolder backupFolder = {
 						JoinPath(cfgIt->second.saveRoot, cfgIt->second.worlds[world_idx].first).wstring(),
 						cfgIt->second.worlds[world_idx].first,
@@ -160,9 +159,6 @@ void TriggerHotkeyBackup(string comment) {
 	MyFolder world = GetOccupiedWorld();
 	if (!world.path.empty()) {
 		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
-		console.AddLog(L("KNOTLINK_PRE_HOT_BACKUP"), world.config.name.c_str(), wstring_to_utf8(world.name).c_str());
-
-		world.config.hotBackup = true;
 
 		thread backup_thread(DoBackup, world, ref(console), utf8_to_wstring(comment));
 		backup_thread.detach();
