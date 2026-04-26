@@ -4,6 +4,7 @@
 #include "Console.h"
 #include "AppState.h"
 #include "Globals.h"
+#include "json.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -14,6 +15,9 @@
 #include <cstdio>
 #include <algorithm>
 #include <functional>
+#include <vector>
+#include <sstream>
+#include <cctype>
 #include <limits.h>
 #include <thread>
 #include <system_error>
@@ -22,6 +26,8 @@
 #include <mach-o/dyld.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <tuple>
+#include <cstdint>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -59,6 +65,135 @@ static string ExtractLocalizedContent(const string& content) {
 	}
 }
 
+static string ToLowerAscii(const string& value) {
+    string lowered = value;
+    for (char& ch : lowered) {
+        ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+    }
+    return lowered;
+}
+
+static string TrimAsciiWhitespace(const string& value) {
+    size_t begin = 0;
+    while (begin < value.size() && isspace(static_cast<unsigned char>(value[begin]))) {
+        ++begin;
+    }
+    size_t end = value.size();
+    while (end > begin && isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+    return value.substr(begin, end - begin);
+}
+
+static string NormalizeNoticeText(const string& value) {
+    string normalized;
+    normalized.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '\r') {
+            if (i + 1 < value.size() && value[i + 1] == '\n') {
+                ++i;
+            }
+            normalized.push_back('\n');
+        } else {
+            normalized.push_back(value[i]);
+        }
+    }
+    return TrimAsciiWhitespace(normalized);
+}
+
+static bool IsLikely404Body(const string& body) {
+    string lowered = ToLowerAscii(TrimAsciiWhitespace(body));
+    if (lowered.empty()) return true;
+    if (lowered == "404" || lowered == "404: not found" || lowered == "not found") return true;
+    if (lowered.find("<title>404") != string::npos) return true;
+    if (lowered.find("404 not found") != string::npos) return true;
+    if (lowered.find("error 404") != string::npos) return true;
+    return false;
+}
+
+static string BuildMirrorUrl(const string& directUrl) {
+    const string mirrorPrefix = "https://gh-proxy.org/";
+    if (directUrl.rfind(mirrorPrefix, 0) == 0) {
+        return directUrl;
+    }
+    return mirrorPrefix + directUrl;
+}
+
+static string BuildStableContentId(const string& text) {
+    uint64_t hash = 1469598103934665603ull;
+    for (unsigned char ch : text) {
+        hash ^= ch;
+        hash *= 1099511628211ull;
+    }
+    ostringstream oss;
+    oss << "notice-v1-" << hex << hash;
+    return oss.str();
+}
+
+static tuple<int, int, int, int> ParseVersionTuple(const string& ver) {
+    try {
+        size_t p1 = ver.find('.');
+        size_t p2 = (p1 != string::npos) ? ver.find('.', p1 + 1) : string::npos;
+        size_t p3 = ver.find('-');
+        if (p1 == string::npos || p2 == string::npos) return {0, 0, 0, 0};
+
+        int major = stoi(ver.substr(0, p1));
+        int minor = stoi(ver.substr(p1 + 1, p2 - p1 - 1));
+        int patch = (p3 == string::npos) ? stoi(ver.substr(p2 + 1)) : stoi(ver.substr(p2 + 1, p3 - p2 - 1));
+        int sp = 0;
+        if (p3 != string::npos) {
+            size_t spPos = ver.find("sp", p3);
+            if (spPos != string::npos) {
+                sp = stoi(ver.substr(spPos + 2));
+            }
+        }
+        return {major, minor, patch, sp};
+    } catch (...) {
+        return {0, 0, 0, 0};
+    }
+}
+
+static bool FetchHttpText(const string& url, string& outBody) {
+    outBody.clear();
+    string cmd = "curl -L -s --connect-timeout 8 --max-time 20 -w \"\\n%{http_code}\" -H 'User-Agent: MineBackup' '" + url + "' 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return false;
+
+    char buffer[4096];
+    string result;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
+    }
+    pclose(pipe);
+
+    size_t splitPos = result.rfind('\n');
+    if (splitPos == string::npos) return false;
+    string statusText = TrimAsciiWhitespace(result.substr(splitPos + 1));
+    string body = result.substr(0, splitPos);
+    if (statusText != "200") return false;
+
+    body = TrimAsciiWhitespace(body);
+    if (body.empty()) return false;
+    outBody = body;
+    return true;
+}
+
+static bool FetchWithMirrorFallback(const string& directUrl, bool reject404Body, string& outBody) {
+    vector<string> candidates = {directUrl, BuildMirrorUrl(directUrl)};
+    for (const string& candidate : candidates) {
+        string body;
+        if (!FetchHttpText(candidate, body)) {
+            continue;
+        }
+        if (reject404Body && IsLikely404Body(body)) {
+            continue;
+        }
+        outBody = body;
+        return true;
+    }
+    return false;
+}
+
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
     (void)iconType;
     std::string icon = "note";
@@ -81,45 +216,53 @@ void CheckForUpdatesThread() {
     g_NewVersionAvailable = false;
     g_LatestVersionStr.clear();
     g_ReleaseNotes.clear();
-    
-    std::string cmd = "curl -s -H 'User-Agent: MineBackup' https://api.github.com/repos/Leafuke/MineBackup/releases/latest 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (pipe) {
-        char buffer[4096];
-        std::string result;
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-            result += buffer;
+
+    const string apiUrl = "https://api.github.com/repos/Leafuke/MineBackup/releases/latest";
+    vector<string> candidates = {apiUrl, BuildMirrorUrl(apiUrl)};
+    for (const string& candidate : candidates) {
+        string body;
+        if (!FetchHttpText(candidate, body) || IsLikely404Body(body)) {
+            continue;
         }
-        pclose(pipe);
-        
-        size_t pos = result.find("\"tag_name\"");
-        if (pos != std::string::npos) {
-            pos = result.find(':', pos);
-            if (pos != std::string::npos) {
-                size_t start = result.find('"', pos + 1);
-                size_t end = result.find('"', start + 1);
-                if (start != std::string::npos && end != std::string::npos) {
-                    std::string version = result.substr(start + 1, end - start - 1);
-                    if (!version.empty() && version[0] == 'v') {
-                        version = version.substr(1);
-                    }
-                    if (version > CURRENT_VERSION) {
-                        g_LatestVersionStr = "v" + version;
-                        g_NewVersionAvailable = true;
-                        
-                        pos = result.find("\"body\"");
-                        if (pos != std::string::npos) {
-                            pos = result.find(':', pos);
-                            size_t noteStart = result.find('"', pos + 1);
-                            size_t noteEnd = result.find("\"}", noteStart + 1);
-                            if (noteStart != std::string::npos && noteEnd != std::string::npos) {
-                                std::string rawNotes = result.substr(noteStart + 1, noteEnd - noteStart - 1);
-                                g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
-                            }
-                        }
+
+        try {
+            nlohmann::json parsed = nlohmann::json::parse(body);
+            if (!parsed.contains("tag_name") || !parsed["tag_name"].is_string()) {
+                continue;
+            }
+
+            string version = parsed["tag_name"].get<string>();
+            if (!version.empty() && (version[0] == 'v' || version[0] == 'V')) {
+                version = version.substr(1);
+            }
+            if (version.empty()) {
+                continue;
+            }
+
+            if (ParseVersionTuple(version) > ParseVersionTuple(CURRENT_VERSION)) {
+                g_LatestVersionStr = "v" + version;
+                g_NewVersionAvailable = true;
+
+                string rawNotes;
+                if (parsed.contains("body") && parsed["body"].is_string()) {
+                    rawNotes = parsed["body"].get<string>();
+                }
+                for (size_t i = 0; i + 1 < rawNotes.size(); ++i) {
+                    if (rawNotes[i] == '#') {
+                        rawNotes[i] = ' ';
+                    } else if (rawNotes[i] == '\\' && rawNotes[i + 1] == 'n') {
+                        rawNotes[i] = '\n';
+                        rawNotes[i + 1] = ' ';
+                    } else if (rawNotes[i] == '\\') {
+                        rawNotes[i] = ' ';
+                        rawNotes[i + 1] = ' ';
                     }
                 }
+                g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
             }
+            break;
+        } catch (...) {
+            continue;
         }
     }
     
@@ -131,45 +274,26 @@ void CheckForNoticesThread() {
     g_NoticeContent.clear();
     g_NoticeUpdatedAt.clear();
     
-    std::string langSuffix = (g_CurrentLang == "zh_CN") ? "_zh" : "_en";
-    std::string langCmd = "curl -s https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice" + langSuffix + " 2>/dev/null";
-    
-    std::string result;
-    FILE* pipe = popen(langCmd.c_str(), "r");
-    if (pipe) {
-        char buffer[4096];
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-            result += buffer;
-        }
-        pclose(pipe);
-    }
-    
-    // 如果语言特定文件为空或获取失败,回退到原始 notice 文件
-    if (result.empty() || result.find("404") != std::string::npos) {
-        result.clear();
-        std::string fallbackCmd = "curl -s https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice 2>/dev/null";
-        pipe = popen(fallbackCmd.c_str(), "r");
-        if (pipe) {
-            char buffer[4096];
-            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-                result += buffer;
-            }
-            pclose(pipe);
-            
-            if (!result.empty()) {
-                result = ExtractLocalizedContent(result);
-            }
+    string langUrl = string("https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice") + ((g_CurrentLang == "zh_CN") ? "_zh" : "_en");
+    string fallbackUrl = "https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice";
+
+    string result;
+    bool fromFallback = false;
+    if (!FetchWithMirrorFallback(langUrl, true, result)) {
+        if (FetchWithMirrorFallback(fallbackUrl, true, result)) {
+            fromFallback = true;
         }
     }
-    
+
     if (!result.empty()) {
-        // Use content hash as version identifier
-        std::hash<std::string> hasher;
-        g_NoticeUpdatedAt = std::to_string(hasher(result));
-        
-        if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
-            g_NoticeContent = result;
-            g_NewNoticeAvailable = true;
+        string shownNotice = fromFallback ? ExtractLocalizedContent(result) : result;
+        shownNotice = NormalizeNoticeText(shownNotice);
+        if (!shownNotice.empty() && !IsLikely404Body(shownNotice)) {
+            g_NoticeUpdatedAt = BuildStableContentId(shownNotice);
+            if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
+                g_NoticeContent = shownNotice;
+                g_NewNoticeAvailable = true;
+            }
         }
     }
     

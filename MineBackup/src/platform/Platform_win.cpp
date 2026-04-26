@@ -24,6 +24,8 @@
 #include <functional>
 #include <vector>
 #include <tuple>
+#include <cctype>
+#include <cstdint>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
@@ -64,6 +66,209 @@ static string ExtractLocalizedContent(const string& content) {
 		return chineseContent.empty() ? content : chineseContent;
 	} else {
 		return englishContent.empty() ? content : englishContent;
+	}
+}
+
+struct HttpResponseData {
+	bool requestOk = false;
+	DWORD statusCode = 0;
+	string body;
+};
+
+static string ToLowerAscii(const string& value) {
+	string lowered = value;
+	for (char& ch : lowered) {
+		ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+	}
+	return lowered;
+}
+
+static string TrimAsciiWhitespace(const string& value) {
+	size_t begin = 0;
+	while (begin < value.size() && isspace(static_cast<unsigned char>(value[begin]))) {
+		++begin;
+	}
+	size_t end = value.size();
+	while (end > begin && isspace(static_cast<unsigned char>(value[end - 1]))) {
+		--end;
+	}
+	return value.substr(begin, end - begin);
+}
+
+static string NormalizeNoticeText(const string& value) {
+	string normalized;
+	normalized.reserve(value.size());
+	for (size_t i = 0; i < value.size(); ++i) {
+		if (value[i] == '\r') {
+			if (i + 1 < value.size() && value[i + 1] == '\n') {
+				++i;
+			}
+			normalized.push_back('\n');
+		}
+		else {
+			normalized.push_back(value[i]);
+		}
+	}
+	return TrimAsciiWhitespace(normalized);
+}
+
+static bool IsLikely404Body(const string& body) {
+	string lowered = ToLowerAscii(TrimAsciiWhitespace(body));
+	if (lowered.empty()) return true;
+	if (lowered == "404" || lowered == "404: not found" || lowered == "not found") return true;
+	if (lowered.find("<title>404") != string::npos) return true;
+	if (lowered.find("404 not found") != string::npos) return true;
+	if (lowered.find("error 404") != string::npos) return true;
+	return false;
+}
+
+static string BuildMirrorUrl(const string& directUrl) {
+	const string mirrorPrefix = "https://gh-proxy.org/";
+	if (directUrl.rfind(mirrorPrefix, 0) == 0) {
+		return directUrl;
+	}
+	return mirrorPrefix + directUrl;
+}
+
+static string BuildStableContentId(const string& text) {
+	// 使用稳定的 FNV-1a，避免不同运行环境下 std::hash 抖动。
+	uint64_t hash = 1469598103934665603ull;
+	for (unsigned char ch : text) {
+		hash ^= ch;
+		hash *= 1099511628211ull;
+	}
+	ostringstream oss;
+	oss << "notice-v1-" << hex << hash;
+	return oss.str();
+}
+
+static bool WinHttpFetchUrl(const wstring& url, const wchar_t* userAgent, HttpResponseData& result) {
+	result = HttpResponseData{};
+
+	URL_COMPONENTS components{};
+	components.dwStructSize = sizeof(components);
+	components.dwSchemeLength = static_cast<DWORD>(-1);
+	components.dwHostNameLength = static_cast<DWORD>(-1);
+	components.dwUrlPathLength = static_cast<DWORD>(-1);
+	components.dwExtraInfoLength = static_cast<DWORD>(-1);
+	if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components)) {
+		return false;
+	}
+
+	wstring host(components.lpszHostName, components.dwHostNameLength);
+	wstring path(components.lpszUrlPath, components.dwUrlPathLength);
+	if (components.dwExtraInfoLength > 0 && components.lpszExtraInfo) {
+		path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+	}
+	if (path.empty()) {
+		path = L"/";
+	}
+
+	HINTERNET hSession = WinHttpOpen(userAgent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (!hSession) return false;
+
+	HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), components.nPort, 0);
+	if (!hConnect) {
+		WinHttpCloseHandle(hSession);
+		return false;
+	}
+
+	DWORD requestFlags = 0;
+	if (components.nScheme == INTERNET_SCHEME_HTTPS) {
+		requestFlags |= WINHTTP_FLAG_SECURE;
+	}
+
+	HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, requestFlags);
+	if (!hRequest) {
+		WinHttpCloseHandle(hConnect);
+		WinHttpCloseHandle(hSession);
+		return false;
+	}
+
+	bool ok = WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Network\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+		&& WinHttpReceiveResponse(hRequest, NULL);
+	if (!ok) {
+		WinHttpCloseHandle(hRequest);
+		WinHttpCloseHandle(hConnect);
+		WinHttpCloseHandle(hSession);
+		return false;
+	}
+
+	result.requestOk = true;
+	DWORD statusCode = 0;
+	DWORD statusCodeSize = sizeof(statusCode);
+	if (WinHttpQueryHeaders(hRequest,
+		WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+		WINHTTP_HEADER_NAME_BY_INDEX,
+		&statusCode,
+		&statusCodeSize,
+		WINHTTP_NO_HEADER_INDEX)) {
+		result.statusCode = statusCode;
+	}
+
+	DWORD dwSize = 0;
+	DWORD dwDownloaded = 0;
+	do {
+		dwSize = 0;
+		if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
+		if (dwSize == 0) break;
+
+		vector<char> buffer(dwSize + 1, 0);
+		if (WinHttpReadData(hRequest, buffer.data(), dwSize, &dwDownloaded) && dwDownloaded > 0) {
+			result.body.append(buffer.data(), dwDownloaded);
+		}
+	} while (dwSize > 0);
+
+	WinHttpCloseHandle(hRequest);
+	WinHttpCloseHandle(hConnect);
+	WinHttpCloseHandle(hSession);
+	return true;
+}
+
+static bool FetchWithMirrorFallback(const string& directUrl, const wchar_t* userAgent, bool reject404Body, string& outBody) {
+	vector<string> candidates = { directUrl, BuildMirrorUrl(directUrl) };
+	for (const string& candidate : candidates) {
+		HttpResponseData response;
+		if (!WinHttpFetchUrl(utf8_to_wstring(candidate), userAgent, response)) {
+			continue;
+		}
+		if (!response.requestOk || response.statusCode != 200) {
+			continue;
+		}
+		string trimmed = TrimAsciiWhitespace(response.body);
+		if (trimmed.empty()) {
+			continue;
+		}
+		if (reject404Body && IsLikely404Body(trimmed)) {
+			continue;
+		}
+		outBody = trimmed;
+		return true;
+	}
+	return false;
+}
+
+static tuple<int, int, int, int> ParseVersionTuple(const string& ver) {
+	try {
+		size_t p1 = ver.find('.');
+		size_t p2 = (p1 != string::npos) ? ver.find('.', p1 + 1) : string::npos;
+		size_t p3 = ver.find('-');
+		if (p1 == string::npos || p2 == string::npos) return { 0, 0, 0, 0 };
+
+		int major = stoi(ver.substr(0, p1));
+		int minor = stoi(ver.substr(p1 + 1, p2 - p1 - 1));
+		int patch = (p3 == string::npos) ? stoi(ver.substr(p2 + 1)) : stoi(ver.substr(p2 + 1, p3 - p2 - 1));
+		int sp = 0;
+		if (p3 != string::npos) {
+			size_t spPos = ver.find("sp", p3);
+			if (spPos != string::npos) {
+				sp = stoi(ver.substr(spPos + 2));
+			}
+		}
+		return { major, minor, patch, sp };
+	}
+	catch (...) {
+		return { 0, 0, 0, 0 };
 	}
 }
 
@@ -291,164 +496,98 @@ void CheckForNoticesThread() {
 	g_NoticeContent.clear();
 	g_NoticeUpdatedAt.clear();
 
-	HINTERNET hSession = nullptr, hConnect = nullptr, hRequest = nullptr;
-	DWORD dwSize = 0;
-	DWORD dwDownloaded = 0;
-	LPSTR pszOutBuffer = nullptr;
-	string responseBody;
-	bool success = false;
+	const string langUrl = g_CurrentLang == "zh_CN"
+		? "https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice_zh"
+		: "https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice_en";
 
-	wstring noticePath = g_CurrentLang == "zh_CN"
-		? L"/Leafuke/MineBackup/develop/notice_zh"
-		: L"/Leafuke/MineBackup/develop/notice_en";
+	string content;
+	FetchWithMirrorFallback(langUrl, L"MineBackup Notice Checker/1.1", true, content);
 
-	hSession = WinHttpOpen(L"MineBackup Notice Checker/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-	if (!hSession) goto cleanup;
-
-	hConnect = WinHttpConnect(hSession, L"raw.githubusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-	if (!hConnect) goto cleanup;
-
-	hRequest = WinHttpOpenRequest(hConnect, L"GET", noticePath.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-	if (!hRequest) goto cleanup;
-
-	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Notice-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-
-	if (!WinHttpReceiveResponse(hRequest, NULL)) {
-		WinHttpCloseHandle(hRequest);
-		hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/Leafuke/MineBackup/develop/notice", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-		if (!hRequest) goto cleanup;
-		WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Notice-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-		if (!WinHttpReceiveResponse(hRequest, NULL)) goto cleanup;
-	}
-
-	do {
-		dwSize = 0;
-		if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
-		if (dwSize == 0) break;
-		pszOutBuffer = new char[dwSize + 1];
-		ZeroMemory(pszOutBuffer, dwSize + 1);
-		if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded)) {
-			responseBody.append(pszOutBuffer, dwDownloaded);
-		}
-		delete[] pszOutBuffer;
-	} while (dwSize > 0);
-
-	if (!responseBody.empty()) {
-		wstring lastModified;
-		dwSize = 0;
-		if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LAST_MODIFIED, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &dwSize, WINHTTP_NO_HEADER_INDEX)) {
-			if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && dwSize > 0) {
-				vector<wchar_t> headerBuf(dwSize / sizeof(wchar_t));
-				if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LAST_MODIFIED, WINHTTP_HEADER_NAME_BY_INDEX, headerBuf.data(), &dwSize, WINHTTP_NO_HEADER_INDEX)) {
-					lastModified.assign(headerBuf.data());
-				}
+	if (!content.empty()) {
+		string shownNotice = content;
+		shownNotice = NormalizeNoticeText(shownNotice);
+		if (!shownNotice.empty() && !IsLikely404Body(shownNotice)) {
+			g_NoticeUpdatedAt = BuildStableContentId(shownNotice);
+			if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
+				g_NoticeContent = shownNotice;
+				g_NewNoticeAvailable = true;
 			}
 		}
-
-		g_NoticeUpdatedAt = lastModified.empty() ? to_string(hash<string>{}(responseBody)) : wstring_to_utf8(lastModified);
-
-		if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
-			g_NoticeContent = ExtractLocalizedContent(responseBody);
-			g_NewNoticeAvailable = true;
-		}
-		success = true;
 	}
 
-cleanup:
-	if (hRequest) WinHttpCloseHandle(hRequest);
-	if (hConnect) WinHttpCloseHandle(hConnect);
-	if (hSession) WinHttpCloseHandle(hSession);
-
-	if (!success) {
-		g_NewNoticeAvailable = false;
-	}
 	g_NoticeCheckDone = true;
 }
 
 void CheckForUpdatesThread() {
-	DWORD dwSize = 0;
-	DWORD dwDownloaded = 0;
-	LPSTR pszOutBuffer;
-	string responseBody;
-	BOOL bResults = FALSE;
-	HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
+	g_UpdateCheckDone = false;
+	g_NewVersionAvailable = false;
+	g_LatestVersionStr.clear();
+	g_ReleaseNotes.clear();
 
-	hSession = WinHttpOpen(L"MineBackup Update Checker/2.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-	if (!hSession) goto cleanup;
+	const string apiUrl = "https://api.github.com/repos/Leafuke/MineBackup/releases/latest";
+	vector<string> candidates = { apiUrl, BuildMirrorUrl(apiUrl) };
 
-	hConnect = WinHttpConnect(hSession, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-	if (!hConnect) goto cleanup;
-
-	hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/repos/Leafuke/MineBackup/releases/latest", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-	if (!hRequest) goto cleanup;
-
-	WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-
-	//WinHttpSendRequest(hRequest, L"User-Agent: MineBackup-Update-Checker\r\n", (DWORD)(wcslen(L"User-Agent: MineBackup-Update-Checker\r\n") * sizeof(wchar_t)), WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-
-	bResults = WinHttpReceiveResponse(hRequest, NULL);
-	if (!bResults) goto cleanup;
-
-	do {
-		dwSize = 0;
-		if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
-		if (dwSize == 0) break;
-		pszOutBuffer = new char[dwSize + 1];
-		ZeroMemory(pszOutBuffer, dwSize + 1);
-		if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded))
-			responseBody.append(pszOutBuffer, dwDownloaded);
-		delete[] pszOutBuffer;
-	} while (dwSize > 0);
-
-	try {
-		//string latestVersion = find_json_value(responseBody, "tag_name");
-		// 使用更可靠的 JSON 解析库
-		string latestVersion = nlohmann::json::parse(responseBody)["tag_name"].get<std::string>();
-		// 移除版本号前的 'v'
-		if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
-			latestVersion = latestVersion.substr(1);
+	for (const string& candidate : candidates) {
+		HttpResponseData response;
+		if (!WinHttpFetchUrl(utf8_to_wstring(candidate), L"MineBackup Update Checker/2.2", response)) {
+			continue;
 		}
-		// 解析版本号为 (major, minor, patch, sp) 元组，支持格式: 1.7.9, 1.7.10, 1.7.9-sp1
-		auto parseVersion = [](const string& ver) -> tuple<int,int,int,int> {
-			size_t p1 = ver.find('.');
-			size_t p2 = (p1 != string::npos) ? ver.find('.', p1 + 1) : string::npos;
-			size_t p3 = ver.find('-');
-			if (p1 == string::npos || p2 == string::npos) return {0,0,0,0};
-			int major = stoi(ver.substr(0, p1));
-			int minor = stoi(ver.substr(p1 + 1, p2 - p1 - 1));
-			int patch = (p3 == string::npos) ? stoi(ver.substr(p2 + 1)) : stoi(ver.substr(p2 + 1, p3 - p2 - 1));
-			int sp = (p3 != string::npos && p3 + 3 < ver.size()) ? stoi(ver.substr(p3 + 3)) : 0;
-			return {major, minor, patch, sp};
-		};
-		bool isNew = parseVersion(latestVersion) > parseVersion(CURRENT_VERSION);
+		if (!response.requestOk || response.statusCode != 200) {
+			continue;
+		}
 
-		// 简单版本比较 (例如 "1.7.0" > "1.6.7")
-		if (!latestVersion.empty() && isNew) {
-			g_LatestVersionStr = "v" + latestVersion;
-			g_NewVersionAvailable = true;
-			string rawNotes = nlohmann::json::parse(responseBody)["body"].get<std::string>();
-			// 先处理转义字符
-			for (int i = 0; i < rawNotes.size() - 1; ++i)
-			{
-				if (rawNotes[i] == '#')
-					rawNotes[i] = ' ';
-				else if (rawNotes[i] == '\\' && rawNotes[i + 1] == 'n')
-					rawNotes[i] = '\n', rawNotes[i + 1] = ' ';
-				else if (rawNotes[i] == '\\')
-					rawNotes[i] = ' ', rawNotes[i + 1] = ' ';
+		string body = TrimAsciiWhitespace(response.body);
+		if (body.empty() || IsLikely404Body(body)) {
+			continue;
+		}
+
+		try {
+			nlohmann::json parsed = nlohmann::json::parse(body);
+			if (!parsed.contains("tag_name") || !parsed["tag_name"].is_string()) {
+				continue;
 			}
-			// 根据当前语言提取对应内容（通过---分隔）
-			g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
+
+			string latestVersion = parsed["tag_name"].get<string>();
+			if (!latestVersion.empty() && (latestVersion[0] == 'v' || latestVersion[0] == 'V')) {
+				latestVersion = latestVersion.substr(1);
+			}
+
+			if (latestVersion.empty()) {
+				continue;
+			}
+
+			bool isNew = ParseVersionTuple(latestVersion) > ParseVersionTuple(CURRENT_VERSION);
+			if (isNew) {
+				g_LatestVersionStr = "v" + latestVersion;
+				g_NewVersionAvailable = true;
+
+				string rawNotes;
+				if (parsed.contains("body") && parsed["body"].is_string()) {
+					rawNotes = parsed["body"].get<string>();
+				}
+				for (size_t i = 0; i + 1 < rawNotes.size(); ++i) {
+					if (rawNotes[i] == '#') {
+						rawNotes[i] = ' ';
+					}
+					else if (rawNotes[i] == '\\' && rawNotes[i + 1] == 'n') {
+						rawNotes[i] = '\n';
+						rawNotes[i + 1] = ' ';
+					}
+					else if (rawNotes[i] == '\\') {
+						rawNotes[i] = ' ';
+						rawNotes[i + 1] = ' ';
+					}
+				}
+				g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
+			}
+
+			break;
+		}
+		catch (...) {
+			continue;
 		}
 	}
-	catch (...) {
-		// 解析失败，静默处理
-	}
 
-cleanup:
-	if (hRequest) WinHttpCloseHandle(hRequest);
-	if (hConnect) WinHttpCloseHandle(hConnect);
-	if (hSession) WinHttpCloseHandle(hSession);
 	g_UpdateCheckDone = true;
 }
 
