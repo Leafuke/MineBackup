@@ -972,8 +972,6 @@ int main(int argc, char** argv)
 					}
 					ImGui::Separator();
 					if (ImGui::MenuItem(L("HISTORY_BUTTON"))) { showHistoryWindow = true; }
-					ImGui::Separator();
-					if (ImGui::MenuItem(L("BUTTON_BACKUP_MODS"))) { ImGui::OpenPopup(L("CONFIRM_BACKUP_OTHERS_TITLE")); }
 					ImGui::EndMenu();
 				}
 				if (ImGui::BeginMenu(L("MENU_HELP"))) {

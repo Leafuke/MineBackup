@@ -31,6 +31,10 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	static string original_comment;
 	static bool is_comment_editing = false;
 	Config& cfg = g_appState.configs[tempCurrentConfigIndex];
+	const float toolbarButtonMinWidth = 96.0f * g_uiScale;
+	const float actionButtonMinWidth = 120.0f * g_uiScale;
+	const float dialogButtonMinWidth = 132.0f * g_uiScale;
+	const float compactButtonMinWidth = 110.0f * g_uiScale;
 
 	// 每帧从键值解析出安全指针（如果条目已被删除/清理，自动失效为 nullptr）
 	auto ResolveEntry = [&](const std::wstring& w, const std::wstring& f) -> HistoryEntry* {
@@ -61,14 +65,14 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	}
 
 	// --- 顶部工具栏 ---
-	filter.Draw(L("HISTORY_SEARCH_HINT"), ImGui::GetContentRegionAvail().x * 0.5f);
+	filter.Draw(L("HISTORY_SEARCH_HINT"), ImGui::GetContentRegionAvail().x * 0.3f);
 	ImGui::SameLine();
-	if (ImGui::Button(L("HISTORY_CLEAN_INVALID"))) {
+	if (ImGui::Button(L("HISTORY_CLEAN_INVALID"), ImVec2(CalcButtonWidth(L("HISTORY_CLEAN_INVALID"), toolbarButtonMinWidth), 0))) {
 		ImGui::OpenPopup(L("HISTORY_CONFIRM_CLEAN_TITLE"));
 	}
 	ImGui::SameLine();
 	if (!CanUseCloudActions(cfg)) ImGui::BeginDisabled();
-	if (ImGui::Button(L("HISTORY_CLOUD_ANALYZE"))) {
+	if (ImGui::Button(L("HISTORY_CLOUD_ANALYZE"), ImVec2(CalcButtonWidth(L("HISTORY_CLOUD_ANALYZE"), toolbarButtonMinWidth), 0))) {
 		Config configCopy = cfg;
 		const int configIndex = tempCurrentConfigIndex;
 		thread([configCopy, configIndex]() {
@@ -76,7 +80,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}).detach();
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_HISTORY"))) {
+	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_HISTORY"), ImVec2(CalcButtonWidth(L("HISTORY_CLOUD_SYNC_HISTORY"), toolbarButtonMinWidth), 0))) {
 		Config configCopy = cfg;
 		const int configIndex = tempCurrentConfigIndex;
 		thread([configCopy, configIndex]() {
@@ -84,7 +88,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}).detach();
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_ALL"))) {
+	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_ALL"), ImVec2(CalcButtonWidth(L("HISTORY_CLOUD_SYNC_ALL"), toolbarButtonMinWidth), 0))) {
 		Config configCopy = cfg;
 		const int configIndex = tempCurrentConfigIndex;
 		thread([configCopy, configIndex]() {
@@ -97,7 +101,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextUnformatted(L("HISTORY_CONFIRM_CLEAN_MSG"));
 		ImGui::Separator();
-		float cleanConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+		float cleanConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"), dialogButtonMinWidth);
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(cleanConfirmBtnWidth, 0))) {
 			if (g_appState.configs.count(tempCurrentConfigIndex) && g_appState.g_history.count(tempCurrentConfigIndex)) {
 				auto& history_vec = g_appState.g_history.at(tempCurrentConfigIndex);
@@ -200,8 +204,9 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 30, p_min.y + 5 + ImGui::GetTextLineHeightWithSpacing()));
 					ImGui::TextDisabled("%s", wstring_to_utf8(entry->timestamp_str + L" | " + entry->comment).c_str());
 					ImGui::SameLine();
-					ImGui::SetCursorScreenPos(ImVec2(p_max.x - 25, p_min.y + (p_max.y - p_min.y) / 2 - ImGui::GetTextLineHeight() / 2));
+					ImGui::SetCursorScreenPos(ImVec2(p_max.x - 2 * ImGui::GetTextLineHeight(), p_min.y + (p_max.y - p_min.y) / 2 - ImGui::GetTextLineHeight() / 2));
 
+					// 重要标记图标
 					if (entry->isImportant) {
 						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f)); // Gold color for important
 					}
@@ -267,7 +272,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		const bool canUseCloud = CanUseCloudActions(cfg);
 		const bool canRestore = file_exists || (has_cloud_copy && cfg.cloudAutoDownloadBeforeRestore && canUseCloud);
 		if (!canRestore) ImGui::BeginDisabled();
-		if (ImGui::Button(L("HISTORY_BUTTON_RESTORE"))) {
+		if (ImGui::Button(L("HISTORY_BUTTON_RESTORE"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_RESTORE"), actionButtonMinWidth), 0))) {
 			ImGui::OpenPopup("##CONFIRM_RESTORE");
 		}
 		if (!canRestore) ImGui::EndDisabled();
@@ -313,8 +318,11 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			}
 
 			ImGui::Separator();
+			float restoreConfirmBtnWidth = CalcButtonWidth(L("BUTTON_CONFIRM_RESTORE"), dialogButtonMinWidth);
+			float restoreSelectFileBtnWidth = CalcButtonWidth(L("BUTTON_SELECT_CUSTOM_FILE"), dialogButtonMinWidth);
+			float restoreCancelBtnWidth = CalcButtonWidth(L("BUTTON_CANCEL"), dialogButtonMinWidth);
 
-			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(CalcButtonWidth(L("BUTTON_CONFIRM_RESTORE")), 0))) {
+			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(restoreConfirmBtnWidth, 0))) {
 				if (cfg.backupBefore) {
 					MyFolder world = { JoinPath(cfg.saveRoot, selected_entry->worldName).wstring(), selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
 					DoBackup(world, ref(console), L"BeforeRestore");
@@ -326,7 +334,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			}
 			ImGui::SameLine();
 
-			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"), ImVec2(-1, 0))) {
+			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"), ImVec2(restoreSelectFileBtnWidth, 0))) {
 				wstring selectedFile = SelectFileDialog();
 				if (!selectedFile.empty()) {
 					thread restore_thread(DoRestore2, cfg, selected_entry->worldName, selectedFile, ref(console), restore_method);
@@ -336,8 +344,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				}
 			}
 
-			ImGui::Dummy(ImVec2(-1, 0));
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(300 + ImGui::GetStyle().ItemSpacing.x, 0))) {
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(restoreCancelBtnWidth, 0))) {
 				ImGui::CloseCurrentPopup();
 				//selected_entry = nullptr;
 			}
@@ -346,14 +353,22 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}
 		ImGui::SameLine();
 		if (!file_exists) ImGui::BeginDisabled();
-		if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"))) {
+		if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_OPEN_FOLDER"), actionButtonMinWidth), 0))) {
 			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
 			OpenFolderWithFocus(backup_path.parent_path().wstring(), cmd);
 		}
 		if (!file_exists) ImGui::EndDisabled();
 		ImGui::SameLine();
+		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"),
+			ImVec2(CalcButtonWidth(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"), actionButtonMinWidth), 0))) {
+			selected_entry->isImportant = !selected_entry->isImportant;
+			SaveHistory();
+		}
+
+		// -----------
+
 		if (!canUseCloud || !file_exists) ImGui::BeginDisabled();
-		if (ImGui::Button(L("HISTORY_BUTTON_UPLOAD_CLOUD"))) {
+		if (ImGui::Button(L("HISTORY_BUTTON_UPLOAD_CLOUD"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_UPLOAD_CLOUD"), compactButtonMinWidth), 0))) {
 			const Config configCopy = cfg;
 			const HistoryEntry entryCopy = *selected_entry;
 			const int configIndex = tempCurrentConfigIndex;
@@ -364,7 +379,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (!canUseCloud || !file_exists) ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (!canUseCloud || !has_cloud_copy) ImGui::BeginDisabled();
-		if (ImGui::Button(L("HISTORY_BUTTON_DOWNLOAD_CLOUD"))) {
+		if (ImGui::Button(L("HISTORY_BUTTON_DOWNLOAD_CLOUD"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_DOWNLOAD_CLOUD"), compactButtonMinWidth), 0))) {
 			const Config configCopy = cfg;
 			const HistoryEntry entryCopy = *selected_entry;
 			const int configIndex = tempCurrentConfigIndex;
@@ -374,14 +389,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		}
 		if (!canUseCloud || !has_cloud_copy) ImGui::EndDisabled();
 		ImGui::SameLine();
-		if (ImGui::Button(selected_entry->isImportant ? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
-			selected_entry->isImportant = !selected_entry->isImportant;
-			SaveHistory();
-		}
-		// -----------
 		if (!cfg.enableWEIntegration || !file_exists) ImGui::BeginDisabled();
-		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_ADD_TO_WE"))) {
+		if (ImGui::Button(L("BUTTON_ADD_TO_WE"), ImVec2(CalcButtonWidth(L("BUTTON_ADD_TO_WE"), compactButtonMinWidth), 0))) {
 			thread we_thread(AddBackupToWESnapshots, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console));
 			we_thread.detach();
 		}
@@ -389,10 +398,12 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		if (!cfg.enableWEIntegration || !file_exists) ImGui::EndDisabled();
 		// -----------
 
-		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
+		const float deleteBtnWidth = CalcButtonWidth(L("HISTORY_BUTTON_DELETE"), compactButtonMinWidth);
+		const float deleteBtnPosX = (std::max)(ImGui::GetCursorPosX(), ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - deleteBtnWidth);
+		ImGui::SameLine(deleteBtnPosX);
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-		if (ImGui::Button(L("HISTORY_BUTTON_DELETE"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_DELETE")), 0))) {
+		if (ImGui::Button(L("HISTORY_BUTTON_DELETE"), ImVec2(deleteBtnWidth, 0))) {
 			entry_to_delete = selected_entry;
 			del_world = sel_world; del_file = sel_file;
 			ImGui::OpenPopup(L("HISTORY_DELETE_POPUP_TITLE"));
@@ -424,8 +435,8 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			if (!canSafeDelete) ImGui::EndDisabled();
 
 			ImGui::Separator();
-			float deleteBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
-			if (ImGui::Button(L("BUTTON_OK"), ImVec2(deleteBtnWidth, 0))) {
+			float deleteConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"), dialogButtonMinWidth);
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(deleteConfirmBtnWidth, 0))) {
 				HistoryEntry entryCopy = *entry_to_delete;
 				Config configCopy = g_appState.configs[tempCurrentConfigIndex];
 				int configIndex = tempCurrentConfigIndex;
@@ -441,7 +452,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(deleteBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(deleteConfirmBtnWidth, 0))) { ImGui::CloseCurrentPopup(); }
 			ImGui::EndPopup();
 		}
 
@@ -450,13 +461,13 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SeparatorText(L("HISTORY_GROUP_COMMENT"));
 		if (is_comment_editing) {
 			ImGui::InputTextMultiline("##commentedit", comment_buf, sizeof(comment_buf), ImVec2(-1, ImGui::GetContentRegionAvail().y - 40));
-			if (ImGui::Button(L("HISTORY_BUTTON_SAVE_COMMENT"))) {
+			if (ImGui::Button(L("HISTORY_BUTTON_SAVE_COMMENT"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_SAVE_COMMENT"), compactButtonMinWidth), 0))) {
 				selected_entry->comment = utf8_to_wstring(comment_buf);
 				SaveHistory();
 				is_comment_editing = false;
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("BUTTON_CANCEL"))) {
+			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(CalcButtonWidth(L("BUTTON_CANCEL"), compactButtonMinWidth), 0))) {
 				is_comment_editing = false;
 			}
 		}
