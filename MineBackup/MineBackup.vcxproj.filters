@@ -66,6 +66,9 @@
     <ClCompile Include="src\core\FolderRewindHistoryStore.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\FolderRewindMetadataStore.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\GameSessionManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -171,6 +174,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\FolderRewindHistoryStore.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\FolderRewindMetadataStore.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\HistoryManager.h">
