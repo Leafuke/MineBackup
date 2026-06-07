@@ -17,16 +17,28 @@ wstring JsonString(const nlohmann::json& item, const char* key) {
     return utf8_to_wstring(it->get<string>());
 }
 
+bool HasSafeRawRelativeSegments(const wstring& value) {
+    size_t start = 0;
+    while (start <= value.size()) {
+        const size_t end = value.find_first_of(L"\\/", start);
+        const wstring segment = value.substr(start, end == wstring::npos ? wstring::npos : end - start);
+        if (segment.empty() || segment == L"." || segment == L"..") return false;
+        if (end == wstring::npos) break;
+        start = end + 1;
+    }
+    return true;
+}
+
 bool TryNormalizeRelativeEntry(const wstring& value, wstring& outValue) {
     outValue.clear();
-    if (value.empty()) return false;
+    if (value.empty() || !HasSafeRawRelativeSegments(value)) return false;
 
     filesystem::path raw(value);
     if (raw.empty() || raw.is_absolute() || raw.has_root_name() || raw.has_root_directory()) return false;
 
     for (const auto& part : raw) {
         const wstring segment = part.wstring();
-        if (segment.empty() || segment == L"..") return false;
+        if (segment.empty() || segment == L"." || segment == L"..") return false;
     }
 
     const wstring normalized = FolderRewindFormat::NormalizeRelativePath(raw);
@@ -63,20 +75,20 @@ bool TryParseFileState(const nlohmann::json& item, FolderRewindFormat::FileState
 
     FolderRewindFormat::FileState state;
     const auto sizeIt = item.find("Size");
-    if (sizeIt != item.end()) {
-        if (sizeIt->is_number_unsigned()) {
-            state.size = sizeIt->get<uintmax_t>();
-        }
-        else if (sizeIt->is_number_integer()) {
-            const auto signedSize = sizeIt->get<int64_t>();
-            if (signedSize < 0) return false;
-            state.size = static_cast<uintmax_t>(signedSize);
-        }
-        else {
-            return false;
-        }
+    if (sizeIt == item.end()) return false;
+    if (sizeIt->is_number_unsigned()) {
+        state.size = sizeIt->get<uintmax_t>();
+    }
+    else if (sizeIt->is_number_integer()) {
+        const auto signedSize = sizeIt->get<int64_t>();
+        if (signedSize < 0) return false;
+        state.size = static_cast<uintmax_t>(signedSize);
+    }
+    else {
+        return false;
     }
     state.lastWriteTimeUtc = JsonString(item, "LastWriteTimeUtc");
+    if (state.lastWriteTimeUtc.empty()) return false;
     state.hash = JsonString(item, "Hash");
 
     outState = std::move(state);
@@ -98,7 +110,7 @@ bool TryLoadStringArray(const nlohmann::json& parent, const char* key, vector<ws
         out.push_back(normalized);
     }
     sort(out.begin(), out.end());
-    return true;
+    return adjacent_find(out.begin(), out.end()) == out.end();
 }
 
 bool WriteStringArray(nlohmann::json& parent, const char* key, const vector<wstring>& values) {
