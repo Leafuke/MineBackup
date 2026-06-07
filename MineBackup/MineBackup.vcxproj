@@ -149,6 +149,7 @@
     <ClCompile Include="src\core\CloudSyncService.cpp" />
     <ClCompile Include="src\core\CoreValidation.cpp" />
     <ClCompile Include="src\core\FolderRewindFormat.cpp" />
+    <ClCompile Include="src\core\FolderRewindHistoryStore.cpp" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
     <ClCompile Include="src\core\HistoryManager.cpp" />
     <ClCompile Include="src\core\SpecialMode.cpp" />
@@ -185,6 +186,7 @@
     <ClInclude Include="src\core\BackupManagerRestore.inl" />
     <ClInclude Include="src\core\CoreValidation.h" />
     <ClInclude Include="src\core\FolderRewindFormat.h" />
+    <ClInclude Include="src\core\FolderRewindHistoryStore.h" />
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\TaskSystem.h" />
     <ClInclude Include="src\infra\Broadcast.h" />

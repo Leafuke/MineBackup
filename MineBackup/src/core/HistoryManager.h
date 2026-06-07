@@ -3,6 +3,7 @@
 #define _HISTORY_MANAGER_H
 
 #include <iostream>
+#include <string>
 #include <vector>
 #include "AppState.h"
 
