@@ -73,6 +73,8 @@ struct ActiveHistoryManifest {
 std::wstring GenerateGuidString();
 std::wstring EnsureConfigId(std::wstring currentValue);
 std::wstring MakeLocalTimestampString();
+std::wstring MakeLocalHistoryTimestampString();
+std::wstring FormatFileTimeUtc(std::filesystem::file_time_type fileTime);
 std::wstring MakeUtcTimestampString();
 std::wstring NormalizeRelativePath(std::filesystem::path relativePath);
 std::wstring SanitizePathSegment(std::wstring value);

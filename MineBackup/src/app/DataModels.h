@@ -30,6 +30,7 @@ struct Config {
 	bool backupBefore = false;
 	int theme = 1;
 	std::string name;
+	std::wstring configId;
 	int cpuThreads = 0;
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
@@ -153,11 +154,13 @@ struct SpecialConfig {
 };
 
 struct HistoryEntry {
+	std::wstring configId;
 	std::wstring timestamp_str;
 	std::wstring worldPath;
 	std::wstring worldName;
 	std::wstring backupFile;
 	std::wstring backupType;
+	bool isPartialBackup = false;
 	std::wstring comment;
 	bool isImportant = false;
 	bool isCloudArchived = false;
@@ -188,13 +191,17 @@ struct CloudSyncResult {
 };
 
 struct CloudActiveHistoryEntry {
+	std::wstring folderPath;
+	std::wstring folderName;
+	std::wstring fileName;
+	std::wstring timestamp;
 	std::wstring worldPath;
 	std::wstring worldName;
 	std::wstring backupFile;
-	std::wstring timestamp;
 };
 
 struct CloudActiveHistoryManifest {
+	std::wstring configId;
 	std::wstring configName;
 	std::wstring updatedAtUtc;
 	std::vector<CloudActiveHistoryEntry> entries;

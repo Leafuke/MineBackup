@@ -346,6 +346,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 							if (!filesystem::exists(entry.path() / "save", save_ec) || save_ec) continue;
 							int index = CreateNewNormalConfig();
 							g_appState.configs[index] = initialConfig;
+							AssignFreshNormalConfigId(index);
 							g_appState.configs[index].saveRoot = (entry.path() / "save").wstring();
 							g_appState.configs[index].worlds.clear();
 						}

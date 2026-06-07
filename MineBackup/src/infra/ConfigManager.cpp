@@ -1,5 +1,6 @@
 ﻿#include "ConfigManager.h"
 #include "AppState.h"
+#include "FolderRewindFormat.h"
 #include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -144,6 +145,7 @@ int CreateNewNormalConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	Config new_cfg;
 	new_cfg.name = name_hint;
+	new_cfg.configId = FolderRewindFormat::GenerateGuidString();
 	// 默认空的路径/世界
 	new_cfg.saveRoot.clear();
 	new_cfg.backupPath.clear();
@@ -152,6 +154,18 @@ int CreateNewNormalConfig(const string& name_hint) {
 	EnsureDefaultRestoreWhitelist();
 	g_appState.configs[newId] = new_cfg;
 	return newId;
+}
+
+void AssignFreshNormalConfigId(int configIndex) {
+	auto it = g_appState.configs.find(configIndex);
+	if (it == g_appState.configs.end()) return;
+	it->second.configId = FolderRewindFormat::GenerateGuidString();
+}
+
+void EnsureConfigIds() {
+	for (auto& kv : g_appState.configs) {
+		kv.second.configId = FolderRewindFormat::EnsureConfigId(kv.second.configId);
+	}
 }
 
 void LoadConfigs(const string& filename) {
@@ -193,6 +207,7 @@ void LoadConfigs(const string& filename) {
 
 			if (cur) { // Inside a [ConfigN] section
 				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
+				else if (key == L"ConfigId") cur->configId = FolderRewindFormat::EnsureConfigId(val);
 				else if (key == L"SavePath") {
 					cur->saveRoot = val;
 				}
@@ -418,6 +433,7 @@ void LoadConfigs(const string& filename) {
 		}
 		if (cfg.cloudTimeoutSeconds <= 0) cfg.cloudTimeoutSeconds = 600;
 		if (cfg.cloudRetryCount < 0) cfg.cloudRetryCount = 0;
+		cfg.configId = FolderRewindFormat::EnsureConfigId(cfg.configId);
 	}
 
 	for (auto& kv : g_appState.specialConfigs) {
@@ -470,6 +486,8 @@ void SaveConfigs(const wstring& filename) {
 		Config& c = kv.second;
 		buffer << L"[Config" << idx << L"]\n";
 		buffer << L"ConfigName=" << utf8_to_wstring(c.name) << L"\n";
+		c.configId = FolderRewindFormat::EnsureConfigId(c.configId);
+		buffer << L"ConfigId=" << c.configId << L"\n";
 		buffer << L"SavePath=" << c.saveRoot << L"\n";
 		buffer << L"# One line for name, one line for description, terminated by '*'\n";
 		buffer << L"WorldData=\n";

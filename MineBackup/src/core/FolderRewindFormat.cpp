@@ -161,6 +161,17 @@ wstring FormatTime(tm value, const wchar_t* pattern) {
     return buffer;
 }
 
+wstring FormatSystemTimeUtc(chrono::system_clock::time_point timePoint) {
+    time_t value = chrono::system_clock::to_time_t(timePoint);
+    tm utcTime{};
+#ifdef _WIN32
+    gmtime_s(&utcTime, &value);
+#else
+    gmtime_r(&value, &utcTime);
+#endif
+    return FormatTime(utcTime, L"%Y-%m-%dT%H:%M:%SZ");
+}
+
 bool PathEqualsOrUnder(const filesystem::path& candidate, const filesystem::path& root) {
     error_code ec;
     filesystem::path normalizedRoot = filesystem::absolute(root, ec).lexically_normal();
@@ -221,15 +232,26 @@ wstring MakeLocalTimestampString() {
     return FormatTime(localTime, L"%Y-%m-%d_%H-%M-%S");
 }
 
-wstring MakeUtcTimestampString() {
+wstring MakeLocalHistoryTimestampString() {
     time_t now = time(nullptr);
-    tm utcTime{};
+    tm localTime{};
 #ifdef _WIN32
-    gmtime_s(&utcTime, &now);
+    localtime_s(&localTime, &now);
 #else
-    gmtime_r(&now, &utcTime);
+    localtime_r(&now, &localTime);
 #endif
-    return FormatTime(utcTime, L"%Y-%m-%dT%H:%M:%SZ");
+    return FormatTime(localTime, L"%Y-%m-%dT%H:%M:%S");
+}
+
+wstring FormatFileTimeUtc(filesystem::file_time_type fileTime) {
+    const auto systemTime = chrono::time_point_cast<chrono::system_clock::duration>(
+        fileTime - filesystem::file_time_type::clock::now() + chrono::system_clock::now()
+    );
+    return FormatSystemTimeUtc(systemTime);
+}
+
+wstring MakeUtcTimestampString() {
+    return FormatSystemTimeUtc(chrono::system_clock::now());
 }
 
 wstring NormalizeRelativePath(filesystem::path relativePath) {

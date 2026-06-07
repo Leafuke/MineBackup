@@ -145,6 +145,7 @@ void DrawConfigManagementPanel() {
 					int new_index = CreateNewNormalConfig(new_config_name);
 					if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 						g_appState.configs[new_index] = g_appState.configs[g_appState.currentConfigIndex];
+						AssignFreshNormalConfigId(new_index);
 						g_appState.configs[new_index].name = new_config_name;
 						g_appState.configs[new_index].saveRoot.clear();
 						g_appState.configs[new_index].backupPath.clear();

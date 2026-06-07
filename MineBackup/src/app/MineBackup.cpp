@@ -668,6 +668,7 @@ int main(int argc, char** argv)
 				// 没有的话添加为新的配置
 				int index = CreateNewNormalConfig();
 				g_appState.configs[index] = config;
+				AssignFreshNormalConfigId(index);
 				g_appState.configs[index].name = wstring_to_utf8(entry.path().filename().wstring());
 				g_appState.configs[index].saveRoot = (entry.path() / "saves").wstring();
 				g_appState.configs[index].worlds.clear();
@@ -1451,6 +1452,7 @@ int main(int argc, char** argv)
 								// 继承当前配置（如果有），但保留路径为空
 								if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 									g_appState.configs[new_index] = g_appState.configs[g_appState.currentConfigIndex];
+									AssignFreshNormalConfigId(new_index);
 									g_appState.configs[new_index].name = new_config_name;
 									g_appState.configs[new_index].saveRoot.clear();
 									g_appState.configs[new_index].backupPath.clear();
