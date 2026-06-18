@@ -340,7 +340,7 @@ namespace {
 		FolderRewindMetadataStore::SaveState(metadataDir, state);
 	}
 
-	static void UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
+	static bool UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
 		FolderRewindFormat::MetadataState previousState;
 		FolderRewindMetadataStore::LoadState(metadataDir, previousState);
 
@@ -383,7 +383,10 @@ namespace {
 		if (!FolderRewindMetadataStore::Save(metadataDir, state, record)) {
 			error_code ec;
 			filesystem::remove(FolderRewindMetadataStore::GetStatePath(metadataDir), ec);
+			FolderRewindMetadataStore::DeleteRecord(metadataDir, currentBackupFile);
+			return false;
 		}
+		return true;
 	}
 
 	static void InvalidateBackupMetadata(const Config& config, const wstring& worldName, const wstring& deletedBackupFile, const wstring& renamedOldFile = L"", const wstring& renamedNewFile = L"") {
@@ -1016,8 +1019,8 @@ void AddBackupToWESnapshots(const Config& config, const wstring& worldName, cons
 	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
 }
 
-void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
-	UpdateMetadataFiles(metadataPath, newBackupFile, basedOnBackupFile, backupType, currentState, changeSet);
+bool UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
+	return UpdateMetadataFiles(metadataPath, newBackupFile, basedOnBackupFile, backupType, currentState, changeSet);
 }
 
 
@@ -1512,7 +1515,11 @@ execute_backup:
             }
         }
 
-		UpdateMetadataFile(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet);
+		if (!UpdateMetadataFile(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet)) {
+			console.AddLog("[Error] Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
+			BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(storageFolderName) + ";error=metadata_write_failed");
+			return;
+		}
 		AddHistoryEntry(folder.configIndex, storageFolderName, completedBackupFile, backupTypeStr, comment, folder.path);
 
 		if (folder.configIndex != -1)
@@ -1592,7 +1599,11 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
-		UpdateMetadataFile(storagePaths.metadataDir, archiveFileName, archiveFileName, L"Full", currentState, changeSet);
+		if (!UpdateMetadataFile(storagePaths.metadataDir, archiveFileName, archiveFileName, L"Full", currentState, changeSet)) {
+			console.AddLog("[Error] Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(archiveFileName).c_str());
+			console.AddLog(L("LOG_BACKUP_OTHERS_END"));
+			return;
+		}
 		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 		AddHistoryEntry(g_appState.currentConfigIndex, storagePaths.folderName, archiveFileName, L"Full", comment, othersPath.wstring());
 	}
