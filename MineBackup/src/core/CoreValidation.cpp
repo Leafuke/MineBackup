@@ -1,11 +1,14 @@
-﻿#include "CoreValidation.h"
+#include "CoreValidation.h"
 
 #include "BackupManager.h"
 #include "ConfigManager.h"
 #include "Console.h"
+#include "FolderRewindFormat.h"
+#include "FolderRewindMetadataStore.h"
 #include "Globals.h"
 #include "HistoryManager.h"
 #include "i18n.h"
+#include "json.hpp"
 #include "PlatformCompat.h"
 #include "text_to_text.h"
 
@@ -190,6 +193,7 @@ namespace {
 			{ kSmartWorldName, L"CoreValidation" },
 			{ kLimitWorldName, L"CoreValidation" }
 		};
+		cfg.configId = L"00000000-0000-0000-0000-000000424242";
 		return cfg;
 	}
 
@@ -319,6 +323,8 @@ namespace {
 		bool previousSafeDelete = true;
 		bool hadHistorySnapshot = false;
 		vector<HistoryEntry> historySnapshot;
+		bool hadConfigSnapshot = false;
+		Config configSnapshot;
 
 		~ValidationCleanupGuard() {
 			isSafeDelete = previousSafeDelete;
@@ -327,6 +333,15 @@ namespace {
 			}
 			else {
 				g_appState.g_history.erase(kValidationConfigIndex);
+			}
+			{
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				if (hadConfigSnapshot) {
+					g_appState.configs[kValidationConfigIndex] = configSnapshot;
+				}
+				else {
+					g_appState.configs.erase(kValidationConfigIndex);
+				}
 			}
 			SaveHistory();
 			error_code ec;
@@ -365,6 +380,53 @@ namespace {
 		return true;
 	}
 
+	static bool AssertFolderRewindMetadata(ValidationContext& ctx, const Config& cfg, const wstring& worldName, const wstring& backupFile, const wstring& expectedBackupType) {
+		FolderRewindFormat::StoragePaths paths;
+		if (!ctx.Require(FolderRewindFormat::TryResolveStoragePaths(cfg.backupPath, worldName, L"", paths), "[Validation] FolderRewind storage path resolved.", "[Validation] Failed to resolve FolderRewind storage paths.")) return false;
+		if (!ctx.Require(filesystem::exists(paths.statePath), "[Validation] state.json exists.", "[Validation] state.json missing.")) return false;
+		if (!ctx.Require(filesystem::exists(paths.recordsDir), "[Validation] records directory exists.", "[Validation] records directory missing.")) return false;
+
+		auto recordPath = FolderRewindMetadataStore::TryGetRecordPath(paths.metadataDir, backupFile);
+		if (!ctx.Require(recordPath.has_value(), "[Validation] record json path resolved.", "[Validation] record json path could not be resolved.")) return false;
+		if (!ctx.Require(filesystem::exists(*recordPath), "[Validation] record json exists.", "[Validation] record json missing.")) return false;
+		if (!ctx.Require(!filesystem::exists(paths.metadataDir / L"metadata.json"), "[Validation] legacy metadata.json absent.", "[Validation] legacy metadata.json was written.")) return false;
+
+		ifstream stateIn(paths.statePath, ios::binary);
+		nlohmann::json state = nlohmann::json::parse(stateIn, nullptr, false);
+		if (!ctx.Require(!state.is_discarded() && state.is_object(), "[Validation] state.json parses.", "[Validation] state.json parse failed.")) return false;
+		if (!ctx.Require(state.contains("Version") && state.contains("LastBackupTime") && state.contains("LastBackupFileName") && state.contains("BasedOnFullBackup") && state.contains("FileStates"), "[Validation] state.json has PascalCase fields.", "[Validation] state.json PascalCase fields missing.")) return false;
+		if (!ctx.Require(state.value("Version", string{}) == "3.0", "[Validation] state Version is 3.0.", "[Validation] state Version is not 3.0.")) return false;
+		if (!ctx.Require(state["FileStates"].is_object(), "[Validation] state FileStates is object.", "[Validation] state FileStates is not an object.")) return false;
+		if (!ctx.Require(utf8_to_wstring(state.value("LastBackupFileName", string{})) == backupFile, "[Validation] state LastBackupFileName matches.", "[Validation] state LastBackupFileName mismatch.")) return false;
+
+		ifstream recordIn(*recordPath, ios::binary);
+		nlohmann::json record = nlohmann::json::parse(recordIn, nullptr, false);
+		if (!ctx.Require(!record.is_discarded() && record.is_object(), "[Validation] record json parses.", "[Validation] record json parse failed.")) return false;
+		if (!ctx.Require(record.contains("ArchiveFileName") && record.contains("BackupType") && record.contains("BasedOnFullBackup") && record.contains("PreviousBackupFileName") && record.contains("CreatedAtUtc") && record.contains("AddedFiles") && record.contains("ModifiedFiles") && record.contains("DeletedFiles") && record.contains("FullFileList"), "[Validation] record json has PascalCase fields.", "[Validation] record PascalCase fields missing.")) return false;
+		if (!ctx.Require(utf8_to_wstring(record.value("ArchiveFileName", string{})) == backupFile, "[Validation] record ArchiveFileName matches.", "[Validation] record ArchiveFileName mismatch.")) return false;
+		if (!ctx.Require(utf8_to_wstring(record.value("BackupType", string{})) == expectedBackupType, "[Validation] record BackupType matches.", "[Validation] record BackupType mismatch.")) return false;
+		if (!ctx.Require(record["AddedFiles"].is_array() && record["ModifiedFiles"].is_array() && record["DeletedFiles"].is_array() && record["FullFileList"].is_array(), "[Validation] record change lists are arrays.", "[Validation] record change lists are not arrays.")) return false;
+		return true;
+	}
+
+	static bool AssertFolderRewindHistoryItem(ValidationContext& ctx, const Config& cfg, const MyFolder& world, const wstring& backupFile, const wstring& expectedBackupType) {
+		ifstream historyIn(filesystem::path(L"history.json"), ios::binary);
+		nlohmann::json historyRoot = nlohmann::json::parse(historyIn, nullptr, false);
+		if (!ctx.Require(!historyRoot.is_discarded() && historyRoot.is_array(), "[Validation] history.json parses as array.", "[Validation] history.json parse failed.")) return false;
+
+		const bool hasFolderRewindHistoryItem = any_of(historyRoot.begin(), historyRoot.end(), [&](const nlohmann::json& item) {
+			return item.is_object()
+				&& item.value("ConfigId", string{}) == wstring_to_utf8(cfg.configId)
+				&& item.value("FolderName", string{}) == wstring_to_utf8(world.name)
+				&& item.value("FileName", string{}) == wstring_to_utf8(backupFile)
+				&& item.value("BackupType", string{}) == wstring_to_utf8(expectedBackupType)
+				&& item.contains("Timestamp")
+				&& item.contains("IsCloudArchived");
+		});
+		if (!ctx.Require(hasFolderRewindHistoryItem, "[Validation] history.json contains FolderRewind HistoryItem.", "[Validation] FolderRewind HistoryItem missing.")) return false;
+		return true;
+	}
+
 	static bool RunSmartBackupScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
 		ctx.Info(L("VAL_INFO_SCENARIO_SMART"));
 
@@ -376,6 +438,10 @@ namespace {
 		filesystem::create_directories(worldPath / L"locks");
 
 		Config cfg = BuildValidationConfig(templateConfig, saveRoot, backupRoot, 2, 0, true);
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			g_appState.configs[kValidationConfigIndex] = cfg;
+		}
 		MyFolder world{ worldPath.wstring(), kSmartWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 0 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
 		SaveHistory();
@@ -412,6 +478,8 @@ namespace {
 		if (!ctx.Require(historyEntries[0].backupType == L"Full", L("VAL_OK_FIRST_TYPE_FULL"), L("VAL_ERR_FIRST_TYPE_NOT_FULL"))) return false;
 		const wstring fullBackupFile = historyEntries[0].backupFile;
 		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 1, L("VAL_OK_ARCHIVE_COUNT_AFTER_FIRST"), L("VAL_ERR_ARCHIVE_COUNT_AFTER_FIRST"))) return false;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, fullBackupFile, L"Full")) return false;
+		if (!AssertFolderRewindHistoryItem(ctx, cfg, world, fullBackupFile, L"Full")) return false;
 
 		world.config.skipIfUnchanged = true;
 		SleepForUniqueBackupName();
@@ -436,6 +504,7 @@ namespace {
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_FIRST_SMART_CREATED"), L("VAL_ERR_FIRST_SMART_NOT_CREATED"))) return false;
 		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_FIRST_SMART_TYPE"), L("VAL_ERR_FIRST_SMART_TYPE"))) return false;
 		const wstring firstSmartBackupFile = historyEntries.back().backupFile;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, firstSmartBackupFile, L"Smart")) return false;
 
 		SleepForUniqueBackupName();
 		WriteTextFile(worldPath / L"notes.txt", state3.at(L"notes.txt"));
@@ -446,6 +515,7 @@ namespace {
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SECOND_SMART_CREATED"), L("VAL_ERR_SECOND_SMART_NOT_CREATED"))) return false;
 		const wstring secondSmartBackupFile = historyEntries.back().backupFile;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, secondSmartBackupFile, L"Smart")) return false;
 
 		SleepForUniqueBackupName();
 		RemoveIfExists(worldPath / L"data" / L"fresh.txt");
@@ -453,6 +523,7 @@ namespace {
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 4, L("VAL_OK_DELETION_ONLY_CREATED"), L("VAL_ERR_DELETION_ONLY_NOT_CREATED"))) return false;
 		const wstring latestBackupFile = historyEntries.back().backupFile;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, latestBackupFile, L"Smart")) return false;
 		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 4, L("VAL_OK_ARCHIVE_COUNT_BEFORE_RESTORE"), L("VAL_ERR_ARCHIVE_COUNT_BEFORE_RESTORE"))) return false;
 
 		WriteTextFile(worldPath / L"notes.txt", "corrupted-before-clean-restore\n");
@@ -498,6 +569,10 @@ namespace {
 		filesystem::create_directories(worldPath);
 
 		Config cfg = BuildValidationConfig(templateConfig, saveRoot, backupRoot, 2, 2, false);
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			g_appState.configs[kValidationConfigIndex] = cfg;
+		}
 		MyFolder world{ worldPath.wstring(), kLimitWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 1 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
 		SaveHistory();
@@ -553,6 +628,14 @@ namespace {
 		if (historyIt != g_appState.g_history.end()) {
 			cleanup.hadHistorySnapshot = true;
 			cleanup.historySnapshot = historyIt->second;
+		}
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			auto configIt = g_appState.configs.find(kValidationConfigIndex);
+			if (configIt != g_appState.configs.end()) {
+				cleanup.hadConfigSnapshot = true;
+				cleanup.configSnapshot = configIt->second;
+			}
 		}
 
 		try {
