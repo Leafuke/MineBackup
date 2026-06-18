@@ -2,6 +2,9 @@
 
 #include "ConfigManager.h"
 #include "HistoryManager.h"
+#include "FolderRewindFormat.h"
+#include "FolderRewindHistoryStore.h"
+#include "FolderRewindMetadataStore.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "text_to_text.h"
@@ -19,13 +22,12 @@
 using namespace std;
 
 namespace {
-	const wchar_t* kCloudHistoryFileName = L"history.json";
+	const wchar_t* kCloudHistoryFileName = FolderRewindFormat::kCloudHistoryFileName;
 	const wchar_t* kCloudConfigFileName = L"config.ini";
-	const wchar_t* kCloudStateDirName = L"_minebackup";
-	const wchar_t* kCloudActiveHistoryFileName = L"active-history.json";
-	const wchar_t* kCloudArchivesDirName = L"archives";
-	const wchar_t* kCloudMetadataDirName = L"_metadata";
-	const wchar_t* kCloudMetadataRecordsDirName = L"records";
+	const wchar_t* kCloudStateDirName = FolderRewindFormat::kCloudStateDirName;
+	const wchar_t* kCloudActiveHistoryFileName = FolderRewindFormat::kCloudActiveHistoryFileName;
+	const wchar_t* kCloudMetadataDirName = FolderRewindFormat::kMetadataRootDirName;
+	const wchar_t* kCloudMetadataRecordsDirName = FolderRewindFormat::kMetadataRecordsDirName;
 
 	mutex g_cloudMutex;
 
@@ -40,6 +42,8 @@ namespace {
 	};
 
 	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult);
+	bool BelongsToConfiguration(const Config& config, const HistoryEntry& entry);
+	bool TryResolveKnownConfigId(const HistoryEntry& entry, wstring& outConfigId);
 
 	wstring GetUtcTimestampString() {
 		auto now = chrono::system_clock::now();
@@ -101,14 +105,11 @@ namespace {
 	}
 
 	bool IsIncrementalBackupType(const wstring& typeOrFileName) {
-		return _wcsicmp(typeOrFileName.c_str(), L"Smart") == 0
-			|| typeOrFileName.find(L"[Smart]") != wstring::npos;
+		return FolderRewindFormat::IsSmartBackupType(typeOrFileName);
 	}
 
 	bool IsFullLikeBackupType(const wstring& typeOrFileName) {
-		return _wcsicmp(typeOrFileName.c_str(), L"Full") == 0
-			|| _wcsicmp(typeOrFileName.c_str(), L"Overwrite") == 0
-			|| typeOrFileName.find(L"[Full]") != wstring::npos;
+		return FolderRewindFormat::IsFullLikeBackupType(typeOrFileName);
 	}
 
 	wstring QuoteCommandArg(const wstring& value) {
@@ -163,25 +164,35 @@ namespace {
 		return true;
 	}
 
+	FolderRewindFormat::StoragePaths ResolveStoragePaths(const Config& config, const wstring& folderName, const wstring& folderPath) {
+		FolderRewindFormat::StoragePaths storagePaths;
+		if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, folderName, folderPath, storagePaths)) {
+			storagePaths.folderName = FolderRewindFormat::SanitizePathSegment(folderName);
+			storagePaths.backupSubDir = filesystem::path(config.backupPath) / storagePaths.folderName;
+			storagePaths.metadataDir = filesystem::path(config.backupPath) / FolderRewindFormat::kMetadataRootDirName / storagePaths.folderName;
+			storagePaths.recordsDir = storagePaths.metadataDir / FolderRewindFormat::kMetadataRecordsDirName;
+			storagePaths.statePath = storagePaths.metadataDir / FolderRewindFormat::kMetadataStateFileName;
+		}
+		return storagePaths;
+	}
+
 	HistoryCloudPaths BuildHistoryPaths(const Config& config, const HistoryEntry& entry) {
 		HistoryCloudPaths paths;
-		paths.archiveLocalPath = filesystem::path(config.backupPath) / entry.worldName / entry.backupFile;
-		paths.metadataDir = filesystem::path(config.backupPath) / L"_metadata" / entry.worldName;
-		paths.metadataStateLocalPath = paths.metadataDir / L"metadata.json";
-		paths.metadataRecordLocalPath = paths.metadataDir / (entry.backupFile + L".json");
+		FolderRewindFormat::StoragePaths storagePaths = ResolveStoragePaths(config, entry.worldName, entry.worldPath);
 
-		const wstring archiveRoot = AppendRemotePath(config.rcloneRemotePath, {
-			GetConfigCloudSegment(config),
-			entry.worldName
-		});
+		paths.archiveLocalPath = storagePaths.backupSubDir / entry.backupFile;
+		paths.metadataDir = storagePaths.metadataDir;
+		paths.metadataStateLocalPath = storagePaths.statePath;
+		paths.metadataRecordLocalPath = storagePaths.recordsDir / (entry.backupFile + L".json");
+
 		paths.archiveRemotePath = entry.cloudArchiveRemotePath.empty()
-			? AppendRemotePath(archiveRoot, { entry.backupFile })
+			? FolderRewindFormat::BuildArchiveRemotePath(config, storagePaths.folderName, entry.backupFile)
 			: entry.cloudArchiveRemotePath;
 		paths.metadataStateRemotePath = entry.cloudMetadataStateRemotePath.empty()
-			? AppendRemotePath(archiveRoot, { kCloudMetadataDirName, L"state.json" })
+			? FolderRewindFormat::BuildMetadataStateRemotePath(config, storagePaths.folderName)
 			: entry.cloudMetadataStateRemotePath;
 		paths.metadataRecordRemotePath = entry.cloudMetadataRecordRemotePath.empty()
-			? AppendRemotePath(archiveRoot, { kCloudMetadataDirName, kCloudMetadataRecordsDirName, entry.backupFile + L".json" })
+			? FolderRewindFormat::BuildMetadataRecordRemotePath(config, storagePaths.folderName, entry.backupFile)
 			: entry.cloudMetadataRecordRemotePath;
 		return paths;
 	}
@@ -246,39 +257,49 @@ namespace {
 		return result;
 	}
 
-	nlohmann::json SerializeHistoryEntryForCloud(const HistoryEntry& entry) {
-		nlohmann::json item;
-		item["timestamp"] = wstring_to_utf8(entry.timestamp_str);
-		item["worldPath"] = wstring_to_utf8(entry.worldPath);
-		item["worldName"] = wstring_to_utf8(entry.worldName);
-		item["backupFile"] = wstring_to_utf8(entry.backupFile);
-		item["backupType"] = wstring_to_utf8(entry.backupType);
-		item["comment"] = wstring_to_utf8(entry.comment);
-		item["isImportant"] = entry.isImportant;
-		item["isCloudArchived"] = entry.isCloudArchived;
-		item["cloudArchivedAtUtc"] = wstring_to_utf8(entry.cloudArchivedAtUtc);
-		item["cloudArchiveRemotePath"] = wstring_to_utf8(entry.cloudArchiveRemotePath);
-		item["cloudMetadataRecordRemotePath"] = wstring_to_utf8(entry.cloudMetadataRecordRemotePath);
-		item["cloudMetadataStateRemotePath"] = wstring_to_utf8(entry.cloudMetadataStateRemotePath);
-		return item;
+	nlohmann::json SerializeHistoryEntryForCloud(const Config& config, const HistoryEntry& entry) {
+		return FolderRewindHistoryStore::SerializeHistoryItem(config, entry);
 	}
 
-	bool TryParseHistoryEntryFromCloudJson(const nlohmann::json& item, HistoryEntry& outEntry) {
-		if (!item.is_object()) return false;
-		outEntry = HistoryEntry{};
-		outEntry.timestamp_str = utf8_to_wstring(item.value("timestamp", string{}));
-		outEntry.worldPath = utf8_to_wstring(item.value("worldPath", string{}));
-		outEntry.worldName = utf8_to_wstring(item.value("worldName", string{}));
-		outEntry.backupFile = utf8_to_wstring(item.value("backupFile", string{}));
-		outEntry.backupType = utf8_to_wstring(item.value("backupType", string{}));
-		outEntry.comment = utf8_to_wstring(item.value("comment", string{}));
-		outEntry.isImportant = item.value("isImportant", false);
-		outEntry.isCloudArchived = item.value("isCloudArchived", false);
-		outEntry.cloudArchivedAtUtc = utf8_to_wstring(item.value("cloudArchivedAtUtc", string{}));
-		outEntry.cloudArchiveRemotePath = utf8_to_wstring(item.value("cloudArchiveRemotePath", string{}));
-		outEntry.cloudMetadataRecordRemotePath = utf8_to_wstring(item.value("cloudMetadataRecordRemotePath", string{}));
-		outEntry.cloudMetadataStateRemotePath = utf8_to_wstring(item.value("cloudMetadataStateRemotePath", string{}));
-		return !outEntry.worldName.empty() && !outEntry.backupFile.empty();
+	bool TryParseHistoryEntryFromCloudJson(const nlohmann::json& item, HistoryEntry& outEntry, wstring& outConfigId) {
+		outConfigId.clear();
+		if (FolderRewindHistoryStore::TryParseHistoryItem(item, outEntry, outConfigId)) {
+			return true;
+		}
+
+		int parsedConfigIndex = -1;
+		if (!FolderRewindHistoryStore::TryParseLegacyHistoryItem(item, outEntry, parsedConfigIndex)) {
+			return false;
+		}
+
+		if (parsedConfigIndex >= 0) {
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			auto it = g_appState.configs.find(parsedConfigIndex);
+			if (it != g_appState.configs.end()) {
+				outConfigId = it->second.configId;
+			}
+		}
+		if (outConfigId.empty()) {
+			TryResolveKnownConfigId(outEntry, outConfigId);
+		}
+		outEntry.configId = outConfigId;
+		return true;
+	}
+
+	bool TryParseCloudHistoryArray(const nlohmann::json& root, vector<HistoryEntry>& outEntries) {
+		outEntries.clear();
+		if (root.is_discarded() || !root.is_array()) {
+			return false;
+		}
+		for (const auto& item : root) {
+			HistoryEntry entry;
+			wstring parsedConfigId;
+			if (TryParseHistoryEntryFromCloudJson(item, entry, parsedConfigId)) {
+				entry.configId = parsedConfigId;
+				outEntries.push_back(std::move(entry));
+			}
+		}
+		return root.empty() || !outEntries.empty();
 	}
 
 	filesystem::path BuildTempFilePath(const wchar_t* prefix, const wchar_t* extension) {
@@ -290,15 +311,16 @@ namespace {
 	CloudActiveHistoryManifest BuildActiveManifest(int configIndex) {
 		CloudActiveHistoryManifest manifest;
 		auto cfgIt = g_appState.configs.find(configIndex);
-		if (cfgIt != g_appState.configs.end()) {
-			manifest.configName = utf8_to_wstring(cfgIt->second.name);
-		}
-		manifest.updatedAtUtc = GetUtcTimestampString();
+		if (cfgIt == g_appState.configs.end()) return manifest;
+
+		manifest.configId = cfgIt->second.configId;
+		manifest.configName = utf8_to_wstring(cfgIt->second.name);
+		manifest.updatedAtUtc = FolderRewindFormat::MakeUtcTimestampString();
 		for (const auto& entry : GetHistoryEntriesForConfig(configIndex)) {
 			CloudActiveHistoryEntry item;
-			item.worldPath = entry.worldPath;
-			item.worldName = entry.worldName;
-			item.backupFile = entry.backupFile;
+			item.folderPath = entry.worldPath;
+			item.folderName = entry.worldName;
+			item.fileName = entry.backupFile;
 			item.timestamp = entry.timestamp_str;
 			manifest.entries.push_back(std::move(item));
 		}
@@ -306,59 +328,32 @@ namespace {
 	}
 
 	wstring BuildActiveManifestRemotePath(const Config& config) {
-		return AppendRemotePath(config.rcloneRemotePath, {
-			GetConfigCloudSegment(config),
-			kCloudStateDirName,
-			kCloudActiveHistoryFileName
-		});
+		return FolderRewindFormat::BuildActiveHistoryManifestRemotePath(config);
 	}
 
 	nlohmann::json SerializeManifest(const CloudActiveHistoryManifest& manifest) {
 		nlohmann::json root;
-		root["configName"] = wstring_to_utf8(manifest.configName);
-		root["updatedAtUtc"] = wstring_to_utf8(manifest.updatedAtUtc);
-		root["entries"] = nlohmann::json::array();
+		root["ConfigId"] = wstring_to_utf8(manifest.configId);
+		root["ConfigName"] = wstring_to_utf8(manifest.configName);
+		root["UpdatedAtUtc"] = wstring_to_utf8(manifest.updatedAtUtc);
+		root["Entries"] = nlohmann::json::array();
 		for (const auto& entry : manifest.entries) {
 			nlohmann::json item;
-			item["worldPath"] = wstring_to_utf8(entry.worldPath);
-			item["worldName"] = wstring_to_utf8(entry.worldName);
-			item["backupFile"] = wstring_to_utf8(entry.backupFile);
-			item["timestamp"] = wstring_to_utf8(entry.timestamp);
-			root["entries"].push_back(std::move(item));
+			item["FolderPath"] = wstring_to_utf8(entry.folderPath);
+			item["FolderName"] = wstring_to_utf8(entry.folderName);
+			item["FileName"] = wstring_to_utf8(entry.fileName);
+			item["Timestamp"] = wstring_to_utf8(entry.timestamp);
+			root["Entries"].push_back(std::move(item));
 		}
 		return root;
 	}
 
 	bool TryParseManifest(const nlohmann::json& root, CloudActiveHistoryManifest& manifest) {
-		if (!root.is_object()) return false;
-		manifest = CloudActiveHistoryManifest{};
-		manifest.configName = utf8_to_wstring(root.value("configName", string{}));
-		manifest.updatedAtUtc = utf8_to_wstring(root.value("updatedAtUtc", string{}));
-		const auto entriesIt = root.find("entries");
-		if (entriesIt == root.end() || !entriesIt->is_array()) return true;
-		for (const auto& item : *entriesIt) {
-			if (!item.is_object()) continue;
-			CloudActiveHistoryEntry entry;
-			entry.worldPath = utf8_to_wstring(item.value("worldPath", string{}));
-			entry.worldName = utf8_to_wstring(item.value("worldName", string{}));
-			entry.backupFile = utf8_to_wstring(item.value("backupFile", string{}));
-			entry.timestamp = utf8_to_wstring(item.value("timestamp", string{}));
-			if (!entry.worldName.empty() && !entry.backupFile.empty()) {
-				manifest.entries.push_back(std::move(entry));
-			}
-		}
-		return true;
+		return FolderRewindHistoryStore::TryParseActiveHistoryManifest(root, manifest);
 	}
 
 	bool ManifestContainsHistoryItem(const CloudActiveHistoryManifest& manifest, const HistoryEntry& entry) {
-		for (const auto& item : manifest.entries) {
-			if (item.backupFile != entry.backupFile) continue;
-			if (!item.timestamp.empty() && !entry.timestamp_str.empty() && item.timestamp != entry.timestamp_str) continue;
-			if (item.worldName == entry.worldName || (!item.worldPath.empty() && item.worldPath == entry.worldPath)) {
-				return true;
-			}
-		}
-		return false;
+		return FolderRewindHistoryStore::ManifestContainsHistoryItem(manifest, entry);
 	}
 
 	bool HasRemotePrefix(const wstring& value, const wstring& root) {
@@ -369,8 +364,33 @@ namespace {
 			|| normalizedValue.rfind(normalizedRoot + L"/", 0) == 0;
 	}
 
+	bool TryResolveKnownConfigId(const HistoryEntry& entry, wstring& outConfigId) {
+		lock_guard<mutex> lock(g_appState.configsMutex);
+		const Config* matchedConfig = nullptr;
+		for (const auto& pair : g_appState.configs) {
+			if (!BelongsToConfiguration(pair.second, entry)) {
+				continue;
+			}
+			if (matchedConfig != nullptr) {
+				outConfigId.clear();
+				return false;
+			}
+			matchedConfig = &pair.second;
+		}
+		if (matchedConfig == nullptr || matchedConfig->configId.empty()) {
+			outConfigId.clear();
+			return false;
+		}
+		outConfigId = matchedConfig->configId;
+		return true;
+	}
+
 	bool BelongsToConfiguration(const Config& config, const HistoryEntry& entry) {
-		const wstring configRoot = AppendRemotePath(config.rcloneRemotePath, { GetConfigCloudSegment(config) });
+		if (!entry.configId.empty() && !config.configId.empty()) {
+			return _wcsicmp(entry.configId.c_str(), config.configId.c_str()) == 0;
+		}
+
+		const wstring configRoot = FolderRewindFormat::BuildConfigCloudRoot(config);
 		if (HasRemotePrefix(entry.cloudArchiveRemotePath, configRoot)
 			|| HasRemotePrefix(entry.cloudMetadataRecordRemotePath, configRoot)
 			|| HasRemotePrefix(entry.cloudMetadataStateRemotePath, configRoot)) {
@@ -418,7 +438,7 @@ namespace {
 		}
 		nlohmann::json historyRoot = nlohmann::json::array();
 		for (const auto& entry : mergedEntries) {
-			historyRoot.push_back(SerializeHistoryEntryForCloud(entry));
+			historyRoot.push_back(SerializeHistoryEntryForCloud(BelongsToConfiguration(config, entry) ? config : Config{}, entry));
 		}
 		historyOut << historyRoot.dump(2);
 		historyOut.close();
@@ -431,7 +451,7 @@ namespace {
 		manifestOut << SerializeManifest(BuildActiveManifest(configIndex)).dump(2);
 		manifestOut.close();
 
-		const wstring historyRemotePath = AppendRemotePath(config.rcloneRemotePath, { kCloudHistoryFileName });
+		const wstring historyRemotePath = FolderRewindFormat::BuildGlobalHistoryRemotePath(config);
 		result = ExecuteCommandWithRetry(config, configIndex, console,
 			BuildRcloneCopyToCommand(config, tempHistoryPath.wstring(), historyRemotePath),
 			"CLOUD_STATUS_UPLOADING_HISTORY",
@@ -607,7 +627,7 @@ namespace {
 	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult) {
 		vector<HistoryEntry> entries;
 		const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_analysis", L".json");
-		const wstring remoteHistoryPath = AppendRemotePath(config.rcloneRemotePath, { kCloudHistoryFileName });
+		const wstring remoteHistoryPath = FolderRewindFormat::BuildGlobalHistoryRemotePath(config);
 		outResult = ExecuteCommandWithRetry(
 			config,
 			configIndex,
@@ -624,13 +644,9 @@ namespace {
 		try {
 			ifstream in(tempPath, ios::binary);
 			nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
-			if (root.is_array()) {
-				for (const auto& item : root) {
-					HistoryEntry entry;
-					if (TryParseHistoryEntryFromCloudJson(item, entry)) {
-						entries.push_back(std::move(entry));
-					}
-				}
+			if (!TryParseCloudHistoryArray(root, entries)) {
+				outResult.success = false;
+				outResult.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_FAILED"));
 			}
 		}
 		catch (...) {
@@ -662,7 +678,15 @@ namespace {
 		try {
 			ifstream in(tempPath, ios::binary);
 			nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
-			ok = !root.is_discarded() && TryParseManifest(root, outManifest);
+			if (!root.is_discarded()) {
+				ok = TryParseManifest(root, outManifest);
+				const bool looksLegacyManifest = root.is_object()
+					&& root.find("entries") != root.end()
+					&& root.find("Entries") == root.end();
+				if (looksLegacyManifest) {
+					ok = false;
+				}
+			}
 		}
 		catch (...) {
 			ok = false;
@@ -807,6 +831,9 @@ CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configI
 	CloudActiveHistoryManifest activeManifest;
 	const bool hasActiveManifest = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest);
 	for (auto remoteEntry : remoteEntries) {
+		if (!BelongsToConfiguration(config, remoteEntry)) {
+			continue;
+		}
 		if (hasActiveManifest && !ManifestContainsHistoryItem(activeManifest, remoteEntry)) {
 			continue;
 		}
@@ -962,7 +989,8 @@ CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int conf
 		return configError;
 	}
 
-	const filesystem::path backupDir = filesystem::path(config.backupPath) / worldName;
+	const FolderRewindFormat::StoragePaths storagePaths = ResolveStoragePaths(config, worldName, (filesystem::path(config.saveRoot) / worldName).wstring());
+	const filesystem::path backupDir = storagePaths.backupSubDir;
 	if (!filesystem::exists(backupDir)) {
 		CloudCommandResult result = MakeConfigErrorResult("CLOUD_LOCAL_ARCHIVE_MISSING", backupDir.wstring());
 		UpdateConfigCloudLastResult(configIndex, result);
@@ -970,10 +998,9 @@ CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int conf
 		return result;
 	}
 
-	const wstring remoteWorldRoot = AppendRemotePath(config.rcloneRemotePath, {
-		GetConfigCloudSegment(config),
-		worldName
-	});
+	const wstring remoteWorldRoot = FolderRewindFormat::AppendRemotePath(
+		FolderRewindFormat::BuildConfigCloudRoot(config),
+		{ storagePaths.folderName });
 	CloudCommandResult result = ExecuteCommandWithRetry(
 		config,
 		configIndex,
@@ -989,13 +1016,13 @@ CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int conf
 	}
 
 	wstring warningMessage;
-	const filesystem::path metadataDir = filesystem::path(config.backupPath) / L"_metadata" / worldName;
+	const filesystem::path metadataDir = storagePaths.metadataDir;
 	if (filesystem::exists(metadataDir)) {
 		CloudCommandResult metadataResult = ExecuteCommandWithRetry(
 			config,
 			configIndex,
 			console,
-			BuildRcloneCopyCommand(config, metadataDir.wstring(), AppendRemotePath(remoteWorldRoot, { kCloudMetadataDirName })),
+			BuildRcloneCopyCommand(config, metadataDir.wstring(), FolderRewindFormat::AppendRemotePath(remoteWorldRoot, { kCloudMetadataDirName })),
 			"CLOUD_STATUS_UPLOADING_METADATA",
 			70);
 		if (!metadataResult.success) {
@@ -1047,6 +1074,7 @@ bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const Hi
 		CloudActiveHistoryManifest activeManifest;
 		const bool hasActiveManifest = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest);
 		for (const auto& remoteEntry : remoteEntries) {
+			if (!BelongsToConfiguration(config, remoteEntry)) continue;
 			if (hasActiveManifest && !ManifestContainsHistoryItem(activeManifest, remoteEntry)) continue;
 			if (remoteEntry.worldName == targetEntry.worldName) {
 				UpsertHistoryEntry(configIndex, remoteEntry, false);
@@ -1205,16 +1233,42 @@ CloudCommandResult ImportHistoryFromCloud(const Config& config, int configIndex,
 		config,
 		configIndex,
 		console,
-		BuildRcloneCopyToCommand(config, AppendRemotePath(config.rcloneRemotePath, { kCloudHistoryFileName }), tempPath.wstring()),
+		BuildRcloneCopyToCommand(config, FolderRewindFormat::BuildGlobalHistoryRemotePath(config), tempPath.wstring()),
 		"CLOUD_STATUS_DOWNLOADING_HISTORY",
 		70);
 
-	if (result.success && ImportHistoryFromFile(tempPath.wstring(), configIndex, mergeExisting)) {
-		result.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_SUCCEEDED"));
-	}
-	else if (result.success) {
-		result.success = false;
-		result.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_FAILED"));
+	if (result.success) {
+		vector<HistoryEntry> remoteEntries;
+		try {
+			ifstream in(tempPath, ios::binary);
+			nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
+			if (!TryParseCloudHistoryArray(root, remoteEntries)) {
+				result.success = false;
+			}
+		}
+		catch (...) {
+			result.success = false;
+		}
+
+		if (result.success) {
+			if (!mergeExisting) {
+				g_appState.g_history[configIndex].clear();
+			}
+			bool changed = false;
+			for (const auto& entry : remoteEntries) {
+				if (!BelongsToConfiguration(config, entry)) {
+					continue;
+				}
+				changed = UpsertHistoryEntry(configIndex, entry, false) || changed;
+			}
+			if (changed || !mergeExisting) {
+				SaveHistory();
+			}
+			result.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_SUCCEEDED"));
+		}
+		else {
+			result.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_FAILED"));
+		}
 	}
 	else {
 		result.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_FAILED"));
