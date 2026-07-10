@@ -7,6 +7,7 @@
 #include "FolderRewindMetadataStore.h"
 #include "Globals.h"
 #include "HistoryManager.h"
+#include "MigrationService.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
@@ -608,6 +609,65 @@ namespace {
 		return true;
 	}
 
+	static bool RunLegacyMigrationScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
+		const wstring worldName = L"__CoreValidationMigration";
+		Config cfg = BuildValidationConfig(templateConfig, sandboxRoot / L"worlds", sandboxRoot / L"migration-backups", 2, 0, true);
+		cfg.name = "LegacyCloudConfig";
+		cfg.cloudSyncEnabled = true;
+		cfg.rcloneRemotePath = L"test:FolderRewind";
+		cfg.configId = MigrationService::GenerateLegacyConfigId(cfg, kValidationConfigIndex);
+		Config secondDevice = cfg;
+		if (!ctx.Require(cfg.configId == MigrationService::GenerateLegacyConfigId(secondDevice, 999),
+			"[Validation] Legacy ConfigId is deterministic across devices.", "[Validation] Legacy ConfigId is not deterministic.")) return false;
+		g_appState.configs[kValidationConfigIndex] = cfg;
+
+		const filesystem::path archiveDir = filesystem::path(cfg.backupPath) / worldName;
+		const filesystem::path metadataDir = filesystem::path(cfg.backupPath) / L"_metadata" / worldName;
+		filesystem::create_directories(archiveDir);
+		filesystem::create_directories(metadataDir);
+		const wstring fullName = L"[Full][2026-01-01_00-00-00]Old Description.7z";
+		const wstring smartName = L"[Smart][2026-01-01_00-01-00]Old Description.7z";
+		WriteTextFile(archiveDir / fullName, "archive-placeholder");
+		WriteTextFile(archiveDir / smartName, "archive-placeholder");
+		const long long ticks = static_cast<long long>(filesystem::last_write_time(archiveDir / smartName).time_since_epoch().count());
+		nlohmann::json summary;
+		summary["version"] = 2;
+		summary["lastBackupFileName"] = wstring_to_utf8(smartName);
+		summary["basedOnFullBackup"] = wstring_to_utf8(fullName);
+		summary["fileStates"] = { { "level.dat", { { "size", 5 }, { "lastWriteTimeTicks", ticks } } } };
+		summary["records"] = nlohmann::json::array({
+			{ { "archiveFileName", wstring_to_utf8(fullName) }, { "backupType", "Full" }, { "basedOnFullBackup", wstring_to_utf8(fullName) }, { "previousBackupFileName", "" }, { "createdAtUtc", "2026-01-01T00:00:00Z" } },
+			{ { "archiveFileName", wstring_to_utf8(smartName) }, { "backupType", "Smart" }, { "basedOnFullBackup", wstring_to_utf8(fullName) }, { "previousBackupFileName", wstring_to_utf8(fullName) }, { "createdAtUtc", "2026-01-01T00:01:00Z" } }
+		});
+		WriteTextFile(metadataDir / L"metadata.json", summary.dump(2));
+		auto writeRecord = [&](const wstring& name, const string& type, const wstring& previous) {
+			nlohmann::json record;
+			record["archiveFileName"] = wstring_to_utf8(name);
+			record["backupType"] = type;
+			record["basedOnFullBackup"] = wstring_to_utf8(fullName);
+			record["previousBackupFileName"] = wstring_to_utf8(previous);
+			record["createdAtUtc"] = type == "Full" ? "2026-01-01T00:00:00Z" : "2026-01-01T00:01:00Z";
+			record["addedFiles"] = nlohmann::json::array({ "level.dat" });
+			record["modifiedFiles"] = nlohmann::json::array();
+			record["deletedFiles"] = nlohmann::json::array();
+			record["fullFileList"] = nlohmann::json::array({ "level.dat" });
+			WriteTextFile(metadataDir / (name + L".json"), record.dump(2));
+		};
+		writeRecord(fullName, "Full", L"");
+		writeRecord(smartName, "Smart", fullName);
+
+		const MigrationUnitResult result = MigrationService::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
+		if (!ctx.Require(result.status == MigrationStatus::Succeeded, "[Validation] 1.15 metadata migrated.", "[Validation] 1.15 metadata migration failed.")) return false;
+		FolderRewindFormat::MetadataState state;
+		if (!ctx.Require(FolderRewindMetadataStore::LoadState(metadataDir, state) && state.lastBackupFileName == smartName,
+			"[Validation] Migrated state references the original archive name.", "[Validation] Migrated state is invalid.")) return false;
+		FolderRewindFormat::ChangeRecord record;
+		if (!ctx.Require(FolderRewindMetadataStore::LoadRecord(metadataDir, smartName, record) && record.previousBackupFileName == fullName,
+			"[Validation] Migrated Smart chain is intact.", "[Validation] Migrated Smart chain is invalid.")) return false;
+		return ctx.Require(filesystem::exists(archiveDir / fullName) && filesystem::exists(archiveDir / smartName),
+			"[Validation] Legacy archives were not renamed.", "[Validation] Legacy archive files changed during migration.");
+	}
+
 	static bool RunCoreValidation(Console& console, bool automatic) {
 		ValidationContext ctx{ console, automatic };
 		ctx.Info(automatic ? L("VAL_INFO_START_AUTO") : L("VAL_INFO_START_MANUAL"));
@@ -641,6 +701,7 @@ namespace {
 		try {
 			filesystem::create_directories(sandboxRoot / L"worlds");
 			filesystem::create_directories(sandboxRoot / L"backups");
+			RunLegacyMigrationScenario(ctx, templateConfig, sandboxRoot);
 			RunSmartBackupScenario(ctx, templateConfig, sandboxRoot);
 			RunKeepCountScenario(ctx, templateConfig, sandboxRoot);
 		}

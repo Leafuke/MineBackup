@@ -69,6 +69,12 @@
     <ClCompile Include="src\core\FolderRewindMetadataStore.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\MigrationService.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
     <ClCompile Include="src\core\GameSessionManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -179,6 +185,12 @@
     <ClInclude Include="src\core\FolderRewindMetadataStore.h">
       <Filter>src\core</Filter>
     </ClInclude>
+	<ClInclude Include="src\core\LegacyMineBackup15Reader.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\MigrationService.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
     <ClInclude Include="src\core\HistoryManager.h">
       <Filter>src\core</Filter>
     </ClInclude>

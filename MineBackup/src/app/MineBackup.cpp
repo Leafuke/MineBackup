@@ -17,6 +17,7 @@
 #include "BackupManager.h"
 #include "CloudSyncService.h"
 #include "CoreValidation.h"
+#include "MigrationService.h"
 
 #ifdef _WIN32
 #include <conio.h>
@@ -279,6 +280,7 @@ int main(int argc, char** argv)
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
 	}
 
+	MigrationService::RunStartupMigration();
 	CheckForConfigConflicts();
 	LoadHistory();
 	if (g_CheckForUpdates) {
@@ -735,6 +737,25 @@ int main(int argc, char** argv)
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
+
+		if (MigrationService::ShouldShowStartupSummary()) {
+			ImGui::OpenPopup("MineBackup 1.15 migration summary");
+		}
+		if (ImGui::BeginPopupModal("MineBackup 1.15 migration summary", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::TextWrapped("MineBackup converted compatible 1.15 data without renaming archive files. Recovery snapshots were retained.");
+			const auto migrationReport = MigrationService::GetMigrationReport();
+			for (const auto& unit : migrationReport.units) {
+				const char* state = unit.status == MigrationStatus::Succeeded ? "Succeeded" : unit.status == MigrationStatus::Degraded ? "Degraded"
+					: unit.status == MigrationStatus::Failed ? "Failed" : unit.status == MigrationStatus::Pending ? "Pending" : "Not needed";
+				ImGui::BulletText("%s: %s", wstring_to_utf8(unit.unitId).c_str(), state);
+				if (!unit.message.empty()) ImGui::TextWrapped("%s", wstring_to_utf8(unit.message).c_str());
+			}
+			if (ImGui::Button("OK")) {
+				MigrationService::DismissStartupSummary();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
 
 		if (!showConfigWizard && g_appState.showMainApp && g_CoreValidationPending.load() && !g_CoreValidationRunning.load()) {
 			StartCoreValidationAsync(true, console);

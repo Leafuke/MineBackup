@@ -31,6 +31,8 @@ struct Config {
 	int theme = 1;
 	std::string name;
 	std::wstring configId;
+	// Runtime-only: the loaded 1.15 configuration did not persist ConfigId.
+	bool legacyConfigIdGenerated = false;
 	int cpuThreads = 0;
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
@@ -168,6 +170,29 @@ struct HistoryEntry {
 	std::wstring cloudArchiveRemotePath;
 	std::wstring cloudMetadataRecordRemotePath;
 	std::wstring cloudMetadataStateRemotePath;
+};
+
+enum class MigrationStatus {
+	NotNeeded = 0,
+	Pending,
+	Succeeded,
+	Degraded,
+	Failed
+};
+
+struct MigrationUnitResult {
+	std::wstring unitId;
+	MigrationStatus status = MigrationStatus::NotNeeded;
+	std::wstring message;
+	std::wstring snapshotPath;
+	int migratedItems = 0;
+	int skippedItems = 0;
+};
+
+struct MigrationReport {
+	MigrationStatus status = MigrationStatus::NotNeeded;
+	std::wstring updatedAtUtc;
+	std::vector<MigrationUnitResult> units;
 };
 
 struct CloudHistoryAnalysisResult {

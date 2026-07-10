@@ -2,7 +2,7 @@ IMPORTANT NOTICE
 
 2026.7.10
 
-According to feedback and evaluation, the major version update for 1.16.0 will be rolled out in a more gradual manner. You don't need to worry about existing backups/cloud saves being incompatible.
+According to feedback and evaluation, the major version update for 1.16.0 will be rolled out in a more gradual manner. You don't need to worry about existing backups/cloud saves being incompatible.  
 But please note that linked components such as MineBackup-Mod and MineBackup-Plugin will also be updated alongside the 1.16.0 update. You will need to update these linked components to the latest version in order to use them properly.
 
 Thank you for your understanding and support.

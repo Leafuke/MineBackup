@@ -1,7 +1,9 @@
 # MineBackup 与 FolderRewind 备份/云存档格式统一设计
 
 日期：2026-06-07
-状态：设计已分段确认，待实现计划
+状态：2026-07-10 兼容性修订；原“直接替换”策略已撤销
+
+> 2026-07-10 修订优先于本文后续仍保留的历史分析。MineBackup 1.16 将对 1.15 数据执行一次性、单向、事务化迁移，而不是直接舍弃旧 history/metadata。详细取舍见 `docs/adr/0001-staged-v15-to-v16-migration.md`。
 
 ## 背景
 
@@ -11,7 +13,7 @@
 
 ## 已确认决策
 
-1. **兼容策略：直接替换。** MineBackup 新生成的数据全部采用 FolderRewind 格式；旧 MineBackup 元数据/历史不作为长期双格式兼容目标。
+1. **兼容策略：分阶段迁移。** MineBackup 新生成的数据全部采用 FolderRewind 格式；1.16 启动时迁移 1.15 配置/历史，并在世界或云端首次使用时惰性迁移 metadata。旧格式只读、不双写，兼容层在 1.17 移除。
 2. **配置身份：新增 `ConfigId`。** MineBackup 每个配置持久化一个 GUID，对齐 FolderRewind `BackupConfig.Id` / `HistoryItem.ConfigId`。
 3. **存储目录名：使用世界文件夹名。** 本地备份子目录、元数据目录、云端 `FolderName` 都使用 Minecraft 世界文件夹名。
 4. **归档文件名主体：使用世界文件夹名。** MineBackup 的 `desc` 不再影响归档文件名主体，也不参与路径身份。
@@ -46,12 +48,21 @@
 
 ## 非目标
 
-1. 不实现 MineBackup 旧格式到 FolderRewind 格式的完整自动迁移器。
+1. 不为 1.15 以前版本承诺完整 Smart 链迁移；1.15 metadata v2 属于 1.16 的正式迁移范围。
 2. 不保证旧 MineBackup Smart 链在没有 FolderRewind `records/` 的情况下可精确 Clean Restore。
 3. 不重写 MineBackup UI、备份调度、KnotLink、WorldEdit 集成或安全删除整体架构。
 4. 不引入强制文件哈希扫描；`Hash` 字段先保持为空字符串以对齐 FolderRewind schema。
 
 ## 架构设计
+
+### 0. 1.15 迁移边界
+
+- `LegacyMineBackup15Reader` 是唯一允许读取 camelCase history、`metadata.json` 和相邻 record 的组件。
+- `MigrationService` 在启动时迁移配置/历史，在备份、还原、删除或云操作前迁移对应世界。
+- 迁移不重命名或重传归档；新 state/records 继续引用原文件名。
+- 新格式有效时优先，旧数据只补缺；损坏或无法唯一映射时保留快照并局部阻断危险操作。
+- 配置身份对旧云配置由规范化的 `RemoteBase + ConfigName` 确定性派生，新建配置仍使用随机 GUID。
+- `MINEBACKUP_ENABLE_V15_MIGRATION=0` 必须仍可构建，为 1.17 删除兼容层提供验证。
 
 ### 1. FolderRewindIdentity
 

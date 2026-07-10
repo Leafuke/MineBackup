@@ -5,6 +5,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
+#include "MigrationService.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "text_to_text.h"
@@ -44,6 +45,13 @@ namespace {
 	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult);
 	bool BelongsToConfiguration(const Config& config, const HistoryEntry& entry);
 	bool TryResolveKnownConfigId(const HistoryEntry& entry, wstring& outConfigId);
+
+	bool IsLegacyHistoryJson(const nlohmann::json& root) {
+		if (!root.is_array()) return false;
+		return any_of(root.begin(), root.end(), [](const nlohmann::json& item) {
+			return item.is_object() && (item.contains("backupFile") || item.contains("configIndex"));
+		});
+	}
 
 	wstring GetUtcTimestampString() {
 		auto now = chrono::system_clock::now();
@@ -505,6 +513,18 @@ namespace {
 		}
 
 		wstring warningMessage;
+		if (filesystem::exists(paths.metadataDir / L"metadata.json")) {
+			const wstring stamp = FolderRewindFormat::MakeLocalTimestampString();
+			const wstring snapshotRoot = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
+				{ L"_minebackup", L"migration-backups", L"1.15", stamp, utf8_to_wstring(config.name), entry.worldName });
+			// Missing remote metadata is normal for archives that were never uploaded by 1.15.
+			ExecuteCommandWithRetry(config, configIndex, console,
+				BuildRcloneCopyToCommand(config, paths.metadataStateRemotePath,
+					FolderRewindFormat::AppendRemotePath(snapshotRoot, { L"state.json" })), "CLOUD_STATUS_UPLOADING_METADATA", 52);
+			ExecuteCommandWithRetry(config, configIndex, console,
+				BuildRcloneCopyToCommand(config, paths.metadataRecordRemotePath,
+					FolderRewindFormat::AppendRemotePath(snapshotRoot, { L"records", entry.backupFile + L".json" })), "CLOUD_STATUS_UPLOADING_METADATA", 54);
+		}
 		if (filesystem::exists(paths.metadataStateLocalPath)) {
 			CloudCommandResult metadataStateResult = ExecuteCommandWithRetry(
 				config,
@@ -606,6 +626,30 @@ namespace {
 			warningMessage = utf8_to_wstring(L("CLOUD_METADATA_PARTIAL"));
 		}
 
+		// A 1.15 cloud state used the state.json destination but contained metadata v2 camelCase.
+		// Convert the downloaded small JSON files locally; the archive remains untouched.
+		bool downloadedLegacyState = false;
+		try {
+			ifstream stateIn(paths.metadataStateLocalPath, ios::binary);
+			nlohmann::json stateRoot = nlohmann::json::parse(stateIn, nullptr, false);
+			downloadedLegacyState = stateRoot.is_object() && stateRoot.contains("fileStates") && !stateRoot.contains("FileStates");
+		}
+		catch (...) {}
+		if (downloadedLegacyState) {
+			const filesystem::path legacySummary = paths.metadataDir / L"metadata.json";
+			const filesystem::path legacyRecord = paths.metadataDir / (entry.backupFile + L".json");
+			error_code migrateEc;
+			filesystem::copy_file(paths.metadataStateLocalPath, legacySummary, filesystem::copy_options::overwrite_existing, migrateEc);
+			migrateEc.clear();
+			if (filesystem::exists(paths.metadataRecordLocalPath))
+				filesystem::copy_file(paths.metadataRecordLocalPath, legacyRecord, filesystem::copy_options::overwrite_existing, migrateEc);
+			filesystem::remove(paths.metadataStateLocalPath, migrateEc);
+			filesystem::remove(paths.metadataRecordLocalPath, migrateEc);
+			const MigrationUnitResult migrated = MigrationService::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
+			if (migrated.status == MigrationStatus::Failed || migrated.status == MigrationStatus::Degraded)
+				warningMessage = L"Downloaded legacy metadata could not be migrated completely: " + migrated.message;
+		}
+
 		UpdateHistoryCloudState(
 			configIndex,
 			entry.worldName,
@@ -626,6 +670,12 @@ namespace {
 
 	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult) {
 		vector<HistoryEntry> entries;
+		const MigrationUnitResult cloudGate = MigrationService::EnsureCloudMigrated(configIndex);
+		if (cloudGate.status == MigrationStatus::Failed) {
+			outResult.success = false;
+			outResult.message = cloudGate.message;
+			return entries;
+		}
 		const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_analysis", L".json");
 		const wstring remoteHistoryPath = FolderRewindFormat::BuildGlobalHistoryRemotePath(config);
 		outResult = ExecuteCommandWithRetry(
@@ -648,6 +698,47 @@ namespace {
 				outResult.success = false;
 				outResult.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_FAILED"));
 			}
+			else if (IsLegacyHistoryJson(root)) {
+				const bool hasUnmapped = any_of(entries.begin(), entries.end(), [](const HistoryEntry& entry) { return entry.configId.empty(); });
+				if (hasUnmapped || entries.size() != root.size()) {
+					outResult.success = false;
+					outResult.message = L"Legacy cloud history contains entries that cannot be mapped safely; remote data was not changed.";
+					MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed, outResult.message);
+				}
+				else {
+					const wstring stamp = FolderRewindFormat::MakeLocalTimestampString();
+					const wstring backupRemote = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
+						{ L"_minebackup", L"migration-backups", L"1.15", stamp, L"history.json" });
+					CloudCommandResult snapshotResult = ExecuteCommandWithRetry(config, configIndex, console,
+						BuildRcloneCopyToCommand(config, remoteHistoryPath, backupRemote), "CLOUD_STATUS_ANALYZING", 24);
+					if (!snapshotResult.success) {
+						outResult = snapshotResult;
+						outResult.message = L"Could not create the remote 1.15 history snapshot; migration was aborted.";
+						MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed, outResult.message);
+					}
+					else {
+						nlohmann::json converted = nlohmann::json::array();
+						for (const auto& entry : entries) {
+							const Config* owner = nullptr;
+							for (const auto& [candidateIndex, candidate] : g_appState.configs)
+								if (_wcsicmp(candidate.configId.c_str(), entry.configId.c_str()) == 0) { owner = &candidate; break; }
+							if (!owner) { outResult.success = false; break; }
+							converted.push_back(FolderRewindHistoryStore::SerializeHistoryItem(*owner, entry));
+						}
+						if (outResult.success) {
+							ofstream convertedOut(tempPath, ios::binary | ios::trunc);
+							convertedOut << converted.dump(2);
+							convertedOut.close();
+							outResult = ExecuteCommandWithRetry(config, configIndex, console,
+								BuildRcloneCopyToCommand(config, tempPath.wstring(), remoteHistoryPath), "CLOUD_STATUS_ANALYZING", 28);
+							if (outResult.success) MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Succeeded,
+								L"Legacy cloud history migrated; archive objects were left in place.", backupRemote);
+							else MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed,
+								L"Uploading converted cloud history failed; the recovery snapshot is intact.", backupRemote);
+						}
+					}
+				}
+			}
 		}
 		catch (...) {
 			outResult.success = false;
@@ -669,9 +760,48 @@ namespace {
 			"CLOUD_STATUS_ANALYZING",
 			30);
 		if (!result.success) {
-			error_code ec;
-			filesystem::remove(tempPath, ec);
-			return false;
+			// 1.15 stored the manifest under _minebackup. Read and convert it lazily.
+			const wstring legacyRemote = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
+				{ utf8_to_wstring(config.name), L"_minebackup", L"active-history.json" });
+			result = ExecuteCommandWithRetry(config, configIndex, console,
+				BuildRcloneCopyToCommand(config, legacyRemote, tempPath.wstring()), "CLOUD_STATUS_ANALYZING", 30);
+			if (!result.success) {
+				error_code ec; filesystem::remove(tempPath, ec); return false;
+			}
+			ifstream legacyIn(tempPath, ios::binary);
+			nlohmann::json legacy = nlohmann::json::parse(legacyIn, nullptr, false);
+			legacyIn.close();
+			if (!legacy.is_object() || !legacy.contains("entries") || !legacy["entries"].is_array()) {
+				error_code ec; filesystem::remove(tempPath, ec); return false;
+			}
+			CloudActiveHistoryManifest converted;
+			converted.configId = config.configId;
+			converted.configName = utf8_to_wstring(config.name);
+			converted.updatedAtUtc = legacy.value("updatedAtUtc", string{}).empty()
+				? FolderRewindFormat::MakeUtcTimestampString() : utf8_to_wstring(legacy.value("updatedAtUtc", string{}));
+			for (const auto& item : legacy["entries"]) {
+				if (!item.is_object()) continue;
+				CloudActiveHistoryEntry entry;
+				entry.folderPath = utf8_to_wstring(item.value("worldPath", string{}));
+				entry.folderName = utf8_to_wstring(item.value("worldName", string{}));
+				entry.fileName = utf8_to_wstring(item.value("backupFile", string{}));
+				entry.timestamp = utf8_to_wstring(item.value("timestamp", string{}));
+				if (!entry.folderName.empty() && !entry.fileName.empty()) converted.entries.push_back(std::move(entry));
+			}
+			const wstring stamp = FolderRewindFormat::MakeLocalTimestampString();
+			const wstring backupRemote = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
+				{ L"_minebackup", L"migration-backups", L"1.15", stamp, utf8_to_wstring(config.name), L"active-history.json" });
+			CloudCommandResult snapshot = ExecuteCommandWithRetry(config, configIndex, console,
+				BuildRcloneCopyToCommand(config, legacyRemote, backupRemote), "CLOUD_STATUS_ANALYZING", 31);
+			if (!snapshot.success) { error_code ec; filesystem::remove(tempPath, ec); return false; }
+			ofstream convertedOut(tempPath, ios::binary | ios::trunc);
+			convertedOut << SerializeManifest(converted).dump(2);
+			convertedOut.close();
+			CloudCommandResult upload = ExecuteCommandWithRetry(config, configIndex, console,
+				BuildRcloneCopyToCommand(config, tempPath.wstring(), BuildActiveManifestRemotePath(config)), "CLOUD_STATUS_ANALYZING", 32);
+			if (!upload.success) { error_code ec; filesystem::remove(tempPath, ec); return false; }
+			outManifest = std::move(converted);
+			error_code ec; filesystem::remove(tempPath, ec); return true;
 		}
 
 		bool ok = false;
@@ -963,6 +1093,14 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 CloudCommandResult UploadHistoryEntry(const Config& config, int configIndex, const HistoryEntry& entry, Console& console) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_PREPARING")));
+	const MigrationUnitResult localMigration = MigrationService::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
+	if (localMigration.status == MigrationStatus::Failed || localMigration.status == MigrationStatus::Degraded) {
+		CloudCommandResult blocked;
+		blocked.success = false;
+		blocked.message = L"Cloud upload requires complete local metadata migration: " + localMigration.message;
+		SetCloudRuntimeState(configIndex, false, 100, blocked.message, blocked.message);
+		return blocked;
+	}
 	CloudCommandResult result = UploadHistoryEntryNoLock(config, configIndex, entry, console);
 	UpdateConfigCloudLastResult(configIndex, result);
 	SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);

@@ -1,6 +1,7 @@
 ﻿#include "ConfigManager.h"
 #include "AppState.h"
 #include "FolderRewindFormat.h"
+#include "MigrationService.h"
 #include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -433,7 +434,13 @@ void LoadConfigs(const string& filename) {
 		}
 		if (cfg.cloudTimeoutSeconds <= 0) cfg.cloudTimeoutSeconds = 600;
 		if (cfg.cloudRetryCount < 0) cfg.cloudRetryCount = 0;
-		cfg.configId = FolderRewindFormat::EnsureConfigId(cfg.configId);
+		if (cfg.configId.empty()) {
+			cfg.configId = MigrationService::GenerateLegacyConfigId(cfg, kv.first);
+			cfg.legacyConfigIdGenerated = true;
+		}
+		else {
+			cfg.configId = FolderRewindFormat::EnsureConfigId(cfg.configId);
+		}
 	}
 
 	for (auto& kv : g_appState.specialConfigs) {
@@ -445,7 +452,9 @@ void LoadConfigs(const string& filename) {
 
 void SaveConfigs(const wstring& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
-	ofstream out{std::filesystem::path(filename), ios::binary};
+	const filesystem::path target(filename);
+	const filesystem::path temp = target.wstring() + L".tmp";
+	ofstream out{temp, ios::binary | ios::trunc};
 	if (!out.is_open()) {
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
 		return;
@@ -585,6 +594,26 @@ void SaveConfigs(const wstring& filename) {
 
 	const string utf8 = wstring_to_utf8(buffer.str());
 	out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
+	out.close();
+	if (!out.good()) {
+		error_code ec; filesystem::remove(temp, ec);
+		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
+		return;
+	}
+#ifdef _WIN32
+	SetFileAttributesW(target.c_str(), FILE_ATTRIBUTE_NORMAL);
+	if (!MoveFileExW(temp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+		error_code ec; filesystem::remove(temp, ec);
+		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
+	}
+#else
+	error_code ec;
+	filesystem::rename(temp, target, ec);
+	if (ec) {
+		filesystem::remove(temp, ec);
+		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
+	}
+#endif
 }
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口

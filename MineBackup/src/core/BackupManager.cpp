@@ -10,6 +10,7 @@
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
+#include "MigrationService.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -734,11 +735,13 @@ namespace {
 	}
 
 	static void CleanupInternalRestoreMarkers(const filesystem::path& targetDir) {
-		error_code ec;
-		filesystem::path internalDir = targetDir / kDeletedOnlyMarkerDir;
-		if (filesystem::exists(internalDir, ec) && !ec) {
-			ClearReadonlyAttributesRecursively(internalDir);
-			filesystem::remove_all(internalDir, ec);
+		for (const wchar_t* markerDir : { kDeletedOnlyMarkerDir, L"__MineBackup_Internal" }) {
+			error_code ec;
+			filesystem::path internalDir = targetDir / markerDir;
+			if (filesystem::exists(internalDir, ec) && !ec) {
+				ClearReadonlyAttributesRecursively(internalDir);
+				filesystem::remove_all(internalDir, ec);
+			}
 		}
 	}
 
@@ -1147,6 +1150,14 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		);
 		return;
 	}
+	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, folder.configIndex, folder.name, folder.path);
+	const bool forceFullForMigration = migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded;
+	if (migration.status == MigrationStatus::Failed) {
+		console.AddLog("[Warning] Legacy metadata migration failed; this backup will establish a new Full chain: %s", wstring_to_utf8(migration.message).c_str());
+	}
+	else if (migration.status == MigrationStatus::Degraded) {
+		console.AddLog("[Warning] Legacy metadata was only partially migrated; forcing a safe Full backup.");
+	}
 
 	console.AddLog(L("LOG_BACKUP_START_HEADER"));
 	console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
@@ -1233,6 +1244,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         }
     }
+	if (forceFullForMigration) forceFullBackup = true;
     if (forceFullBackup)
         console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
 
@@ -1638,6 +1650,11 @@ void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelet
 		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "history deletion", console);
 		return;
 	}
+	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
+		console.AddLog("[Error] Local archive deletion is blocked until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
+		return;
+	}
 
 	if (mode == BackupDeleteMode::LocalArchiveOnly) {
 		if (DeleteLocalArchiveOnly(config, entryToDelete, console)) {
@@ -1688,6 +1705,11 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
 	console.AddLog(L("LOG_SAFE_DELETE_START"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
+		console.AddLog("[Error] Safe delete requires a complete metadata migration: %s", wstring_to_utf8(migration.message).c_str());
+		return;
+	}
 
 	if (entryToDelete.isImportant) {
 		console.AddLog(L("LOG_SAFE_DELETE_ABORT_IMPORTANT"), wstring_to_utf8(entryToDelete.backupFile).c_str());

@@ -6,10 +6,40 @@
 #include <algorithm>
 #include <fstream>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 using namespace std;
 
 namespace FolderRewindMetadataStore {
 namespace {
+
+bool AtomicWriteJson(const filesystem::path& path, const nlohmann::json& value) {
+    const filesystem::path temp = path.wstring() + L".tmp";
+    {
+        ofstream out(temp, ios::binary | ios::trunc);
+        if (!out.is_open()) return false;
+        out << value.dump(2);
+        if (!out.good()) return false;
+    }
+    {
+        ifstream verifyIn(temp, ios::binary);
+        const auto verify = nlohmann::json::parse(verifyIn, nullptr, false);
+        if (verify.is_discarded()) { error_code ec; filesystem::remove(temp, ec); return false; }
+    }
+#ifdef _WIN32
+    SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+    if (MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+#else
+    error_code renameEc;
+    filesystem::rename(temp, path, renameEc);
+    if (!renameEc) return true;
+#endif
+    error_code cleanupEc;
+    filesystem::remove(temp, cleanupEc);
+    return false;
+}
 
 wstring JsonString(const nlohmann::json& item, const char* key) {
     const auto it = item.find(key);
@@ -433,10 +463,7 @@ bool SaveState(const filesystem::path& metadataDir, const FolderRewindFormat::Me
         const filesystem::path statePath = GetStatePath(metadataDir);
         if (statePath.empty()) return false;
 
-        ofstream out(statePath, ios::binary | ios::trunc);
-        if (!out.is_open()) return false;
-        out << root.dump(2);
-        return out.good();
+        return AtomicWriteJson(statePath, root);
     }
     catch (...) {
         return false;
@@ -453,10 +480,7 @@ bool SaveRecord(const filesystem::path& metadataDir, const FolderRewindFormat::C
 
         filesystem::create_directories(GetRecordsDir(metadataDir));
 
-        ofstream out(*recordPath, ios::binary | ios::trunc);
-        if (!out.is_open()) return false;
-        out << root.dump(2);
-        return out.good();
+        return AtomicWriteJson(*recordPath, root);
     }
     catch (...) {
         return false;

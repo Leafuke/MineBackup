@@ -6,6 +6,7 @@
 #include "AppState.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
+#include "MigrationService.h"
 #include "json.hpp"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
@@ -83,6 +84,7 @@ static bool LoadLegacyHistoryFile(const filesystem::path& filename) {
 }
 
 void SaveHistory() {
+	if (MigrationService::IsHistoryPersistenceBlocked()) return;
 	const filesystem::path filename = L"history.json";
 #ifdef _WIN32
 	SetFileAttributesWin(filename.wstring(), 0);
