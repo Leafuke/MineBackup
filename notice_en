@@ -1,11 +1,8 @@
 IMPORTANT NOTICE
 
-2026.3.14
-1.14.0 contains many **breaking changes**. After upgrading, please be sure to click "Auto-Verify Core Functions" in the "Tools" menu to validate that the current version works properly on your machine. Also, it's highly recommended to perform several backup and restore tests to ensure everything is working correctly before using it for real.
+2026.7.10
 
-2026.3.12
-For Windows 10 and above users, it is recommended to prioritize the combination of [FolderRewind](https://github.com/Leafuke/FolderRewind) + [MineRewind Plugin](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft) — the Second Generation Time Machine features a more modern UI and more powerful functionalities, and it will be the main focus of future maintenance. Looking back at the first-generation Time Machine, MineBackup, I recognize that it indeed has many design shortcomings, which make it more difficult to maintain and extend. However, considering that many users are already using it, I will continue to maintain MineBackup, fixing critical bugs and security issues, but updates will often lag behind the second-generation Time Machine.
+According to feedback and evaluation, the major version update for 1.16.0 will be rolled out in a more gradual manner. You don't need to worry about existing backups/cloud saves being incompatible.
+But please note that linked components such as MineBackup-Mod and MineBackup-Plugin will also be updated alongside the 1.16.0 update. You will need to update these linked components to the latest version in order to use them properly.
 
-2026.3.1
-FolderRewind Official Website is Now Live!
-https://folderrewind.top
+Thank you for your understanding and support.
