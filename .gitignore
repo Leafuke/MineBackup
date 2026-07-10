@@ -373,3 +373,6 @@ References/
 .DS_Store
 
 !MineBackup/Assets/fontawesome-sp.otf
+superpowers/
+.superpowers/
+docs/adr

@@ -1,11 +1,15 @@
-﻿#include "CoreValidation.h"
+#include "CoreValidation.h"
 
 #include "BackupManager.h"
 #include "ConfigManager.h"
 #include "Console.h"
+#include "FolderRewindFormat.h"
+#include "FolderRewindMetadataStore.h"
 #include "Globals.h"
 #include "HistoryManager.h"
+#include "MigrationService.h"
 #include "i18n.h"
+#include "json.hpp"
 #include "PlatformCompat.h"
 #include "text_to_text.h"
 
@@ -190,6 +194,7 @@ namespace {
 			{ kSmartWorldName, L"CoreValidation" },
 			{ kLimitWorldName, L"CoreValidation" }
 		};
+		cfg.configId = L"00000000-0000-0000-0000-000000424242";
 		return cfg;
 	}
 
@@ -319,6 +324,8 @@ namespace {
 		bool previousSafeDelete = true;
 		bool hadHistorySnapshot = false;
 		vector<HistoryEntry> historySnapshot;
+		bool hadConfigSnapshot = false;
+		Config configSnapshot;
 
 		~ValidationCleanupGuard() {
 			isSafeDelete = previousSafeDelete;
@@ -327,6 +334,15 @@ namespace {
 			}
 			else {
 				g_appState.g_history.erase(kValidationConfigIndex);
+			}
+			{
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				if (hadConfigSnapshot) {
+					g_appState.configs[kValidationConfigIndex] = configSnapshot;
+				}
+				else {
+					g_appState.configs.erase(kValidationConfigIndex);
+				}
 			}
 			SaveHistory();
 			error_code ec;
@@ -365,6 +381,53 @@ namespace {
 		return true;
 	}
 
+	static bool AssertFolderRewindMetadata(ValidationContext& ctx, const Config& cfg, const wstring& worldName, const wstring& backupFile, const wstring& expectedBackupType) {
+		FolderRewindFormat::StoragePaths paths;
+		if (!ctx.Require(FolderRewindFormat::TryResolveStoragePaths(cfg.backupPath, worldName, L"", paths), "[Validation] FolderRewind storage path resolved.", "[Validation] Failed to resolve FolderRewind storage paths.")) return false;
+		if (!ctx.Require(filesystem::exists(paths.statePath), "[Validation] state.json exists.", "[Validation] state.json missing.")) return false;
+		if (!ctx.Require(filesystem::exists(paths.recordsDir), "[Validation] records directory exists.", "[Validation] records directory missing.")) return false;
+
+		auto recordPath = FolderRewindMetadataStore::TryGetRecordPath(paths.metadataDir, backupFile);
+		if (!ctx.Require(recordPath.has_value(), "[Validation] record json path resolved.", "[Validation] record json path could not be resolved.")) return false;
+		if (!ctx.Require(filesystem::exists(*recordPath), "[Validation] record json exists.", "[Validation] record json missing.")) return false;
+		if (!ctx.Require(!filesystem::exists(paths.metadataDir / L"metadata.json"), "[Validation] legacy metadata.json absent.", "[Validation] legacy metadata.json was written.")) return false;
+
+		ifstream stateIn(paths.statePath, ios::binary);
+		nlohmann::json state = nlohmann::json::parse(stateIn, nullptr, false);
+		if (!ctx.Require(!state.is_discarded() && state.is_object(), "[Validation] state.json parses.", "[Validation] state.json parse failed.")) return false;
+		if (!ctx.Require(state.contains("Version") && state.contains("LastBackupTime") && state.contains("LastBackupFileName") && state.contains("BasedOnFullBackup") && state.contains("FileStates"), "[Validation] state.json has PascalCase fields.", "[Validation] state.json PascalCase fields missing.")) return false;
+		if (!ctx.Require(state.value("Version", string{}) == "3.0", "[Validation] state Version is 3.0.", "[Validation] state Version is not 3.0.")) return false;
+		if (!ctx.Require(state["FileStates"].is_object(), "[Validation] state FileStates is object.", "[Validation] state FileStates is not an object.")) return false;
+		if (!ctx.Require(utf8_to_wstring(state.value("LastBackupFileName", string{})) == backupFile, "[Validation] state LastBackupFileName matches.", "[Validation] state LastBackupFileName mismatch.")) return false;
+
+		ifstream recordIn(*recordPath, ios::binary);
+		nlohmann::json record = nlohmann::json::parse(recordIn, nullptr, false);
+		if (!ctx.Require(!record.is_discarded() && record.is_object(), "[Validation] record json parses.", "[Validation] record json parse failed.")) return false;
+		if (!ctx.Require(record.contains("ArchiveFileName") && record.contains("BackupType") && record.contains("BasedOnFullBackup") && record.contains("PreviousBackupFileName") && record.contains("CreatedAtUtc") && record.contains("AddedFiles") && record.contains("ModifiedFiles") && record.contains("DeletedFiles") && record.contains("FullFileList"), "[Validation] record json has PascalCase fields.", "[Validation] record PascalCase fields missing.")) return false;
+		if (!ctx.Require(utf8_to_wstring(record.value("ArchiveFileName", string{})) == backupFile, "[Validation] record ArchiveFileName matches.", "[Validation] record ArchiveFileName mismatch.")) return false;
+		if (!ctx.Require(utf8_to_wstring(record.value("BackupType", string{})) == expectedBackupType, "[Validation] record BackupType matches.", "[Validation] record BackupType mismatch.")) return false;
+		if (!ctx.Require(record["AddedFiles"].is_array() && record["ModifiedFiles"].is_array() && record["DeletedFiles"].is_array() && record["FullFileList"].is_array(), "[Validation] record change lists are arrays.", "[Validation] record change lists are not arrays.")) return false;
+		return true;
+	}
+
+	static bool AssertFolderRewindHistoryItem(ValidationContext& ctx, const Config& cfg, const MyFolder& world, const wstring& backupFile, const wstring& expectedBackupType) {
+		ifstream historyIn(filesystem::path(L"history.json"), ios::binary);
+		nlohmann::json historyRoot = nlohmann::json::parse(historyIn, nullptr, false);
+		if (!ctx.Require(!historyRoot.is_discarded() && historyRoot.is_array(), "[Validation] history.json parses as array.", "[Validation] history.json parse failed.")) return false;
+
+		const bool hasFolderRewindHistoryItem = any_of(historyRoot.begin(), historyRoot.end(), [&](const nlohmann::json& item) {
+			return item.is_object()
+				&& item.value("ConfigId", string{}) == wstring_to_utf8(cfg.configId)
+				&& item.value("FolderName", string{}) == wstring_to_utf8(world.name)
+				&& item.value("FileName", string{}) == wstring_to_utf8(backupFile)
+				&& item.value("BackupType", string{}) == wstring_to_utf8(expectedBackupType)
+				&& item.contains("Timestamp")
+				&& item.contains("IsCloudArchived");
+		});
+		if (!ctx.Require(hasFolderRewindHistoryItem, "[Validation] history.json contains FolderRewind HistoryItem.", "[Validation] FolderRewind HistoryItem missing.")) return false;
+		return true;
+	}
+
 	static bool RunSmartBackupScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
 		ctx.Info(L("VAL_INFO_SCENARIO_SMART"));
 
@@ -376,6 +439,10 @@ namespace {
 		filesystem::create_directories(worldPath / L"locks");
 
 		Config cfg = BuildValidationConfig(templateConfig, saveRoot, backupRoot, 2, 0, true);
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			g_appState.configs[kValidationConfigIndex] = cfg;
+		}
 		MyFolder world{ worldPath.wstring(), kSmartWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 0 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
 		SaveHistory();
@@ -412,6 +479,8 @@ namespace {
 		if (!ctx.Require(historyEntries[0].backupType == L"Full", L("VAL_OK_FIRST_TYPE_FULL"), L("VAL_ERR_FIRST_TYPE_NOT_FULL"))) return false;
 		const wstring fullBackupFile = historyEntries[0].backupFile;
 		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 1, L("VAL_OK_ARCHIVE_COUNT_AFTER_FIRST"), L("VAL_ERR_ARCHIVE_COUNT_AFTER_FIRST"))) return false;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, fullBackupFile, L"Full")) return false;
+		if (!AssertFolderRewindHistoryItem(ctx, cfg, world, fullBackupFile, L"Full")) return false;
 
 		world.config.skipIfUnchanged = true;
 		SleepForUniqueBackupName();
@@ -436,6 +505,7 @@ namespace {
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_FIRST_SMART_CREATED"), L("VAL_ERR_FIRST_SMART_NOT_CREATED"))) return false;
 		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_FIRST_SMART_TYPE"), L("VAL_ERR_FIRST_SMART_TYPE"))) return false;
 		const wstring firstSmartBackupFile = historyEntries.back().backupFile;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, firstSmartBackupFile, L"Smart")) return false;
 
 		SleepForUniqueBackupName();
 		WriteTextFile(worldPath / L"notes.txt", state3.at(L"notes.txt"));
@@ -446,6 +516,7 @@ namespace {
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SECOND_SMART_CREATED"), L("VAL_ERR_SECOND_SMART_NOT_CREATED"))) return false;
 		const wstring secondSmartBackupFile = historyEntries.back().backupFile;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, secondSmartBackupFile, L"Smart")) return false;
 
 		SleepForUniqueBackupName();
 		RemoveIfExists(worldPath / L"data" / L"fresh.txt");
@@ -453,6 +524,7 @@ namespace {
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 4, L("VAL_OK_DELETION_ONLY_CREATED"), L("VAL_ERR_DELETION_ONLY_NOT_CREATED"))) return false;
 		const wstring latestBackupFile = historyEntries.back().backupFile;
+		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, latestBackupFile, L"Smart")) return false;
 		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 4, L("VAL_OK_ARCHIVE_COUNT_BEFORE_RESTORE"), L("VAL_ERR_ARCHIVE_COUNT_BEFORE_RESTORE"))) return false;
 
 		WriteTextFile(worldPath / L"notes.txt", "corrupted-before-clean-restore\n");
@@ -498,6 +570,10 @@ namespace {
 		filesystem::create_directories(worldPath);
 
 		Config cfg = BuildValidationConfig(templateConfig, saveRoot, backupRoot, 2, 2, false);
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			g_appState.configs[kValidationConfigIndex] = cfg;
+		}
 		MyFolder world{ worldPath.wstring(), kLimitWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 1 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
 		SaveHistory();
@@ -533,6 +609,65 @@ namespace {
 		return true;
 	}
 
+	static bool RunLegacyMigrationScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
+		const wstring worldName = L"__CoreValidationMigration";
+		Config cfg = BuildValidationConfig(templateConfig, sandboxRoot / L"worlds", sandboxRoot / L"migration-backups", 2, 0, true);
+		cfg.name = "LegacyCloudConfig";
+		cfg.cloudSyncEnabled = true;
+		cfg.rcloneRemotePath = L"test:FolderRewind";
+		cfg.configId = MigrationService::GenerateLegacyConfigId(cfg, kValidationConfigIndex);
+		Config secondDevice = cfg;
+		if (!ctx.Require(cfg.configId == MigrationService::GenerateLegacyConfigId(secondDevice, 999),
+			"[Validation] Legacy ConfigId is deterministic across devices.", "[Validation] Legacy ConfigId is not deterministic.")) return false;
+		g_appState.configs[kValidationConfigIndex] = cfg;
+
+		const filesystem::path archiveDir = filesystem::path(cfg.backupPath) / worldName;
+		const filesystem::path metadataDir = filesystem::path(cfg.backupPath) / L"_metadata" / worldName;
+		filesystem::create_directories(archiveDir);
+		filesystem::create_directories(metadataDir);
+		const wstring fullName = L"[Full][2026-01-01_00-00-00]Old Description.7z";
+		const wstring smartName = L"[Smart][2026-01-01_00-01-00]Old Description.7z";
+		WriteTextFile(archiveDir / fullName, "archive-placeholder");
+		WriteTextFile(archiveDir / smartName, "archive-placeholder");
+		const long long ticks = static_cast<long long>(filesystem::last_write_time(archiveDir / smartName).time_since_epoch().count());
+		nlohmann::json summary;
+		summary["version"] = 2;
+		summary["lastBackupFileName"] = wstring_to_utf8(smartName);
+		summary["basedOnFullBackup"] = wstring_to_utf8(fullName);
+		summary["fileStates"] = { { "level.dat", { { "size", 5 }, { "lastWriteTimeTicks", ticks } } } };
+		summary["records"] = nlohmann::json::array({
+			{ { "archiveFileName", wstring_to_utf8(fullName) }, { "backupType", "Full" }, { "basedOnFullBackup", wstring_to_utf8(fullName) }, { "previousBackupFileName", "" }, { "createdAtUtc", "2026-01-01T00:00:00Z" } },
+			{ { "archiveFileName", wstring_to_utf8(smartName) }, { "backupType", "Smart" }, { "basedOnFullBackup", wstring_to_utf8(fullName) }, { "previousBackupFileName", wstring_to_utf8(fullName) }, { "createdAtUtc", "2026-01-01T00:01:00Z" } }
+		});
+		WriteTextFile(metadataDir / L"metadata.json", summary.dump(2));
+		auto writeRecord = [&](const wstring& name, const string& type, const wstring& previous) {
+			nlohmann::json record;
+			record["archiveFileName"] = wstring_to_utf8(name);
+			record["backupType"] = type;
+			record["basedOnFullBackup"] = wstring_to_utf8(fullName);
+			record["previousBackupFileName"] = wstring_to_utf8(previous);
+			record["createdAtUtc"] = type == "Full" ? "2026-01-01T00:00:00Z" : "2026-01-01T00:01:00Z";
+			record["addedFiles"] = nlohmann::json::array({ "level.dat" });
+			record["modifiedFiles"] = nlohmann::json::array();
+			record["deletedFiles"] = nlohmann::json::array();
+			record["fullFileList"] = nlohmann::json::array({ "level.dat" });
+			WriteTextFile(metadataDir / (name + L".json"), record.dump(2));
+		};
+		writeRecord(fullName, "Full", L"");
+		writeRecord(smartName, "Smart", fullName);
+
+		const MigrationUnitResult result = MigrationService::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
+		if (!ctx.Require(result.status == MigrationStatus::Succeeded, "[Validation] 1.15 metadata migrated.", "[Validation] 1.15 metadata migration failed.")) return false;
+		FolderRewindFormat::MetadataState state;
+		if (!ctx.Require(FolderRewindMetadataStore::LoadState(metadataDir, state) && state.lastBackupFileName == smartName,
+			"[Validation] Migrated state references the original archive name.", "[Validation] Migrated state is invalid.")) return false;
+		FolderRewindFormat::ChangeRecord record;
+		if (!ctx.Require(FolderRewindMetadataStore::LoadRecord(metadataDir, smartName, record) && record.previousBackupFileName == fullName,
+			"[Validation] Migrated Smart chain is intact.", "[Validation] Migrated Smart chain is invalid.")) return false;
+		return ctx.Require(filesystem::exists(archiveDir / fullName) && filesystem::exists(archiveDir / smartName),
+			"[Validation] Legacy archives were not renamed.", "[Validation] Legacy archive files changed during migration.");
+	}
+
 	static bool RunCoreValidation(Console& console, bool automatic) {
 		ValidationContext ctx{ console, automatic };
 		ctx.Info(automatic ? L("VAL_INFO_START_AUTO") : L("VAL_INFO_START_MANUAL"));
@@ -554,10 +689,19 @@ namespace {
 			cleanup.hadHistorySnapshot = true;
 			cleanup.historySnapshot = historyIt->second;
 		}
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			auto configIt = g_appState.configs.find(kValidationConfigIndex);
+			if (configIt != g_appState.configs.end()) {
+				cleanup.hadConfigSnapshot = true;
+				cleanup.configSnapshot = configIt->second;
+			}
+		}
 
 		try {
 			filesystem::create_directories(sandboxRoot / L"worlds");
 			filesystem::create_directories(sandboxRoot / L"backups");
+			RunLegacyMigrationScenario(ctx, templateConfig, sandboxRoot);
 			RunSmartBackupScenario(ctx, templateConfig, sandboxRoot);
 			RunKeepCountScenario(ctx, templateConfig, sandboxRoot);
 		}

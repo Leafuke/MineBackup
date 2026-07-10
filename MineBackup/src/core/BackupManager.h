@@ -11,12 +11,14 @@ enum class BackupCheckResult {
 	NO_CHANGE,
 	CHANGES_DETECTED,
 	FORCE_FULL_BACKUP_METADATA_INVALID,
-	FORCE_FULL_BACKUP_BASE_MISSING
+	FORCE_FULL_BACKUP_BASE_MISSING,
+	FORCE_FULL_BACKUP_SCAN_FAILED
 };
 
 struct BackupFileState {
 	uintmax_t size = 0;
 	long long lastWriteTimeTicks = 0;
+	std::wstring lastWriteTimeUtc;
 };
 
 struct BackupChangeSet {

@@ -1,5 +1,6 @@
 ﻿#include "SettingsUI.h"
 #include "SettingsUIPrivate.h"
+#include "MigrationService.h"
 
 using namespace std;
 
@@ -18,6 +19,11 @@ void ShowSettingsWindowV2() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
+
+	MigrationService::DrawMigrationSettings();
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
 
     // 根据配置类型显示不同的设置界面
     if (specialSetting) {

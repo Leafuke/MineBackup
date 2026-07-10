@@ -4,6 +4,9 @@
 #include <sstream>
 #include "HistoryManager.h"
 #include "AppState.h"
+#include "FolderRewindFormat.h"
+#include "FolderRewindHistoryStore.h"
+#include "MigrationService.h"
 #include "json.hpp"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
@@ -21,45 +24,6 @@ namespace {
 	bool IsSameHistoryEntry(const HistoryEntry& lhs, const wstring& worldName, const wstring& backupFile) {
 		return lhs.worldName == worldName
 			&& lhs.backupFile == backupFile;
-	}
-
-	void SerializeHistoryEntry(nlohmann::json& item, int configIndex, const HistoryEntry& entry) {
-		item["configIndex"] = configIndex;
-		item["timestamp"] = wstring_to_utf8(entry.timestamp_str);
-		item["worldPath"] = wstring_to_utf8(entry.worldPath);
-		item["worldName"] = wstring_to_utf8(entry.worldName);
-		item["backupFile"] = wstring_to_utf8(entry.backupFile);
-		item["backupType"] = wstring_to_utf8(entry.backupType);
-		item["comment"] = wstring_to_utf8(entry.comment);
-		item["isImportant"] = entry.isImportant;
-		item["isCloudArchived"] = entry.isCloudArchived;
-		item["cloudArchivedAtUtc"] = wstring_to_utf8(entry.cloudArchivedAtUtc);
-		item["cloudArchiveRemotePath"] = wstring_to_utf8(entry.cloudArchiveRemotePath);
-		item["cloudMetadataRecordRemotePath"] = wstring_to_utf8(entry.cloudMetadataRecordRemotePath);
-		item["cloudMetadataStateRemotePath"] = wstring_to_utf8(entry.cloudMetadataStateRemotePath);
-	}
-
-	bool TryDeserializeHistoryEntry(const nlohmann::json& item, int defaultConfigIndex, int& outConfigIndex, HistoryEntry& outEntry) {
-		if (!item.is_object()) return false;
-
-		outConfigIndex = item.value("configIndex", defaultConfigIndex);
-		if (outConfigIndex < 0) return false;
-
-		outEntry = HistoryEntry{};
-		outEntry.timestamp_str = utf8_to_wstring(item.value("timestamp", std::string{}));
-		outEntry.worldPath = utf8_to_wstring(item.value("worldPath", std::string{}));
-		outEntry.worldName = utf8_to_wstring(item.value("worldName", std::string{}));
-		outEntry.backupFile = utf8_to_wstring(item.value("backupFile", std::string{}));
-		outEntry.backupType = utf8_to_wstring(item.value("backupType", std::string{}));
-		outEntry.comment = utf8_to_wstring(item.value("comment", std::string{}));
-		outEntry.isImportant = item.value("isImportant", false);
-		outEntry.isCloudArchived = item.value("isCloudArchived", false);
-		outEntry.cloudArchivedAtUtc = utf8_to_wstring(item.value("cloudArchivedAtUtc", std::string{}));
-		outEntry.cloudArchiveRemotePath = utf8_to_wstring(item.value("cloudArchiveRemotePath", std::string{}));
-		outEntry.cloudMetadataRecordRemotePath = utf8_to_wstring(item.value("cloudMetadataRecordRemotePath", std::string{}));
-		outEntry.cloudMetadataStateRemotePath = utf8_to_wstring(item.value("cloudMetadataStateRemotePath", std::string{}));
-
-		return !outEntry.worldName.empty() && !outEntry.backupFile.empty();
 	}
 
 	vector<HistoryEntry>* TryGetHistoryVector(int configIndex) {
@@ -108,6 +72,7 @@ static bool LoadLegacyHistoryFile(const filesystem::path& filename) {
 				entry.worldName = segments[1];
 				entry.backupFile = segments[2];
 				entry.backupType = segments[3];
+				entry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(entry.backupType);
 				entry.comment = segments.size() >= 5 ? segments[4] : L"";
 				entry.isImportant = (segments.size() >= 6 && segments[5] == L"important");
 				g_appState.g_history[current_config_id].push_back(entry);
@@ -119,27 +84,14 @@ static bool LoadLegacyHistoryFile(const filesystem::path& filename) {
 }
 
 void SaveHistory() {
+	if (MigrationService::IsHistoryPersistenceBlocked()) return;
 	const filesystem::path filename = L"history.json";
 #ifdef _WIN32
 	SetFileAttributesWin(filename.wstring(), 0);
 #endif
-	ofstream out(filename, ios::binary | ios::trunc);
-	if (!out.is_open()) return;
-
-	nlohmann::json root = nlohmann::json::array();
-
-	for (const auto& config_pair : g_appState.g_history) {
-		for (const auto& entry : config_pair.second) {
-			nlohmann::json item;
-			SerializeHistoryEntry(item, config_pair.first, entry);
-			root.push_back(std::move(item));
-		}
-	}
-
-	out << root.dump(2);
-	out.close();
+	const bool saved = FolderRewindHistoryStore::SaveHistoryFile(filename, g_appState.configs, g_appState.g_history);
 #ifdef _WIN32
-	SetFileAttributesWin(filename.wstring(), 1);
+	if (saved) SetFileAttributesWin(filename.wstring(), 1);
 #endif
 }
 
@@ -148,26 +100,12 @@ void LoadHistory() {
 	const filesystem::path legacyFilename = L"history.dat";
 	g_appState.g_history.clear();
 	if (filesystem::exists(jsonFilename)) {
-		try {
-			ifstream in(jsonFilename, ios::binary);
-			if (!in.is_open()) return;
-
-			nlohmann::json root = nlohmann::json::parse(in);
-			if (!root.is_array()) return;
-
-			for (const auto& item : root) {
-				int configIndex = -1;
-				HistoryEntry entry;
-				if (!TryDeserializeHistoryEntry(item, -1, configIndex, entry)) {
-					continue;
-				}
-				g_appState.g_history[configIndex].push_back(entry);
-			}
+		map<int, vector<HistoryEntry>> loadedHistory;
+		if (FolderRewindHistoryStore::LoadHistoryFile(jsonFilename, g_appState.configs, loadedHistory)) {
+			g_appState.g_history = std::move(loadedHistory);
 			return;
 		}
-		catch (...) {
-			g_appState.g_history.clear();
-		}
+		g_appState.g_history.clear();
 	}
 
 	if (filesystem::exists(legacyFilename) && LoadLegacyHistoryFile(legacyFilename)) {
@@ -176,18 +114,18 @@ void LoadHistory() {
 }
 
 void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment, const wstring& worldPath) {
-	time_t now = time(0);
-	tm ltm;
-	localtime_s(&ltm, &now);
-	wchar_t timeBuf[80];
-	wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-
 	HistoryEntry entry;
-	entry.timestamp_str = timeBuf;
+	auto configIt = g_appState.configs.find(configIndex);
+	if (configIt != g_appState.configs.end()) {
+		configIt->second.configId = FolderRewindFormat::EnsureConfigId(configIt->second.configId);
+		entry.configId = configIt->second.configId;
+	}
+	entry.timestamp_str = FolderRewindFormat::MakeLocalHistoryTimestampString();
 	entry.worldPath = worldPath;
 	entry.worldName = worldName;
 	entry.backupFile = backupFile;
 	entry.backupType = backupType;
+	entry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(backupType);
 	entry.comment = comment;
 
 	g_appState.g_history[configIndex].push_back(entry);
@@ -221,51 +159,61 @@ void RemoveHistoryEntry(int configIndex, const wstring& worldName, const wstring
 }
 
 bool ExportHistoryToFile(const wstring& destinationPath, int configIndex) {
-	ofstream out{ filesystem::path(destinationPath), ios::binary | ios::trunc };
-	if (!out.is_open()) return false;
-
-	nlohmann::json root = nlohmann::json::array();
 	if (configIndex < 0) {
-		for (const auto& pair : g_appState.g_history) {
-			for (const auto& entry : pair.second) {
-				nlohmann::json item;
-				SerializeHistoryEntry(item, pair.first, entry);
-				root.push_back(std::move(item));
-			}
-		}
-	}
-	else {
-		for (const auto& entry : g_appState.g_history[configIndex]) {
-			nlohmann::json item;
-			SerializeHistoryEntry(item, configIndex, entry);
-			root.push_back(std::move(item));
-		}
+		return FolderRewindHistoryStore::SaveHistoryFile(filesystem::path(destinationPath), g_appState.configs, g_appState.g_history);
 	}
 
-	out << root.dump(2);
-	return true;
+	map<int, Config> selectedConfigs;
+	auto configIt = g_appState.configs.find(configIndex);
+	if (configIt != g_appState.configs.end()) {
+		selectedConfigs.emplace(configIndex, configIt->second);
+	}
+
+	map<int, vector<HistoryEntry>> selectedHistory;
+	auto historyIt = g_appState.g_history.find(configIndex);
+	if (historyIt != g_appState.g_history.end()) {
+		selectedHistory.emplace(configIndex, historyIt->second);
+	}
+
+	return FolderRewindHistoryStore::SaveHistoryFile(filesystem::path(destinationPath), selectedConfigs, selectedHistory);
 }
 
 bool ImportHistoryFromFile(const wstring& sourcePath, int configIndex, bool mergeExisting) {
+	auto configIt = g_appState.configs.find(configIndex);
+	if (configIt == g_appState.configs.end()) return false;
+	configIt->second.configId = FolderRewindFormat::EnsureConfigId(configIt->second.configId);
+	const wstring targetConfigId = configIt->second.configId;
+
 	ifstream in{ filesystem::path(sourcePath), ios::binary };
 	if (!in.is_open()) return false;
 
 	nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
 	if (root.is_discarded() || !root.is_array()) return false;
 
+	vector<HistoryEntry> parsedEntries;
+	for (const auto& item : root) {
+		HistoryEntry entry;
+		wstring importedConfigId;
+		int importedConfigIndex = -1;
+		if (!FolderRewindHistoryStore::TryParseHistoryItem(item, entry, importedConfigId)
+			&& !FolderRewindHistoryStore::TryParseLegacyHistoryItem(item, entry, importedConfigIndex)) {
+			continue;
+		}
+		entry.configId = targetConfigId;
+		parsedEntries.push_back(std::move(entry));
+	}
+
+	if (!root.empty() && parsedEntries.empty()) {
+		return false;
+	}
+
 	if (!mergeExisting) {
 		g_appState.g_history[configIndex].clear();
 	}
 
 	bool changed = false;
-	for (const auto& item : root) {
-		int importedConfigIndex = configIndex;
-		HistoryEntry entry;
-		if (!TryDeserializeHistoryEntry(item, configIndex, importedConfigIndex, entry)) {
-			continue;
-		}
-		importedConfigIndex = configIndex;
-		changed = UpsertHistoryEntry(importedConfigIndex, entry, false) || changed;
+	for (const auto& entry : parsedEntries) {
+		changed = UpsertHistoryEntry(configIndex, entry, false) || changed;
 	}
 
 	if (changed || !mergeExisting) {
@@ -329,6 +277,10 @@ bool UpsertHistoryEntry(int configIndex, const HistoryEntry& entry, bool overwri
 			changed = true;
 		}
 		else {
+			if (existing.configId.empty() && !entry.configId.empty()) {
+				existing.configId = entry.configId;
+				changed = true;
+			}
 			if (existing.timestamp_str.empty() && !entry.timestamp_str.empty()) {
 				existing.timestamp_str = entry.timestamp_str;
 				changed = true;
@@ -343,6 +295,10 @@ bool UpsertHistoryEntry(int configIndex, const HistoryEntry& entry, bool overwri
 			}
 			if (existing.backupType.empty() && !entry.backupType.empty()) {
 				existing.backupType = entry.backupType;
+				changed = true;
+			}
+			if (!existing.isPartialBackup && entry.isPartialBackup) {
+				existing.isPartialBackup = true;
 				changed = true;
 			}
 			if (!existing.isImportant && entry.isImportant) {

@@ -25,21 +25,10 @@ static bool ApplyRestoreChain(const vector<filesystem::path>& backupsToApply, co
 
 static RestoreChainResult BuildMetadataRestoreChain(const filesystem::path& metadataDir, const filesystem::path& backupDir, const filesystem::path& targetBackupPath) {
 	RestoreChainResult result;
-	BackupMetadataSummary summary;
-	if (!LoadBackupMetadataSummary(metadataDir, summary) || summary.records.empty()) {
-		result.status = RestoreChainStatus::METADATA_UNAVAILABLE;
-		return result;
-	}
-
-	map<wstring, BackupMetadataRecordIndex> recordMap;
-	for (const auto& record : summary.records) {
-		if (!record.archiveFileName.empty()) {
-			recordMap[record.archiveFileName] = record;
-		}
-	}
-
 	set<wstring> visited;
+	vector<FolderRewindFormat::ChangeRecord> recordChain;
 	wstring current = targetBackupPath.filename().wstring();
+
 	while (!current.empty()) {
 		if (!visited.insert(current).second) {
 			result.status = RestoreChainStatus::INVALID;
@@ -47,8 +36,8 @@ static RestoreChainResult BuildMetadataRestoreChain(const filesystem::path& meta
 			return result;
 		}
 
-		auto recordIt = recordMap.find(current);
-		if (recordIt == recordMap.end()) {
+		FolderRewindFormat::ChangeRecord record;
+		if (!FolderRewindMetadataStore::LoadRecord(metadataDir, current, record)) {
 			result.status = RestoreChainStatus::METADATA_UNAVAILABLE;
 			result.chain.clear();
 			return result;
@@ -62,9 +51,9 @@ static RestoreChainResult BuildMetadataRestoreChain(const filesystem::path& meta
 		}
 
 		result.chain.push_back(currentArchive);
-		const auto& record = recordIt->second;
-		wstring recordType = record.backupType.empty() ? current : record.backupType;
-		if (!IsIncrementalBackupType(recordType)) {
+		recordChain.push_back(record);
+		const wstring recordType = record.backupType.empty() ? current : record.backupType;
+		if (!FolderRewindFormat::IsSmartBackupType(recordType)) {
 			break;
 		}
 
@@ -77,15 +66,15 @@ static RestoreChainResult BuildMetadataRestoreChain(const filesystem::path& meta
 	}
 
 	reverse(result.chain.begin(), result.chain.end());
-	if (result.chain.empty()) {
+	reverse(recordChain.begin(), recordChain.end());
+	if (result.chain.empty() || recordChain.empty()) {
 		result.status = RestoreChainStatus::INVALID;
 		return result;
 	}
 
 	const wstring firstName = result.chain.front().filename().wstring();
-	auto firstRecordIt = recordMap.find(firstName);
-	const wstring firstType = firstRecordIt == recordMap.end() ? firstName : firstRecordIt->second.backupType;
-	if (!IsFullLikeBackupType(firstType)) {
+	const wstring firstType = recordChain.front().backupType.empty() ? firstName : recordChain.front().backupType;
+	if (!FolderRewindFormat::IsFullLikeBackupType(firstType)) {
 		result.chain.clear();
 		result.status = RestoreChainStatus::MISSING_BASE_FULL;
 		return result;
@@ -100,12 +89,12 @@ static vector<filesystem::path> BuildLegacyForwardRestoreChain(const filesystem:
 	vector<filesystem::path> backupsToApply;
 	const auto targetTime = filesystem::last_write_time(targetBackupPath);
 
-	if (targetBackupPath.filename().wstring().find(L"[Smart]") != wstring::npos) {
+	if (FolderRewindFormat::IsSmartBackupType(targetBackupPath.filename().wstring())) {
 		filesystem::path baseFullBackup;
 		auto baseFullTime = filesystem::file_time_type{};
 		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
 			if (!entry.is_regular_file()) continue;
-			if (entry.path().filename().wstring().find(L"[Full]") == wstring::npos) continue;
+			if (!FolderRewindFormat::IsFullLikeBackupType(entry.path().filename().wstring())) continue;
 			auto entryTime = entry.last_write_time();
 			if (entryTime < targetTime && entryTime > baseFullTime) {
 				baseFullTime = entryTime;
@@ -118,7 +107,7 @@ static vector<filesystem::path> BuildLegacyForwardRestoreChain(const filesystem:
 		backupsToApply.push_back(baseFullBackup);
 		for (const auto& entry : filesystem::directory_iterator(backupDir)) {
 			if (!entry.is_regular_file()) continue;
-			if (entry.path().filename().wstring().find(L"[Smart]") == wstring::npos) continue;
+			if (!FolderRewindFormat::IsSmartBackupType(entry.path().filename().wstring())) continue;
 			auto entryTime = entry.last_write_time();
 			if (entryTime > baseFullTime && entryTime <= targetTime) {
 				backupsToApply.push_back(entry.path());
@@ -154,8 +143,8 @@ static bool TryBuildSmartRestorePlan(const filesystem::path& metadataDir, const 
 	outPlan = SmartRestorePlan{};
 	if (chain.empty()) return false;
 
-	BackupChangeRecord baseRecord;
-	if (!LoadBackupChangeRecord(metadataDir, chain.front().filename().wstring(), baseRecord) || baseRecord.fullFileList.empty()) {
+	FolderRewindFormat::ChangeRecord baseRecord;
+	if (!FolderRewindMetadataStore::LoadRecord(metadataDir, chain.front().filename().wstring(), baseRecord) || baseRecord.fullFileList.empty()) {
 		return false;
 	}
 
@@ -165,8 +154,8 @@ static bool TryBuildSmartRestorePlan(const filesystem::path& metadataDir, const 
 	}
 
 	for (size_t i = 1; i < chain.size(); ++i) {
-		BackupChangeRecord record;
-		if (!LoadBackupChangeRecord(metadataDir, chain[i].filename().wstring(), record)) {
+		FolderRewindFormat::ChangeRecord record;
+		if (!FolderRewindMetadataStore::LoadRecord(metadataDir, chain[i].filename().wstring(), record)) {
 			return false;
 		}
 
@@ -379,6 +368,12 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
 	filesystem::path targetBackupPath = sourceDir / backupFile;
 	const int resolvedConfigIndex = ResolveConfigIndexForCloud(config);
+	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, resolvedConfigIndex, worldName, destinationFolder.wstring());
+	if ((migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded)
+		&& IsIncrementalBackupType(backupFile) && restoreMethod == 0) {
+		console.AddLog("[Error] Exact Smart restore is unavailable until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
+		return failRestore("legacy_metadata_migration_incomplete");
+	}
 	HistoryEntry targetHistoryEntry;
 	const bool hasHistoryEntry = resolvedConfigIndex >= 0
 		&& TryGetHistoryEntry(resolvedConfigIndex, worldName, backupFile, targetHistoryEntry);
@@ -389,7 +384,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		EnsureRestoreChainAvailable(config, resolvedConfigIndex, targetHistoryEntry, console);
 	}
 
-	if ((backupFile.find(L"[Smart]") == wstring::npos && backupFile.find(L"[Full]") == wstring::npos) || !filesystem::exists(targetBackupPath)) {
+	if ((!FolderRewindFormat::IsSmartBackupType(backupFile) && !FolderRewindFormat::IsFullLikeBackupType(backupFile)) || !filesystem::exists(targetBackupPath)) {
 		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return failRestore("backup_not_found");
 	}
@@ -428,6 +423,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		}
 		else {
 			if (restoreMethod == 0) {
+				console.AddLog("[Info] Current MineBackup uses FolderRewind records/*.json for Smart clean restore.");
 				console.AddLog("[Error] Exact Clean Restore for Smart backups requires valid metadata and an intact full base.");
 				return failRestore("exact_clean_restore_unavailable");
 			}

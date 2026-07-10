@@ -1,6 +1,8 @@
 ﻿#include "json.hpp"
 #include "text_to_text.h"
 #include "BackupManager.h"
+#include "FolderRewindFormat.h"
+#include "FolderRewindMetadataStore.h"
 #include <string>
 #include <map>
 #include <filesystem>
@@ -18,19 +20,50 @@ bool IsPureASCII(const wstring& s) {
 	return true;
 }
 
-static BackupFileState CaptureFileState(const filesystem::path& filepath) {
+static bool TryCaptureFileState(const filesystem::path& filepath, BackupFileState& outState) {
 	BackupFileState state;
 	error_code ec;
-	if (!filesystem::exists(filepath, ec) || ec) return state;
-	
+	if (!filesystem::exists(filepath, ec) || ec) return false;
+
 	state.size = filesystem::file_size(filepath, ec);
-	if (ec) return BackupFileState{};
-	
+	if (ec) return false;
+
 	auto modTime = filesystem::last_write_time(filepath, ec);
-	if (ec) return BackupFileState{};
+	if (ec) return false;
 
 	state.lastWriteTimeTicks = static_cast<long long>(modTime.time_since_epoch().count());
-	return state;
+	state.lastWriteTimeUtc = FolderRewindFormat::FormatFileTimeUtc(modTime);
+	if (state.lastWriteTimeUtc.empty()) return false;
+
+	outState = std::move(state);
+	return true;
+}
+
+static bool IsSafeNormalizedRelativePath(const wstring& value) {
+	if (value.empty() || value == L"." || value == L"..") return false;
+	filesystem::path path(value);
+	if (path.empty() || path.is_absolute() || path.has_root_name() || path.has_root_directory()) return false;
+	for (const auto& part : path) {
+		const wstring segment = part.wstring();
+		if (segment.empty() || segment == L"." || segment == L"..") return false;
+		if (!FolderRewindFormat::IsSafeSinglePathSegment(segment)) return false;
+	}
+	return true;
+}
+
+static bool TryGetNormalizedRelativePath(const filesystem::path& filePath, const filesystem::path& rootPath, wstring& outRelativePath) {
+	error_code ec;
+	filesystem::path relativePath = filesystem::relative(filePath, rootPath, ec);
+	if (ec || relativePath.empty() || relativePath.is_absolute() || relativePath.has_root_name() || relativePath.has_root_directory()) return false;
+
+	try {
+		outRelativePath = FolderRewindFormat::NormalizeRelativePath(relativePath);
+	}
+	catch (...) {
+		outRelativePath.clear();
+		return false;
+	}
+	return IsSafeNormalizedRelativePath(outRelativePath);
 }
 
 vector<filesystem::path> GetChangedFiles(
@@ -41,13 +74,39 @@ vector<filesystem::path> GetChangedFiles(
 	map<wstring, BackupFileState>& out_currentState,
 	BackupChangeSet& out_changeSet
 ) {
+	map<wstring, filesystem::path> currentPaths;
 	auto collectCurrentState = [&]() {
-		if (!filesystem::exists(worldPath)) return;
-		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
-			if (entry.is_regular_file()) {
-				out_currentState[filesystem::relative(entry.path(), worldPath).wstring()] = CaptureFileState(entry.path());
+		map<wstring, BackupFileState> nextState;
+		map<wstring, filesystem::path> nextPaths;
+
+		error_code ec;
+		if (!filesystem::exists(worldPath, ec) || ec) return false;
+
+		filesystem::recursive_directory_iterator it(worldPath, ec), end;
+		if (ec) return false;
+
+		while (it != end) {
+			const auto& entry = *it;
+			const bool isRegularFile = entry.is_regular_file(ec);
+			if (ec) return false;
+			if (isRegularFile) {
+				wstring relativePath;
+				BackupFileState fileState;
+				if (!TryGetNormalizedRelativePath(entry.path(), worldPath, relativePath)
+					|| !TryCaptureFileState(entry.path(), fileState)) {
+					return false;
+				}
+				nextPaths[relativePath] = entry.path();
+				nextState[relativePath] = std::move(fileState);
 			}
+
+			it.increment(ec);
+			if (ec) return false;
 		}
+
+		currentPaths = std::move(nextPaths);
+		out_currentState = std::move(nextState);
+		return true;
 	};
 
 	out_result = BackupCheckResult::NO_CHANGE;
@@ -55,94 +114,103 @@ vector<filesystem::path> GetChangedFiles(
 	out_changeSet = BackupChangeSet{};
 	vector<filesystem::path> changedFiles;
 	map<wstring, BackupFileState> lastState;
-	filesystem::path metadataFile = metadataPath / L"metadata.json";
 
-	// 1. 读取并验证元数据
-	if (!filesystem::exists(metadataFile)) {
-		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
-		// 元数据不存在，扫描所有文件并返回，以便进行首次完整备份
-		collectCurrentState();
-		return {}; // 返回空列表，因为所有文件状态都记录在 out_currentState 中了
-	}
-
-	nlohmann::json metadata;
+	FolderRewindFormat::MetadataState metadata;
 	wstring lastBackupFile;
 	wstring basedOnFullBackup;
-	try {
-		ifstream f(metadataFile.c_str());
-		metadata = nlohmann::json::parse(f);
-		if (metadata.contains("lastBackupFileName") && metadata.at("lastBackupFileName").is_string()) {
-			lastBackupFile = utf8_to_wstring(metadata.at("lastBackupFileName"));
+	if (!FolderRewindMetadataStore::LoadState(metadataPath, metadata)) {
+		if (collectCurrentState()) {
+			out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
 		}
-		else if (metadata.contains("lastBackupFile") && metadata.at("lastBackupFile").is_string()) {
-			lastBackupFile = utf8_to_wstring(metadata.at("lastBackupFile"));
+		else {
+			out_result = BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED;
+			out_currentState.clear();
+			out_changeSet = BackupChangeSet{};
+			currentPaths.clear();
 		}
-
-		if (metadata.contains("basedOnFullBackup") && metadata.at("basedOnFullBackup").is_string()) {
-			basedOnFullBackup = utf8_to_wstring(metadata.at("basedOnFullBackup"));
-		}
-		else if (metadata.contains("basedOnBackupFile") && metadata.at("basedOnBackupFile").is_string()) {
-			basedOnFullBackup = utf8_to_wstring(metadata.at("basedOnBackupFile"));
-		}
-
-		if (!metadata.contains("fileStates") || !metadata.at("fileStates").is_object()) {
-			throw runtime_error("metadata missing fileStates object");
-		}
-
-		for (auto& [key, val] : metadata.at("fileStates").items()) {
-			if (!val.is_object()) {
-				throw runtime_error("legacy metadata file state format");
-			}
-
-			BackupFileState state;
-			state.size = val.value("size", static_cast<uintmax_t>(0));
-			state.lastWriteTimeTicks = val.value("lastWriteTimeTicks", static_cast<long long>(0));
-			lastState.emplace(utf8_to_wstring(key), state);
-		}
-	}
-	catch (const exception&) {
-		// 元数据文件损坏或格式错误
-		out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
-		// 同样需要扫描所有文件
-		collectCurrentState();
 		return {};
 	}
 
+	lastBackupFile = metadata.lastBackupFileName;
+	basedOnFullBackup = metadata.basedOnFullBackup;
+	for (const auto& pair : metadata.fileStates) {
+		wstring relativePath;
+		try {
+			relativePath = FolderRewindFormat::NormalizeRelativePath(pair.first);
+		}
+		catch (...) {
+			relativePath.clear();
+		}
+		if (!IsSafeNormalizedRelativePath(relativePath) || pair.second.lastWriteTimeUtc.empty()) {
+			if (collectCurrentState()) {
+				out_result = BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID;
+			}
+			else {
+				out_result = BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED;
+				out_currentState.clear();
+				out_changeSet = BackupChangeSet{};
+				currentPaths.clear();
+			}
+			return {};
+		}
+
+		BackupFileState state;
+		state.size = pair.second.size;
+		state.lastWriteTimeUtc = pair.second.lastWriteTimeUtc;
+		lastState.emplace(relativePath, state);
+	}
+
 	// 2. 核心验证：上次备份文件（差异检测地基）必须存在
-	if (lastBackupFile.empty() || !filesystem::exists(backupPath / lastBackupFile)) {
-		out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
-		collectCurrentState();
+	error_code ec;
+	if (lastBackupFile.empty() || !filesystem::exists(backupPath / lastBackupFile, ec) || ec) {
+		if (collectCurrentState()) {
+			out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
+		}
+		else {
+			out_result = BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED;
+			out_currentState.clear();
+			out_changeSet = BackupChangeSet{};
+			currentPaths.clear();
+		}
 		return {};
 	}
 
 	// 3. 兼容旧链路：如果元数据记录了 basedOnBackupFile，也要求其存在
-	if (!basedOnFullBackup.empty() && !filesystem::exists(backupPath / basedOnFullBackup)) {
-		out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
+	ec.clear();
+	if (!basedOnFullBackup.empty() && (!filesystem::exists(backupPath / basedOnFullBackup, ec) || ec)) {
 		// 基准文件被用户删除，元数据失效，扫描所有文件以进行新的完整备份
-		collectCurrentState();
+		if (collectCurrentState()) {
+			out_result = BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING;
+		}
+		else {
+			out_result = BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED;
+			out_currentState.clear();
+			out_changeSet = BackupChangeSet{};
+			currentPaths.clear();
+		}
 		return {};
 	}
 
-	// 4. 计算当前状态并与上次状态比较（使用文件大小+修改时间的快速检测）
-	if (filesystem::exists(worldPath)) {
-		for (const auto& entry : filesystem::recursive_directory_iterator(worldPath)) {
-			if (entry.is_regular_file()) {
-				filesystem::path relativePath = filesystem::relative(entry.path(), worldPath);
-				BackupFileState currentFileState = CaptureFileState(entry.path());
-				out_currentState[relativePath.wstring()] = currentFileState;
+	// 4. 计算当前状态并与上次状态比较（使用文件大小+UTC修改时间的快速检测）
+	if (!collectCurrentState()) {
+		out_result = BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED;
+		out_currentState.clear();
+		out_changeSet = BackupChangeSet{};
+		currentPaths.clear();
+		return {};
+	}
 
-				// 如果文件是新的，或者状态不同（大小或时间变化），则判定为已更改
-				auto lastIt = lastState.find(relativePath.wstring());
-				if (lastIt == lastState.end()) {
-					out_changeSet.addedFiles.push_back(relativePath.wstring());
-					changedFiles.push_back(entry.path());
-				}
-				else if (lastIt->second.size != currentFileState.size
-					|| lastIt->second.lastWriteTimeTicks != currentFileState.lastWriteTimeTicks) {
-					out_changeSet.modifiedFiles.push_back(relativePath.wstring());
-					changedFiles.push_back(entry.path());
-				}
-			}
+	for (const auto& pair : out_currentState) {
+		// FolderRewind state compares Size + LastWriteTimeUtc; ticks are kept only for in-memory diagnostics.
+		auto lastIt = lastState.find(pair.first);
+		if (lastIt == lastState.end()) {
+			out_changeSet.addedFiles.push_back(pair.first);
+			changedFiles.push_back(currentPaths[pair.first]);
+		}
+		else if (lastIt->second.size != pair.second.size
+			|| lastIt->second.lastWriteTimeUtc != pair.second.lastWriteTimeUtc) {
+			out_changeSet.modifiedFiles.push_back(pair.first);
+			changedFiles.push_back(currentPaths[pair.first]);
 		}
 	}
 

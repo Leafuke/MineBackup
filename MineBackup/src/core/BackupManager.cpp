@@ -8,6 +8,9 @@
 #include "HistoryManager.h"
 #include "CloudSyncService.h"
 #include "ConfigManager.h"
+#include "FolderRewindFormat.h"
+#include "FolderRewindMetadataStore.h"
+#include "MigrationService.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -149,8 +152,8 @@ vector<filesystem::path> GetChangedFiles(const filesystem::path& worldPath, cons
 bool is_blacklisted(const filesystem::path& file_to_check, const filesystem::path& backup_source_root, const filesystem::path& original_world_root, const vector<wstring>& blacklist);
 
 namespace {
-	constexpr const wchar_t* kDeletedOnlyMarkerDir = L"__MineBackup_Internal";
-	constexpr const wchar_t* kDeletedOnlyMarkerFile = L"__DeletedOnly.marker";
+	constexpr const wchar_t* kDeletedOnlyMarkerDir = FolderRewindFormat::kInternalRestoreMarkerDirectoryName;
+	constexpr const wchar_t* kDeletedOnlyMarkerFile = FolderRewindFormat::kInternalRestoreMarkerFileName;
 	const vector<wstring> kForcedBackupBlacklistRules = {
 		L"regex:(^|[\\\\/])session\\.lock$",
 		L"regex:(^|[\\\\/])lock$",
@@ -230,9 +233,11 @@ namespace {
 	}
 
 	static filesystem::path GetMetadataDirectory(const Config& config, const wstring& worldName) {
-		filesystem::path metadataFolder = JoinPath(config.backupPath, L"_metadata");
-		metadataFolder /= worldName;
-		return metadataFolder;
+		FolderRewindFormat::StoragePaths storagePaths;
+		if (FolderRewindFormat::TryResolveStoragePaths(config.backupPath, worldName, L"", storagePaths)) {
+			return storagePaths.metadataDir;
+		}
+		return filesystem::path(config.backupPath) / FolderRewindFormat::kMetadataRootDirName / FolderRewindFormat::SanitizePathSegment(worldName);
 	}
 
 	static string MakeUtcTimestampString() {
@@ -250,237 +255,162 @@ namespace {
 	}
 
 	static bool IsIncrementalBackupType(const wstring& typeOrFileName) {
-		return _wcsicmp(typeOrFileName.c_str(), L"Smart") == 0
-			|| typeOrFileName.find(L"[Smart]") != wstring::npos;
+		return FolderRewindFormat::IsSmartBackupType(typeOrFileName);
 	}
 
 	static bool IsFullLikeBackupType(const wstring& typeOrFileName) {
-		return _wcsicmp(typeOrFileName.c_str(), L"Full") == 0
-			|| _wcsicmp(typeOrFileName.c_str(), L"Overwrite") == 0
-			|| typeOrFileName.find(L"[Full]") != wstring::npos;
+		return FolderRewindFormat::IsFullLikeBackupType(typeOrFileName);
 	}
 
-	static nlohmann::json SerializeFileState(const BackupFileState& state) {
-		nlohmann::json item;
-		item["size"] = state.size;
-		item["lastWriteTimeTicks"] = state.lastWriteTimeTicks;
-		return item;
-	}
-
-	static bool TryDeserializeFileState(const nlohmann::json& item, BackupFileState& outState) {
-		if (!item.is_object()) return false;
-		outState.size = item.value("size", static_cast<uintmax_t>(0));
-		outState.lastWriteTimeTicks = item.value("lastWriteTimeTicks", static_cast<long long>(0));
-		return true;
+	static FolderRewindFormat::FileState ToFolderRewindFileState(const BackupFileState& state) {
+		FolderRewindFormat::FileState result;
+		result.size = state.size;
+		result.lastWriteTimeUtc = state.lastWriteTimeUtc;
+		result.hash = L"";
+		return result;
 	}
 
 	static bool LoadBackupMetadataSummary(const filesystem::path& metadataDir, BackupMetadataSummary& outSummary) {
-		filesystem::path metadataFile = metadataDir / L"metadata.json";
-		if (!filesystem::exists(metadataFile)) return false;
+		FolderRewindFormat::MetadataState state;
+		if (!FolderRewindMetadataStore::LoadState(metadataDir, state)) return false;
 
-		try {
-			ifstream in(metadataFile, ios::binary);
-			if (!in.is_open()) return false;
-
-			nlohmann::json root = nlohmann::json::parse(in);
-			outSummary = BackupMetadataSummary{};
-			outSummary.version = root.value("version", 2);
-			outSummary.lastBackupFileName = utf8_to_wstring(root.value("lastBackupFileName", string{}));
-			if (outSummary.lastBackupFileName.empty()) {
-				outSummary.lastBackupFileName = utf8_to_wstring(root.value("lastBackupFile", string{}));
-			}
-			outSummary.basedOnFullBackup = utf8_to_wstring(root.value("basedOnFullBackup", string{}));
-			if (outSummary.basedOnFullBackup.empty()) {
-				outSummary.basedOnFullBackup = utf8_to_wstring(root.value("basedOnBackupFile", string{}));
-			}
-
-			if (!root.contains("fileStates") || !root.at("fileStates").is_object()) {
-				return false;
-			}
-			for (auto& [key, value] : root.at("fileStates").items()) {
-				BackupFileState state;
-				if (!TryDeserializeFileState(value, state)) {
-					return false;
-				}
-				outSummary.fileStates.emplace(utf8_to_wstring(key), state);
-			}
-
-			if (root.contains("records") && root.at("records").is_array()) {
-				for (const auto& recordJson : root.at("records")) {
-					if (!recordJson.is_object()) continue;
-					BackupMetadataRecordIndex record;
-					record.archiveFileName = utf8_to_wstring(recordJson.value("archiveFileName", string{}));
-					record.backupType = utf8_to_wstring(recordJson.value("backupType", string{}));
-					record.basedOnFullBackup = utf8_to_wstring(recordJson.value("basedOnFullBackup", string{}));
-					record.previousBackupFileName = utf8_to_wstring(recordJson.value("previousBackupFileName", string{}));
-					record.createdAtUtc = utf8_to_wstring(recordJson.value("createdAtUtc", string{}));
-					if (!record.archiveFileName.empty()) {
-						outSummary.records.push_back(std::move(record));
-					}
-				}
-			}
-
-			return true;
+		outSummary = BackupMetadataSummary{};
+		outSummary.version = 3;
+		outSummary.lastBackupFileName = state.lastBackupFileName;
+		outSummary.basedOnFullBackup = state.basedOnFullBackup;
+		for (const auto& pair : state.fileStates) {
+			BackupFileState fileState;
+			fileState.size = pair.second.size;
+			fileState.lastWriteTimeUtc = pair.second.lastWriteTimeUtc;
+			outSummary.fileStates.emplace(FolderRewindFormat::NormalizeRelativePath(pair.first), fileState);
 		}
-		catch (...) {
-			return false;
+
+		FolderRewindMetadataStore::LoadResult loadedRecords = FolderRewindMetadataStore::Load(metadataDir);
+		for (const auto& pair : loadedRecords.records) {
+			const FolderRewindFormat::ChangeRecord& record = pair.second;
+			BackupMetadataRecordIndex indexRecord;
+			indexRecord.archiveFileName = record.archiveFileName;
+			indexRecord.backupType = record.backupType;
+			indexRecord.basedOnFullBackup = record.basedOnFullBackup;
+			indexRecord.previousBackupFileName = record.previousBackupFileName;
+			indexRecord.createdAtUtc = record.createdAtUtc;
+			outSummary.records.push_back(std::move(indexRecord));
 		}
+		return true;
 	}
 
 	static bool LoadBackupChangeRecord(const filesystem::path& metadataDir, const wstring& archiveFileName, BackupChangeRecord& outRecord) {
-		filesystem::path recordPath = GetMetadataRecordPath(metadataDir, archiveFileName);
-		if (!filesystem::exists(recordPath)) return false;
-
-		try {
-			ifstream in(recordPath, ios::binary);
-			if (!in.is_open()) return false;
-
-			nlohmann::json root = nlohmann::json::parse(in);
-			outRecord = BackupChangeRecord{};
-			outRecord.archiveFileName = utf8_to_wstring(root.value("archiveFileName", string{}));
-			outRecord.backupType = utf8_to_wstring(root.value("backupType", string{}));
-			outRecord.basedOnFullBackup = utf8_to_wstring(root.value("basedOnFullBackup", string{}));
-			outRecord.previousBackupFileName = utf8_to_wstring(root.value("previousBackupFileName", string{}));
-			outRecord.createdAtUtc = utf8_to_wstring(root.value("createdAtUtc", string{}));
-
-			auto loadStringArray = [](const nlohmann::json& parent, const char* key, vector<wstring>& out) {
-				out.clear();
-				if (!parent.contains(key) || !parent.at(key).is_array()) return;
-				for (const auto& item : parent.at(key)) {
-					if (item.is_string()) out.push_back(utf8_to_wstring(item.get<string>()));
-				}
-				sort(out.begin(), out.end());
-			};
-
-			loadStringArray(root, "addedFiles", outRecord.addedFiles);
-			loadStringArray(root, "modifiedFiles", outRecord.modifiedFiles);
-			loadStringArray(root, "deletedFiles", outRecord.deletedFiles);
-			loadStringArray(root, "fullFileList", outRecord.fullFileList);
-			if (outRecord.archiveFileName.empty()) {
-				outRecord.archiveFileName = archiveFileName;
-			}
-			return true;
-		}
-		catch (...) {
-			return false;
-		}
+		FolderRewindFormat::ChangeRecord record;
+		if (!FolderRewindMetadataStore::LoadRecord(metadataDir, archiveFileName, record)) return false;
+		outRecord = BackupChangeRecord{};
+		outRecord.archiveFileName = record.archiveFileName;
+		outRecord.backupType = record.backupType;
+		outRecord.basedOnFullBackup = record.basedOnFullBackup;
+		outRecord.previousBackupFileName = record.previousBackupFileName;
+		outRecord.createdAtUtc = record.createdAtUtc;
+		outRecord.addedFiles = record.addedFiles;
+		outRecord.modifiedFiles = record.modifiedFiles;
+		outRecord.deletedFiles = record.deletedFiles;
+		outRecord.fullFileList = record.fullFileList;
+		return true;
 	}
 
 	static void SaveBackupChangeRecord(const filesystem::path& metadataDir, const BackupChangeRecord& record) {
-		filesystem::create_directories(metadataDir);
-		nlohmann::json root;
-		root["archiveFileName"] = wstring_to_utf8(record.archiveFileName);
-		root["backupType"] = wstring_to_utf8(record.backupType);
-		root["basedOnFullBackup"] = wstring_to_utf8(record.basedOnFullBackup);
-		root["previousBackupFileName"] = wstring_to_utf8(record.previousBackupFileName);
-		root["createdAtUtc"] = wstring_to_utf8(record.createdAtUtc);
-
-		auto writeStringArray = [](nlohmann::json& parent, const char* key, const vector<wstring>& values) {
-			nlohmann::json arr = nlohmann::json::array();
-			for (const auto& value : values) {
-				arr.push_back(wstring_to_utf8(value));
-			}
-			parent[key] = std::move(arr);
-		};
-
-		writeStringArray(root, "addedFiles", record.addedFiles);
-		writeStringArray(root, "modifiedFiles", record.modifiedFiles);
-		writeStringArray(root, "deletedFiles", record.deletedFiles);
-		writeStringArray(root, "fullFileList", record.fullFileList);
-
-		ofstream out(GetMetadataRecordPath(metadataDir, record.archiveFileName), ios::binary | ios::trunc);
-		out << root.dump(2);
+		FolderRewindFormat::ChangeRecord serialized;
+		serialized.archiveFileName = record.archiveFileName;
+		serialized.backupType = record.backupType;
+		serialized.basedOnFullBackup = record.basedOnFullBackup;
+		serialized.previousBackupFileName = record.previousBackupFileName;
+		serialized.createdAtUtc = record.createdAtUtc;
+		serialized.addedFiles = record.addedFiles;
+		serialized.modifiedFiles = record.modifiedFiles;
+		serialized.deletedFiles = record.deletedFiles;
+		serialized.fullFileList = record.fullFileList;
+		FolderRewindMetadataStore::SaveRecord(metadataDir, serialized);
 	}
 
 	static void SaveBackupMetadataSummary(const filesystem::path& metadataDir, const BackupMetadataSummary& summary) {
-		filesystem::create_directories(metadataDir);
-		nlohmann::json root;
-		root["version"] = summary.version;
-		root["lastBackupFileName"] = wstring_to_utf8(summary.lastBackupFileName);
-		root["basedOnFullBackup"] = wstring_to_utf8(summary.basedOnFullBackup);
-
-		nlohmann::json fileStates = nlohmann::json::object();
+		FolderRewindFormat::MetadataState state;
+		state.version = L"3.0";
+		state.lastBackupTime = FolderRewindFormat::MakeLocalHistoryTimestampString();
+		state.lastBackupFileName = summary.lastBackupFileName;
+		state.basedOnFullBackup = summary.basedOnFullBackup;
 		for (const auto& pair : summary.fileStates) {
-			fileStates[wstring_to_utf8(pair.first)] = SerializeFileState(pair.second);
+			state.fileStates[FolderRewindFormat::NormalizeRelativePath(pair.first)] = ToFolderRewindFileState(pair.second);
 		}
-		root["fileStates"] = std::move(fileStates);
-
-		nlohmann::json records = nlohmann::json::array();
-		for (const auto& record : summary.records) {
-			nlohmann::json recordJson;
-			recordJson["archiveFileName"] = wstring_to_utf8(record.archiveFileName);
-			recordJson["backupType"] = wstring_to_utf8(record.backupType);
-			recordJson["basedOnFullBackup"] = wstring_to_utf8(record.basedOnFullBackup);
-			recordJson["previousBackupFileName"] = wstring_to_utf8(record.previousBackupFileName);
-			recordJson["createdAtUtc"] = wstring_to_utf8(record.createdAtUtc);
-			records.push_back(std::move(recordJson));
-		}
-		root["records"] = std::move(records);
-
-		ofstream out(metadataDir / L"metadata.json", ios::binary | ios::trunc);
-		out << root.dump(2);
+		FolderRewindMetadataStore::SaveState(metadataDir, state);
 	}
 
-	static void UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
-		BackupMetadataSummary summary;
-		LoadBackupMetadataSummary(metadataDir, summary);
+	static bool UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
+		FolderRewindFormat::MetadataState previousState;
+		FolderRewindMetadataStore::LoadState(metadataDir, previousState);
 
-		const wstring previousLastBackupFile = summary.lastBackupFileName;
-		const wstring normalizedBase = IsIncrementalBackupType(backupType)
+		const wstring previousLastBackupFile = previousState.lastBackupFileName;
+		const wstring normalizedBase = FolderRewindFormat::IsSmartBackupType(backupType)
 			? (baseBackupFile.empty() ? currentBackupFile : baseBackupFile)
 			: currentBackupFile;
 
-		BackupChangeRecord record;
+		FolderRewindFormat::ChangeRecord record;
 		record.archiveFileName = currentBackupFile;
 		record.backupType = backupType;
 		record.basedOnFullBackup = normalizedBase;
-		record.previousBackupFileName = IsIncrementalBackupType(backupType) ? previousLastBackupFile : L"";
-		record.createdAtUtc = utf8_to_wstring(MakeUtcTimestampString());
+		record.previousBackupFileName = FolderRewindFormat::IsSmartBackupType(backupType) ? previousLastBackupFile : L"";
+		record.createdAtUtc = FolderRewindFormat::MakeUtcTimestampString();
 		record.addedFiles = changeSet.addedFiles;
 		record.modifiedFiles = changeSet.modifiedFiles;
 		record.deletedFiles = changeSet.deletedFiles;
 		for (const auto& pair : currentState) {
-			record.fullFileList.push_back(pair.first);
+			record.fullFileList.push_back(FolderRewindFormat::NormalizeRelativePath(pair.first));
 		}
 		sort(record.fullFileList.begin(), record.fullFileList.end());
-		SaveBackupChangeRecord(metadataDir, record);
 
-		summary.version = 2;
-		summary.lastBackupFileName = currentBackupFile;
-		summary.basedOnFullBackup = normalizedBase;
-		summary.fileStates = currentState;
-		summary.records.erase(
-			remove_if(summary.records.begin(), summary.records.end(), [&](const BackupMetadataRecordIndex& item) {
-				return _wcsicmp(item.archiveFileName.c_str(), currentBackupFile.c_str()) == 0;
-			}),
-			summary.records.end()
-		);
+		if (!FolderRewindFormat::IsSmartBackupType(backupType)) {
+			record.previousBackupFileName.clear();
+			record.basedOnFullBackup = currentBackupFile;
+			record.addedFiles = record.fullFileList;
+			record.modifiedFiles.clear();
+			record.deletedFiles.clear();
+		}
 
-		BackupMetadataRecordIndex indexRecord;
-		indexRecord.archiveFileName = currentBackupFile;
-		indexRecord.backupType = backupType;
-		indexRecord.basedOnFullBackup = normalizedBase;
-		indexRecord.previousBackupFileName = record.previousBackupFileName;
-		indexRecord.createdAtUtc = record.createdAtUtc;
-		summary.records.push_back(std::move(indexRecord));
-		sort(summary.records.begin(), summary.records.end(), [](const BackupMetadataRecordIndex& a, const BackupMetadataRecordIndex& b) {
-			if (a.createdAtUtc != b.createdAtUtc) return a.createdAtUtc < b.createdAtUtc;
-			return a.archiveFileName < b.archiveFileName;
-		});
+		FolderRewindFormat::MetadataState state;
+		state.version = L"3.0";
+		state.lastBackupTime = FolderRewindFormat::MakeLocalHistoryTimestampString();
+		state.lastBackupFileName = currentBackupFile;
+		state.basedOnFullBackup = record.basedOnFullBackup;
+		for (const auto& pair : currentState) {
+			state.fileStates[FolderRewindFormat::NormalizeRelativePath(pair.first)] = ToFolderRewindFileState(pair.second);
+		}
 
-		SaveBackupMetadataSummary(metadataDir, summary);
+		if (!FolderRewindMetadataStore::Save(metadataDir, state, record)) {
+			error_code ec;
+			filesystem::remove(FolderRewindMetadataStore::GetStatePath(metadataDir), ec);
+			FolderRewindMetadataStore::DeleteRecord(metadataDir, currentBackupFile);
+			return false;
+		}
+		return true;
 	}
 
 	static void InvalidateBackupMetadata(const Config& config, const wstring& worldName, const wstring& deletedBackupFile, const wstring& renamedOldFile = L"", const wstring& renamedNewFile = L"") {
 		filesystem::path metadataDir = GetMetadataDirectory(config, worldName);
 		error_code ec;
-		if (!deletedBackupFile.empty()) {
-			filesystem::remove(GetMetadataRecordPath(metadataDir, deletedBackupFile), ec);
+		const bool hasRename = !renamedOldFile.empty() && !renamedNewFile.empty();
+		if (hasRename) {
+			FolderRewindMetadataStore::RewriteRecordArchiveName(metadataDir, renamedOldFile, renamedNewFile);
 		}
-		if (!renamedOldFile.empty() && !renamedNewFile.empty()) {
-			filesystem::path oldRecord = GetMetadataRecordPath(metadataDir, renamedOldFile);
-			filesystem::path newRecord = GetMetadataRecordPath(metadataDir, renamedNewFile);
-			filesystem::rename(oldRecord, newRecord, ec);
+		else if (!deletedBackupFile.empty()) {
+			FolderRewindMetadataStore::DeleteRecord(metadataDir, deletedBackupFile);
+		}
+
+		FolderRewindFormat::MetadataState state;
+		if (FolderRewindMetadataStore::LoadState(metadataDir, state)) {
+			if (hasRename) {
+				if (_wcsicmp(state.lastBackupFileName.c_str(), renamedOldFile.c_str()) == 0) state.lastBackupFileName = renamedNewFile;
+				if (_wcsicmp(state.basedOnFullBackup.c_str(), renamedOldFile.c_str()) == 0) state.basedOnFullBackup = renamedNewFile;
+				FolderRewindMetadataStore::SaveState(metadataDir, state);
+			}
+			else if (!deletedBackupFile.empty()) {
+				filesystem::remove(FolderRewindMetadataStore::GetStatePath(metadataDir), ec);
+			}
 		}
 		filesystem::remove(metadataDir / L"metadata.json", ec);
 	}
@@ -501,21 +431,15 @@ namespace {
 		errorMessage.clear();
 		filesystem::path metadataDir = GetMetadataDirectory(config, worldName);
 
-		BackupMetadataSummary summary;
-		if (!LoadBackupMetadataSummary(metadataDir, summary)) {
-			errorMessage = "Cannot load metadata summary.";
+		FolderRewindFormat::ChangeRecord deletedRecord;
+		if (!FolderRewindMetadataStore::LoadRecord(metadataDir, deletedBackupFile, deletedRecord)) {
+			errorMessage = "Cannot load deleted FolderRewind metadata record.";
 			return false;
 		}
 
-		BackupChangeRecord deletedRecord;
-		if (!LoadBackupChangeRecord(metadataDir, deletedBackupFile, deletedRecord)) {
-			errorMessage = "Cannot load deleted backup metadata record.";
-			return false;
-		}
-
-		BackupChangeRecord mergedRecord;
-		if (!LoadBackupChangeRecord(metadataDir, mergedOldFile, mergedRecord)) {
-			errorMessage = "Cannot load merged target metadata record.";
+		FolderRewindFormat::ChangeRecord mergedRecord;
+		if (!FolderRewindMetadataStore::LoadRecord(metadataDir, mergedOldFile, mergedRecord)) {
+			errorMessage = "Cannot load merged target FolderRewind metadata record.";
 			return false;
 		}
 
@@ -559,12 +483,12 @@ namespace {
 			mergedModified.insert(path);
 		}
 
-		BackupChangeRecord repaired = mergedRecord;
+		FolderRewindFormat::ChangeRecord repaired = mergedRecord;
 		repaired.archiveFileName = mergedFinalFile;
 		repaired.backupType = mergedBackupType;
-		repaired.createdAtUtc = mergedRecord.createdAtUtc.empty() ? utf8_to_wstring(MakeUtcTimestampString()) : mergedRecord.createdAtUtc;
+		repaired.createdAtUtc = mergedRecord.createdAtUtc.empty() ? FolderRewindFormat::MakeUtcTimestampString() : mergedRecord.createdAtUtc;
 
-		if (IsIncrementalBackupType(mergedBackupType)) {
+		if (FolderRewindFormat::IsSmartBackupType(mergedBackupType)) {
 			repaired.previousBackupFileName = deletedRecord.previousBackupFileName;
 			repaired.basedOnFullBackup = !deletedRecord.basedOnFullBackup.empty() ? deletedRecord.basedOnFullBackup : mergedRecord.basedOnFullBackup;
 			repaired.addedFiles = ToSortedVector(mergedAdded);
@@ -580,68 +504,47 @@ namespace {
 		}
 		repaired.fullFileList = ToSortedVector(fullAfterMerged);
 
-		SaveBackupChangeRecord(metadataDir, repaired);
-
-		error_code ec;
-		filesystem::remove(GetMetadataRecordPath(metadataDir, deletedBackupFile), ec);
+		if (!FolderRewindMetadataStore::SaveRecord(metadataDir, repaired)) {
+			errorMessage = "Cannot save repaired FolderRewind metadata record.";
+			return false;
+		}
+		FolderRewindMetadataStore::DeleteRecord(metadataDir, deletedBackupFile);
 		if (mergedOldFile != mergedFinalFile) {
-			ec.clear();
-			filesystem::remove(GetMetadataRecordPath(metadataDir, mergedOldFile), ec);
+			FolderRewindMetadataStore::DeleteRecord(metadataDir, mergedOldFile);
 		}
 
-		vector<BackupMetadataRecordIndex> repairedRecords;
-		repairedRecords.reserve(summary.records.size());
-		for (auto record : summary.records) {
-			if (_wcsicmp(record.archiveFileName.c_str(), deletedBackupFile.c_str()) == 0) {
-				continue;
-			}
-
-			if (_wcsicmp(record.archiveFileName.c_str(), mergedOldFile.c_str()) == 0) {
-				record.archiveFileName = mergedFinalFile;
-				record.backupType = repaired.backupType;
-				record.basedOnFullBackup = repaired.basedOnFullBackup;
-				record.previousBackupFileName = repaired.previousBackupFileName;
-				record.createdAtUtc = repaired.createdAtUtc;
-			}
-
-			if (_wcsicmp(record.previousBackupFileName.c_str(), deletedBackupFile.c_str()) == 0) {
-				record.previousBackupFileName = mergedFinalFile;
-			}
-			if (mergedOldFile != mergedFinalFile && _wcsicmp(record.previousBackupFileName.c_str(), mergedOldFile.c_str()) == 0) {
-				record.previousBackupFileName = mergedFinalFile;
-			}
-
-			if (_wcsicmp(record.basedOnFullBackup.c_str(), deletedBackupFile.c_str()) == 0) {
-				record.basedOnFullBackup = mergedFinalFile;
-			}
-			if (mergedOldFile != mergedFinalFile && _wcsicmp(record.basedOnFullBackup.c_str(), mergedOldFile.c_str()) == 0) {
-				record.basedOnFullBackup = mergedFinalFile;
-			}
-
-			repairedRecords.push_back(std::move(record));
+		FolderRewindMetadataStore::LoadResult loaded = FolderRewindMetadataStore::Load(metadataDir);
+		if (loaded.recordLoadFailed) {
+			errorMessage = "Cannot load FolderRewind metadata records after repair.";
+			return false;
 		}
 
-		summary.records = std::move(repairedRecords);
-		sort(summary.records.begin(), summary.records.end(), [](const BackupMetadataRecordIndex& a, const BackupMetadataRecordIndex& b) {
-			if (a.createdAtUtc != b.createdAtUtc) return a.createdAtUtc < b.createdAtUtc;
-			return a.archiveFileName < b.archiveFileName;
-		});
-
-		if (_wcsicmp(summary.lastBackupFileName.c_str(), deletedBackupFile.c_str()) == 0) {
-			summary.lastBackupFileName = mergedFinalFile;
-		}
-		if (_wcsicmp(summary.lastBackupFileName.c_str(), mergedOldFile.c_str()) == 0) {
-			summary.lastBackupFileName = mergedFinalFile;
-		}
-
-		if (_wcsicmp(summary.basedOnFullBackup.c_str(), deletedBackupFile.c_str()) == 0) {
-			summary.basedOnFullBackup = mergedFinalFile;
-		}
-		if (mergedOldFile != mergedFinalFile && _wcsicmp(summary.basedOnFullBackup.c_str(), mergedOldFile.c_str()) == 0) {
-			summary.basedOnFullBackup = mergedFinalFile;
+		bool repairOk = true;
+		for (auto& pair : loaded.records) {
+			FolderRewindFormat::ChangeRecord record = pair.second;
+			if (_wcsicmp(record.archiveFileName.c_str(), repaired.archiveFileName.c_str()) == 0) {
+				record = repaired;
+			}
+			if (_wcsicmp(record.previousBackupFileName.c_str(), deletedBackupFile.c_str()) == 0) record.previousBackupFileName = mergedFinalFile;
+			if (mergedOldFile != mergedFinalFile && _wcsicmp(record.previousBackupFileName.c_str(), mergedOldFile.c_str()) == 0) record.previousBackupFileName = mergedFinalFile;
+			if (_wcsicmp(record.basedOnFullBackup.c_str(), deletedBackupFile.c_str()) == 0) record.basedOnFullBackup = mergedFinalFile;
+			if (mergedOldFile != mergedFinalFile && _wcsicmp(record.basedOnFullBackup.c_str(), mergedOldFile.c_str()) == 0) record.basedOnFullBackup = mergedFinalFile;
+			repairOk = FolderRewindMetadataStore::SaveRecord(metadataDir, record) && repairOk;
 		}
 
-		SaveBackupMetadataSummary(metadataDir, summary);
+		FolderRewindFormat::MetadataState state;
+		if (FolderRewindMetadataStore::LoadState(metadataDir, state)) {
+			if (_wcsicmp(state.lastBackupFileName.c_str(), deletedBackupFile.c_str()) == 0) state.lastBackupFileName = mergedFinalFile;
+			if (_wcsicmp(state.lastBackupFileName.c_str(), mergedOldFile.c_str()) == 0) state.lastBackupFileName = mergedFinalFile;
+			if (_wcsicmp(state.basedOnFullBackup.c_str(), deletedBackupFile.c_str()) == 0) state.basedOnFullBackup = mergedFinalFile;
+			if (mergedOldFile != mergedFinalFile && _wcsicmp(state.basedOnFullBackup.c_str(), mergedOldFile.c_str()) == 0) state.basedOnFullBackup = mergedFinalFile;
+			repairOk = FolderRewindMetadataStore::SaveState(metadataDir, state) && repairOk;
+		}
+
+		if (!repairOk) {
+			errorMessage = "Cannot save FolderRewind metadata after safe-delete repair.";
+			return false;
+		}
 		return true;
 	}
 
@@ -832,11 +735,13 @@ namespace {
 	}
 
 	static void CleanupInternalRestoreMarkers(const filesystem::path& targetDir) {
-		error_code ec;
-		filesystem::path internalDir = targetDir / kDeletedOnlyMarkerDir;
-		if (filesystem::exists(internalDir, ec) && !ec) {
-			ClearReadonlyAttributesRecursively(internalDir);
-			filesystem::remove_all(internalDir, ec);
+		for (const wchar_t* markerDir : { kDeletedOnlyMarkerDir, L"__MineBackup_Internal" }) {
+			error_code ec;
+			filesystem::path internalDir = targetDir / markerDir;
+			if (filesystem::exists(internalDir, ec) && !ec) {
+				ClearReadonlyAttributesRecursively(internalDir);
+				filesystem::remove_all(internalDir, ec);
+			}
 		}
 	}
 
@@ -1009,7 +914,7 @@ void AddBackupToWESnapshots(const Config& config, const wstring& worldName, cons
 		auto baseFullTime = filesystem::file_time_type{};
 
 		for (const auto& entry : filesystem::directory_iterator(sourceDir)) {
-			if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
+			if (entry.is_regular_file() && FolderRewindFormat::IsFullLikeBackupType(entry.path().filename().wstring())) {
 				if (entry.last_write_time() < filesystem::last_write_time(targetBackupPath) && entry.last_write_time() > baseFullTime) {
 					baseFullTime = entry.last_write_time();
 					baseFullBackup = entry.path();
@@ -1117,8 +1022,8 @@ void AddBackupToWESnapshots(const Config& config, const wstring& worldName, cons
 	console.AddLog(L("LOG_WE_INTEGRATION_SUCCESS"), wstring_to_utf8(worldName).c_str());
 }
 
-void UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
-	UpdateMetadataFiles(metadataPath, newBackupFile, basedOnBackupFile, backupType, currentState, changeSet);
+bool UpdateMetadataFile(const filesystem::path& metadataPath, const wstring& newBackupFile, const wstring& basedOnBackupFile, const wstring& backupType, const map<wstring, BackupFileState>& currentState, const BackupChangeSet& changeSet) {
+	return UpdateMetadataFiles(metadataPath, newBackupFile, basedOnBackupFile, backupType, currentState, changeSet);
 }
 
 
@@ -1245,6 +1150,14 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		);
 		return;
 	}
+	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, folder.configIndex, folder.name, folder.path);
+	const bool forceFullForMigration = migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded;
+	if (migration.status == MigrationStatus::Failed) {
+		console.AddLog("[Warning] Legacy metadata migration failed; this backup will establish a new Full chain: %s", wstring_to_utf8(migration.message).c_str());
+	}
+	else if (migration.status == MigrationStatus::Degraded) {
+		console.AddLog("[Warning] Legacy metadata was only partially migrated; forcing a safe Full backup.");
+	}
 
 	console.AddLog(L("LOG_BACKUP_START_HEADER"));
 	console.AddLog(L("LOG_BACKUP_PREPARE"), wstring_to_utf8(folder.name).c_str());
@@ -1258,24 +1171,19 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	wstring originalSourcePath = folder.path;
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
 	const vector<wstring> effectiveBlacklist = BuildEffectiveBackupBlacklist(config.blacklist);
-	filesystem::path destinationFolder = JoinPath(config.backupPath, folder.name);
-	filesystem::path metadataFolder = JoinPath(config.backupPath, L"_metadata");
-	metadataFolder /= folder.name;
+	FolderRewindFormat::StoragePaths storagePaths;
+	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, folder.name, folder.path, storagePaths)) {
+		console.AddLog("[Error] Invalid FolderRewind storage folder name for world: %s", wstring_to_utf8(folder.name).c_str());
+		return;
+	}
+	filesystem::path destinationFolder = storagePaths.backupSubDir;
+	filesystem::path metadataFolder = storagePaths.metadataDir;
+	const wstring storageFolderName = storagePaths.folderName;
     wstring command;
 	wstring archivePath;
-    wstring archiveNameBase = folder.desc.empty() ? folder.name : folder.desc;
-
-    if (!comment.empty()) {
-        archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
-    }
-
-    // 生成带时间戳的文件名
-    time_t now = time(0);
-    tm ltm;
-    localtime_s(&ltm, &now);
-    wchar_t timeBuf[160];
-    wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-	archivePath = (destinationFolder / (L"[" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+	auto makeArchivePath = [&](const wstring& backupType) {
+		return (destinationFolder / FolderRewindFormat::GenerateArchiveFileName(backupType, storageFolderName, comment, config.zipFormat)).wstring();
+	};
 
 	try {
 		filesystem::create_directories(destinationFolder);
@@ -1330,12 +1238,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     bool forceFullBackup = true;
     if (filesystem::exists(destinationFolder)) {
         for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-            if (entry.is_regular_file() && entry.path().filename().wstring().find(L"[Full]") != wstring::npos) {
+            if (entry.is_regular_file() && FolderRewindFormat::IsFullLikeBackupType(entry.path().filename().wstring())) {
                 forceFullBackup = false;
                 break;
             }
         }
     }
+	if (forceFullForMigration) forceFullBackup = true;
     if (forceFullBackup)
         console.AddLog(L("LOG_FORCE_FULL_BACKUP"));
 
@@ -1361,11 +1270,11 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             bool fullFound = false;
             for (auto it = worldBackups.rbegin(); it != worldBackups.rend(); ++it) {
                 wstring filename = it->filename().wstring();
-                if (filename.find(L"[Full]") != wstring::npos) {
+                if (FolderRewindFormat::IsFullLikeBackupType(filename)) {
                     fullFound = true;
                     break;
                 }
-                if (filename.find(L"[Smart]") != wstring::npos) {
+                if (FolderRewindFormat::IsSmartBackupType(filename)) {
                     ++smartCount;
                 }
             }
@@ -1389,6 +1298,9 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         console.AddLog(L("LOG_METADATA_INVALID"));
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING && config.backupMode == 2) {
         console.AddLog(L("LOG_BASE_BACKUP_NOT_FOUND"));
+    } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED) {
+        console.AddLog("[Error] Failed to scan source directory for backup state.");
+        return;
     }
 
     forceFullBackup = (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID ||
@@ -1485,9 +1397,9 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     wstring basedOnBackupFile;
     filesystem::path latestBackupPath;
 
-	if (config.backupMode == 1 || forceFullBackup) {
+	if ((config.backupMode == 1 || forceFullBackup) && config.backupMode != 3) {
 		backupTypeStr = L"Full";
-		archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+		archivePath = makeArchivePath(L"Full");
 		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
 		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
@@ -1499,16 +1411,25 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         // 智能备份需要找到它所基于的文件
         // 这可以通过再次读取元数据获得，GetChangedFiles 内部已经验证过它存在
 		try {
-			BackupMetadataSummary summary;
-			if (!LoadBackupMetadataSummary(metadataFolder, summary)) {
-				throw runtime_error("Cannot load metadata summary");
+			FolderRewindFormat::MetadataState folderRewindState;
+			if (FolderRewindMetadataStore::LoadState(metadataFolder, folderRewindState)) {
+				basedOnBackupFile = folderRewindState.basedOnFullBackup.empty() ? folderRewindState.lastBackupFileName : folderRewindState.basedOnFullBackup;
 			}
-			basedOnBackupFile = summary.basedOnFullBackup.empty() ? summary.lastBackupFileName : summary.basedOnFullBackup;
+			else {
+				BackupMetadataSummary summary;
+				if (!LoadBackupMetadataSummary(metadataFolder, summary)) {
+					throw runtime_error("Cannot load metadata summary");
+				}
+				basedOnBackupFile = summary.basedOnFullBackup.empty() ? summary.lastBackupFileName : summary.basedOnFullBackup;
+			}
+			if (basedOnBackupFile.empty()) {
+				throw runtime_error("Metadata does not contain a base backup");
+			}
 		} catch (const exception& e) {
 			console.AddLog("[Warning] Failed to read metadata for smart backup, forcing full backup: %s", e.what());
 			// 回退到完整备份
 			backupTypeStr = L"Full";
-			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+			archivePath = makeArchivePath(L"Full");
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
 			basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
@@ -1516,7 +1437,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		}
 
         // 7z 支持用 @文件名 的方式批量指定要压缩的文件。把所有要备份的文件路径写到一个文本文件避免超过cmd 8191限长
-		archivePath = (destinationFolder / (L"[Smart][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+		archivePath = makeArchivePath(L"Smart");
 
 		if (!deletionOnlyChange) {
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
@@ -1544,7 +1465,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
         else {
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
-			archivePath = (destinationFolder / (L"[Full][" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+			archivePath = makeArchivePath(L"Overwrite");
 			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) + L" -m0=" + config.zipMethod +
 				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw -spf \"" + archivePath + L"\"" + L" \"" + NormalizeSeparators(sourcePath) + L"/*\"";
             // -spf 强制使用完整路径，-spf2 使用相对路径
@@ -1583,56 +1504,50 @@ execute_backup:
             console.AddLog("[Error] Could not check backup file size: %s", e.what());
         }
 
+		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
+
+        g_appState.realConfigIndex = -1;
+
+        if (config.backupMode == 3) {
+            if (!latestBackupPath.empty()) {
+                wstring oldName = latestBackupPath.filename().wstring();
+                wstring newName = FolderRewindFormat::GenerateArchiveFileName(L"Overwrite", storageFolderName, comment, config.zipFormat);
+                filesystem::path newPath = latestBackupPath.parent_path() / newName;
+                if (latestBackupPath != newPath) {
+                    filesystem::rename(latestBackupPath, newPath);
+                    latestBackupPath = newPath;
+                    archivePath = latestBackupPath.wstring();
+                    completedBackupFile = latestBackupPath.filename().wstring();
+                    RemoveHistoryEntry(folder.configIndex, storageFolderName, oldName);
+                    InvalidateBackupMetadata(config, storageFolderName, oldName, oldName, completedBackupFile);
+                }
+            }
+            else {
+                completedBackupFile = filesystem::path(archivePath).filename().wstring();
+            }
+        }
+
+		if (!UpdateMetadataFile(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet)) {
+			console.AddLog("[Error] Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
+			BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(storageFolderName) + ";error=metadata_write_failed");
+			return;
+		}
+		AddHistoryEntry(folder.configIndex, storageFolderName, completedBackupFile, backupTypeStr, comment, folder.path);
+
 		if (folder.configIndex != -1)
 			LimitBackupFiles(config, folder.configIndex, destinationFolder.wstring(), config.keepCount, &console);
 		else
 			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 
-		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
-
-        g_appState.realConfigIndex = -1;
-
-        if (config.backupMode == 3) { // 如果是覆写模式，修改一下文件名
-            wstring oldName = latestBackupPath.filename().wstring();
-            size_t leftBracket = oldName.find(L"["); // 第一个对应Full Smart
-            leftBracket = oldName.find(L"[", leftBracket + 1);
-            size_t rightBracket = oldName.find(L"]");
-            rightBracket = oldName.find(L"]", rightBracket + 1);
-            wstring newName = oldName;
-            if (leftBracket != wstring::npos && rightBracket != wstring::npos && rightBracket > leftBracket) {
-                // 构造新的时间戳
-                wchar_t timeBuf[160];
-                time_t now = time(0);
-                tm ltm;
-                localtime_s(&ltm, &now);
-                wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-                // 替换时间戳部分
-                newName.replace(leftBracket + 1, rightBracket - leftBracket - 1, timeBuf);
-                filesystem::path newPath = latestBackupPath.parent_path() / newName;
-                filesystem::rename(latestBackupPath, newPath);
-                latestBackupPath = newPath;
-				archivePath = latestBackupPath.wstring();
-				completedBackupFile = latestBackupPath.filename().wstring();
-            }
-			if (latestBackupPath.empty()) {
-				completedBackupFile = filesystem::path(archivePath).filename().wstring();
-			}
-			else {
-				RemoveHistoryEntry(folder.configIndex, oldName);
-				InvalidateBackupMetadata(config, folder.name, oldName, oldName, completedBackupFile);
-			}
-        }
-
-		UpdateMetadataFile(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet);
-		AddHistoryEntry(folder.configIndex, folder.name, completedBackupFile, backupTypeStr, comment, folder.path);
-
 		// 广播一个成功事件
-		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";file=" + wstring_to_utf8(completedBackupFile);
+		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(storageFolderName) + ";file=" + wstring_to_utf8(completedBackupFile);
 		BroadcastEvent(payload);
 
 
 		// 云存档统一交给 CloudSyncService 处理，避免 UI 和核心逻辑各自拼接 rclone 命令。
-		QueueUploadAfterBackup(config, folder.configIndex, folder, completedBackupFile, comment, console);
+		MyFolder cloudFolder = folder;
+		cloudFolder.name = storageFolderName;
+		QueueUploadAfterBackup(config, folder.configIndex, cloudFolder, completedBackupFile, comment, console);
         }
         else {
             BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
@@ -1642,13 +1557,9 @@ execute_backup:
 void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wstring& comment, Console& console) {
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
 
-	filesystem::path saveRoot(config.saveRoot);
-
 	filesystem::path othersPath = backupWhat;
-	backupWhat = backupWhat.filename().wstring(); // 只保留最后的文件夹名
+	backupWhat = backupWhat.filename().wstring();
 	const std::wstring backupName = backupWhat.wstring();
-
-	//filesystem::path modsPath = saveRoot.parent_path() / "mods";
 
 	if (!filesystem::exists(othersPath) || !filesystem::is_directory(othersPath)) {
 		console.AddLog(L("LOG_ERROR_OTHERS_NOT_FOUND"), wstring_to_utf8(othersPath.wstring()).c_str());
@@ -1656,26 +1567,20 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 		return;
 	}
 
-	filesystem::path destinationFolder;
-	wstring archiveNameBase;
-
-	destinationFolder = filesystem::path(config.backupPath) / backupWhat;
-	archiveNameBase = backupName;
-
-	if (!comment.empty()) {
-		archiveNameBase += L" [" + SanitizeFileName(comment) + L"]";
+	FolderRewindFormat::StoragePaths storagePaths;
+	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, backupName, othersPath.wstring(), storagePaths)) {
+		console.AddLog("[Error] Invalid FolderRewind storage folder name for backup target: %s", wstring_to_utf8(backupName).c_str());
+		console.AddLog(L("LOG_BACKUP_OTHERS_END"));
+		return;
 	}
 
-	// Timestamp
-	time_t now = time(0);
-	tm ltm;
-	localtime_s(&ltm, &now);
-	wchar_t timeBuf[160];
-	wcsftime(timeBuf, std::size(timeBuf), L"%Y-%m-%d_%H-%M-%S", &ltm);
-	wstring archivePath = (destinationFolder / (L"[" + wstring(timeBuf) + L"]" + archiveNameBase + L"." + config.zipFormat)).wstring();
+	filesystem::path destinationFolder = storagePaths.backupSubDir;
+	wstring archiveFileName = FolderRewindFormat::GenerateArchiveFileName(L"Full", storagePaths.folderName, comment, config.zipFormat);
+	wstring archivePath = (destinationFolder / archiveFileName).wstring();
 
 	try {
 		filesystem::create_directories(destinationFolder);
+		filesystem::create_directories(storagePaths.metadataDir);
 		console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder.wstring()).c_str());
 	}
 	catch (const filesystem::filesystem_error& e) {
@@ -1684,14 +1589,35 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 		return;
 	}
 
+	BackupCheckResult checkResult;
+	map<wstring, BackupFileState> currentState;
+	BackupChangeSet changeSet;
+	GetChangedFiles(othersPath, storagePaths.metadataDir, storagePaths.backupSubDir, checkResult, currentState, changeSet);
+	if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED) {
+		console.AddLog("[Error] Failed to scan source directory for backup state.");
+		console.AddLog(L("LOG_BACKUP_OTHERS_END"));
+		return;
+	}
+	changeSet.addedFiles.clear();
+	for (const auto& pair : currentState) {
+		changeSet.addedFiles.push_back(pair.first);
+	}
+	sort(changeSet.addedFiles.begin(), changeSet.addedFiles.end());
+	changeSet.modifiedFiles.clear();
+	changeSet.deletedFiles.clear();
+
 	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
 	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
 		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
 
 	if (RunCommandInBackground(command, console, config.useLowPriority)) {
+		if (!UpdateMetadataFile(storagePaths.metadataDir, archiveFileName, archiveFileName, L"Full", currentState, changeSet)) {
+			console.AddLog("[Error] Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(archiveFileName).c_str());
+			console.AddLog(L("LOG_BACKUP_OTHERS_END"));
+			return;
+		}
 		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
-		// 用特殊名字添加到历史
-		AddHistoryEntry(g_appState.currentConfigIndex, backupName, filesystem::path(archivePath).filename().wstring(), backupName, comment, othersPath.wstring());
+		AddHistoryEntry(g_appState.currentConfigIndex, storagePaths.folderName, archiveFileName, L"Full", comment, othersPath.wstring());
 	}
 
 	console.AddLog(L("LOG_BACKUP_OTHERS_END"));
@@ -1724,13 +1650,20 @@ void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelet
 		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "history deletion", console);
 		return;
 	}
-
-	if (mode == BackupDeleteMode::LocalArchiveOnly) {
-		DeleteLocalArchiveOnly(config, entryToDelete, console);
+	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
+		console.AddLog("[Error] Local archive deletion is blocked until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
 		return;
 	}
 
-	if (useSafeDelete && entryToDelete.backupType.find(L"Smart") != wstring::npos) {
+	if (mode == BackupDeleteMode::LocalArchiveOnly) {
+		if (DeleteLocalArchiveOnly(config, entryToDelete, console)) {
+			InvalidateBackupMetadata(config, entryToDelete.worldName, entryToDelete.backupFile);
+		}
+		return;
+	}
+
+	if (useSafeDelete && (FolderRewindFormat::IsSmartBackupType(entryToDelete.backupType) || FolderRewindFormat::IsSmartBackupType(entryToDelete.backupFile))) {
 		DoSafeDeleteBackup(config, entryToDelete, configIndex, console);
 	}
 	else {
@@ -1772,6 +1705,11 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
 	console.AddLog(L("LOG_SAFE_DELETE_START"), wstring_to_utf8(entryToDelete.backupFile).c_str());
+	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
+		console.AddLog("[Error] Safe delete requires a complete metadata migration: %s", wstring_to_utf8(migration.message).c_str());
+		return;
+	}
 
 	if (entryToDelete.isImportant) {
 		console.AddLog(L("LOG_SAFE_DELETE_ABORT_IMPORTANT"), wstring_to_utf8(entryToDelete.backupFile).c_str());
@@ -1802,7 +1740,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		}
 	}
 
-	if (!nextEntryRaw || nextEntryRaw->backupType == L"Full") {
+	if (!nextEntryRaw || FolderRewindFormat::IsFullLikeBackupType(nextEntryRaw->backupType) || FolderRewindFormat::IsFullLikeBackupType(nextEntryRaw->backupFile)) {
 		console.AddLog(L("LOG_SAFE_DELETE_END_OF_CHAIN"));
 		DoDeleteBackup(config, entryToDelete, configIndex, console);
 		return;
@@ -1902,7 +1840,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		}
 		replacedTargetArchive = true;
 
-		if (entryToDelete.backupType == L"Full") {
+		if (FolderRewindFormat::IsFullLikeBackupType(entryToDelete.backupType) || FolderRewindFormat::IsFullLikeBackupType(entryToDelete.backupFile)) {
 			console.AddLog(L("LOG_SAFE_DELETE_STEP_3"));
 			finalBackupType = L"Full";
 

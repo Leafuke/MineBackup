@@ -10,6 +10,8 @@ void AddHistoryEntry(int configIndex, const std::wstring& worldName, const std::
 void RemoveHistoryEntry(int configIndex, const std::wstring& backupFileToRemove);
 int CreateNewSpecialConfig(const std::string& name_hint = "None");
 int CreateNewNormalConfig(const std::string& name_hint = "None");
+void AssignFreshNormalConfigId(int configIndex);
+void EnsureConfigIds();
 std::vector<std::wstring> DefaultBackupBlacklist();
 std::vector<std::wstring> DefaultRestoreWhitelist();
 std::vector<std::wstring> BuildEffectiveRestoreWhitelist(const std::vector<std::wstring>& userWhitelist);
