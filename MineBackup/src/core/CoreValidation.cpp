@@ -658,6 +658,18 @@ namespace {
 
 		const MigrationUnitResult result = MigrationService::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
 		if (!ctx.Require(result.status == MigrationStatus::Succeeded, "[Validation] 1.15 metadata migrated.", "[Validation] 1.15 metadata migration failed.")) return false;
+		const filesystem::path snapshotRoot(result.snapshotPath);
+		if (!ctx.Require(filesystem::exists(snapshotRoot / L"metadata.json")
+			&& filesystem::exists(snapshotRoot / (fullName + L".json"))
+			&& filesystem::exists(snapshotRoot / (smartName + L".json")),
+			"[Validation] Legacy metadata recovery snapshot contains summary and records.",
+			"[Validation] Legacy metadata recovery snapshot is incomplete.")) return false;
+		if (!ctx.Require(
+			MigrationService::HigherPriorityStatus(MigrationStatus::Succeeded, MigrationStatus::Pending) == MigrationStatus::Pending
+			&& MigrationService::HigherPriorityStatus(MigrationStatus::Pending, MigrationStatus::Degraded) == MigrationStatus::Degraded
+			&& MigrationService::HigherPriorityStatus(MigrationStatus::Degraded, MigrationStatus::Failed) == MigrationStatus::Failed,
+			"[Validation] Migration report priority is Failed > Degraded > Pending > Succeeded.",
+			"[Validation] Migration report priority is incorrect.")) return false;
 		FolderRewindFormat::MetadataState state;
 		if (!ctx.Require(FolderRewindMetadataStore::LoadState(metadataDir, state) && state.lastBackupFileName == smartName,
 			"[Validation] Migrated state references the original archive name.", "[Validation] Migrated state is invalid.")) return false;

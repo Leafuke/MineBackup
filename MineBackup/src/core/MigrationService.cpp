@@ -126,6 +126,36 @@ void PreserveInvalidFile(const filesystem::path& source) {
 	filesystem::copy_file(source, source.wstring() + L".invalid." + SafeStamp(), filesystem::copy_options::overwrite_existing, ec);
 }
 
+bool CreateWorldMetadataSnapshot(
+	const Config& config,
+	const FolderRewindFormat::StoragePaths& paths,
+	filesystem::path& snapshotRoot,
+	wstring& error) {
+	error.clear();
+	snapshotRoot = filesystem::path(config.backupPath) / L"_migration-backups" / L"1.15" / SafeStamp()
+		/ FolderRewindFormat::kMetadataRootDirName / paths.folderName;
+	error_code ec;
+	filesystem::create_directories(snapshotRoot, ec);
+	if (ec) { error = L"Could not create the world metadata recovery snapshot directory."; return false; }
+
+	int copied = 0;
+	for (const auto& entry : filesystem::directory_iterator(paths.metadataDir, ec)) {
+		if (ec) { error = L"Could not enumerate legacy metadata for recovery snapshot."; return false; }
+		if (!entry.is_regular_file(ec) || ec || entry.path().extension() != L".json") { ec.clear(); continue; }
+		const wstring fileName = entry.path().filename().wstring();
+		// state.json belongs to the new format. Legacy metadata.json and every adjacent record are preserved.
+		if (_wcsicmp(fileName.c_str(), FolderRewindFormat::kMetadataStateFileName) == 0) continue;
+		filesystem::copy_file(entry.path(), snapshotRoot / entry.path().filename(), filesystem::copy_options::overwrite_existing, ec);
+		if (ec) { error = L"Could not copy a legacy metadata file into the recovery snapshot."; return false; }
+		++copied;
+	}
+	if (copied == 0 || !filesystem::exists(snapshotRoot / L"metadata.json")) {
+		error = L"The world metadata recovery snapshot is incomplete.";
+		return false;
+	}
+	return true;
+}
+
 bool ReplaceFileAtomically(const filesystem::path& temp, const filesystem::path& target) {
 #ifdef _WIN32
 	SetFileAttributesW(target.c_str(), FILE_ATTRIBUTE_NORMAL);
@@ -139,16 +169,17 @@ bool ReplaceFileAtomically(const filesystem::path& temp, const filesystem::path&
 
 void AddOrReplaceUnit(const MigrationUnitResult& unit) {
 	lock_guard<mutex> lock(g_mutex);
+	MigrationUnitResult mergedUnit = unit;
 	auto it = find_if(g_report.units.begin(), g_report.units.end(), [&](const MigrationUnitResult& value) { return value.unitId == unit.unitId; });
-	if (it == g_report.units.end()) g_report.units.push_back(unit); else *it = unit;
+	if (it == g_report.units.end()) g_report.units.push_back(mergedUnit);
+	else {
+		if (mergedUnit.snapshotPath.empty()) mergedUnit.snapshotPath = it->snapshotPath;
+		*it = std::move(mergedUnit);
+	}
 	g_report.updatedAtUtc = FolderRewindFormat::MakeUtcTimestampString();
 	g_report.status = MigrationStatus::NotNeeded;
-	for (const auto& item : g_report.units) {
-		if (item.status == MigrationStatus::Failed) { g_report.status = MigrationStatus::Failed; break; }
-		if (item.status == MigrationStatus::Degraded) g_report.status = MigrationStatus::Degraded;
-		else if (item.status == MigrationStatus::Succeeded && g_report.status == MigrationStatus::NotNeeded) g_report.status = MigrationStatus::Succeeded;
-		else if (item.status == MigrationStatus::Pending && g_report.status == MigrationStatus::NotNeeded) g_report.status = MigrationStatus::Pending;
-	}
+	for (const auto& item : g_report.units)
+		g_report.status = HigherPriorityStatus(g_report.status, item.status);
 	try {
 		filesystem::create_directories(L".migration");
 		nlohmann::json root;
@@ -251,17 +282,48 @@ MigrationUnitResult MigrateHistory() {
 	return unit;
 }
 
-wstring InferLastBackupTime(const Config& config, const wstring& folderName, const LegacyMineBackup15Reader::MetadataSummary& summary, const vector<FolderRewindFormat::ChangeRecord>& records) {
+wstring NormalizeHistoryTimestamp(wstring value) {
+	// 1.15 normally used yyyy-MM-dd_HH-mm-ss; FolderRewind accepts an ISO local DateTime.
+	if (value.size() >= 19 && value[10] == L'_') {
+		value[10] = L'T';
+		if (value[13] == L'-') value[13] = L':';
+		if (value[16] == L'-') value[16] = L':';
+	}
+	return value;
+}
+
+wstring InferLastBackupTime(const Config& config, int configIndex, const wstring& folderName, const LegacyMineBackup15Reader::MetadataSummary& summary, const vector<FolderRewindFormat::ChangeRecord>& records) {
 	for (auto it = records.rbegin(); it != records.rend(); ++it) if (!it->createdAtUtc.empty()) return it->createdAtUtc;
 	error_code ec;
 	auto archive = filesystem::path(config.backupPath) / folderName / summary.lastBackupFileName;
-	if (filesystem::exists(archive, ec) && !ec) return FolderRewindFormat::FormatFileTimeUtc(filesystem::last_write_time(archive, ec));
-	auto historyIt = g_appState.g_history.find(-1);
-	(void)historyIt;
+	if (filesystem::exists(archive, ec) && !ec) {
+		const auto archiveTime = filesystem::last_write_time(archive, ec);
+		if (!ec) return FolderRewindFormat::FormatFileTimeUtc(archiveTime);
+	}
+	auto historyIt = g_appState.g_history.find(configIndex);
+	if (historyIt != g_appState.g_history.end()) {
+		for (auto it = historyIt->second.rbegin(); it != historyIt->second.rend(); ++it) {
+			if (it->worldName == folderName && it->backupFile == summary.lastBackupFileName && !it->timestamp_str.empty())
+				return NormalizeHistoryTimestamp(it->timestamp_str);
+		}
+	}
 	return L"";
 }
 
 } // namespace
+
+MigrationStatus HigherPriorityStatus(MigrationStatus lhs, MigrationStatus rhs) {
+	auto priority = [](MigrationStatus status) {
+		switch (status) {
+		case MigrationStatus::Failed: return 4;
+		case MigrationStatus::Degraded: return 3;
+		case MigrationStatus::Pending: return 2;
+		case MigrationStatus::Succeeded: return 1;
+		case MigrationStatus::NotNeeded: default: return 0;
+		}
+	};
+	return priority(rhs) > priority(lhs) ? rhs : lhs;
+}
 
 wstring GenerateLegacyConfigId(const Config& config, int configIndex) {
 	wstring identity;
@@ -342,7 +404,6 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 	}
 	FolderRewindFormat::MetadataState current;
 	const bool validNewState = FolderRewindMetadataStore::LoadState(paths.metadataDir, current);
-	if (!validNewState && filesystem::exists(paths.statePath)) PreserveInvalidFile(paths.statePath);
 	LegacyMineBackup15Reader::MetadataSummary legacy;
 	wstring error;
 	if (!LegacyMineBackup15Reader::ReadMetadataSummary(paths.metadataDir, legacy, error)) {
@@ -361,6 +422,31 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 		unit.message = L"The FolderRewind chain has advanced beyond the retained 1.15 metadata.";
 		AddOrReplaceUnit(unit); return unit;
 	}
+	if (validNewState) {
+		bool allRecordsMigrated = true;
+		for (const auto& legacyRecord : legacy.recordIndex) {
+			FolderRewindFormat::ChangeRecord existing;
+			if (!FolderRewindMetadataStore::LoadRecord(paths.metadataDir, legacyRecord.archiveFileName, existing)) {
+				allRecordsMigrated = false;
+				break;
+			}
+		}
+		if (allRecordsMigrated) {
+			unit.status = MigrationStatus::NotNeeded;
+			unit.message = L"FolderRewind state and records are already complete; retained 1.15 files were not reprocessed.";
+			AddOrReplaceUnit(unit);
+			return unit;
+		}
+	}
+	filesystem::path recoverySnapshot;
+	if (!CreateWorldMetadataSnapshot(config, paths, recoverySnapshot, error)) {
+		unit.status = MigrationStatus::Failed;
+		unit.message = error;
+		AddOrReplaceUnit(unit);
+		return unit;
+	}
+	unit.snapshotPath = recoverySnapshot.wstring();
+	if (!validNewState && filesystem::exists(paths.statePath)) PreserveInvalidFile(paths.statePath);
 
 	vector<FolderRewindFormat::ChangeRecord> convertedRecords;
 	bool degraded = false;
@@ -395,7 +481,7 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 		if (value.lastWriteTimeUtc.empty()) { degraded = true; continue; }
 		next.fileStates[FolderRewindFormat::NormalizeRelativePath(name)] = std::move(value);
 	}
-	next.lastBackupTime = InferLastBackupTime(config, paths.folderName, legacy, convertedRecords);
+	next.lastBackupTime = InferLastBackupTime(config, configIndex, paths.folderName, legacy, convertedRecords);
 	if (next.lastBackupTime.empty()) degraded = true;
 	error_code ec;
 	if (!filesystem::exists(paths.backupSubDir / next.lastBackupFileName, ec) || ec) degraded = true;
@@ -434,7 +520,6 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 	}
 	unit.status = degraded ? MigrationStatus::Degraded : MigrationStatus::Succeeded;
 	unit.message = degraded ? L"Available records were migrated; the next backup will be forced Full." : L"1.15 metadata migrated without changing archive files.";
-	unit.snapshotPath = legacyPath.wstring();
 	AddOrReplaceUnit(unit);
 	return unit;
 #endif

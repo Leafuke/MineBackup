@@ -265,6 +265,29 @@ namespace {
 		return result;
 	}
 
+	bool IsRemoteObjectMissing(const CloudCommandResult& result) {
+		if (result.success || result.timedOut) return false;
+		// rclone reserves 3 and 4 for directory/file not found. Other exit codes include
+		// configuration, authentication, network, quota and fatal backend failures.
+		if (result.exitCode == 3 || result.exitCode == 4) return true;
+		wstring detail = result.detail;
+		transform(detail.begin(), detail.end(), detail.begin(), ::towlower);
+		if (detail.find(L"config file") != wstring::npos
+			|| detail.find(L"didn't find section") != wstring::npos
+			|| detail.find(L"failed to create file system") != wstring::npos
+			|| detail.find(L"authentication") != wstring::npos
+			|| detail.find(L"unauthorized") != wstring::npos) return false;
+		return detail.find(L"object not found") != wstring::npos
+			|| detail.find(L"directory not found") != wstring::npos
+			|| detail.find(L"file not found") != wstring::npos;
+	}
+
+	enum class ActiveManifestLoadStatus {
+		Loaded,
+		NotFound,
+		Failed
+	};
+
 	nlohmann::json SerializeHistoryEntryForCloud(const Config& config, const HistoryEntry& entry) {
 		return FolderRewindHistoryStore::SerializeHistoryItem(config, entry);
 	}
@@ -428,8 +451,14 @@ namespace {
 		CloudCommandResult remoteLoadResult;
 		vector<HistoryEntry> mergedEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, remoteLoadResult);
 		if (!remoteLoadResult.success) {
-			// 远端首次没有 history.json 时，下载会失败；这里按空历史继续上传本配置快照。
-			mergedEntries.clear();
+			if (IsRemoteObjectMissing(remoteLoadResult)) {
+				// A genuinely absent remote history is the expected first-upload case.
+				mergedEntries.clear();
+			}
+			else {
+				cleanupTempFiles();
+				return remoteLoadResult;
+			}
 		}
 		mergedEntries.erase(
 			remove_if(mergedEntries.begin(), mergedEntries.end(), [&](const HistoryEntry& entry) {
@@ -513,18 +542,30 @@ namespace {
 		}
 
 		wstring warningMessage;
-		if (filesystem::exists(paths.metadataDir / L"metadata.json")) {
+		const filesystem::path cloudMigrationMarker = paths.metadataDir / L".cloud-v15-migrated";
+		const bool needsLegacyMetadataSnapshot = filesystem::exists(paths.metadataDir / L"metadata.json")
+			&& !filesystem::exists(cloudMigrationMarker);
+		if (needsLegacyMetadataSnapshot) {
 			const wstring stamp = FolderRewindFormat::MakeLocalTimestampString();
 			const wstring snapshotRoot = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
 				{ L"_minebackup", L"migration-backups", L"1.15", stamp, utf8_to_wstring(config.name), entry.worldName });
 			// Missing remote metadata is normal for archives that were never uploaded by 1.15.
-			ExecuteCommandWithRetry(config, configIndex, console,
+			CloudCommandResult stateSnapshot = ExecuteCommandWithRetry(config, configIndex, console,
 				BuildRcloneCopyToCommand(config, paths.metadataStateRemotePath,
 					FolderRewindFormat::AppendRemotePath(snapshotRoot, { L"state.json" })), "CLOUD_STATUS_UPLOADING_METADATA", 52);
-			ExecuteCommandWithRetry(config, configIndex, console,
+			if (!stateSnapshot.success && !IsRemoteObjectMissing(stateSnapshot)) {
+				stateSnapshot.message = L"Remote metadata snapshot failed; converted metadata was not uploaded.";
+				return stateSnapshot;
+			}
+			CloudCommandResult recordSnapshot = ExecuteCommandWithRetry(config, configIndex, console,
 				BuildRcloneCopyToCommand(config, paths.metadataRecordRemotePath,
 					FolderRewindFormat::AppendRemotePath(snapshotRoot, { L"records", entry.backupFile + L".json" })), "CLOUD_STATUS_UPLOADING_METADATA", 54);
+			if (!recordSnapshot.success && !IsRemoteObjectMissing(recordSnapshot)) {
+				recordSnapshot.message = L"Remote metadata record snapshot failed; converted metadata was not uploaded.";
+				return recordSnapshot;
+			}
 		}
+		bool metadataUploadComplete = true;
 		if (filesystem::exists(paths.metadataStateLocalPath)) {
 			CloudCommandResult metadataStateResult = ExecuteCommandWithRetry(
 				config,
@@ -535,6 +576,7 @@ namespace {
 				60);
 			if (!metadataStateResult.success) {
 				warningMessage = utf8_to_wstring(L("CLOUD_METADATA_PARTIAL"));
+				metadataUploadComplete = false;
 			}
 		}
 
@@ -548,7 +590,12 @@ namespace {
 				75);
 			if (!metadataRecordResult.success) {
 				warningMessage = utf8_to_wstring(L("CLOUD_METADATA_PARTIAL"));
+				metadataUploadComplete = false;
 			}
+		}
+		if (needsLegacyMetadataSnapshot && metadataUploadComplete) {
+			ofstream marker(cloudMigrationMarker, ios::binary | ios::trunc);
+			marker << "FolderRewind v3 metadata uploaded after 1.15 recovery snapshot.";
 		}
 
 		UpdateHistoryCloudState(
@@ -750,7 +797,8 @@ namespace {
 		return entries;
 	}
 
-	bool TryLoadActiveManifestNoLock(const Config& config, int configIndex, Console& console, CloudActiveHistoryManifest& outManifest) {
+	ActiveManifestLoadStatus TryLoadActiveManifestNoLock(const Config& config, int configIndex, Console& console,
+		CloudActiveHistoryManifest& outManifest, CloudCommandResult& outResult) {
 		const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_active_history", L".json");
 		CloudCommandResult result = ExecuteCommandWithRetry(
 			config,
@@ -760,19 +808,27 @@ namespace {
 			"CLOUD_STATUS_ANALYZING",
 			30);
 		if (!result.success) {
+			if (!IsRemoteObjectMissing(result)) {
+				outResult = result;
+				error_code ec; filesystem::remove(tempPath, ec);
+				return ActiveManifestLoadStatus::Failed;
+			}
 			// 1.15 stored the manifest under _minebackup. Read and convert it lazily.
 			const wstring legacyRemote = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
 				{ utf8_to_wstring(config.name), L"_minebackup", L"active-history.json" });
 			result = ExecuteCommandWithRetry(config, configIndex, console,
 				BuildRcloneCopyToCommand(config, legacyRemote, tempPath.wstring()), "CLOUD_STATUS_ANALYZING", 30);
 			if (!result.success) {
-				error_code ec; filesystem::remove(tempPath, ec); return false;
+				outResult = result;
+				error_code ec; filesystem::remove(tempPath, ec);
+				return IsRemoteObjectMissing(result) ? ActiveManifestLoadStatus::NotFound : ActiveManifestLoadStatus::Failed;
 			}
 			ifstream legacyIn(tempPath, ios::binary);
 			nlohmann::json legacy = nlohmann::json::parse(legacyIn, nullptr, false);
 			legacyIn.close();
 			if (!legacy.is_object() || !legacy.contains("entries") || !legacy["entries"].is_array()) {
-				error_code ec; filesystem::remove(tempPath, ec); return false;
+				outResult.success = false; outResult.message = L"Legacy active-history manifest is malformed.";
+				error_code ec; filesystem::remove(tempPath, ec); return ActiveManifestLoadStatus::Failed;
 			}
 			CloudActiveHistoryManifest converted;
 			converted.configId = config.configId;
@@ -793,15 +849,16 @@ namespace {
 				{ L"_minebackup", L"migration-backups", L"1.15", stamp, utf8_to_wstring(config.name), L"active-history.json" });
 			CloudCommandResult snapshot = ExecuteCommandWithRetry(config, configIndex, console,
 				BuildRcloneCopyToCommand(config, legacyRemote, backupRemote), "CLOUD_STATUS_ANALYZING", 31);
-			if (!snapshot.success) { error_code ec; filesystem::remove(tempPath, ec); return false; }
+			if (!snapshot.success) { outResult = snapshot; error_code ec; filesystem::remove(tempPath, ec); return ActiveManifestLoadStatus::Failed; }
 			ofstream convertedOut(tempPath, ios::binary | ios::trunc);
 			convertedOut << SerializeManifest(converted).dump(2);
 			convertedOut.close();
 			CloudCommandResult upload = ExecuteCommandWithRetry(config, configIndex, console,
 				BuildRcloneCopyToCommand(config, tempPath.wstring(), BuildActiveManifestRemotePath(config)), "CLOUD_STATUS_ANALYZING", 32);
-			if (!upload.success) { error_code ec; filesystem::remove(tempPath, ec); return false; }
+			if (!upload.success) { outResult = upload; error_code ec; filesystem::remove(tempPath, ec); return ActiveManifestLoadStatus::Failed; }
 			outManifest = std::move(converted);
-			error_code ec; filesystem::remove(tempPath, ec); return true;
+			outResult.success = true; outResult.exitCode = 0;
+			error_code ec; filesystem::remove(tempPath, ec); return ActiveManifestLoadStatus::Loaded;
 		}
 
 		bool ok = false;
@@ -824,7 +881,13 @@ namespace {
 
 		error_code ec;
 		filesystem::remove(tempPath, ec);
-		return ok;
+		if (!ok) {
+			outResult.success = false;
+			outResult.message = L"FolderRewind active-history manifest is malformed.";
+			return ActiveManifestLoadStatus::Failed;
+		}
+		outResult.success = true; outResult.exitCode = 0;
+		return ActiveManifestLoadStatus::Loaded;
 	}
 
 	wstring NormalizeWorldPathKey(const wstring& input) {
@@ -959,7 +1022,16 @@ CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configI
 
 	analysis.totalRemoteEntries = static_cast<int>(remoteEntries.size());
 	CloudActiveHistoryManifest activeManifest;
-	const bool hasActiveManifest = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest);
+	CloudCommandResult manifestResult;
+	const ActiveManifestLoadStatus manifestStatus = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest, manifestResult);
+	if (manifestStatus == ActiveManifestLoadStatus::Failed) {
+		analysis.success = false;
+		analysis.message = manifestResult.message;
+		UpdateConfigCloudLastResult(configIndex, manifestResult);
+		SetCloudRuntimeState(configIndex, false, 100, analysis.message, analysis.message);
+		return analysis;
+	}
+	const bool hasActiveManifest = manifestStatus == ActiveManifestLoadStatus::Loaded;
 	for (auto remoteEntry : remoteEntries) {
 		if (!BelongsToConfiguration(config, remoteEntry)) {
 			continue;
@@ -1210,7 +1282,14 @@ bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const Hi
 	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, remoteLoadResult);
 	if (remoteLoadResult.success) {
 		CloudActiveHistoryManifest activeManifest;
-		const bool hasActiveManifest = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest);
+		CloudCommandResult manifestResult;
+		const ActiveManifestLoadStatus manifestStatus = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest, manifestResult);
+		if (manifestStatus == ActiveManifestLoadStatus::Failed) {
+			UpdateConfigCloudLastResult(configIndex, manifestResult);
+			SetCloudRuntimeState(configIndex, false, 100, manifestResult.message, manifestResult.message);
+			return false;
+		}
+		const bool hasActiveManifest = manifestStatus == ActiveManifestLoadStatus::Loaded;
 		for (const auto& remoteEntry : remoteEntries) {
 			if (!BelongsToConfiguration(config, remoteEntry)) continue;
 			if (hasActiveManifest && !ManifestContainsHistoryItem(activeManifest, remoteEntry)) continue;

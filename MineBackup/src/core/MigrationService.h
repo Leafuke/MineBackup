@@ -11,6 +11,7 @@
 namespace MigrationService {
 
 std::wstring GenerateLegacyConfigId(const Config& config, int configIndex);
+MigrationStatus HigherPriorityStatus(MigrationStatus lhs, MigrationStatus rhs);
 MigrationReport RunStartupMigration();
 MigrationUnitResult EnsureWorldMigrated(int configIndex, const std::wstring& folderName, const std::wstring& fallbackPath = L"");
 MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, const std::wstring& folderName, const std::wstring& fallbackPath = L"");
