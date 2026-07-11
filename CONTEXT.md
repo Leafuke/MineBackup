@@ -21,3 +21,5 @@
 - **单实例请求（Instance Request）**：第二个进程交给同配置档主实例的有界、版本化 IPC 消息；当前包括激活窗口、按 ConfigId 选择普通配置和按 SpecialConfigId 运行特殊配置。
 - **SpecialConfigId**：特殊配置的稳定 UUID；进程间请求和 autostart 不使用可被重排的配置序号定位特殊配置。
 - **启动位置迁移（Startup Location Migration）**：在目标配置档尚未初始化时，对旧位置进行规范化发现、用户选择和事务复制的启动阶段；源文件保留不动，完成后才进入格式迁移。
+- **ProcessSpec**：内部外部进程调用的无 shell 契约；可执行文件、参数向量、工作目录、超时、输出上限和优先级分别表达。
+- **ShellTaskSpec**：唯一允许保存并执行原始 shell 命令字符串的用户任务契约；Windows 固定使用 `cmd.exe`，Linux/macOS 固定使用 `/bin/sh`，且不承诺跨平台可移植。

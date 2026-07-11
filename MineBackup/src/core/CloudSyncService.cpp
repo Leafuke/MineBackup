@@ -7,6 +7,7 @@
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
 #include "MigrationCoordinator.h"
+#include "ProcessRunner.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "text_to_text.h"
@@ -121,10 +122,6 @@ namespace {
 		return FolderRewindFormat::IsFullLikeBackupType(typeOrFileName);
 	}
 
-	wstring QuoteCommandArg(const wstring& value) {
-		return L"\"" + value + L"\"";
-	}
-
 	void SetCloudRuntimeState(int configIndex, bool busy, int progress, const wstring& statusText, const wstring& lastMessage = L"") {
 		lock_guard<mutex> lock(g_appState.cloudTask.mutex);
 		g_appState.cloudTask.busy = busy;
@@ -206,25 +203,25 @@ namespace {
 		return paths;
 	}
 
-	wstring BuildRcloneCopyToCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
-		return QuoteCommandArg(config.rclonePath) + L" copyto "
-			+ QuoteCommandArg(sourcePath) + L" "
-			+ QuoteCommandArg(destinationPath)
-			+ L" --progress";
+	ProcessSpec BuildRcloneCopyToCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
+		ProcessSpec spec;
+		spec.executable = config.rclonePath;
+		spec.arguments = {L"copyto", sourcePath, destinationPath, L"--progress"};
+		return spec;
 	}
 
-	wstring BuildRcloneCopyCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
-		return QuoteCommandArg(config.rclonePath) + L" copy "
-			+ QuoteCommandArg(sourcePath) + L" "
-			+ QuoteCommandArg(destinationPath)
-			+ L" --progress";
+	ProcessSpec BuildRcloneCopyCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
+		ProcessSpec spec;
+		spec.executable = config.rclonePath;
+		spec.arguments = {L"copy", sourcePath, destinationPath, L"--progress"};
+		return spec;
 	}
 
 	CloudCommandResult ExecuteCommandWithRetry(
 		const Config& config,
 		int configIndex,
 		Console& console,
-		const wstring& command,
+		const ProcessSpec& command,
 		const char* busyStatusKey,
 		int progress) {
 		CloudCommandResult result;
@@ -232,18 +229,19 @@ namespace {
 		for (int attempt = 0; attempt <= retryCount; ++attempt) {
 			SetCloudRuntimeState(configIndex, true, progress, utf8_to_wstring(L(busyStatusKey)));
 
-			int exitCode = -1;
-			bool timedOut = false;
-			string errorMessage;
-			const bool success = RunCommandWithResult(
-				command,
-				console,
-				config.useLowPriority,
-				config.cloudTimeoutSeconds,
-				exitCode,
-				timedOut,
-				errorMessage,
-				config.cloudWorkingDirectory);
+			ProcessSpec invocation = command;
+			invocation.useLowPriority = config.useLowPriority;
+			invocation.timeout = chrono::seconds(config.cloudTimeoutSeconds);
+			invocation.workingDirectory = config.cloudWorkingDirectory;
+			const auto process = ProcessRunner::Run(invocation);
+			if (!process.standardOutput.empty()) console.AddLog("%s", process.standardOutput.c_str());
+			if (!process.standardError.empty()) console.AddLog("%s", process.standardError.c_str());
+			const bool success = process.status == ProcessStatus::Succeeded;
+			const int exitCode = process.exitCode;
+			const bool timedOut = process.status == ProcessStatus::TimedOut;
+			const string errorMessage = !process.error.empty() ? wstring_to_utf8(process.error)
+				: (!process.standardError.empty() ? process.standardError
+					: "rclone failed with exit code " + to_string(exitCode));
 
 			result.success = success;
 			result.exitCode = exitCode;

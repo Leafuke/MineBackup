@@ -144,6 +144,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			}
 		}
 		else if (task.type == TaskTypeV2::Command) {
+			ImGui::TextWrapped("Shell commands run through the platform shell (cmd.exe or /bin/sh). They may modify files and are not portable between operating systems.");
 			char cmdBuf[512];
 			strncpy_s(cmdBuf, wstring_to_utf8(task.command).c_str(), sizeof(cmdBuf));
 			ImGui::Text("%s", L("TASK_COMMAND_LABEL"));

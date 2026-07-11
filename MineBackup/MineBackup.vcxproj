@@ -119,6 +119,7 @@
     <ClCompile Include="src\infra\SingleInstanceService.cpp" />
     <ClCompile Include="src\infra\LegacyLocationDiscovery.cpp" />
     <ClCompile Include="src\infra\LegacyLocationMigration.cpp" />
+    <ClCompile Include="src\infra\ProcessRunner.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
     <ClCompile Include="src\infra\Console.cpp" />
@@ -166,6 +167,7 @@
     <ClInclude Include="src\infra\SingleInstanceService.h" />
     <ClInclude Include="src\infra\LegacyLocationDiscovery.h" />
     <ClInclude Include="src\infra\LegacyLocationMigration.h" />
+    <ClInclude Include="src\infra\ProcessRunner.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
     <ClInclude Include="src\infra\ConfigManager.h" />
     <ClInclude Include="src\infra\Console.h" />

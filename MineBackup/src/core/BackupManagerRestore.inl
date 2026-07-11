@@ -1,8 +1,8 @@
 ﻿static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
 	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
 	for (const auto& backup : archives) {
-		wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + backup.wstring() + L"\" -y";
-		if (!RunCommandInBackground(testCommand, console, config.useLowPriority)) {
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
+			{L"t", backup.wstring(), L"-y"}, {}, config.useLowPriority), console)) {
 			console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());
 			return false;
 		}
@@ -11,12 +11,14 @@
 	return true;
 }
 
-static bool ApplyRestoreChain(const vector<filesystem::path>& backupsToApply, const filesystem::path& destinationFolder, const Config& config, Console& console, const wstring& filesToExtractStr = L"") {
+static bool ApplyRestoreChain(const vector<filesystem::path>& backupsToApply, const filesystem::path& destinationFolder,
+	const Config& config, Console& console, const vector<wstring>& filesToExtract = {}) {
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
-		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y" + filesToExtractStr;
-		if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+		vector<wstring> arguments = {L"x", backup.wstring(), L"-o" + destinationFolder.wstring(), L"-y"};
+		arguments.insert(arguments.end(), filesToExtract.begin(), filesToExtract.end());
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority), console)) {
 			return false;
 		}
 	}
@@ -235,8 +237,9 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 			}
 			out.close();
 
-			wstring command = L"\"" + config.zipPath + L"\" x \"" + group.archive.wstring() + L"\" @\"" + listFile.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y";
-			if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+			if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
+				{L"x", group.archive.wstring(), L"@" + listFile.wstring(), L"-o" + destinationFolder.wstring(), L"-y"},
+				{}, config.useLowPriority), console)) {
 				filesystem::remove(listFile);
 				return false;
 			}
@@ -439,7 +442,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		backupsToApply.push_back(targetBackupPath);
 	}
 
-	wstring filesToExtractStr;
+	vector<wstring> filesToExtract;
 	if (restoreMethod == 3 && !customRestoreList.empty()) {
 		console.AddLog(L("LOG_CUSTOM_RESTORE_START"));
 		stringstream ss(customRestoreList);
@@ -448,7 +451,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 			item.erase(0, item.find_first_not_of(" \t\n\r"));
 			item.erase(item.find_last_not_of(" \t\n\r") + 1);
 			if (!item.empty()) {
-				filesToExtractStr += L" \"" + utf8_to_wstring(item) + L"\"";
+				filesToExtract.push_back(utf8_to_wstring(item));
 			}
 		}
 	}
@@ -492,7 +495,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		restoreSucceeded = ApplySmartRestorePlan(smartRestorePlan, destinationFolder, config, console);
 	}
 	else {
-		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console, filesToExtractStr);
+		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console, filesToExtract);
 	}
 
 	if (restoreSucceeded) {

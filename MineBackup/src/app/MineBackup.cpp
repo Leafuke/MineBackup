@@ -146,17 +146,13 @@ wstring GetDefaultUIFontPath() {
 #else
 	// Linux: 使用 fontconfig (fc-match) 动态查找字体
 	auto findFontByFc = [](const char* pattern) -> wstring {
-		string cmd = "fc-match -f '%{file}' '";
-		cmd += pattern;
-		cmd += "' 2>/dev/null";
-		FILE* pipe = popen(cmd.c_str(), "r");
-		if (!pipe) return L"";
-		char buf[4096] = {};
-		string output;
-		if (fgets(buf, sizeof(buf), pipe)) {
-			output = buf;
-		}
-		pclose(pipe);
+		ProcessSpec spec;
+		spec.executable = L"/usr/bin/fc-match";
+		spec.arguments = {L"-f", L"%{file}", utf8_to_wstring(pattern)};
+		spec.maximumCapturedBytes = 4096;
+		const auto result = ProcessRunner::Run(spec);
+		if (result.status != ProcessStatus::Succeeded) return L"";
+		string output = result.standardOutput;
 		if (!output.empty() && output.back() == '\n') output.pop_back();
 		if (!output.empty() && filesystem::exists(output))
 			return utf8_to_wstring(output);

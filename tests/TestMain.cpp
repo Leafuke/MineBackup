@@ -8,6 +8,8 @@
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
+#include "ProcessRunner.h"
+#include "text_to_text.h"
 
 #include <algorithm>
 #include <chrono>
@@ -19,6 +21,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 namespace {
 
@@ -394,9 +403,150 @@ void TestLegacyLocationMigration(TestContext& test, const std::filesystem::path&
         "invalid legacy history should leave the destination untouched");
 }
 
+void TestProcessRunner(TestContext& test, const std::filesystem::path& executable, const std::filesystem::path& root) {
+    ProcessSpec echo;
+    echo.executable = executable;
+    echo.arguments = {L"--process-helper-echo", L"space value", L"\u4e16\u754c", L"$()", L"`value`", L"semi;colon", L"line\nbreak"};
+    auto result = ProcessRunner::Run(echo);
+    if (result.status != ProcessStatus::Succeeded) {
+        std::wcerr << L"[DETAIL] ProcessRunner echo: status=" << static_cast<int>(result.status)
+            << L", exit=" << result.exitCode << L", error=" << result.error << L'\n';
+        std::cerr << "[DETAIL] stderr=" << result.standardError << " stdout=" << result.standardOutput << '\n';
+    }
+    test.Expect(result.status == ProcessStatus::Succeeded,
+        "ProcessRunner should execute an argument-vector process without a shell");
+    const std::string expectedArguments = "space value\n\xE4\xB8\x96\xE7\x95\x8C\n$()\n`value`\nsemi;colon\nline\nbreak\n";
+    if (result.standardOutput != expectedArguments) {
+        std::cerr << "[DETAIL] argument output size=" << result.standardOutput.size()
+            << " expected=" << expectedArguments.size() << " value=" << result.standardOutput << '\n';
+    }
+    test.Expect(result.standardOutput == expectedArguments,
+        "ProcessRunner should preserve spaces, Unicode, and shell metacharacters as literal arguments");
+
+    ProcessSpec output;
+    output.executable = executable;
+    output.arguments = {L"--process-helper-output"};
+    output.maximumCapturedBytes = 1024;
+    result = ProcessRunner::Run(output);
+    test.Expect(result.status == ProcessStatus::Succeeded && result.outputTruncated
+        && result.standardOutput.size() == 1024 && result.standardError.size() == 1024,
+        "ProcessRunner should bound both output streams and report truncation");
+
+	ProcessSpec workingDirectory;
+	workingDirectory.executable = executable;
+	workingDirectory.arguments = {L"--process-helper-cwd"};
+	workingDirectory.workingDirectory = root;
+	result = ProcessRunner::Run(workingDirectory);
+	while (!result.standardOutput.empty() && (result.standardOutput.back() == '\r' || result.standardOutput.back() == '\n')) {
+		result.standardOutput.pop_back();
+	}
+	test.Expect(result.status == ProcessStatus::Succeeded
+		&& std::filesystem::equivalent(std::filesystem::path(utf8_to_wstring(result.standardOutput)), root),
+		"ProcessRunner should apply a working directory without mutating the parent process");
+
+	ShellTaskSpec shell;
+#ifdef _WIN32
+	shell.command = L"echo shell-task";
+#else
+	shell.command = L"printf shell-task";
+#endif
+	result = ProcessRunner::RunShellTask(shell);
+	test.Expect(result.status == ProcessStatus::Succeeded && result.standardOutput.find("shell-task") != std::string::npos,
+		"ShellTaskSpec should be the explicit raw-command execution boundary");
+
+    const auto marker = root / "process-grandchild-marker";
+    ProcessSpec timeout;
+    timeout.executable = executable;
+    timeout.arguments = {L"--process-helper-spawn", marker.wstring()};
+    timeout.timeout = std::chrono::milliseconds(150);
+    result = ProcessRunner::Run(timeout);
+    test.Expect(result.status == ProcessStatus::TimedOut, "ProcessRunner should distinguish timeout from process failure");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    test.Expect(!std::filesystem::exists(marker), "timing out a process should terminate its complete descendant tree");
+
+    ProcessSpec cancelled = timeout;
+    cancelled.timeout = std::chrono::seconds(10);
+    std::stop_source cancellation;
+    std::jthread requestStop([&](std::stop_token) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        cancellation.request_stop();
+    });
+    result = ProcessRunner::Run(cancelled, cancellation.get_token());
+    test.Expect(result.status == ProcessStatus::Cancelled, "ProcessRunner should distinguish cooperative cancellation");
+}
+
+void TestSevenZipArgumentVector(TestContext& test, const std::filesystem::path& root) {
+#ifdef _WIN32
+    const auto sevenZip = std::filesystem::path(__FILE__).parent_path().parent_path()
+        / "MineBackup" / "Assets" / "7za.exe";
+    const auto source = root / "7z source $();";
+    const auto restored = root / "7z restored";
+    const auto archive = root / "argument-vector.7z";
+    std::filesystem::create_directories(source);
+    std::ofstream(source / "literal $(); file.txt") << "literal-content";
+    ProcessSpec create;
+    create.executable = sevenZip;
+    create.arguments = {L"a", L"-t7z", L"-m0=LZMA2", L"-mx=1", L"-mmt", L"-ssw", archive.wstring(), L"*"};
+    create.workingDirectory = source;
+    auto result = ProcessRunner::Run(create);
+    test.Expect(result.status == ProcessStatus::Succeeded && std::filesystem::exists(archive),
+        "7-Zip should create an archive through a literal argument vector");
+
+    ProcessSpec extract;
+    extract.executable = sevenZip;
+    extract.arguments = {L"x", archive.wstring(), L"-o" + restored.wstring(), L"-y"};
+    result = ProcessRunner::Run(extract);
+    test.Expect(result.status == ProcessStatus::Succeeded
+        && ReadText(restored / "literal $(); file.txt") == "literal-content",
+        "7-Zip restore should preserve shell metacharacters as filename data");
+#else
+    (void)test;
+    (void)root;
+#endif
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "--process-helper-echo") {
+#ifdef _WIN32
+        _setmode(_fileno(stdout), _O_BINARY);
+        int wideArgumentCount = 0;
+        LPWSTR* wideArguments = CommandLineToArgvW(GetCommandLineW(), &wideArgumentCount);
+        if (!wideArguments || wideArgumentCount != argc) return 2;
+#endif
+        for (int index = 2; index < argc; ++index) {
+#ifdef _WIN32
+            std::cout << wstring_to_utf8(wideArguments[index]) << '\n';
+#else
+            std::cout << argv[index] << '\n';
+#endif
+        }
+#ifdef _WIN32
+        LocalFree(wideArguments);
+#endif
+        return 0;
+    }
+    if (argc >= 2 && std::string(argv[1]) == "--process-helper-output") {
+        std::cout << std::string(10000, 'o');
+        std::cerr << std::string(10000, 'e');
+        return 0;
+    }
+    if (argc >= 2 && std::string(argv[1]) == "--process-helper-cwd") {
+        std::cout << wstring_to_utf8(std::filesystem::current_path().wstring()) << '\n';
+        return 0;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "--process-helper-grandchild") {
+        std::this_thread::sleep_for(std::chrono::milliseconds(900));
+        std::ofstream(argv[2]) << "should-not-exist";
+        return 0;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "--process-helper-spawn") {
+        ProcessSpec child;
+        child.executable = std::filesystem::absolute(argv[0]);
+        child.arguments = {L"--process-helper-grandchild", std::filesystem::path(argv[2]).wstring()};
+        return ProcessRunner::Run(child).status == ProcessStatus::Succeeded ? 0 : 1;
+    }
     TestContext test;
     TemporaryDirectory temporary;
     TestFormat(test);
@@ -409,6 +559,8 @@ int main() {
     TestSingleInstance(test, temporary.path);
     TestLegacyLocationDiscovery(test, temporary.path);
     TestLegacyLocationMigration(test, temporary.path);
+    TestProcessRunner(test, std::filesystem::absolute(argv[0]), temporary.path);
+    TestSevenZipArgumentVector(test, temporary.path);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";

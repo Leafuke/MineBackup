@@ -5,6 +5,7 @@
 #include "AppState.h"
 #include "AppPaths.h"
 #include "Globals.h"
+#include "ProcessRunner.h"
 #include "json.hpp"
 #include <GLFW/glfw3.h>
 
@@ -165,16 +166,15 @@ static tuple<int, int, int, int> ParseVersionTuple(const string& ver) {
 
 static bool FetchHttpText(const string& url, string& outBody) {
     outBody.clear();
-    string cmd = "curl -L -s --connect-timeout 8 --max-time 20 -w \"\\n%{http_code}\" -H 'User-Agent: MineBackup' '" + url + "' 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return false;
-
-    char buffer[4096];
-    string result;
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    pclose(pipe);
+    ProcessSpec spec;
+    spec.executable = fs::exists("/usr/bin/curl") ? "/usr/bin/curl" : "/usr/local/bin/curl";
+    spec.arguments = {L"-L", L"-s", L"--connect-timeout", L"8", L"--max-time", L"20",
+        L"-w", L"\n%{http_code}", L"-H", L"User-Agent: MineBackup", utf8_to_wstring(url)};
+    spec.timeout = chrono::seconds(25);
+    spec.maximumCapturedBytes = 2u * 1024u * 1024u;
+    const auto process = ProcessRunner::Run(spec);
+    if (process.status != ProcessStatus::Succeeded) return false;
+    string result = process.standardOutput;
 
     size_t splitPos = result.rfind('\n');
     if (splitPos == string::npos) return false;
@@ -381,35 +381,34 @@ void CheckForNoticesThread() {
     g_NoticeCheckDone = true;
 }
 
-static std::wstring RunZenity(const std::string& args) {
-    std::string cmd = "zenity --file-selection " + args + " 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return L"";
-    char buffer[4096] = {0};
-    std::string output;
-    if (fgets(buffer, sizeof(buffer), pipe)) {
-        output = buffer;
-    }
-    pclose(pipe);
+static std::wstring RunZenity(vector<wstring> arguments) {
+    ProcessSpec spec;
+    spec.executable = fs::exists("/usr/bin/zenity") ? "/usr/bin/zenity" : "/usr/local/bin/zenity";
+    spec.arguments = {L"--file-selection"};
+    spec.arguments.insert(spec.arguments.end(), arguments.begin(), arguments.end());
+    spec.maximumCapturedBytes = 4096;
+    const auto process = ProcessRunner::Run(spec);
+    if (process.status != ProcessStatus::Succeeded) return L"";
+    std::string output = process.standardOutput;
     if (output.empty()) return L"";
     if (!output.empty() && output.back() == '\n') output.pop_back();
     return utf8_to_wstring(output);
 }
 
 std::wstring SelectFileDialog() {
-    return RunZenity("--title=\"Select File\"");
+    return RunZenity({L"--title=Select File"});
 }
 
 std::wstring SelectFolderDialog() {
-    return RunZenity("--directory --title=\"Select Folder\"");
+    return RunZenity({L"--directory", L"--title=Select Folder"});
 }
 
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName, const std::wstring& filter) {
-    std::string args = "--save --confirm-overwrite --title=\"Save File\"";
+    vector<wstring> arguments = {L"--save", L"--confirm-overwrite", L"--title=Save File"};
     if (!defaultFileName.empty()) {
-        args += " --filename=\"" + wstring_to_utf8(defaultFileName) + "\"";
+        arguments.push_back(L"--filename=" + defaultFileName);
     }
-    return RunZenity(args);
+    return RunZenity(std::move(arguments));
 }
 
 std::wstring GetDocumentsPath() {
@@ -597,16 +596,18 @@ std::string GetRegistryValue(const std::string& key, const std::string& valueNam
 
 void OpenLinkInBrowser(const std::wstring& url) {
     if (url.empty()) return;
-    std::string u8 = wstring_to_utf8(url);
-    std::string cmd = "xdg-open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    ProcessSpec spec;
+    spec.executable = L"/usr/bin/xdg-open";
+    spec.arguments = {url};
+    ProcessRunner::Run(spec);
 }
 
 void OpenFolder(const std::wstring& folderPath) {
     if (folderPath.empty()) return;
-    std::string u8 = wstring_to_utf8(folderPath);
-    std::string cmd = "xdg-open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    ProcessSpec spec;
+    spec.executable = L"/usr/bin/xdg-open";
+    spec.arguments = {folderPath};
+    ProcessRunner::Run(spec);
 }
 
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus) {
@@ -718,41 +719,4 @@ bool IsFileLocked(const std::wstring& path) {
     }
     close(fd);
     return false;
-}
-
-bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory) {
-    (void)useLowPriority;
-    console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
-
-    std::error_code ec;
-    fs::path oldCwd = fs::current_path(ec);
-    if (!workingDirectory.empty() && fs::exists(workingDirectory)) {
-        fs::current_path(workingDirectory, ec);
-    }
-
-    std::string cmd = wstring_to_utf8(command);
-    int ret = std::system(cmd.c_str());
-
-    if (!workingDirectory.empty()) {
-        fs::current_path(oldCwd, ec);
-    }
-
-    if (ret == 0) {
-        console.AddLog(L("LOG_SUCCESS_CMD"));
-        return true;
-    }
-    console.AddLog(L("LOG_ERROR_CMD_FAILED"), ret);
-    return false;
-}
-
-bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory) {
-    (void)timeoutSeconds;
-    timedOut = false;
-    errorMessage.clear();
-    bool success = RunCommandInBackground(command, console, useLowPriority, workingDirectory);
-    exitCode = success ? 0 : 1;
-    if (!success) {
-        errorMessage = "Command failed.";
-    }
-    return success;
 }

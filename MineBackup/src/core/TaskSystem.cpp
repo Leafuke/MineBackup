@@ -5,6 +5,7 @@
 #include "i18n.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
+#include "ProcessRunner.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -94,13 +95,15 @@ namespace TaskSystem {
 
             case TaskType::Command: {
                 ConsoleLog(console, L("LOG_CMD_EXECUTING"), wstring_to_utf8(task.command).c_str());
-                
-                #ifdef _WIN32
-                wstring workDir = task.workingDirectory.empty() ? L"." : task.workingDirectory;
-                RunCommandInBackground(task.command, *console, false, workDir);
-                #else
-                system(wstring_to_utf8(task.command).c_str());
-                #endif
+                ShellTaskSpec spec;
+                spec.command = task.command;
+                spec.workingDirectory = task.workingDirectory;
+                const auto result = ProcessRunner::RunShellTask(spec);
+                if (!result.standardOutput.empty()) console->AddLog("%s", result.standardOutput.c_str());
+                if (!result.standardError.empty()) console->AddLog("%s", result.standardError.c_str());
+                if (result.status != ProcessStatus::Succeeded) {
+                    console->AddLog("[Error] Shell task failed with exit code %d.", result.exitCode);
+                }
                 
                 ConsoleLog(console, "[Task] Command completed: %s", task.name.c_str());
                 break;

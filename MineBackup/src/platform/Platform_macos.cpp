@@ -5,6 +5,7 @@
 #include "AppState.h"
 #include "AppPaths.h"
 #include "Globals.h"
+#include "ProcessRunner.h"
 #include "json.hpp"
 
 #include <atomic>
@@ -157,16 +158,15 @@ static tuple<int, int, int, int> ParseVersionTuple(const string& ver) {
 
 static bool FetchHttpText(const string& url, string& outBody) {
     outBody.clear();
-    string cmd = "curl -L -s --connect-timeout 8 --max-time 20 -w \"\\n%{http_code}\" -H 'User-Agent: MineBackup' '" + url + "' 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return false;
-
-    char buffer[4096];
-    string result;
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    pclose(pipe);
+    ProcessSpec spec;
+    spec.executable = L"/usr/bin/curl";
+    spec.arguments = {L"-L", L"-s", L"--connect-timeout", L"8", L"--max-time", L"20",
+        L"-w", L"\n%{http_code}", L"-H", L"User-Agent: MineBackup", utf8_to_wstring(url)};
+    spec.timeout = chrono::seconds(25);
+    spec.maximumCapturedBytes = 2u * 1024u * 1024u;
+    const auto process = ProcessRunner::Run(spec);
+    if (process.status != ProcessStatus::Succeeded) return false;
+    string result = process.standardOutput;
 
     size_t splitPos = result.rfind('\n');
     if (splitPos == string::npos) return false;
@@ -197,21 +197,15 @@ static bool FetchWithMirrorFallback(const string& directUrl, bool reject404Body,
 }
 
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
-    (void)iconType;
-    std::string icon = "note";
-    if (iconType == 1) icon = "caution";
-    else if (iconType == 2) icon = "stop";
-    
-    std::string escaped_message = message;
-    size_t pos = 0;
-    while ((pos = escaped_message.find('"', pos)) != std::string::npos) {
-        escaped_message.replace(pos, 1, "\\\"");
-        pos += 2;
-    }
-    
-    std::string cmd = "osascript -e 'display dialog \"" + escaped_message + 
-                      "\" with title \"" + title + "\" with icon " + icon + " buttons {\"OK\"}' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    CFStringRef titleText = CFStringCreateWithCString(kCFAllocatorDefault, title.c_str(), kCFStringEncodingUTF8);
+    CFStringRef messageText = CFStringCreateWithCString(kCFAllocatorDefault, message.c_str(), kCFStringEncodingUTF8);
+    const CFOptionFlags level = iconType == 2 ? kCFUserNotificationStopAlertLevel
+        : iconType == 1 ? kCFUserNotificationCautionAlertLevel : kCFUserNotificationNoteAlertLevel;
+    CFOptionFlags response = 0;
+    CFUserNotificationDisplayAlert(0, level, nullptr, nullptr, nullptr, titleText, messageText,
+        CFSTR("OK"), nullptr, nullptr, &response);
+    if (titleText) CFRelease(titleText);
+    if (messageText) CFRelease(messageText);
 }
 
 void CheckForUpdatesThread() {
@@ -303,16 +297,13 @@ void CheckForNoticesThread() {
 }
 
 static std::wstring RunOsaScript(const std::string& script) {
-    std::string cmd = "osascript -e '" + script + "' 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return L"";
-    
-    char buffer[4096] = {0};
-    std::string output;
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-    pclose(pipe);
+    ProcessSpec spec;
+    spec.executable = L"/usr/bin/osascript";
+    spec.arguments = {L"-e", utf8_to_wstring(script)};
+    spec.maximumCapturedBytes = 4096;
+    const auto process = ProcessRunner::Run(spec);
+    if (process.status != ProcessStatus::Succeeded) return L"";
+    std::string output = process.standardOutput;
     
     if (output.empty()) return L"";
     if (!output.empty() && output.back() == '\n') output.pop_back();
@@ -405,19 +396,18 @@ void GetUserDefaultUILanguageWin() {
         }
     }
     
-    FILE* pipe = popen("defaults read -g AppleLanguages 2>/dev/null | head -2 | tail -1 | tr -d ' \"'", "r");
-    if (pipe) {
-        char buffer[64] = {0};
-        if (fgets(buffer, sizeof(buffer), pipe)) {
-            std::string lang(buffer);
-            if (lang.rfind("zh", 0) == 0) {
-                SetLanguage("zh_CN");
-                pclose(pipe);
-                return;
-            }
+    CFArrayRef languages = CFLocaleCopyPreferredLanguages();
+    if (languages && CFArrayGetCount(languages) > 0) {
+        CFStringRef language = static_cast<CFStringRef>(CFArrayGetValueAtIndex(languages, 0));
+        char buffer[64] = {};
+        if (language && CFStringGetCString(language, buffer, sizeof(buffer), kCFStringEncodingUTF8)
+            && string(buffer).rfind("zh", 0) == 0) {
+            CFRelease(languages);
+            SetLanguage("zh_CN");
+            return;
         }
-        pclose(pipe);
     }
+    if (languages) CFRelease(languages);
     
     SetLanguage("en_US");
 }
@@ -430,36 +420,24 @@ std::string GetRegistryValue(const std::string& key, const std::string& valueNam
 
 void OpenLinkInBrowser(const std::wstring& url) {
     if (url.empty()) return;
-    std::string u8 = wstring_to_utf8(url);
-    std::string cmd = "open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    ProcessRunner::Run({L"/usr/bin/open", {url}});
 }
 
 void OpenFolder(const std::wstring& folderPath) {
     if (folderPath.empty()) return;
-    std::string u8 = wstring_to_utf8(folderPath);
-    std::string cmd = "open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    ProcessRunner::Run({L"/usr/bin/open", {folderPath}});
 }
 
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus) {
     if (!focus.empty()) {
-        std::string u8 = wstring_to_utf8(focus);
-        std::string cmd = "open -R '" + u8 + "' >/dev/null 2>&1 &";
-        std::system(cmd.c_str());
+        ProcessRunner::Run({L"/usr/bin/open", {L"-R", focus}});
     } else {
         OpenFolder(folderPath);
     }
 }
 
 void ReStartApplication() {
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) == 0) {
-        std::string cmd = std::string(path) + " &";
-        std::system(cmd.c_str());
-        exit(0);
-    }
+    MessageBoxWin("MineBackup", "Please close and reopen MineBackup to complete this operation.", 0);
 }
 
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray) {
@@ -592,46 +570,4 @@ bool IsFileLocked(const std::wstring& path) {
     }
     close(fd);
     return false;
-}
-
-bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory) {
-    console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
-    
-    std::error_code ec;
-    fs::path oldCwd = fs::current_path(ec);
-    if (!workingDirectory.empty() && fs::exists(workingDirectory)) {
-        fs::current_path(workingDirectory, ec);
-    }
-    
-    std::string cmd = wstring_to_utf8(command);
-    
-    if (useLowPriority) {
-        cmd = "nice -n 10 " + cmd;
-    }
-    
-    int ret = std::system(cmd.c_str());
-    
-    if (!workingDirectory.empty()) {
-        fs::current_path(oldCwd, ec);
-    }
-    
-    if (ret == 0) {
-        console.AddLog(L("LOG_SUCCESS_CMD"));
-        return true;
-    }
-    
-    console.AddLog(L("LOG_ERROR_CMD_FAILED"), WEXITSTATUS(ret));
-    return false;
-}
-
-bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory) {
-    (void)timeoutSeconds;
-    timedOut = false;
-    errorMessage.clear();
-    bool success = RunCommandInBackground(command, console, useLowPriority, workingDirectory);
-    exitCode = success ? 0 : 1;
-    if (!success) {
-        errorMessage = "Command failed.";
-    }
-    return success;
 }

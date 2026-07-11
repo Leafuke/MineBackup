@@ -10,6 +10,7 @@
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
+#include "ProcessRunner.h"
 
 #ifdef _WIN32
 #include <conio.h>
@@ -23,6 +24,20 @@ inline int _getch_special() { return std::getchar(); }
 #include <fstream>
 
 using namespace std;
+
+namespace {
+void RunUserShellTask(const wstring& command, const filesystem::path& workingDirectory, Console& output) {
+	ShellTaskSpec spec;
+	spec.command = command;
+	spec.workingDirectory = workingDirectory;
+	const auto result = ProcessRunner::RunShellTask(spec);
+	if (!result.standardOutput.empty()) output.AddLog("%s", result.standardOutput.c_str());
+	if (!result.standardError.empty()) output.AddLog("%s", result.standardError.c_str());
+	if (result.status != ProcessStatus::Succeeded) {
+		output.AddLog("[Error] Shell task failed with exit code %d.", result.exitCode);
+	}
+}
+}
 
 // 前向声明
 extern Console console;
@@ -53,7 +68,7 @@ void RunSpecialMode(int configId) {
 
 	// 设置控制台标题和头部信息
 #ifdef _WIN32
-	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
+	SetConsoleTitleW((L"MineBackup - Automated Task: " + utf8_to_wstring(spCfg.name)).c_str());
 #endif
 	ConsoleLog(&console, L("AUTOMATED_TASK_RUNNER_HEADER"));
 	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), (spCfg.name.c_str()));
@@ -70,11 +85,7 @@ void RunSpecialMode(int configId) {
 	// --- 1. 执行旧版一次性命令（向后兼容）---
 	for (const auto& cmd : spCfg.commands) {
 		ConsoleLog(&console, L("LOG_CMD_EXECUTING"), wstring_to_utf8(cmd).c_str());
-#ifdef _WIN32
-		system(utf8_to_gbk(wstring_to_utf8(cmd)).c_str());
-#else
-		system(wstring_to_utf8(cmd).c_str());
-#endif
+		RunUserShellTask(cmd, {}, console);
 	}
 
 	// --- 2. 如果有新版统一任务，使用新版系统 ---
@@ -192,17 +203,7 @@ void RunSpecialMode(int configId) {
 
 					case TaskTypeV2::Command: {
 						ConsoleLog(&console, L("LOG_CMD_EXECUTING"), wstring_to_utf8(task.command).c_str());
-#ifdef _WIN32
-						wstring workDir = task.workingDirectory.empty() ? L"." : task.workingDirectory;
-						RunCommandInBackground(task.command, console, false, workDir);
-#else
-						if (!task.workingDirectory.empty()) {
-							string cmdWithCd = "cd \"" + wstring_to_utf8(task.workingDirectory) + "\" && " + wstring_to_utf8(task.command);
-							system(cmdWithCd.c_str());
-						} else {
-							system(wstring_to_utf8(task.command).c_str());
-						}
-#endif
+						RunUserShellTask(task.command, task.workingDirectory, console);
 						ConsoleLog(&console, L("TASK_COMMAND_COMPLETED"), task.name.c_str());
 						break;
 					}
