@@ -9,6 +9,28 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/windows-msvc-x64",
       "cacheVariables": { "MINEBACKUP_ENABLE_V15_MIGRATION": "ON" }
+    },
+    {
+      "name": "linux-x64",
+      "displayName": "Linux x86_64",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MINEBACKUP_ENABLE_V15_MIGRATION": "ON"
+      }
+    },
+    {
+      "name": "macos-arm64",
+      "displayName": "macOS arm64",
+      "generator": "Xcode",
+      "architecture": { "value": "arm64", "strategy": "external" },
+      "binaryDir": "${sourceDir}/build/macos-arm64",
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "15.0",
+        "MINEBACKUP_ENABLE_V15_MIGRATION": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -16,6 +38,25 @@
       "name": "windows-msvc-x64-release",
       "configurePreset": "windows-msvc-x64",
       "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-msvc-x64-release",
+      "configurePreset": "windows-msvc-x64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-x64",
+      "configurePreset": "linux-x64",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-arm64",
+      "configurePreset": "macos-arm64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
     }
   ]
 }

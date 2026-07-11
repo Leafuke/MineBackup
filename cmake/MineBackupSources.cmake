@@ -6,7 +6,7 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.cpp
     ${MINEBACKUP_CORE_DIR}/LegacyMineBackup15Reader.cpp
-    ${MINEBACKUP_CORE_DIR}/MigrationService.cpp
+    ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp
 )
 
 set(MINEBACKUP_APPLICATION_SOURCES
@@ -17,6 +17,7 @@ set(MINEBACKUP_APPLICATION_SOURCES
     ${MINEBACKUP_CORE_DIR}/CoreValidation.cpp
     ${MINEBACKUP_CORE_DIR}/GameSessionManager.cpp
     ${MINEBACKUP_CORE_DIR}/HistoryManager.cpp
+    ${MINEBACKUP_CORE_DIR}/MigrationService.cpp
     ${MINEBACKUP_CORE_DIR}/SpecialMode.cpp
     ${MINEBACKUP_CORE_DIR}/TaskSystem.cpp
     ${MINEBACKUP_INFRA_DIR}/Broadcast.cpp
@@ -24,7 +25,6 @@ set(MINEBACKUP_APPLICATION_SOURCES
     ${MINEBACKUP_INFRA_DIR}/Console.cpp
     ${MINEBACKUP_INFRA_DIR}/i18n.cpp
     ${MINEBACKUP_UTILS_DIR}/basic_func.cpp
-    ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp
 )
 
 set(MINEBACKUP_UI_SOURCES
