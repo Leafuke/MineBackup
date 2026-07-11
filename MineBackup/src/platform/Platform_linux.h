@@ -24,6 +24,7 @@ void GetUserDefaultUILanguageWin();
 std::string GetRegistryValue(const std::string& key, const std::string& valueName);
 // iconType: 0 info, 1 warning, 2 error (matching Windows signature)
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType = 0);
+bool ConfirmMessageBox(const std::string& title, const std::string& message);
 void OpenLinkInBrowser(const std::wstring& url);
 void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);

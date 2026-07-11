@@ -134,6 +134,9 @@ struct ServiceConfig {
 };
 
 struct SpecialConfig {
+	std::wstring specialConfigId;
+	// Runtime-only: an older profile did not persist SpecialConfigId.
+	bool legacySpecialConfigIdGenerated = false;
 	bool autoExecute = false;
 	std::vector<std::wstring> commands;              // 旧版兼容：命令列表
 	std::vector<AutomatedTask> tasks;                // 旧版兼容：任务列表

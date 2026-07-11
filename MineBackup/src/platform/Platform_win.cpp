@@ -735,6 +735,11 @@ void WriteLogEntry(const std::string& message, LogLevel level) {
     RotatingFileLog::Append(path, GetCurrentTimestamp() + " " + level_str + " " + message + "\n");
 }
 
+bool ConfirmMessageBox(const string& title, const string& message) {
+	return MessageBoxW(nullptr, utf8_to_wstring(message).c_str(), utf8_to_wstring(title).c_str(),
+		MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES;
+}
+
 //选择文件
 wstring SelectFileDialog() {
 	HWND hwndOwner = NULL;

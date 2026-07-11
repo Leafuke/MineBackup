@@ -29,6 +29,7 @@
 #include <sys/file.h>
 #include <tuple>
 #include <cstdint>
+#include <CoreFoundation/CoreFoundation.h>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -534,6 +535,19 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
 		}
 	}
     return false;
+}
+
+bool ConfirmMessageBox(const std::string& title, const std::string& message) {
+    CFStringRef titleText = CFStringCreateWithCString(kCFAllocatorDefault, title.c_str(), kCFStringEncodingUTF8);
+    CFStringRef messageText = CFStringCreateWithCString(kCFAllocatorDefault, message.c_str(), kCFStringEncodingUTF8);
+    CFStringRef acceptText = CFSTR("Import");
+    CFStringRef declineText = CFSTR("Not now");
+    CFOptionFlags response = 1;
+    const SInt32 status = CFUserNotificationDisplayAlert(0, kCFUserNotificationCautionAlertLevel,
+        nullptr, nullptr, nullptr, titleText, messageText, acceptText, declineText, nullptr, &response);
+    if (titleText) CFRelease(titleText);
+    if (messageText) CFRelease(messageText);
+    return status == 0 && response == kCFUserNotificationDefaultResponse;
 }
 
 bool IsFileLocked(const std::wstring& path) {

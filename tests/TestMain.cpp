@@ -5,6 +5,9 @@
 #include "FolderRewindMetadataStore.h"
 #include "MigrationCoordinator.h"
 #include "RotatingFileLog.h"
+#include "SingleInstanceService.h"
+#include "LegacyLocationDiscovery.h"
+#include "LegacyLocationMigration.h"
 
 #include <algorithm>
 #include <chrono>
@@ -43,6 +46,11 @@ struct TemporaryDirectory {
         std::filesystem::remove_all(path, error);
     }
 };
+
+std::string ReadText(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
 
 void TestFormat(TestContext& test) {
     test.Expect(FolderRewindFormat::IsSafeSinglePathSegment(L"World One"), "normal world name should be safe");
@@ -297,6 +305,95 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
         "--data-dir should remain authoritative when a portable marker is present");
 }
 
+void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
+    const auto runtime = root / "single-instance";
+    std::wstring error;
+    SingleInstanceService primary;
+    test.Expect(primary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::Acquired,
+        "the first instance should acquire its profile lock");
+
+    SingleInstanceService secondary;
+    test.Expect(secondary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::AlreadyRunning,
+        "a second instance of the same profile should be rejected");
+    test.Expect(secondary.Send({InstanceRequestType::SelectConfig, L"stable-config-id"}, error),
+        "the second instance should deliver a bounded IPC request");
+    const auto requests = primary.PollRequests(error);
+    if (requests.empty() && !error.empty()) {
+        std::wcerr << L"[DETAIL] single-instance IPC: " << error << L'\n';
+    }
+    test.Expect(requests.size() == 1 && requests.front().type == InstanceRequestType::SelectConfig
+        && requests.front().stableId == L"stable-config-id", "the primary instance should decode the IPC request");
+
+    const std::wstring oversizedId(70u * 1024u, L'x');
+    test.Expect(!secondary.Send({InstanceRequestType::SelectConfig, oversizedId}, error),
+        "instance IPC should reject payloads above the protocol limit");
+
+    SingleInstanceService otherProfile;
+    test.Expect(otherProfile.Acquire(L"profile-two", runtime, error) == InstanceAcquireResult::Acquired,
+        "a different profile should acquire an independent lock");
+}
+
+void TestLegacyLocationDiscovery(TestContext& test, const std::filesystem::path& root) {
+    const auto targetConfig = root / "profile" / "config" / "config.ini";
+    const auto targetHistory = root / "profile" / "data" / "history.json";
+    const auto legacy = root / "legacy";
+    std::filesystem::create_directories(legacy);
+    std::ofstream(legacy / "config.ini") << "[General]\n";
+    std::ofstream(legacy / "history.json") << "[]\n";
+
+    auto result = DiscoverLegacyLocations(targetConfig, targetHistory, {
+        {legacy, LegacyLocationOrigin::ExecutableDirectory},
+        {legacy / ".", LegacyLocationOrigin::OriginalWorkingDirectory},
+        {targetConfig.parent_path(), LegacyLocationOrigin::KnownPlatformLocation}
+    });
+    test.Expect(!result.targetInitialized, "an empty 1.16 destination should be reported as uninitialized");
+    test.Expect(result.candidates.size() == 1 && result.candidates.front().origins.size() == 2,
+        "legacy source aliases should be normalized and deduplicated");
+    test.Expect(!result.candidates.front().configFile.empty() && !result.candidates.front().historyFile.empty(),
+        "a legacy candidate should report its available data units");
+
+    std::filesystem::create_directories(targetConfig.parent_path());
+    std::ofstream(targetConfig) << "[General]\n";
+    result = DiscoverLegacyLocations(targetConfig, targetHistory, {
+        {legacy, LegacyLocationOrigin::ExecutableDirectory},
+        {targetConfig.parent_path(), LegacyLocationOrigin::KnownPlatformLocation}
+    });
+    test.Expect(result.targetInitialized, "an existing target config should forbid automatic startup merging");
+    test.Expect(result.candidates.size() == 1, "the current target must not be rediscovered as a legacy source");
+}
+
+void TestLegacyLocationMigration(TestContext& test, const std::filesystem::path& root) {
+    const auto sourceRoot = root / "legacy-import";
+    const auto targetConfig = root / "imported-profile" / "config" / "config.ini";
+    const auto targetHistory = root / "imported-profile" / "data" / "history.json";
+    std::filesystem::create_directories(sourceRoot);
+    const std::string sourceConfig = "[General]\nLanguage=en_US\n";
+    const std::string sourceHistory = "[]\n";
+    std::ofstream(sourceRoot / "config.ini", std::ios::binary) << sourceConfig;
+    std::ofstream(sourceRoot / "history.json", std::ios::binary) << sourceHistory;
+    LegacyLocationCandidate source{sourceRoot, sourceRoot / "config.ini", sourceRoot / "history.json", {}};
+
+    auto result = ImportLegacyLocation(source, targetConfig, targetHistory);
+    test.Expect(result.success, "a selected legacy location should import transactionally into an empty profile");
+    test.Expect(ReadText(targetConfig) == sourceConfig && ReadText(targetHistory) == sourceHistory,
+        "startup location migration should preserve source bytes");
+    test.Expect(ReadText(source.configFile) == sourceConfig && ReadText(source.historyFile) == sourceHistory,
+        "startup location migration must not move, rename, or delete legacy files");
+    test.Expect(!ImportLegacyLocation(source, targetConfig, targetHistory).success,
+        "startup location migration should refuse to merge into an initialized target");
+
+    const auto invalidRoot = root / "invalid-legacy-import";
+    std::filesystem::create_directories(invalidRoot);
+    std::ofstream(invalidRoot / "config.ini") << "[General]\n";
+    std::ofstream(invalidRoot / "history.json") << "not-json";
+    const auto rejectedConfig = root / "rejected-profile" / "config" / "config.ini";
+    const auto rejectedHistory = root / "rejected-profile" / "data" / "history.json";
+    result = ImportLegacyLocation({invalidRoot, invalidRoot / "config.ini", invalidRoot / "history.json", {}},
+        rejectedConfig, rejectedHistory);
+    test.Expect(!result.success && !std::filesystem::exists(rejectedConfig) && !std::filesystem::exists(rejectedHistory),
+        "invalid legacy history should leave the destination untouched");
+}
+
 } // namespace
 
 int main() {
@@ -309,6 +406,9 @@ int main() {
     TestMigrationCoordinator(test, temporary.path);
     TestRotatingLog(test, temporary.path);
     TestLaunchOptionsAndAppPaths(test, temporary.path);
+    TestSingleInstance(test, temporary.path);
+    TestLegacyLocationDiscovery(test, temporary.path);
+    TestLegacyLocationMigration(test, temporary.path);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";

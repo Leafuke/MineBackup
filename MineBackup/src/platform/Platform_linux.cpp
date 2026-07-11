@@ -11,8 +11,10 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 
-#ifdef MB_HAVE_APPINDICATOR
+#ifdef MB_HAVE_GTK
 #include <gtk/gtk.h>
+#endif
+#ifdef MB_HAVE_APPINDICATOR
 #include <libappindicator/app-indicator.h>
 #endif
 
@@ -651,6 +653,22 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
 	}
 
     return false;
+}
+
+bool ConfirmMessageBox(const std::string& title, const std::string& message) {
+#ifdef MB_HAVE_GTK
+    if (!gtk_init_check(nullptr, nullptr)) return false;
+    GtkWidget* dialog = gtk_message_dialog_new(nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+        GTK_BUTTONS_YES_NO, "%s", message.c_str());
+    gtk_window_set_title(GTK_WINDOW(dialog), title.c_str());
+    const bool accepted = gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_YES;
+    gtk_widget_destroy(dialog);
+    while (gtk_events_pending()) gtk_main_iteration();
+    return accepted;
+#else
+    std::cout << "[" << title << "] " << message << std::endl;
+    return false;
+#endif
 }
 
 bool IsFileLocked(const std::wstring& path) {

@@ -28,6 +28,7 @@ void SetFileAttributesWin(const std::wstring& path, bool isHidden);
 void EnableDarkModeWin(bool enable);
 void GetUserDefaultUILanguageWin();
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType);
+bool ConfirmMessageBox(const std::string& title, const std::string& message);
 HWND CreateHiddenWindow(HINSTANCE hInstance);
 void OpenLinkInBrowser(const std::wstring& url);
 void OpenFolder(const std::wstring& folderPath);

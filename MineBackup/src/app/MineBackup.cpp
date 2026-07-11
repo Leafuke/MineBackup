@@ -21,6 +21,9 @@
 #include "CoreValidation.h"
 #include "MigrationCoordinator.h"
 #include "RotatingFileLog.h"
+#include "SingleInstanceService.h"
+#include "LegacyLocationDiscovery.h"
+#include "LegacyLocationMigration.h"
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 #include "V15MigrationAdapter.h"
 #endif
@@ -249,16 +252,129 @@ int main(int argc, char** argv)
 	SetCurrentAppPaths(std::move(appPaths));
 	const bool launchSilentStartup = launchOptions.silentStartup || launchOptions.autostart;
 	const auto& paths = GetAppPaths();
+	SingleInstanceService singleInstance;
+	const auto instanceResult = singleInstance.Acquire(paths.profileIdentity, paths.runtimeRoot, launchError);
+	if (instanceResult == InstanceAcquireResult::AlreadyRunning) {
+		InstanceRequest request;
+		if (!launchOptions.runSpecialId.empty()) {
+			request = { InstanceRequestType::RunSpecial, launchOptions.runSpecialId };
+		}
+		else if (!launchOptions.selectConfigId.empty()) {
+			request = { InstanceRequestType::SelectConfig, launchOptions.selectConfigId };
+		}
+		if (!singleInstance.Send(request, launchError)) {
+			MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+			return 3;
+		}
+		return 0;
+	}
+	if (instanceResult == InstanceAcquireResult::Failed) {
+		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+		return 3;
+	}
+	vector<LegacyLocationProbe> locationProbes = {
+		{GetExecutablePath().parent_path(), LegacyLocationOrigin::ExecutableDirectory},
+		{originalWorkingDirectory, LegacyLocationOrigin::OriginalWorkingDirectory}
+	};
+#ifdef _WIN32
+	wchar_t localAppData[MAX_PATH] = {};
+	if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+		locationProbes.push_back({filesystem::path(localAppData) / L"MineBackup", LegacyLocationOrigin::KnownPlatformLocation});
+	}
+#else
+	if (const char* home = getenv("HOME")) {
+		locationProbes.push_back({filesystem::path(home) / ".minebackup", LegacyLocationOrigin::KnownPlatformLocation});
+#ifdef __APPLE__
+		locationProbes.push_back({filesystem::path(home) / "Library" / "Application Support" / "MineBackup",
+			LegacyLocationOrigin::KnownPlatformLocation});
+#else
+		locationProbes.push_back({filesystem::path(home) / ".config" / "MineBackup", LegacyLocationOrigin::KnownPlatformLocation});
+		locationProbes.push_back({filesystem::path(home) / ".local" / "share" / "MineBackup", LegacyLocationOrigin::KnownPlatformLocation});
+#endif
+	}
+#endif
+	const auto locationDiscovery = DiscoverLegacyLocations(paths.ConfigFile(), paths.HistoryFile(), locationProbes);
+	optional<LegacyLocationCandidate> importedLegacyLocation;
+	if (!locationDiscovery.targetInitialized) {
+		for (const auto& candidate : locationDiscovery.candidates) {
+			if (candidate.configFile.empty()) continue;
+			const string prompt = "MineBackup found data from an older location:\n\nSource: "
+				+ wstring_to_utf8(candidate.root.wstring()) + "\nTarget config: " + wstring_to_utf8(paths.configRoot.wstring())
+				+ "\nTarget data: " + wstring_to_utf8(paths.dataRoot.wstring())
+				+ "\n\nThe old files will not be deleted or renamed. Import this location?";
+			if (!ConfirmMessageBox("MineBackup data migration", prompt)) continue;
+			const auto migration = ImportLegacyLocation(candidate, paths.ConfigFile(), paths.HistoryFile());
+			if (!migration.success) {
+				MessageBoxWin("MineBackup", wstring_to_utf8(migration.error), 2);
+				return 5;
+			}
+			importedLegacyLocation = candidate;
+			break;
+		}
+	}
 	MigrationCoordinator::ConfigurePaths({
 		paths.ConfigFile(),
 		paths.HistoryFile(),
 		paths.stateRoot / L"migration" / L"1.15-to-1.16.json",
 		paths.dataRoot / L"migration-snapshots" / L"1.15"
 	});
+	if (importedLegacyLocation) {
+		MigrationUnitResult locationUnit;
+		locationUnit.unitId = L"startup:legacy-location";
+		locationUnit.status = MigrationStatus::Succeeded;
+		locationUnit.message = L"Imported legacy data from " + importedLegacyLocation->root.wstring()
+			+ L". The source files were retained.";
+		locationUnit.migratedItems = importedLegacyLocation->historyFile.empty() ? 1 : 2;
+		MigrationCoordinator::RecordUnit(locationUnit);
+	}
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 	V15MigrationAdapter::Install();
 #endif
 	LoadConfigs();
+	MigrationCoordinator::RunStartupMigration();
+	CheckForConfigConflicts();
+	LoadHistory();
+	auto equalStableId = [](const wstring& left, const wstring& right) {
+#ifdef _WIN32
+		return _wcsicmp(left.c_str(), right.c_str()) == 0;
+#else
+		if (left.size() != right.size()) return false;
+		for (size_t index = 0; index < left.size(); ++index) {
+			if (towlower(left[index]) != towlower(right[index])) return false;
+		}
+		return true;
+#endif
+	};
+	auto findNormalConfig = [&](const wstring& stableId) {
+		for (const auto& [index, config] : g_appState.configs) {
+			if (equalStableId(config.configId, stableId)) return index;
+		}
+		return -1;
+	};
+	auto findSpecialConfig = [&](const wstring& stableId) {
+		for (const auto& [index, config] : g_appState.specialConfigs) {
+			if (equalStableId(config.specialConfigId, stableId)) return index;
+		}
+		return -1;
+	};
+	if (!launchOptions.runSpecialId.empty()) {
+		const int index = findSpecialConfig(launchOptions.runSpecialId);
+		if (index < 0) {
+			MessageBoxWin("MineBackup", "The requested special configuration no longer exists.", 2);
+			return 4;
+		}
+		g_appState.currentConfigIndex = index;
+		g_appState.specialConfigMode = true;
+	}
+	else if (!launchOptions.selectConfigId.empty()) {
+		const int index = findNormalConfig(launchOptions.selectConfigId);
+		if (index < 0) {
+			MessageBoxWin("MineBackup", "The requested configuration no longer exists.", 2);
+			return 4;
+		}
+		g_appState.currentConfigIndex = index;
+		g_appState.specialConfigMode = false;
+	}
 	if (launchOptions.legacySpecialConfigIndex
 		&& g_appState.specialConfigs.count(*launchOptions.legacySpecialConfigIndex)) {
 		g_appState.currentConfigIndex = *launchOptions.legacySpecialConfigIndex;
@@ -296,9 +412,6 @@ int main(int argc, char** argv)
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
 	}
 
-	MigrationCoordinator::RunStartupMigration();
-	CheckForConfigConflicts();
-	LoadHistory();
 	if (g_CheckForUpdates) {
 		thread update_thread(CheckForUpdatesThread);
 		update_thread.detach();
@@ -727,6 +840,30 @@ int main(int argc, char** argv)
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
+		wstring instanceError;
+		for (const auto& request : singleInstance.PollRequests(instanceError)) {
+			g_appState.showMainApp = true;
+			glfwShowWindow(wc);
+			glfwRestoreWindow(wc);
+			glfwFocusWindow(wc);
+			if (request.type == InstanceRequestType::SelectConfig) {
+				const int index = findNormalConfig(request.stableId);
+				if (index >= 0) {
+					g_appState.currentConfigIndex = index;
+					g_appState.specialConfigMode = false;
+				}
+			}
+			else if (request.type == InstanceRequestType::RunSpecial) {
+				const int index = findSpecialConfig(request.stableId);
+				if (index >= 0) {
+					g_appState.currentConfigIndex = index;
+					RunSpecialMode(index);
+				}
+			}
+		}
+		if (!instanceError.empty()) {
+			ConsoleLog(&console, "[SingleInstance] %s", wstring_to_utf8(instanceError).c_str());
+		}
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(1.0);
 			continue;

@@ -139,6 +139,7 @@ int CreateNewSpecialConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	SpecialConfig sp;
 	sp.name = name_hint;
+	sp.specialConfigId = FolderRewindFormat::GenerateGuidString();
 	EnsureDefaultBackupBlacklist(sp.blacklist);
 	EnsureDefaultRestoreWhitelist();
 	g_appState.specialConfigs[newId] = sp;
@@ -289,6 +290,7 @@ void LoadConfigs(const filesystem::path& filename) {
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
 				if (key == L"Name") spCur->name = wstring_to_utf8(val);
+				else if (key == L"SpecialConfigId") spCur->specialConfigId = FolderRewindFormat::EnsureConfigId(val);
 				else if (key == L"AutoExecute") {
 					spCur->autoExecute = (val != L"0");
 					if (spCur->autoExecute)
@@ -468,8 +470,23 @@ void LoadConfigs(const filesystem::path& filename) {
 		}
 	}
 
+	set<wstring> usedSpecialConfigIds;
 	for (auto& kv : g_appState.specialConfigs) {
 		SpecialConfig& spCfg = kv.second;
+		if (spCfg.specialConfigId.empty()) {
+			spCfg.specialConfigId = FolderRewindFormat::GenerateGuidString();
+			spCfg.legacySpecialConfigIdGenerated = true;
+		}
+		wstring identity = spCfg.specialConfigId;
+		transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
+		if (!usedSpecialConfigIds.insert(identity).second) {
+			do {
+				spCfg.specialConfigId = FolderRewindFormat::GenerateGuidString();
+				identity = spCfg.specialConfigId;
+				transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
+			} while (!usedSpecialConfigIds.insert(identity).second);
+			spCfg.legacySpecialConfigIdGenerated = true;
+		}
 		if (spCfg.zipLevel < 1) spCfg.zipLevel = 1;
 		if (spCfg.zipLevel > 22) spCfg.zipLevel = 22;
 	}
@@ -569,6 +586,8 @@ bool SaveConfigs(const filesystem::path& filename) {
 		SpecialConfig& sc = kv.second;
 		buffer << L"[SpCfg" << idx << L"]\n";
 		buffer << L"Name=" << utf8_to_wstring(sc.name) << L"\n";
+		sc.specialConfigId = FolderRewindFormat::EnsureConfigId(sc.specialConfigId);
+		buffer << L"SpecialConfigId=" << sc.specialConfigId << L"\n";
 		buffer << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
 		for (const auto& cmd : sc.commands) buffer << L"Command=" << cmd << L"\n";
 		for (const auto& task : sc.tasks) {
