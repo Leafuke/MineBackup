@@ -12,6 +12,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MINEBACKUP_ENABLE_V15_MIGRATION "Build the MineBackup 1.15 compatibility adapter" ON)
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+endif()
 
 set(MINEBACKUP_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/MineBackup)
 set(MINEBACKUP_SRC_DIR ${MINEBACKUP_SOURCE_DIR}/src)
@@ -26,7 +29,6 @@ set(MINEBACKUP_IMGUI_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/imgui)
 set(MINEBACKUP_KNOTLINK_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/KnotLink)
 set(MINEBACKUP_JSON_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/json)
 set(MINEBACKUP_STB_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/stb)
-set(MINEBACKUP_GLFW_INCLUDE_DIR ${MINEBACKUP_IMGUI_DIR}/GLFW)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MineBackupSources.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MineBackupGenerateArtifacts.cmake)
@@ -37,52 +39,25 @@ minebackup_generate_artifacts(${MINEBACKUP_GENERATED_DIR} ${MINEBACKUP_SOURCE_DI
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
 
-set(MINEBACKUP_GLFW_TARGET "")
-if(WIN32)
-    set(MINEBACKUP_BUNDLED_GLFW ${MINEBACKUP_IMGUI_DIR}/lib-vc2022-64/glfw3.lib)
-    if(EXISTS ${MINEBACKUP_BUNDLED_GLFW})
-        add_library(minebackup_glfw_bundled STATIC IMPORTED)
-        set_target_properties(minebackup_glfw_bundled PROPERTIES IMPORTED_LOCATION ${MINEBACKUP_BUNDLED_GLFW})
-        target_include_directories(minebackup_glfw_bundled INTERFACE ${MINEBACKUP_GLFW_INCLUDE_DIR})
-        set(MINEBACKUP_GLFW_TARGET minebackup_glfw_bundled)
-    endif()
+include(FetchContent)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+if(UNIX AND NOT APPLE)
+    set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
 endif()
-
-if(MINEBACKUP_GLFW_TARGET STREQUAL "")
-    find_package(glfw3 QUIET)
-    if(TARGET glfw)
-        set(MINEBACKUP_GLFW_TARGET glfw)
-    elseif(TARGET glfw3::glfw)
-        set(MINEBACKUP_GLFW_TARGET glfw3::glfw)
-    endif()
-endif()
-
-if(MINEBACKUP_GLFW_TARGET STREQUAL "")
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(GLFW3 QUIET glfw3)
-        if(GLFW3_FOUND)
-            add_library(minebackup_glfw_system INTERFACE)
-            target_include_directories(minebackup_glfw_system INTERFACE ${GLFW3_INCLUDE_DIRS})
-            target_link_libraries(minebackup_glfw_system INTERFACE ${GLFW3_LIBRARIES})
-            set(MINEBACKUP_GLFW_TARGET minebackup_glfw_system)
-        endif()
-    endif()
-endif()
-
-if(APPLE AND MINEBACKUP_GLFW_TARGET STREQUAL "")
-    include(FetchContent)
-    FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 3.3.8)
-    FetchContent_MakeAvailable(glfw)
-    set(MINEBACKUP_GLFW_TARGET glfw)
-endif()
-
-if(MINEBACKUP_GLFW_TARGET STREQUAL "")
-    message(FATAL_ERROR "GLFW was not found. MineBackup requires an explicit GLFW target.")
-endif()
+FetchContent_Declare(glfw
+    URL https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
+    URL_HASH SHA256=b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(glfw)
+set(MINEBACKUP_GLFW_TARGET glfw)
 
 add_library(minebackup_third_party_imgui STATIC ${MINEBACKUP_IMGUI_SOURCES})
-target_include_directories(minebackup_third_party_imgui PUBLIC ${MINEBACKUP_IMGUI_DIR} ${MINEBACKUP_GLFW_INCLUDE_DIR})
+target_include_directories(minebackup_third_party_imgui PUBLIC ${MINEBACKUP_IMGUI_DIR})
 target_link_libraries(minebackup_third_party_imgui PUBLIC ${MINEBACKUP_GLFW_TARGET})
 
 set(MINEBACKUP_DESKTOP_SOURCES ${MINEBACKUP_APPLICATION_SOURCES} ${MINEBACKUP_UI_SOURCES})
@@ -102,7 +77,7 @@ set(MINEBACKUP_COMMON_INCLUDE_DIRS
     ${MINEBACKUP_GENERATED_DIR} ${MINEBACKUP_SOURCE_DIR} ${MINEBACKUP_APP_DIR} ${MINEBACKUP_CORE_DIR}
     ${MINEBACKUP_INFRA_DIR} ${MINEBACKUP_PLATFORM_DIR} ${MINEBACKUP_UI_DIR} ${MINEBACKUP_UTILS_DIR}
     ${MINEBACKUP_THIRD_PARTY_DIR} ${MINEBACKUP_IMGUI_DIR} ${MINEBACKUP_KNOTLINK_DIR}
-    ${MINEBACKUP_JSON_DIR} ${MINEBACKUP_STB_DIR} ${MINEBACKUP_GLFW_INCLUDE_DIR}
+    ${MINEBACKUP_JSON_DIR} ${MINEBACKUP_STB_DIR}
 )
 target_compile_definitions(minebackup_data_core PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)
 target_compile_definitions(minebackup_desktop PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)

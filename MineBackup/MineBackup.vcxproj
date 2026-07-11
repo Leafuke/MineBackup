@@ -36,6 +36,7 @@
   <PropertyGroup>
     <MineBackupCMakeExecutable Condition="'$(MineBackupCMakeExecutable)'=='' and Exists('$(VSInstallDir)Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')">$(VSInstallDir)Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe</MineBackupCMakeExecutable>
     <MineBackupCMakeExecutable Condition="'$(MineBackupCMakeExecutable)'==''">cmake</MineBackupCMakeExecutable>
+    <MineBackupGlfwBuildDir>$(SolutionDir)build\msbuild-deps</MineBackupGlfwBuildDir>
   </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
@@ -56,13 +57,15 @@
       <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
-      <AdditionalIncludeDirectories>$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>.\third_party\imgui\lib-vc2022-64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-build\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)$(IntDir)generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -78,14 +81,15 @@
       <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>.\third_party\imgui\lib-vc2022-64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-build\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)$(IntDir)generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -199,6 +203,10 @@
   <Target Name="GenerateMineBackupVersionArtifacts" BeforeTargets="ClCompile;ResourceCompile">
     <MakeDir Directories="$(ProjectDir)$(IntDir)generated" />
     <Exec Command="&quot;$(MineBackupCMakeExecutable)&quot; -DMINEBACKUP_OUTPUT_DIR=&quot;$(ProjectDir)$(IntDir)generated&quot; -P &quot;$(SolutionDir)cmake\GenerateVersionArtifacts.cmake&quot;" />
+  </Target>
+  <Target Name="BuildMineBackupGlfw" BeforeTargets="ClCompile;Link">
+    <Exec Command="&quot;$(MineBackupCMakeExecutable)&quot; -S &quot;$(SolutionDir).&quot; -B &quot;$(MineBackupGlfwBuildDir)&quot; -A x64 -DBUILD_TESTING=OFF" />
+    <Exec Command="&quot;$(MineBackupCMakeExecutable)&quot; --build &quot;$(MineBackupGlfwBuildDir)&quot; --config $(Configuration) --target glfw --parallel" />
   </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
