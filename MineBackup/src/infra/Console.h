@@ -5,6 +5,7 @@
 #include "Globals.h"
 #include "imgui/imgui.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "PlatformCompat.h"
 #include "i18n.h"
 #include "text_to_text.h"
@@ -205,7 +206,8 @@ struct Console
 		bool copy_to_clipboard = ImGui::Button(L("BUTTON_COPY"));
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_EXPORT_LOG"))) {
-			std::ofstream out("console_log.txt", std::ios::out | std::ios::trunc);
+			const auto logPath = GetAppPaths().logsRoot / L"console_log.txt";
+			std::ofstream out(logPath, std::ios::out | std::ios::trunc);
 			if (!out.is_open()) return;
 			for (int i = 0; i < Items.Size; ++i)
 			{
@@ -213,7 +215,7 @@ struct Console
 			}
 			out.close();
 			// 自动打开日志所在目录 并选中该文件
-			OpenFolderWithFocus(std::filesystem::current_path().wstring(), L"/select,\"console_log.txt\"");
+			OpenFolderWithFocus(logPath.parent_path().wstring(), L"/select,\"" + logPath.wstring() + L"\"");
 		}
 		ImGui::Separator();
 

@@ -225,7 +225,7 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 
 		wstringstream fileNameBuilder;
 		fileNameBuilder << L"MineBackup_Restore_" << chrono::steady_clock::now().time_since_epoch().count() << L"_" << i << L".txt";
-		filesystem::path listFile = filesystem::temp_directory_path() / fileNameBuilder.str();
+		filesystem::path listFile = GetAppPaths().runtimeRoot / fileNameBuilder.str();
 		try {
 			ofstream out(listFile, ios::binary | ios::trunc);
 			for (const auto& file : group.files) {

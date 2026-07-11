@@ -292,7 +292,7 @@ MigrationReport RunStartupMigration() {
 		const auto configPath = MigrationCoordinator::GetPaths().configFile;
 		if (CopySnapshot(configPath, snapshot)) {
 			configUnit.snapshotPath = snapshot.wstring();
-			if (SaveConfigs(configPath.wstring())) {
+			if (SaveConfigs(configPath)) {
 				configUnit.status = MigrationStatus::Succeeded;
 				configUnit.message = L"Stable ConfigId values were persisted for 1.15 configurations.";
 				for (auto& [index, config] : g_appState.configs) config.legacyConfigIdGenerated = false;

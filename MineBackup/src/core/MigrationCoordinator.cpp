@@ -99,16 +99,6 @@ MigrationReport LoadReport(const filesystem::path& path) {
 
 } // namespace
 
-MigrationPaths BuildLegacyMigrationPaths(const filesystem::path& profileRoot) {
-    const filesystem::path root = filesystem::absolute(profileRoot).lexically_normal();
-    return {
-        root / L"config.ini",
-        root / L"history.json",
-        root / L".migration" / L"1.15-to-1.16.json",
-        root / L".migration" / L"snapshots" / L"1.15"
-    };
-}
-
 void ConfigurePaths(MigrationPaths paths) {
     MigrationReport report = LoadReport(paths.reportFile);
     lock_guard<mutex> lock(g_mutex);

@@ -1,4 +1,5 @@
 #include "AtomicFileWriter.h"
+#include "AppPaths.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -194,6 +196,107 @@ void TestRotatingLog(TestContext& test, const std::filesystem::path& root) {
     }
 }
 
+void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path& root) {
+    LaunchOptions options;
+    std::wstring error;
+    const auto profile = std::filesystem::absolute(root / "explicit-profile");
+    test.Expect(ParseLaunchOptions(
+        {L"MineBackup", L"--data-dir", profile.wstring(), L"--autostart",
+            L"--select-config", L"config-id", L"--run-special", L"special-id"},
+        options, error), "known launch options should parse");
+    test.Expect(options.autostart && options.selectConfigId == L"config-id"
+        && options.runSpecialId == L"special-id", "launch option values should be retained");
+    LaunchOptions rejected;
+    test.Expect(!ParseLaunchOptions({L"MineBackup", L"--data-dir"}, rejected, error),
+        "a launch option with a missing value should be rejected");
+    test.Expect(!ParseLaunchOptions({L"MineBackup", L"--unknown"}, rejected, error),
+        "an unknown launch option should be rejected explicitly");
+
+    const auto appDirectory = root / "read-only-app-layout";
+    std::filesystem::create_directories(appDirectory);
+    const auto executable = appDirectory / "MineBackup.exe";
+    AppPaths paths;
+    test.Expect(ResolveAppPaths(options, executable, paths, error), "an absolute --data-dir should resolve");
+    test.Expect(paths.mode == AppPathMode::Explicit, "--data-dir should take precedence over other modes");
+    test.Expect(paths.ConfigFile() == profile / "config" / "config.ini",
+        "the explicit profile should own the config root");
+    test.Expect(paths.HistoryFile() == profile / "data" / "history.json",
+        "the explicit profile should own the data root");
+    test.Expect(std::filesystem::is_empty(appDirectory),
+        "resolving an explicit profile should not write beside the application");
+
+    const auto previousWorkingDirectory = std::filesystem::current_path();
+    const auto unrelatedWorkingDirectory = root / "unrelated-working-directory";
+    std::filesystem::create_directories(unrelatedWorkingDirectory);
+    std::filesystem::current_path(unrelatedWorkingDirectory);
+    AppPaths pathsFromAnotherDirectory;
+    const bool resolvedFromAnotherDirectory = ResolveAppPaths(options, executable, pathsFromAnotherDirectory, error);
+    std::filesystem::current_path(previousWorkingDirectory);
+    test.Expect(resolvedFromAnotherDirectory && pathsFromAnotherDirectory.ConfigFile() == paths.ConfigFile(),
+        "the profile should not depend on the process working directory");
+
+    LaunchOptions invalid;
+    invalid.dataDirectory = std::filesystem::path("relative-profile");
+    test.Expect(!ResolveAppPaths(invalid, executable, paths, error),
+        "a relative explicit profile should fail instead of falling back");
+    const auto fileInsteadOfProfile = std::filesystem::absolute(root / "profile-is-a-file");
+    test.Expect(AtomicFileWriter::WriteText(fileInsteadOfProfile, "not a directory").success,
+        "the invalid explicit profile fixture should be created");
+    invalid.dataDirectory = fileInsteadOfProfile;
+    test.Expect(!ResolveAppPaths(invalid, executable, paths, error),
+        "an unusable explicit profile should fail instead of falling back");
+
+#ifdef _WIN32
+    test.Expect(AtomicFileWriter::WriteText(appDirectory / "portable.flag", "").success,
+        "the portable marker should be created for the test");
+    LaunchOptions portable;
+    test.Expect(ResolveAppPaths(portable, executable, paths, error), "the Windows portable profile should resolve");
+    test.Expect(paths.mode == AppPathMode::Portable
+        && paths.configRoot == appDirectory / "MineBackupData" / "config",
+        "portable.flag should select the adjacent MineBackupData layout on Windows");
+    std::error_code markerError;
+    std::filesystem::remove(appDirectory / "portable.flag", markerError);
+    const wchar_t* previousLocalAppDataValue = _wgetenv(L"LOCALAPPDATA");
+    const std::wstring previousLocalAppData = previousLocalAppDataValue ? previousLocalAppDataValue : L"";
+    const auto localAppData = std::filesystem::absolute(root / "local-app-data");
+    _wputenv_s(L"LOCALAPPDATA", localAppData.wstring().c_str());
+    LaunchOptions installed;
+    test.Expect(ResolveAppPaths(installed, executable, paths, error), "the Windows installed profile should resolve");
+    test.Expect(paths.mode == AppPathMode::Installed
+        && paths.configRoot == localAppData / "MineBackup" / "config",
+        "the Windows installed profile should use LOCALAPPDATA");
+    _wputenv_s(L"LOCALAPPDATA", previousLocalAppData.c_str());
+#elif !defined(__APPLE__)
+    const auto fakeAppImage = appDirectory / "MineBackup.AppImage";
+    setenv("APPIMAGE", fakeAppImage.c_str(), 1);
+    test.Expect(AtomicFileWriter::WriteText(appDirectory / "portable.flag", "").success,
+        "the AppImage portable marker should be created for the test");
+    LaunchOptions portable;
+    test.Expect(ResolveAppPaths(portable, executable, paths, error), "the AppImage portable profile should resolve");
+    test.Expect(paths.mode == AppPathMode::Portable
+        && paths.configRoot == appDirectory / "MineBackupData" / "config",
+        "portable.flag should select the adjacent MineBackupData layout for AppImage");
+    unsetenv("APPIMAGE");
+
+    const auto fakeHome = root / "xdg-home";
+    std::filesystem::create_directories(fakeHome);
+    setenv("HOME", fakeHome.c_str(), 1);
+    setenv("XDG_CONFIG_HOME", "relative-config", 1);
+    setenv("XDG_DATA_HOME", "relative-data", 1);
+    setenv("XDG_STATE_HOME", "relative-state", 1);
+    setenv("XDG_CACHE_HOME", "relative-cache", 1);
+    unsetenv("XDG_RUNTIME_DIR");
+    LaunchOptions installed;
+    test.Expect(ResolveAppPaths(installed, executable, paths, error), "invalid relative XDG roots should fall back safely");
+    test.Expect(paths.configRoot == fakeHome / ".config" / "MineBackup"
+        && paths.runtimeRoot == fakeHome / ".local" / "state" / "MineBackup" / "runtime",
+        "invalid XDG and absent runtime roots should use the documented fallbacks");
+#endif
+
+    test.Expect(ResolveAppPaths(options, executable, paths, error) && paths.mode == AppPathMode::Explicit,
+        "--data-dir should remain authoritative when a portable marker is present");
+}
+
 } // namespace
 
 int main() {
@@ -205,6 +308,7 @@ int main() {
     TestHistoryRoundTrip(test, temporary.path);
     TestMigrationCoordinator(test, temporary.path);
     TestRotatingLog(test, temporary.path);
+    TestLaunchOptionsAndAppPaths(test, temporary.path);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";

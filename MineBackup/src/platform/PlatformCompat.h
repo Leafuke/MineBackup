@@ -207,17 +207,6 @@ inline DWORD GetModuleFileNameW(HINSTANCE, wchar_t* buffer, DWORD size) {
 	return static_cast<DWORD>(std::wcslen(buffer));
 }
 
-inline DWORD GetCurrentDirectoryW(DWORD size, wchar_t* buffer) {
-	if (!buffer || size == 0) return 0;
-	char path[PATH_MAX];
-	if (!getcwd(path, sizeof(path))) return 0;
-	std::mbstate_t state{};
-	const char* src = path;
-	std::mbsrtowcs(buffer, &src, size - 1, &state);
-	buffer[size - 1] = L'\0';
-	return static_cast<DWORD>(std::wcslen(buffer));
-}
-
 inline BOOL CopyFileW(const wchar_t* existing, const wchar_t* newfile, BOOL) {
 	try {
 		std::filesystem::copy_file(existing, newfile, std::filesystem::copy_options::overwrite_existing);

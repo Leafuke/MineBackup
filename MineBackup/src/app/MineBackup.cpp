@@ -8,6 +8,8 @@
 #include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
+#include "AppPaths.h"
+#include "LaunchOptions.h"
 #include "TaskSystem.h"
 #include "PlatformCompat.h"
 #include "Console.h"
@@ -198,17 +200,6 @@ wstring GetDefaultUIFontPath() {
 #endif
 }
 
-#ifdef __APPLE__
-static void SetWorkingDirectoryToExecutable() {
-	char path[PATH_MAX];
-	uint32_t size = sizeof(path);
-	if (_NSGetExecutablePath(path, &size) == 0) {
-		std::error_code ec;
-		filesystem::current_path(filesystem::path(path).parent_path(), ec);
-	}
-}
-#endif
-
 static void glfw_error_callback(int error, const char* description)
 {
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -229,40 +220,50 @@ void ConsoleLog(Console* console, const char* format, ...);
 #ifdef _WIN32
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
-	bool launchSilentStartup = false;
-	if (lpCmdLine) {
-		string cmdLine(lpCmdLine);
-		launchSilentStartup = (cmdLine.find("--silent-startup") != string::npos) || (cmdLine.find("-silentstartup") != string::npos);
-	}
-
-	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
-	wchar_t exePath[MAX_PATH];
-	GetModuleFileNameW(NULL, exePath, MAX_PATH);
-	SetCurrentDirectoryW(filesystem::path(exePath).parent_path().c_str());
+	(void)lpCmdLine;
+	vector<wstring> launchArguments(__wargv, __wargv + __argc);
 
 #else
 int main(int argc, char** argv)
 {
-	bool launchSilentStartup = false;
+	vector<wstring> launchArguments;
+	launchArguments.reserve(static_cast<size_t>(argc));
 	for (int i = 1; i < argc; ++i) {
-		if (!argv[i]) continue;
-		string arg = argv[i];
-		if (arg == "--silent-startup" || arg == "-silentstartup") {
-			launchSilentStartup = true;
-			break;
-		}
+		if (argv[i]) launchArguments.push_back(utf8_to_wstring(argv[i]));
 	}
-
-	#ifdef __APPLE__
-	SetWorkingDirectoryToExecutable();
-	#endif
+	launchArguments.insert(launchArguments.begin(), L"MineBackup");
 #endif
-	MigrationCoordinator::ConfigurePaths(
-		MigrationCoordinator::BuildLegacyMigrationPaths(filesystem::current_path()));
+	const filesystem::path originalWorkingDirectory = filesystem::current_path();
+	(void)originalWorkingDirectory;
+	LaunchOptions launchOptions;
+	wstring launchError;
+	if (!ParseLaunchOptions(launchArguments, launchOptions, launchError)) {
+		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+		return 2;
+	}
+	AppPaths appPaths;
+	if (!ResolveAppPaths(launchOptions, GetExecutablePath(), appPaths, launchError)) {
+		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+		return 2;
+	}
+	SetCurrentAppPaths(std::move(appPaths));
+	const bool launchSilentStartup = launchOptions.silentStartup || launchOptions.autostart;
+	const auto& paths = GetAppPaths();
+	MigrationCoordinator::ConfigurePaths({
+		paths.ConfigFile(),
+		paths.HistoryFile(),
+		paths.stateRoot / L"migration" / L"1.15-to-1.16.json",
+		paths.dataRoot / L"migration-snapshots" / L"1.15"
+	});
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 	V15MigrationAdapter::Install();
 #endif
-	LoadConfigs("config.ini");
+	LoadConfigs();
+	if (launchOptions.legacySpecialConfigIndex
+		&& g_appState.specialConfigs.count(*launchOptions.legacySpecialConfigIndex)) {
+		g_appState.currentConfigIndex = *launchOptions.legacySpecialConfigIndex;
+		g_appState.specialConfigMode = true;
+	}
 
 #ifdef _WIN32
 	if (g_autoLogEnabled)
@@ -282,8 +283,14 @@ int main(int argc, char** argv)
 
 	
 	wstring g_7zTempPath, g_FontTempPath;
+	const void* bundledIconFontData = nullptr;
+	size_t bundledIconFontSize = 0;
 	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
+#ifdef _WIN32
+	bool fontExtracted = GetBundledIconFontResource(bundledIconFontData, bundledIconFontSize);
+#else
 	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
+#endif
 
 	if (!sevenZipExtracted || !fontExtracted) {
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
@@ -360,7 +367,7 @@ int main(int argc, char** argv)
 		ostringstream specialModeLog;
 		for (const char* item : console.Items) specialModeLog << item << '\n';
 		specialModeLog << L("SPECIAL_MODE_LOG_END") << "\n\n";
-		if (!RotatingFileLog::Append("special_mode_log.txt", specialModeLog.str())) {
+		if (!RotatingFileLog::Append(paths.logsRoot / "special_mode_log.txt", specialModeLog.str())) {
 			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
 		}
 
@@ -409,7 +416,7 @@ int main(int argc, char** argv)
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
 	bool errorShow = false;
-	bool isFirstRun = !filesystem::exists("config.ini");
+	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
 	const bool shouldStartHiddenToTray = launchSilentStartup && !isFirstRun;
 	g_appState.showMainApp = !isFirstRun && !shouldStartHiddenToTray;
@@ -543,6 +550,10 @@ int main(int argc, char** argv)
 	ImGui::CreateContext();
 
 	ImGuiIO& io = ImGui::GetIO();
+	const string imguiIniPath = wstring_to_utf8((paths.stateRoot / L"imgui.ini").wstring());
+	const string imguiLogPath = wstring_to_utf8((paths.logsRoot / L"imgui_log.txt").wstring());
+	io.IniFilename = imguiIniPath.c_str();
+	io.LogFilename = imguiLogPath.c_str();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
@@ -622,7 +633,7 @@ int main(int argc, char** argv)
 	}
 
 	// 准备合并图标字体
-	if (!g_FontTempPath.empty() && filesystem::exists(g_FontTempPath)) {
+	if (fontExtracted) {
 		ImFontConfig config2;
 		config2.MergeMode = true;
 		config2.PixelSnapH = true;
@@ -631,7 +642,13 @@ int main(int argc, char** argv)
 		static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
 		// 加载并合并
+#ifdef _WIN32
+		config2.FontDataOwnedByAtlas = false;
+		io.Fonts->AddFontFromMemoryTTF(
+			const_cast<void*>(bundledIconFontData), static_cast<int>(bundledIconFontSize), 20.0f, &config2, icon_ranges);
+#else
 		io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
+#endif
 	}
 
 	// 构建字体图谱
@@ -853,7 +870,7 @@ int main(int argc, char** argv)
 					ImGui::Separator();
 					float importBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(importBtnW, 0))) {
-						LoadConfigs(wstring_to_utf8(pendingImportPath));
+						LoadConfigs(filesystem::path(pendingImportPath));
 						SaveConfigs(); // 保存到默认位置
 						console.AddLog(L("LOG_CONFIG_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
 						showImportConfigConfirm = false;
@@ -1958,11 +1975,12 @@ int main(int argc, char** argv)
 								const auto& dw = displayWorlds[selectedWorldIndex];
 								tempExportConfig = dw.effectiveConfig; // 复制当前配置作为基础
 
-								// 智能设置默认输出路径为MineBackup当前位置
-								wchar_t currentPath[MAX_PATH];
-								GetCurrentDirectoryW(MAX_PATH, currentPath);
+								// 默认导出到配置档数据目录，不依赖启动工作目录。
+								const auto exportRoot = paths.dataRoot / L"exports";
+								error_code exportDirectoryError;
+								filesystem::create_directories(exportRoot, exportDirectoryError);
 								wstring cleanWorldName = SanitizeFileName(dw.name);
-								wstring finalPath = wstring(currentPath) + L"\\" + cleanWorldName + L"_shared." + tempExportConfig.zipFormat;
+								wstring finalPath = (exportRoot / (cleanWorldName + L"_shared." + tempExportConfig.zipFormat)).wstring();
 								strncpy_s(outputPathBuf, wstring_to_utf8(finalPath).c_str(), sizeof(outputPathBuf));
 
 								// 预设默认黑名单
@@ -2207,14 +2225,14 @@ int main(int argc, char** argv)
 
 	glfwGetWindowSize(wc, &g_windowWidth, &g_windowHeight);
 
-	if (filesystem::exists("config.ini"))
+	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
 
 	// 将捕获到的所有日志写入文件
 	ostringstream automaticLog;
 	for (const char* item : console.Items) automaticLog << item << '\n';
 	automaticLog << "=== End ===\n\n";
-	RotatingFileLog::Append("auto_log.txt", automaticLog.str());
+	RotatingFileLog::Append(paths.logsRoot / "auto_log.txt", automaticLog.str());
 
 #ifdef _WIN32
 	RemoveTrayIcon();
@@ -2292,6 +2310,6 @@ void ApplyTheme(const int& theme)
 	case 4: ImGuiTheme::ApplyWindows11(true); break;
 	case 5: ImGuiTheme::ApplyNord(false); break;
 	case 6: ImGuiTheme::ApplyNord(true); break;
-	case 7: ImGuiTheme::ApplyCustom(); break;
+	case 7: ImGuiTheme::ApplyCustom(GetAppPaths().configRoot / L"custom_theme.json"); break;
 	}
 }

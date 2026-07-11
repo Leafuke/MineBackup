@@ -1,6 +1,7 @@
 ﻿#include "Broadcast.h"
 #include "BackupManager.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -828,7 +829,7 @@ namespace {
 	static bool CreateDeletionOnlyArchive(const Config& config, const filesystem::path& archivePath, Console& console) {
 		wstringstream nameBuilder;
 		nameBuilder << L"MineBackup_DeleteOnly_" << chrono::steady_clock::now().time_since_epoch().count();
-		filesystem::path tempDir = filesystem::temp_directory_path() / nameBuilder.str();
+		filesystem::path tempDir = GetAppPaths().runtimeRoot / nameBuilder.str();
 		bool success = false;
 		try {
 			filesystem::path internalDir = tempDir / kDeletedOnlyMarkerDir;
@@ -1362,7 +1363,8 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		return;
 	}
 
-    filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
+    filesystem::path tempDir = GetAppPaths().runtimeRoot /
+		(L"MineBackup_Filelist_" + FolderRewindFormat::GenerateGuidString());
 	wstring filelist_path;
 	if (!files_to_backup.empty()) {
 		filesystem::create_directories(tempDir);
@@ -1775,7 +1777,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		tempRootBase = filesystem::path(NormalizeSeparators(config.snapshotPath));
 	}
 	else {
-		tempRootBase = filesystem::temp_directory_path();
+		tempRootBase = GetAppPaths().runtimeRoot;
 	}
 
 	wstringstream suffixBuilder;
@@ -1984,7 +1986,8 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 	console.AddLog(L("LOG_EXPORT_STARTED"), wstring_to_utf8(worldName).c_str());
 
 	// 准备临时文件和路径
-	filesystem::path temp_export_dir = filesystem::temp_directory_path() / L"MineBackup_Export" / worldName;
+	filesystem::path temp_export_dir = GetAppPaths().runtimeRoot / L"MineBackup_Export" /
+		FolderRewindFormat::SanitizePathSegment(worldName);
 	filesystem::path readme_path = temp_export_dir / L"readme.txt";
 
 	try {

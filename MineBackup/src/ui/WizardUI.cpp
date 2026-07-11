@@ -4,6 +4,7 @@
 #include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
@@ -94,11 +95,12 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		ImGui::Text(L("THEME_SETTINGS"));
 		const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 		if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
-			if (themeId == 7 && !filesystem::exists("custom_theme.json")) {
+			const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
+			if (themeId == 7 && !filesystem::exists(customThemePath)) {
 				// 打开自定义主题编辑器
-				ImGuiTheme::WriteDefaultCustomTheme();
+				ImGuiTheme::WriteDefaultCustomTheme(customThemePath);
 				// 打开 custom_theme.json 文件供用户编辑
-				OpenFolder(L"custom_theme.json");
+				OpenFolder(customThemePath.wstring());
 			}
 			else {
 				ApplyTheme(themeId);
@@ -279,9 +281,10 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		}
 		else {
 			// 如果释放失败，执行原来的自动检测逻辑
-			if (filesystem::exists("7z.exe"))
+			const auto bundled7z = GetAppPaths().toolsRoot / L"7zip" / L"7z.exe";
+			if (filesystem::exists(bundled7z))
 			{
-				strncpy_s(zipPath, "7z.exe", sizeof(zipPath));
+				strncpy_s(zipPath, wstring_to_utf8(bundled7z.wstring()).c_str(), sizeof(zipPath));
 				ImGui::Text(L("AUTODETECTED_7Z"));
 			}
 			else

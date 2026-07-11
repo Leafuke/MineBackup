@@ -3,11 +3,14 @@
 #include "Platform_win.h"
 #include "text_to_text.h"
 #include "AppState.h"
+#include "AppPaths.h"
+#include "AtomicFileWriter.h"
 #include "Globals.h"
 #include "resource.h"
 #include "i18n.h"
 #include "Console.h"
 #include "ConfigManager.h"
+#include "RotatingFileLog.h"
 #include "json.hpp"
 #include <shobjidl.h>
 #include <shlobj.h>
@@ -705,10 +708,10 @@ void SetAutoStart(const string& appName, const wstring& appPath, bool configType
 }
 
 
-static std::string g_logFilePath = "auto_log.txt";
+static std::filesystem::path g_logFilePath;
 
 void SetLogFilePath(const std::string& path) {
-    g_logFilePath = path;
+    g_logFilePath = std::filesystem::u8path(path);
 }
 
 std::string GetCurrentTimestamp() {
@@ -721,8 +724,6 @@ std::string GetCurrentTimestamp() {
 }
 
 void WriteLogEntry(const std::string& message, LogLevel level) {
-    std::ofstream log_file(g_logFilePath, std::ios::app);
-    if (!log_file.is_open()) return;
     std::string level_str;
     switch (level) {
         case LogLevel::Info: level_str = "[INFO]"; break;
@@ -730,8 +731,8 @@ void WriteLogEntry(const std::string& message, LogLevel level) {
         case LogLevel::Error: level_str = "[ERROR]"; break;
         default: level_str = "[INFO]"; break;
     }
-    log_file << GetCurrentTimestamp() << " " << level_str << " " << message << std::endl;
-    log_file.close();
+    const auto path = g_logFilePath.empty() ? GetAppPaths().logsRoot / "auto_log.txt" : g_logFilePath;
+    RotatingFileLog::Append(path, GetCurrentTimestamp() + " " + level_str + " " + message + "\n");
 }
 
 //选择文件
@@ -822,16 +823,10 @@ wstring SelectSaveFileDialog(const wstring& defaultFileName, const wstring& filt
 }
 
 bool Extract7zToTempFile(wstring& extractedPath) {
-
-
-	// 构造目标路径：文档\7z.exe
-	wstring finalPath = GetDocumentsPath();
-
-	if (finalPath.back() != L'\\') finalPath += L'\\';
-	finalPath += L"7z.exe";
+	const filesystem::path finalPath = GetAppPaths().toolsRoot / L"7zip" / L"7z.exe";
 
 	if (filesystem::exists(finalPath)) {
-		extractedPath = finalPath;
+		extractedPath = finalPath.wstring();
 		return true;
 	}
 
@@ -848,65 +843,27 @@ bool Extract7zToTempFile(wstring& extractedPath) {
 	LPVOID pData = LockResource(hData);
 	if (!pData) return false;
 
-	HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hFile == INVALID_HANDLE_VALUE) return false;
-
-	DWORD bytesWritten;
-	BOOL ok = WriteFile(hFile, pData, dataSize, &bytesWritten, nullptr);
-	CloseHandle(hFile);
-	if (!ok || bytesWritten != dataSize) {
-		DeleteFileW(finalPath.c_str());
-		return false;
-	}
-
-	extractedPath = finalPath;
+	AtomicFileWriter::WriteOptions options;
+	options.keepBackup = false;
+	const string content(static_cast<const char*>(pData), static_cast<size_t>(dataSize));
+	if (!AtomicFileWriter::WriteText(finalPath, content, options).success) return false;
+	extractedPath = finalPath.wstring();
 	return true;
-
-	/*wchar_t tempFile[MAX_PATH];
-	if (!GetTempFileNameW(tempPath, L"7z", 0, tempFile)) return false;
-
-	// 随机名称，其实没必要
-	std::wstring finalPath = tempFile;
-	finalPath += L".exe";
-	MoveFileW(tempFile, finalPath.c_str());*/
 }
 
-bool ExtractFontToTempFile(wstring& extractedPath) {
-
-	wstring finalPath = GetDocumentsPath();
-
-	if (finalPath.back() != L'\\') finalPath += L'\\';
-	finalPath += L"fontawesome-sp.otf";
-
-	if (filesystem::exists(finalPath)) {
-		extractedPath = finalPath;
-		return true;
-	}
-
+bool GetBundledIconFontResource(const void*& data, size_t& size) {
+	data = nullptr;
+	size = 0;
 	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDR_FONTS1), L"FONTS");
 	if (!hRes) return false;
-
 	HGLOBAL hData = LoadResource(GetModuleHandleW(NULL), hRes);
 	if (!hData) return false;
-
 	DWORD dataSize = SizeofResource(GetModuleHandleW(NULL), hRes);
 	if (dataSize == 0) return false;
-
 	LPVOID pData = LockResource(hData);
 	if (!pData) return false;
-
-	HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hFile == INVALID_HANDLE_VALUE) return false;
-
-	DWORD bytesWritten;
-	BOOL ok = WriteFile(hFile, pData, dataSize, &bytesWritten, nullptr);
-	CloseHandle(hFile);
-	if (!ok || bytesWritten != dataSize) {
-		DeleteFileW(finalPath.c_str());
-		return false;
-	}
-
-	extractedPath = finalPath;
+	data = pData;
+	size = static_cast<size_t>(dataSize);
 	return true;
 }
 

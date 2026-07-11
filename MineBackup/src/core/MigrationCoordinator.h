@@ -25,7 +25,6 @@ struct AdapterCallbacks {
     std::function<bool(const std::wstring&)> retryMigration;
 };
 
-MigrationPaths BuildLegacyMigrationPaths(const std::filesystem::path& profileRoot);
 void ConfigurePaths(MigrationPaths paths);
 MigrationPaths GetPaths();
 

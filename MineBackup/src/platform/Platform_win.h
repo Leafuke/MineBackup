@@ -3,6 +3,7 @@
 #define _PLATFORM_WIN_H
 #include <iostream>
 #include <windows.h>
+#include <cstddef>
 #include <string>
 struct Console;
 enum class LogLevel {
@@ -33,7 +34,7 @@ void OpenFolder(const std::wstring& folderPath);
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus);
 void ReStartApplication();
 bool Extract7zToTempFile(std::wstring& extractedPath);
-bool ExtractFontToTempFile(std::wstring& extractedPath);
+bool GetBundledIconFontResource(const void*& data, std::size_t& size);
 bool IsFileLocked(const std::wstring& path);
 std::string GetRegistryValue(const std::string& keyPath, const std::string& valueName);
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray = false);

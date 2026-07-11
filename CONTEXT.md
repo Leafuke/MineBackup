@@ -3,6 +3,10 @@
 ## 术语
 
 - **配置档（Profile）**：一组相互隔离、共享持久化根目录和单实例身份的 MineBackup 配置、历史、状态、缓存、运行时文件与工具。
+- **配置档根（Profile Root）**：由 `--data-dir` 或便携模式显式选择的完整配置档目录；其下按 config、data、state、cache、runtime、tools 和 logs 分区。
+- **AppPaths**：启动参数解析后建立的绝对路径集合，是配置、数据、状态、缓存、临时任务、工具、只读资源和日志位置的唯一运行时来源。
+- **便携模式（Portable Mode）**：Windows 或 AppImage 在应用相邻 `portable.flag` 明确存在时使用相邻 `MineBackupData` 配置档根的运行方式；macOS 不支持该标记。
+- **资源根（Resources Root）**：安装包或应用包内只读资源的位置；不得作为用户数据、缓存或下载组件的写入目标。
 - **Legacy v2**：MineBackup 1.15 的 camelCase `history.json`、`metadata.json` 和相邻 `<archive>.json` record；只允许由 v1.15 reader 解释。
 - **FolderRewind v3**：1.16 的 PascalCase `HistoryItem`、`state.json` 和 `records/<archive>.json`。
 - **迁移协调器（Migration Coordinator）**：永久存在的迁移流程边界，负责显式路径、迁移报告、恢复快照索引和受影响操作的写门禁；不解释旧格式，也不绘制 UI。

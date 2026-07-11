@@ -97,6 +97,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\app\AppState.cpp" />
+    <ClCompile Include="src\app\LaunchOptions.cpp" />
     <ClCompile Include="src\app\Globals.cpp" />
     <ClCompile Include="src\app\MineBackup.cpp" />
     <ClCompile Include="src\core\BackupManager.cpp" />
@@ -113,6 +114,7 @@
     <ClCompile Include="src\core\SpecialMode.cpp" />
     <ClCompile Include="src\core\TaskSystem.cpp" />
     <ClCompile Include="src\infra\AtomicFileWriter.cpp" />
+    <ClCompile Include="src\infra\AppPaths.cpp" />
     <ClCompile Include="src\infra\RotatingFileLog.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
@@ -141,6 +143,7 @@
     <ClInclude Include="src\app\AppState.h" />
     <ClInclude Include="src\app\DataModels.h" />
     <ClInclude Include="src\app\Globals.h" />
+    <ClInclude Include="src\app\LaunchOptions.h" />
     <ClInclude Include="src\app\MainUI.h" />
     <ClInclude Include="src\core\BackupManager.h" />
     <ClInclude Include="src\core\CloudSyncService.h" />
@@ -155,6 +158,7 @@
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\TaskSystem.h" />
     <ClInclude Include="src\infra\AtomicFileWriter.h" />
+    <ClInclude Include="src\infra\AppPaths.h" />
     <ClInclude Include="src\infra\RotatingFileLog.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
     <ClInclude Include="src\infra\ConfigManager.h" />

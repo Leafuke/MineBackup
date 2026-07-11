@@ -1,5 +1,7 @@
 ﻿#include "SettingsUIPrivate.h"
 
+#include "AppPaths.h"
+
 using namespace std;
 
 static bool IsAsciiOnlyPath(const wstring& value) {
@@ -211,8 +213,9 @@ void DrawPathSettings(Config& cfg) {
 
 	char zipBuf[256];
 	strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
-	if (filesystem::exists("7z.exe") && cfg.zipPath.empty()) {
-		cfg.zipPath = L"7z.exe";
+	const auto bundled7z = GetAppPaths().toolsRoot / L"7zip" / L"7z.exe";
+	if (filesystem::exists(bundled7z) && cfg.zipPath.empty()) {
+		cfg.zipPath = bundled7z.wstring();
 		ImGui::Text("%s", L("AUTODETECTED_7Z"));
 	}
 	else if (cfg.zipPath.empty()) {

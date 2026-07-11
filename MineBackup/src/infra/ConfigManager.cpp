@@ -1,5 +1,6 @@
 ﻿#include "ConfigManager.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
 #include "MigrationCoordinator.h"
@@ -171,12 +172,16 @@ void EnsureConfigIds() {
 	}
 }
 
-void LoadConfigs(const string& filename) {
+void LoadConfigs() {
+	LoadConfigs(GetAppPaths().ConfigFile());
+}
+
+void LoadConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
 	restoreWhitelist.clear();
-	ifstream in(filename.c_str(), ios::binary);
+	ifstream in(filename, ios::binary);
 	if (!in.is_open()) return;
 	string line1;
 	wstring line, section;
@@ -470,7 +475,11 @@ void LoadConfigs(const string& filename) {
 	}
 }
 
-bool SaveConfigs(const wstring& filename) {
+bool SaveConfigs() {
+	return SaveConfigs(GetAppPaths().ConfigFile());
+}
+
+bool SaveConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	const filesystem::path target(filename);
 

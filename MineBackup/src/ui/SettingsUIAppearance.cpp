@@ -1,6 +1,8 @@
 #include "SettingsUIPrivate.h"
 #include "HistoryManager.h"
 #include "CloudSyncService.h"
+#include "AppPaths.h"
+#include "imgui_style.h"
 
 using namespace std;
 
@@ -96,8 +98,10 @@ void DrawAppearanceSettings(Config& cfg) {
 	const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 	ImGui::SetNextItemWidth(300);
 	if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
-		if (cfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
-			OpenFolder(L"custom_theme.json");
+		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
+		if (cfg.theme == 7 && !filesystem::exists(customThemePath)) {
+			ImGuiTheme::WriteDefaultCustomTheme(customThemePath);
+			OpenFolder(customThemePath.wstring());
 		}
 		else {
 			ApplyTheme(cfg.theme);

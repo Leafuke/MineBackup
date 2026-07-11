@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "HistoryManager.h"
 #include "MigrationCoordinator.h"
+#include "AppPaths.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
@@ -411,7 +412,7 @@ namespace {
 	}
 
 	static bool AssertFolderRewindHistoryItem(ValidationContext& ctx, const Config& cfg, const MyFolder& world, const wstring& backupFile, const wstring& expectedBackupType) {
-		ifstream historyIn(filesystem::path(L"history.json"), ios::binary);
+		ifstream historyIn(GetAppPaths().HistoryFile(), ios::binary);
 		nlohmann::json historyRoot = nlohmann::json::parse(historyIn, nullptr, false);
 		if (!ctx.Require(!historyRoot.is_discarded() && historyRoot.is_array(), "[Validation] history.json parses as array.", "[Validation] history.json parse failed.")) return false;
 
@@ -691,7 +692,7 @@ namespace {
 			return false;
 		}
 
-		const filesystem::path sandboxRoot = filesystem::temp_directory_path() / L"MineBackup_CoreValidation" /
+		const filesystem::path sandboxRoot = GetAppPaths().runtimeRoot / L"MineBackup_CoreValidation" /
 			to_wstring(chrono::steady_clock::now().time_since_epoch().count());
 		ValidationCleanupGuard cleanup;
 		cleanup.sandboxRoot = sandboxRoot;

@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "Console.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "Globals.h"
 #include "json.hpp"
 
@@ -517,45 +518,21 @@ bool Extract7zToTempFile(std::wstring& extractedPath) {
     return false;
 }
 
-static bool CopyBundledFontToTemp(const fs::path& source, std::wstring& extractedPath) {
-    std::error_code ec;
-    if (!fs::exists(source, ec)) return false;
-
-    fs::path tempDir = fs::temp_directory_path(ec);
-    if (ec) {
-        extractedPath = source.wstring();
-        return true;
-    }
-
-    fs::path dest = tempDir / source.filename();
-    fs::copy_file(source, dest, fs::copy_options::overwrite_existing, ec);
-    if (!ec && fs::exists(dest, ec)) {
-        extractedPath = dest.wstring();
-        return true;
-    }
-
-    extractedPath = source.wstring();
-    return true;
-}
-
 bool ExtractFontToTempFile(std::wstring& extractedPath) {
-    fs::path exeDir = GetExecutableDirectory();
-    
+	const auto resourcesRoot = GetAppPaths().resourcesRoot;
     const fs::path bundledCandidates[] = {
-        exeDir / "fontawesome-sp.otf",
-        exeDir / "fa-solid-900.ttf",
-        exeDir / "fa-regular-400.ttf",
-        exeDir / "Assets" / "fontawesome-sp.otf",
-        exeDir / "../Resources/fontawesome-sp.otf",  // For .app bundles
-        exeDir / "../Resources/fa-solid-900.ttf",
-        exeDir / "../Resources/fa-regular-400.ttf",
-        exeDir / "../Resources/Assets/fontawesome-sp.otf"
+		resourcesRoot / "fontawesome-sp.otf",
+		resourcesRoot / "fa-solid-900.ttf",
+		resourcesRoot / "fa-regular-400.ttf",
+		resourcesRoot / "Assets" / "fontawesome-sp.otf"
     };
-    
-    for (const auto& p : bundledCandidates) {
-        if (CopyBundledFontToTemp(p, extractedPath)) return true;
-    }
-    
+	for (const auto& path : bundledCandidates) {
+		std::error_code error;
+		if (fs::is_regular_file(path, error)) {
+			extractedPath = path.wstring();
+			return true;
+		}
+	}
     return false;
 }
 

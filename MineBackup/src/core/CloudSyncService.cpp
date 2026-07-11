@@ -1,6 +1,7 @@
 #include "CloudSyncService.h"
 
 #include "ConfigManager.h"
+#include "AppPaths.h"
 #include "HistoryManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
@@ -336,7 +337,7 @@ namespace {
 	filesystem::path BuildTempFilePath(const wchar_t* prefix, const wchar_t* extension) {
 		wstringstream name;
 		name << prefix << L"_" << chrono::steady_clock::now().time_since_epoch().count() << extension;
-		return filesystem::temp_directory_path() / name.str();
+		return GetAppPaths().runtimeRoot / name.str();
 	}
 
 	CloudActiveHistoryManifest BuildActiveManifest(int configIndex) {
@@ -1370,7 +1371,7 @@ CloudCommandResult ExportConfigToCloud(const Config& config, Console& console) {
 	}
 
 	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_config", L".ini");
-	SaveConfigs(tempPath.wstring());
+	SaveConfigs(tempPath);
 	CloudCommandResult result = ExecuteCommandWithRetry(
 		config,
 		configIndex,
@@ -1415,7 +1416,7 @@ CloudCommandResult ImportConfigFromCloud(const Config& config, Console& console)
 		65);
 
 	if (result.success) {
-		LoadConfigs(wstring_to_utf8(tempPath.wstring()));
+		LoadConfigs(tempPath);
 		SaveConfigs();
 		result.message = utf8_to_wstring(L("CLOUD_CONFIG_IMPORT_SUCCEEDED"));
 	}
