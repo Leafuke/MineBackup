@@ -72,7 +72,10 @@
 	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
-	<ClCompile Include="src\core\MigrationService.cpp">
+	<ClCompile Include="src\core\MigrationCoordinator.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\V15MigrationAdapter.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
     <ClCompile Include="src\core\GameSessionManager.cpp">
@@ -86,6 +89,12 @@
     </ClCompile>
     <ClCompile Include="src\core\TaskSystem.cpp">
       <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\AtomicFileWriter.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\RotatingFileLog.cpp">
+      <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\Broadcast.cpp">
       <Filter>src\infra</Filter>
@@ -103,6 +112,9 @@
       <Filter>src\platform</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\HistoryUI.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\MigrationReportUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\SettingsUIAppearance.cpp">
@@ -188,7 +200,10 @@
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
-	<ClInclude Include="src\core\MigrationService.h">
+	<ClInclude Include="src\core\MigrationCoordinator.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\V15MigrationAdapter.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
     <ClInclude Include="src\core\HistoryManager.h">
@@ -196,6 +211,12 @@
     </ClInclude>
     <ClInclude Include="src\core\TaskSystem.h">
       <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\AtomicFileWriter.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\RotatingFileLog.h">
+      <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\Broadcast.h">
       <Filter>src\infra</Filter>
@@ -222,6 +243,9 @@
       <Filter>src\platform</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\IconsFontAwesome6.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\MigrationReportUI.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\SettingsUI.h">

@@ -368,7 +368,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
 	filesystem::path targetBackupPath = sourceDir / backupFile;
 	const int resolvedConfigIndex = ResolveConfigIndexForCloud(config);
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, resolvedConfigIndex, worldName, destinationFolder.wstring());
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, resolvedConfigIndex, worldName, destinationFolder.wstring());
 	if ((migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded)
 		&& IsIncrementalBackupType(backupFile) && restoreMethod == 0) {
 		console.AddLog("[Error] Exact Smart restore is unavailable until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());

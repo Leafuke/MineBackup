@@ -17,7 +17,11 @@
 #include "BackupManager.h"
 #include "CloudSyncService.h"
 #include "CoreValidation.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
+#include "RotatingFileLog.h"
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+#include "V15MigrationAdapter.h"
+#endif
 
 #ifdef _WIN32
 #include <conio.h>
@@ -253,6 +257,11 @@ int main(int argc, char** argv)
 	SetWorkingDirectoryToExecutable();
 	#endif
 #endif
+	MigrationCoordinator::ConfigurePaths(
+		MigrationCoordinator::BuildLegacyMigrationPaths(filesystem::current_path()));
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+	V15MigrationAdapter::Install();
+#endif
 	LoadConfigs("config.ini");
 
 #ifdef _WIN32
@@ -280,7 +289,7 @@ int main(int argc, char** argv)
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
 	}
 
-	MigrationService::RunStartupMigration();
+	MigrationCoordinator::RunStartupMigration();
 	CheckForConfigConflicts();
 	LoadHistory();
 	if (g_CheckForUpdates) {
@@ -348,15 +357,10 @@ int main(int argc, char** argv)
 		RunSpecialMode(g_appState.currentConfigIndex);
 
 		// 将捕获到的所有日志写入文件
-		ofstream log_file("special_mode_log.txt", ios::app | ios::binary);
-		if (log_file.is_open()) {
-			for (const char* item : console.Items) {
-				log_file << (item) << endl;
-			}
-			log_file << L("SPECIAL_MODE_LOG_END") << endl << endl;
-			log_file.close();
-		}
-		else {
+		ostringstream specialModeLog;
+		for (const char* item : console.Items) specialModeLog << item << '\n';
+		specialModeLog << L("SPECIAL_MODE_LOG_END") << "\n\n";
+		if (!RotatingFileLog::Append("special_mode_log.txt", specialModeLog.str())) {
 			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
 		}
 
@@ -738,12 +742,12 @@ int main(int argc, char** argv)
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		if (MigrationService::ShouldShowStartupSummary()) {
+		if (MigrationCoordinator::ShouldShowStartupSummary()) {
 			ImGui::OpenPopup("MineBackup 1.15 migration summary");
 		}
 		if (ImGui::BeginPopupModal("MineBackup 1.15 migration summary", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextWrapped("MineBackup converted compatible 1.15 data without renaming archive files. Recovery snapshots were retained.");
-			const auto migrationReport = MigrationService::GetMigrationReport();
+			const auto migrationReport = MigrationCoordinator::GetMigrationReport();
 			for (const auto& unit : migrationReport.units) {
 				const char* state = unit.status == MigrationStatus::Succeeded ? "Succeeded" : unit.status == MigrationStatus::Degraded ? "Degraded"
 					: unit.status == MigrationStatus::Failed ? "Failed" : unit.status == MigrationStatus::Pending ? "Pending" : "Not needed";
@@ -751,7 +755,7 @@ int main(int argc, char** argv)
 				if (!unit.message.empty()) ImGui::TextWrapped("%s", wstring_to_utf8(unit.message).c_str());
 			}
 			if (ImGui::Button("OK")) {
-				MigrationService::DismissStartupSummary();
+				MigrationCoordinator::DismissStartupSummary();
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -2207,14 +2211,10 @@ int main(int argc, char** argv)
 		SaveConfigs();
 
 	// 将捕获到的所有日志写入文件
-	ofstream log_file("auto_log.txt", ios::app | ios::binary);
-	if (log_file.is_open()) {
-		for (const char* item : console.Items) {
-			log_file << (item) << endl;
-		}
-		log_file << "=== End ===" << endl << endl;
-		log_file.close();
-	}
+	ostringstream automaticLog;
+	for (const char* item : console.Items) automaticLog << item << '\n';
+	automaticLog << "=== End ===\n\n";
+	RotatingFileLog::Append("auto_log.txt", automaticLog.str());
 
 #ifdef _WIN32
 	RemoveTrayIcon();

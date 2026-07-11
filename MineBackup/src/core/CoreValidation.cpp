@@ -7,7 +7,7 @@
 #include "FolderRewindMetadataStore.h"
 #include "Globals.h"
 #include "HistoryManager.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
@@ -615,9 +615,9 @@ namespace {
 		cfg.name = "LegacyCloudConfig";
 		cfg.cloudSyncEnabled = true;
 		cfg.rcloneRemotePath = L"test:FolderRewind";
-		cfg.configId = MigrationService::GenerateLegacyConfigId(cfg, kValidationConfigIndex);
+		cfg.configId = MigrationCoordinator::GenerateLegacyConfigId(cfg, kValidationConfigIndex);
 		Config secondDevice = cfg;
-		if (!ctx.Require(cfg.configId == MigrationService::GenerateLegacyConfigId(secondDevice, 999),
+		if (!ctx.Require(cfg.configId == MigrationCoordinator::GenerateLegacyConfigId(secondDevice, 999),
 			"[Validation] Legacy ConfigId is deterministic across devices.", "[Validation] Legacy ConfigId is not deterministic.")) return false;
 		g_appState.configs[kValidationConfigIndex] = cfg;
 
@@ -656,7 +656,7 @@ namespace {
 		writeRecord(fullName, "Full", L"");
 		writeRecord(smartName, "Smart", fullName);
 
-		const MigrationUnitResult result = MigrationService::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
+		const MigrationUnitResult result = MigrationCoordinator::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
 		if (!ctx.Require(result.status == MigrationStatus::Succeeded, "[Validation] 1.15 metadata migrated.", "[Validation] 1.15 metadata migration failed.")) return false;
 		const filesystem::path snapshotRoot(result.snapshotPath);
 		if (!ctx.Require(filesystem::exists(snapshotRoot / L"metadata.json")
@@ -665,9 +665,9 @@ namespace {
 			"[Validation] Legacy metadata recovery snapshot contains summary and records.",
 			"[Validation] Legacy metadata recovery snapshot is incomplete.")) return false;
 		if (!ctx.Require(
-			MigrationService::HigherPriorityStatus(MigrationStatus::Succeeded, MigrationStatus::Pending) == MigrationStatus::Pending
-			&& MigrationService::HigherPriorityStatus(MigrationStatus::Pending, MigrationStatus::Degraded) == MigrationStatus::Degraded
-			&& MigrationService::HigherPriorityStatus(MigrationStatus::Degraded, MigrationStatus::Failed) == MigrationStatus::Failed,
+			MigrationCoordinator::HigherPriorityStatus(MigrationStatus::Succeeded, MigrationStatus::Pending) == MigrationStatus::Pending
+			&& MigrationCoordinator::HigherPriorityStatus(MigrationStatus::Pending, MigrationStatus::Degraded) == MigrationStatus::Degraded
+			&& MigrationCoordinator::HigherPriorityStatus(MigrationStatus::Degraded, MigrationStatus::Failed) == MigrationStatus::Failed,
 			"[Validation] Migration report priority is Failed > Degraded > Pending > Succeeded.",
 			"[Validation] Migration report priority is incorrect.")) return false;
 		FolderRewindFormat::MetadataState state;

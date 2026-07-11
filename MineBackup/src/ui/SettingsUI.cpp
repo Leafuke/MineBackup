@@ -1,6 +1,6 @@
 ﻿#include "SettingsUI.h"
 #include "SettingsUIPrivate.h"
-#include "MigrationService.h"
+#include "MigrationReportUI.h"
 
 using namespace std;
 
@@ -20,7 +20,7 @@ void ShowSettingsWindowV2() {
     ImGui::Separator();
     ImGui::Spacing();
 
-	MigrationService::DrawMigrationSettings();
+	MigrationReportUI::DrawSettings();
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();

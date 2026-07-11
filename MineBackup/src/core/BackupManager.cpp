@@ -10,7 +10,7 @@
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -1150,7 +1150,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		);
 		return;
 	}
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, folder.configIndex, folder.name, folder.path);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, folder.configIndex, folder.name, folder.path);
 	const bool forceFullForMigration = migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded;
 	if (migration.status == MigrationStatus::Failed) {
 		console.AddLog("[Warning] Legacy metadata migration failed; this backup will establish a new Full chain: %s", wstring_to_utf8(migration.message).c_str());
@@ -1650,7 +1650,7 @@ void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelet
 		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "history deletion", console);
 		return;
 	}
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
 	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
 		console.AddLog("[Error] Local archive deletion is blocked until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
 		return;
@@ -1705,7 +1705,7 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
 	console.AddLog(L("LOG_SAFE_DELETE_START"), wstring_to_utf8(entryToDelete.backupFile).c_str());
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
 	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
 		console.AddLog("[Error] Safe delete requires a complete metadata migration: %s", wstring_to_utf8(migration.message).c_str());
 		return;

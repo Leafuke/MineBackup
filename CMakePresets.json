@@ -11,6 +11,14 @@
       "cacheVariables": { "MINEBACKUP_ENABLE_V15_MIGRATION": "ON" }
     },
     {
+      "name": "windows-msvc-x64-no-v15",
+      "displayName": "Windows MSVC x64 without v1.15 adapter",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-msvc-x64-no-v15",
+      "cacheVariables": { "MINEBACKUP_ENABLE_V15_MIGRATION": "OFF" }
+    },
+    {
       "name": "linux-x64",
       "displayName": "Linux x86_64",
       "generator": "Ninja",
@@ -38,12 +46,23 @@
       "name": "windows-msvc-x64-release",
       "configurePreset": "windows-msvc-x64",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-x64-no-v15-release",
+      "configurePreset": "windows-msvc-x64-no-v15",
+      "configuration": "Release"
     }
   ],
   "testPresets": [
     {
       "name": "windows-msvc-x64-release",
       "configurePreset": "windows-msvc-x64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-msvc-x64-no-v15-release",
+      "configurePreset": "windows-msvc-x64-no-v15",
       "configuration": "Release",
       "output": { "outputOnFailure": true }
     },

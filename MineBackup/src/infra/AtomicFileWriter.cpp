@@ -1,0 +1,270 @@
+#include "AtomicFileWriter.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <fstream>
+#include <limits>
+#include <mutex>
+#include <system_error>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+using namespace std;
+
+namespace AtomicFileWriter {
+namespace {
+
+atomic<unsigned long long> g_counter{0};
+mutex g_writeMutex;
+
+wstring ErrorText(const wchar_t* operation, const error_code& error = {}) {
+    wstring text(operation);
+    if (error) {
+        const string message = error.message();
+        text += L": ";
+        text.append(message.begin(), message.end());
+    }
+    return text;
+}
+
+bool IsLinkOrReparsePoint(const filesystem::path& path) {
+    error_code error;
+    if (!filesystem::exists(path, error) || error) return false;
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    return filesystem::is_symlink(filesystem::symlink_status(path, error));
+#endif
+}
+
+bool HasLinkOrReparsePointInExistingPath(const filesystem::path& path) {
+    filesystem::path cursor;
+    for (const auto& component : path) {
+        cursor /= component;
+        error_code error;
+        if (!filesystem::exists(cursor, error)) {
+            if (error) return true;
+            continue;
+        }
+        if (IsLinkOrReparsePoint(cursor)) return true;
+    }
+    return false;
+}
+
+bool SyncFile(const filesystem::path& path) {
+#ifdef _WIN32
+    HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    const bool success = FlushFileBuffers(handle) != FALSE;
+    CloseHandle(handle);
+    return success;
+#else
+    const int descriptor = open(path.c_str(), O_RDONLY);
+    if (descriptor < 0) return false;
+    const bool success = fsync(descriptor) == 0;
+    close(descriptor);
+    return success;
+#endif
+}
+
+bool SyncDirectory(const filesystem::path& path) {
+#ifdef _WIN32
+    (void)path;
+    return true;
+#else
+    const int descriptor = open(path.c_str(), O_RDONLY | O_DIRECTORY);
+    if (descriptor < 0) return false;
+    const bool success = fsync(descriptor) == 0;
+    close(descriptor);
+    return success;
+#endif
+}
+
+bool Replace(const filesystem::path& source, const filesystem::path& target, error_code& error) {
+#ifdef _WIN32
+    if (MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        error.clear();
+        return true;
+    }
+    error = error_code(static_cast<int>(GetLastError()), system_category());
+    return false;
+#else
+    filesystem::rename(source, target, error);
+    return !error;
+#endif
+}
+
+filesystem::path UniqueSibling(const filesystem::path& target, const wchar_t* suffix) {
+#ifdef _WIN32
+    const auto process = static_cast<unsigned long long>(GetCurrentProcessId());
+#else
+    const auto process = static_cast<unsigned long long>(getpid());
+#endif
+    return target.parent_path() /
+        (target.filename().wstring() + suffix + L"." + to_wstring(process) + L"." + to_wstring(++g_counter));
+}
+
+void RemoveQuietly(const filesystem::path& path);
+
+bool WriteExclusiveTemporary(
+    const filesystem::path& target, const string& content, filesystem::path& temporary, wstring& errorText) {
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        temporary = UniqueSibling(target, L".tmp");
+#ifdef _WIN32
+        HANDLE handle = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_TEMPORARY, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            if (GetLastError() == ERROR_FILE_EXISTS || GetLastError() == ERROR_ALREADY_EXISTS) continue;
+            errorText = L"Could not exclusively create the atomic write temporary file.";
+            return false;
+        }
+        bool success = true;
+        size_t offset = 0;
+        while (offset < content.size()) {
+            const size_t remaining = content.size() - offset;
+            const size_t maximumChunk = static_cast<size_t>((numeric_limits<DWORD>::max)());
+            const DWORD chunk = static_cast<DWORD>(remaining < maximumChunk ? remaining : maximumChunk);
+            DWORD written = 0;
+            if (!WriteFile(handle, content.data() + offset, chunk, &written, nullptr) || written != chunk) {
+                success = false;
+                break;
+            }
+            offset += written;
+        }
+        if (success) success = FlushFileBuffers(handle) != FALSE;
+        CloseHandle(handle);
+#else
+        const int descriptor = open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+        if (descriptor < 0) {
+            if (errno == EEXIST) continue;
+            errorText = L"Could not exclusively create the atomic write temporary file.";
+            return false;
+        }
+        bool success = true;
+        size_t offset = 0;
+        while (offset < content.size()) {
+            const ssize_t written = write(descriptor, content.data() + offset, content.size() - offset);
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) {
+                success = false;
+                break;
+            }
+            offset += static_cast<size_t>(written);
+        }
+        if (success) success = fsync(descriptor) == 0;
+        close(descriptor);
+#endif
+        if (success) return true;
+        RemoveQuietly(temporary);
+        errorText = L"Could not write and synchronize the complete atomic temporary file.";
+        return false;
+    }
+    errorText = L"Could not allocate a unique atomic write temporary file.";
+    return false;
+}
+
+bool ReadExactly(const filesystem::path& path, const string& expected) {
+    ifstream input(path, ios::binary);
+    if (!input.is_open()) return false;
+    string actual((istreambuf_iterator<char>(input)), istreambuf_iterator<char>());
+    return (input.good() || input.eof()) && actual == expected;
+}
+
+void RemoveQuietly(const filesystem::path& path) {
+    error_code ignored;
+    filesystem::remove(path, ignored);
+}
+
+} // namespace
+
+WriteResult WriteText(const filesystem::path& requestedTarget, const string& content, const WriteOptions& options) {
+    lock_guard<mutex> writeLock(g_writeMutex);
+    WriteResult result;
+    if (requestedTarget.empty()) {
+        result.error = L"The atomic write target is empty.";
+        return result;
+    }
+
+    error_code error;
+    filesystem::path target = filesystem::absolute(requestedTarget, error).lexically_normal();
+    if (error) {
+        result.error = ErrorText(L"Could not resolve the atomic write target", error);
+        return result;
+    }
+
+    const filesystem::path parent = target.parent_path();
+    if (HasLinkOrReparsePointInExistingPath(target)) {
+        result.error = L"Atomic writes do not follow a symlink or reparse-point target.";
+        return result;
+    }
+    if (options.createParentDirectories) {
+        filesystem::create_directories(parent, error);
+        if (error) {
+            result.error = ErrorText(L"Could not create the atomic write directory", error);
+            return result;
+        }
+    }
+    if (HasLinkOrReparsePointInExistingPath(target)) {
+        result.error = L"Atomic writes do not follow a symlink or reparse-point target.";
+        return result;
+    }
+
+    filesystem::path temporary;
+    if (!WriteExclusiveTemporary(target, content, temporary, result.error)) {
+        return result;
+    }
+
+    if (!ReadExactly(temporary, content)) {
+        result.error = L"The atomic temporary file failed read-back verification.";
+        RemoveQuietly(temporary);
+        return result;
+    }
+
+    const bool targetExists = filesystem::exists(target, error) && !error;
+    if (error) {
+        result.error = ErrorText(L"Could not inspect the atomic write target", error);
+        RemoveQuietly(temporary);
+        return result;
+    }
+
+    if (options.keepBackup && targetExists) {
+        result.backupPath = target.wstring() + L".bak";
+        const filesystem::path backupTemporary = UniqueSibling(result.backupPath, L".tmp");
+        filesystem::copy_file(target, backupTemporary, filesystem::copy_options::overwrite_existing, error);
+        if (error || !SyncFile(backupTemporary)) {
+            result.error = ErrorText(L"Could not preserve the previous file as a backup", error);
+            RemoveQuietly(backupTemporary);
+            RemoveQuietly(temporary);
+            return result;
+        }
+        if (!Replace(backupTemporary, result.backupPath, error)) {
+            result.error = ErrorText(L"Could not commit the previous-file backup", error);
+            RemoveQuietly(backupTemporary);
+            RemoveQuietly(temporary);
+            return result;
+        }
+    }
+
+    if (!Replace(temporary, target, error)) {
+        result.error = ErrorText(L"Could not atomically replace the target", error);
+        RemoveQuietly(temporary);
+        return result;
+    }
+    if (!SyncDirectory(parent)) {
+        result.error = L"The target was replaced but its parent directory could not be synchronized.";
+        return result;
+    }
+
+    result.success = true;
+    return result;
+}
+
+} // namespace AtomicFileWriter

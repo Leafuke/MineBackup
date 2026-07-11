@@ -5,7 +5,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "text_to_text.h"
@@ -692,7 +692,7 @@ namespace {
 				filesystem::copy_file(paths.metadataRecordLocalPath, legacyRecord, filesystem::copy_options::overwrite_existing, migrateEc);
 			filesystem::remove(paths.metadataStateLocalPath, migrateEc);
 			filesystem::remove(paths.metadataRecordLocalPath, migrateEc);
-			const MigrationUnitResult migrated = MigrationService::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
+			const MigrationUnitResult migrated = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
 			if (migrated.status == MigrationStatus::Failed || migrated.status == MigrationStatus::Degraded)
 				warningMessage = L"Downloaded legacy metadata could not be migrated completely: " + migrated.message;
 		}
@@ -717,7 +717,7 @@ namespace {
 
 	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult) {
 		vector<HistoryEntry> entries;
-		const MigrationUnitResult cloudGate = MigrationService::EnsureCloudMigrated(configIndex);
+		const MigrationUnitResult cloudGate = MigrationCoordinator::EnsureCloudMigrated(configIndex);
 		if (cloudGate.status == MigrationStatus::Failed) {
 			outResult.success = false;
 			outResult.message = cloudGate.message;
@@ -750,7 +750,7 @@ namespace {
 				if (hasUnmapped || entries.size() != root.size()) {
 					outResult.success = false;
 					outResult.message = L"Legacy cloud history contains entries that cannot be mapped safely; remote data was not changed.";
-					MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed, outResult.message);
+					MigrationCoordinator::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed, outResult.message);
 				}
 				else {
 					const wstring stamp = FolderRewindFormat::MakeLocalTimestampString();
@@ -761,7 +761,7 @@ namespace {
 					if (!snapshotResult.success) {
 						outResult = snapshotResult;
 						outResult.message = L"Could not create the remote 1.15 history snapshot; migration was aborted.";
-						MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed, outResult.message);
+						MigrationCoordinator::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed, outResult.message);
 					}
 					else {
 						nlohmann::json converted = nlohmann::json::array();
@@ -778,9 +778,9 @@ namespace {
 							convertedOut.close();
 							outResult = ExecuteCommandWithRetry(config, configIndex, console,
 								BuildRcloneCopyToCommand(config, tempPath.wstring(), remoteHistoryPath), "CLOUD_STATUS_ANALYZING", 28);
-							if (outResult.success) MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Succeeded,
+							if (outResult.success) MigrationCoordinator::RecordCloudMigrationResult(configIndex, MigrationStatus::Succeeded,
 								L"Legacy cloud history migrated; archive objects were left in place.", backupRemote);
-							else MigrationService::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed,
+							else MigrationCoordinator::RecordCloudMigrationResult(configIndex, MigrationStatus::Failed,
 								L"Uploading converted cloud history failed; the recovery snapshot is intact.", backupRemote);
 						}
 					}
@@ -1165,7 +1165,7 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 CloudCommandResult UploadHistoryEntry(const Config& config, int configIndex, const HistoryEntry& entry, Console& console) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_PREPARING")));
-	const MigrationUnitResult localMigration = MigrationService::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
+	const MigrationUnitResult localMigration = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
 	if (localMigration.status == MigrationStatus::Failed || localMigration.status == MigrationStatus::Degraded) {
 		CloudCommandResult blocked;
 		blocked.success = false;

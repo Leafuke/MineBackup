@@ -105,18 +105,22 @@
     <ClCompile Include="src\core\FolderRewindFormat.cpp" />
     <ClCompile Include="src\core\FolderRewindHistoryStore.cpp" />
     <ClCompile Include="src\core\FolderRewindMetadataStore.cpp" />
-	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp" />
-	<ClCompile Include="src\core\MigrationService.cpp" />
+	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
+	<ClCompile Include="src\core\MigrationCoordinator.cpp" />
+	<ClCompile Include="src\core\V15MigrationAdapter.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
     <ClCompile Include="src\core\HistoryManager.cpp" />
     <ClCompile Include="src\core\SpecialMode.cpp" />
     <ClCompile Include="src\core\TaskSystem.cpp" />
+    <ClCompile Include="src\infra\AtomicFileWriter.cpp" />
+    <ClCompile Include="src\infra\RotatingFileLog.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
     <ClCompile Include="src\infra\Console.cpp" />
     <ClCompile Include="src\infra\i18n.cpp" />
     <ClCompile Include="src\platform\Platform_win.cpp" />
     <ClCompile Include="src\ui\HistoryUI.cpp" />
+    <ClCompile Include="src\ui\MigrationReportUI.cpp" />
     <ClCompile Include="src\ui\SettingsUIAppearance.cpp" />
     <ClCompile Include="src\ui\SettingsUIConfig.cpp" />
     <ClCompile Include="src\ui\SettingsUI.cpp" />
@@ -146,9 +150,12 @@
     <ClInclude Include="src\core\FolderRewindHistoryStore.h" />
     <ClInclude Include="src\core\FolderRewindMetadataStore.h" />
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h" />
-	<ClInclude Include="src\core\MigrationService.h" />
+	<ClInclude Include="src\core\MigrationCoordinator.h" />
+	<ClInclude Include="src\core\V15MigrationAdapter.h" />
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\TaskSystem.h" />
+    <ClInclude Include="src\infra\AtomicFileWriter.h" />
+    <ClInclude Include="src\infra\RotatingFileLog.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
     <ClInclude Include="src\infra\ConfigManager.h" />
     <ClInclude Include="src\infra\Console.h" />
@@ -158,6 +165,7 @@
     <ClInclude Include="src\platform\Platform_macos.h" />
     <ClInclude Include="src\platform\Platform_win.h" />
     <ClInclude Include="src\ui\IconsFontAwesome6.h" />
+    <ClInclude Include="src\ui\MigrationReportUI.h" />
     <ClInclude Include="src\ui\SettingsUI.h" />
     <ClInclude Include="src\ui\SettingsUIPrivate.h" />
     <ClInclude Include="src\ui\imgui-all.h" />
