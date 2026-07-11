@@ -375,4 +375,6 @@ References/
 !MineBackup/Assets/fontawesome-sp.otf
 superpowers/
 .superpowers/
-docs/adr
+# CMake out-of-source build directories
+/build/
+/build-*/

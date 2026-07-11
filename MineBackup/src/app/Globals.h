@@ -6,6 +6,7 @@
 // 定义在 MineBackup.cpp 中，其他文件通过 #include "Globals.h" 访问
 
 #include "AppState.h"
+#include "MineBackupVersion.h"
 #include "imgui.h"
 #include <atomic>
 #include <string>
@@ -78,7 +79,7 @@ struct SpecialTaskRuntimeState {
 };
 
 struct AppGlobalState {
-	std::string currentVersion = "1.15.0";
+	std::string currentVersion = MINEBACKUP_VERSION_STRING;
 	AppWindowState window;
 	AppUpdateState update;
 	AppUiState ui;
