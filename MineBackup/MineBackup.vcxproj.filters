@@ -93,6 +93,9 @@
     <ClCompile Include="src\core\TaskSystem.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\TaskCoordinator.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\AtomicFileWriter.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -112,6 +115,9 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\ProcessRunner.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\Broadcast.cpp">
@@ -233,6 +239,9 @@
     <ClInclude Include="src\core\TaskSystem.h">
       <Filter>src\core</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\TaskCoordinator.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\AtomicFileWriter.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -252,6 +261,9 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\ProcessRunner.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\InterruptedTaskRecovery.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\Broadcast.h">

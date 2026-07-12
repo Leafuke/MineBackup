@@ -1,4 +1,5 @@
 #include "CoreValidation.h"
+#include "TaskCoordinator.h"
 
 #include "BackupManager.h"
 #include "ConfigManager.h"
@@ -745,7 +746,7 @@ void StartCoreValidationAsync(bool automatic, Console& console) {
 	}
 
 	console.AddLog("[Info] [Validation] %s", automatic ? L("VAL_INFO_QUEUED_AUTO") : L("VAL_INFO_QUEUED_MANUAL"));
-	thread([automatic, &console]() {
+	if (!TaskCoordinator::Instance().Submit(L"core-validation", {L"validation"}, [automatic, &console](stop_token) {
 		bool passed = false;
 		try {
 			passed = RunCoreValidation(console, automatic);
@@ -759,5 +760,8 @@ void StartCoreValidationAsync(bool automatic, Console& console) {
 		SaveConfigs();
 		console.AddLog("[Info] [Validation] %s", passed ? L("VAL_INFO_PASSED") : L("VAL_INFO_FAILED_RETRY"));
 		g_CoreValidationRunning.store(false);
-	}).detach();
+	})) {
+		g_CoreValidationRunning.store(false);
+		console.AddLog("[Error] [Validation] Task coordinator is shutting down.");
+	}
 }

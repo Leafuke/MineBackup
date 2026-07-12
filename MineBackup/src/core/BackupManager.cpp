@@ -13,6 +13,7 @@
 #include "FolderRewindMetadataStore.h"
 #include "MigrationCoordinator.h"
 #include "ProcessRunner.h"
+#include "TaskCoordinator.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -27,6 +28,20 @@
 using namespace std;
 
 namespace {
+
+class ScopedRuntimeArtifact {
+public:
+	explicit ScopedRuntimeArtifact(filesystem::path path) : path_(std::move(path)) {}
+	~ScopedRuntimeArtifact() {
+		error_code ignored;
+		filesystem::remove_all(path_, ignored);
+	}
+	ScopedRuntimeArtifact(const ScopedRuntimeArtifact&) = delete;
+	ScopedRuntimeArtifact& operator=(const ScopedRuntimeArtifact&) = delete;
+
+private:
+	filesystem::path path_;
+};
 
 ProcessSpec MakeInternalProcess(
 	const filesystem::path& executable,
@@ -1403,6 +1418,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
     filesystem::path tempDir = GetAppPaths().runtimeRoot /
 		(L"MineBackup_Filelist_" + FolderRewindFormat::GenerateGuidString());
+	ScopedRuntimeArtifact tempDirCleanup(tempDir);
 	wstring filelist_path;
 	if (!files_to_backup.empty()) {
 		filesystem::create_directories(tempDir);
@@ -1978,32 +1994,27 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 }
 
 // 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, atomic<bool>& stop_flag) {
-	auto key = make_pair(configIdx, worldIdx);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, stop_token stopToken) {
 	console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
 
-	while (true) {
-		// 等待指定的时间，但每秒检查一次是否需要停止
-		for (int i = 0; i < intervalMinutes * 60; ++i) {
-			if (stop_flag) { // 或者 stop_flag.load()
-				console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
-				return; // 线程安全地退出
-			}
-			this_thread::sleep_for(chrono::seconds(1));
+	while (!stopToken.stop_requested()) {
+		mutex waitMutex;
+		condition_variable_any waitCondition;
+		unique_lock waitLock(waitMutex);
+		if (waitCondition.wait_for(waitLock, stopToken, chrono::minutes(intervalMinutes), [] { return false; })) {
+			continue;
 		}
-
-		// 如果在长时间的等待后，发现需要停止，则不执行备份直接退出
-		if (stop_flag) {
+		if (stopToken.stop_requested()) {
 			console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
 			return;
 		}
 
-		// 时间到了，开始备份
 		console->AddLog(L("LOG_AUTOBACKUP_ROUTINE"), worldIdx);
+		MyFolder folder;
 		{
 			lock_guard<mutex> lock(g_appState.configsMutex);
 			if (g_appState.configs.count(configIdx) && worldIdx >= 0 && worldIdx < g_appState.configs[configIdx].worlds.size()) {
-				MyFolder folder = {
+				folder = {
 					JoinPath(g_appState.configs[configIdx].saveRoot, g_appState.configs[configIdx].worlds[worldIdx].first).wstring(),
 					g_appState.configs[configIdx].worlds[worldIdx].first,
 					g_appState.configs[configIdx].worlds[worldIdx].second,
@@ -2011,18 +2022,15 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 					configIdx,
 					worldIdx
 				};
-				DoBackup(folder, *console);
 			}
 			else {
 				console->AddLog(L("ERROR_INVALID_WORLD_IN_TASK"), configIdx, worldIdx);
-				// 任务无效，退出或移除
-				lock_guard<mutex> lock2(g_appState.task_mutex);
-				if (g_appState.g_active_auto_backups.count(key)) {
-					g_appState.g_active_auto_backups.erase(key);
-				}
 				return;
 			}
 		}
+		TaskCoordinator::Instance().Submit(L"automatic backup run",
+			{ TaskCoordinator::WorldResourceKey(folder.config.configId, folder.path) },
+			[folder, console](stop_token) { DoBackup(folder, *console); });
 	}
 }
 
@@ -2030,8 +2038,9 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 	console.AddLog(L("LOG_EXPORT_STARTED"), wstring_to_utf8(worldName).c_str());
 
 	// 准备临时文件和路径
-	filesystem::path temp_export_dir = GetAppPaths().runtimeRoot / L"MineBackup_Export" /
-		FolderRewindFormat::SanitizePathSegment(worldName);
+	filesystem::path temp_export_dir = GetAppPaths().runtimeRoot /
+		(L"MineBackup_Export_" + FolderRewindFormat::GenerateGuidString());
+	ScopedRuntimeArtifact tempExportCleanup(temp_export_dir);
 	filesystem::path readme_path = temp_export_dir / L"readme.txt";
 
 	try {
@@ -2076,7 +2085,6 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 		if (files_to_export.empty()) {
 			console.AddLog("[Error] No files left to export after applying blacklist.");
-			filesystem::remove_all(temp_export_dir);
 			return;
 		}
 
@@ -2117,8 +2125,6 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		console.AddLog("[Error] An exception occurred during export: %s", e.what());
 	}
 
-	// 清理临时目录
-	filesystem::remove_all(temp_export_dir);
 }
 
 

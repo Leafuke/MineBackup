@@ -8,6 +8,7 @@
 #include "FolderRewindMetadataStore.h"
 #include "MigrationCoordinator.h"
 #include "ProcessRunner.h"
+#include "TaskCoordinator.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "text_to_text.h"
@@ -966,14 +967,15 @@ bool QueueUploadAfterBackup(const Config& config, int configIndex, const MyFolde
 	const int configIndexCopy = configIndex;
 	const HistoryEntry entryCopy = historyEntry;
 
-	thread([configCopy, configIndexCopy, entryCopy, &console]() {
+	return TaskCoordinator::Instance().Submit(L"cloud-upload-after-backup",
+		{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+		[configCopy, configIndexCopy, entryCopy, &console](stop_token) {
 		unique_lock<mutex> lock(g_cloudMutex);
 		SetCloudRuntimeState(configIndexCopy, true, 5, utf8_to_wstring(L("CLOUD_STATUS_PREPARING")));
 		CloudCommandResult result = UploadHistoryEntryNoLock(configCopy, configIndexCopy, entryCopy, console);
 		UpdateConfigCloudLastResult(configIndexCopy, result);
 		SetCloudRuntimeState(configIndexCopy, false, 100, result.message, result.message);
-	}).detach();
-	return true;
+	});
 }
 
 bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int configIndex, const char* reason, Console& console) {
@@ -982,17 +984,19 @@ bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int con
 	}
 
 	const Config configCopy = config;
-	thread([configCopy, configIndex, reason, &console]() {
+	const string reasonCopy = reason ? reason : "";
+	return TaskCoordinator::Instance().Submit(L"cloud-history-sync",
+		{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+		[configCopy, configIndex, reasonCopy, &console](stop_token) {
 		unique_lock<mutex> lock(g_cloudMutex);
 		SetCloudRuntimeState(configIndex, true, 5, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_HISTORY")));
 		CloudCommandResult result = UploadConfigurationHistorySnapshotNoLock(configCopy, configIndex, console);
 		UpdateConfigCloudLastResult(configIndex, result);
-		if (result.success && reason && *reason) {
-			console.AddLog(L("CLOUD_BACKGROUND_HISTORY_SYNC_DONE"), reason);
+		if (result.success && !reasonCopy.empty()) {
+			console.AddLog(L("CLOUD_BACKGROUND_HISTORY_SYNC_DONE"), reasonCopy.c_str());
 		}
 		SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
-	}).detach();
-	return true;
+	});
 }
 
 CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configIndex, Console& console) {

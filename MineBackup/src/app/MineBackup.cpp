@@ -11,6 +11,8 @@
 #include "AppPaths.h"
 #include "LaunchOptions.h"
 #include "TaskSystem.h"
+#include "TaskCoordinator.h"
+#include "InterruptedTaskRecovery.h"
 #include "PlatformCompat.h"
 #include "Console.h"
 #include "ConfigManager.h"
@@ -210,7 +212,7 @@ wstring SanitizeFileName(const wstring& input);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 
-void GameSessionWatcherThread();
+void GameSessionWatcherThread(std::stop_token stopToken);
 
 string ProcessCommand(const string& commandStr, Console* console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
@@ -267,6 +269,19 @@ int main(int argc, char** argv)
 	if (instanceResult == InstanceAcquireResult::Failed) {
 		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
 		return 3;
+	}
+	const auto interruptedRecovery = RecoverInterruptedTaskArtifacts(
+		paths.runtimeRoot, paths.stateRoot / L"task-recovery" / L"last-interrupted.json");
+	if (!interruptedRecovery.removedPaths.empty() || !interruptedRecovery.errors.empty()) {
+		console.AddLog("[Recovery] Removed %zu interrupted task artifact(s), %llu byte(s).",
+			interruptedRecovery.removedPaths.size(),
+			static_cast<unsigned long long>(interruptedRecovery.removedBytes));
+		if (!interruptedRecovery.reportPath.empty()) {
+			console.AddLog("[Recovery] Report: %s", wstring_to_utf8(interruptedRecovery.reportPath.wstring()).c_str());
+		}
+		for (const auto& error : interruptedRecovery.errors) {
+			console.AddLog("[Recovery] %s", wstring_to_utf8(error).c_str());
+		}
 	}
 	vector<LegacyLocationProbe> locationProbes = {
 		{GetExecutablePath().parent_path(), LegacyLocationOrigin::ExecutableDirectory},
@@ -409,22 +424,22 @@ int main(int argc, char** argv)
 	}
 
 	if (g_CheckForUpdates) {
-		thread update_thread(CheckForUpdatesThread);
-		update_thread.detach();
+		TaskCoordinator::Instance().Submit(L"update-check", {L"network:update"},
+			[](stop_token) { CheckForUpdatesThread(); });
 	}
 	if (g_ReceiveNotices) {
 		g_NoticeCheckDone = false;
 		g_NewNoticeAvailable = false;
-		thread notice_thread(CheckForNoticesThread);
-		notice_thread.detach();
+		TaskCoordinator::Instance().Submit(L"notice-check", {L"network:notice"},
+			[](stop_token) { CheckForNoticesThread(); });
 	}
-	g_stopExitWatcher = false;
-	g_exitWatcherThread = thread(GameSessionWatcherThread);
+	TaskCoordinator::Instance().Submit(L"game-session-watcher", {},
+		[](stop_token token) { GameSessionWatcherThread(token); });
 	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
 
 	if (g_enableKnotLink) {
 		// 初始化 KnotLink （异步进行避免卡顿）
-		thread linkLoaderThread([]() {
+		TaskCoordinator::Instance().Submit(L"knotlink-loader", {L"service:knotlink"}, [](stop_token) {
 #ifndef _WIN32
 			InitKnotLink();
 #endif
@@ -446,7 +461,6 @@ int main(int argc, char** argv)
 				console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
 			}
 		});
-		linkLoaderThread.detach();
 	}
 
 
@@ -859,6 +873,18 @@ int main(int argc, char** argv)
 		}
 		if (!instanceError.empty()) {
 			ConsoleLog(&console, "[SingleInstance] %s", wstring_to_utf8(instanceError).c_str());
+		}
+		for (const auto& event : TaskCoordinator::Instance().PollEvents()) {
+			if (event.type == L"task-failed") {
+				console.AddLog("[Task] Background task failed: %s", wstring_to_utf8(event.message).c_str());
+			}
+			else if (event.type == L"auto-backup-finished") {
+				lock_guard<mutex> lock(g_appState.task_mutex);
+				for (auto it = g_appState.g_active_auto_backups.begin(); it != g_appState.g_active_auto_backups.end();) {
+					if (it->second.taskName == event.message) it = g_appState.g_active_auto_backups.erase(it);
+					else ++it;
+				}
+			}
 		}
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(1.0);
@@ -1918,8 +1944,9 @@ int main(int argc, char** argv)
 						float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
 						if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
 							MyFolder world = { JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring(), displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc, displayWorlds[selectedWorldIndex].effectiveConfig, displayWorlds[selectedWorldIndex].baseConfigIndex, selectedWorldIndex };
-							thread backup_thread(DoBackup, world, ref(console), utf8_to_wstring(backupComment));
-							backup_thread.detach();
+							TaskCoordinator::Instance().Submit(L"manual-backup",
+								{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
+								[world, comment = utf8_to_wstring(backupComment)](stop_token) { DoBackup(world, console, comment); });
 							strcpy_s(backupComment, "");
 						}
 						ImGui::SameLine();
@@ -2017,8 +2044,12 @@ int main(int argc, char** argv)
 									if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
 										modsPath = tempPath / "mods";
 									}
-									thread backup_thread(DoOthersBackup, g_appState.configs[g_appState.currentConfigIndex], modsPath, utf8_to_wstring(mods_comment), ref(console));
-									backup_thread.detach();
+									const Config configCopy = g_appState.configs[g_appState.currentConfigIndex];
+									TaskCoordinator::Instance().Submit(L"mods-backup",
+										{TaskCoordinator::WorldResourceKey(configCopy.configId, modsPath)},
+										[configCopy, modsPath, comment = utf8_to_wstring(mods_comment)](stop_token) {
+											DoOthersBackup(configCopy, modsPath, comment, console);
+										});
 									strcpy_s(mods_comment, "");
 								}
 								ImGui::CloseCurrentPopup();
@@ -2058,8 +2089,13 @@ int main(int argc, char** argv)
 
 							float othersConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 							if (ImGui::Button(L("BUTTON_OK"), ImVec2(othersConfirmBtnWidth, 0))) {
-								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment), ref(console));
-								backup_thread.detach();
+								const Config configCopy = displayWorlds[selectedWorldIndex].effectiveConfig;
+								const wstring othersPath = utf8_to_wstring(buf);
+								TaskCoordinator::Instance().Submit(L"other-path-backup",
+									{TaskCoordinator::WorldResourceKey(configCopy.configId, othersPath)},
+									[configCopy, othersPath, comment = utf8_to_wstring(others_comment)](stop_token) {
+										DoOthersBackup(configCopy, othersPath, comment, console);
+									});
 								strcpy_s(others_comment, "");
 								SaveConfigs(); // 保存一下路径
 								ImGui::CloseCurrentPopup();
@@ -2078,9 +2114,11 @@ int main(int argc, char** argv)
 							const Config configCopy = g_appState.configs[baseConfigIndex];
 							const wstring worldName = displayWorlds[selectedWorldIndex].name;
 							if (CanUseCloudActions(configCopy)) {
-								thread([configCopy, baseConfigIndex, worldName]() {
+								TaskCoordinator::Instance().Submit(L"manual-cloud-upload",
+									{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+									[configCopy, baseConfigIndex, worldName](stop_token) {
 									UploadWorldBackupFolderToCloud(configCopy, baseConfigIndex, worldName, console);
-								}).detach();
+								});
 							}
 							else {
 								console.AddLog(L("CLOUD_SYNC_INVALID"));
@@ -2181,9 +2219,14 @@ int main(int argc, char** argv)
 								const auto& dw = displayWorlds[selectedWorldIndex];
 
 								wstring worldFullPath = JoinPath(dw.effectiveConfig.saveRoot, dw.name).wstring();
+								const Config exportConfig = tempExportConfig;
 
-								thread export_thread(DoExportForSharing, tempExportConfig, dw.name, worldFullPath, utf8_to_wstring(outputPathBuf), utf8_to_wstring(descBuf), ref(console));
-								export_thread.detach();
+								TaskCoordinator::Instance().Submit(L"export-for-sharing",
+									{TaskCoordinator::WorldResourceKey(exportConfig.configId, worldFullPath)},
+									[exportConfig, worldName = dw.name, worldFullPath,
+									 outputPath = utf8_to_wstring(outputPathBuf), description = utf8_to_wstring(descBuf)](stop_token) {
+										DoExportForSharing(exportConfig, worldName, worldFullPath, outputPath, description, console);
+									});
 
 								ImGui::CloseCurrentPopup();
 							}
@@ -2218,19 +2261,16 @@ int main(int argc, char** argv)
 							ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 							ImGui::Separator();
 							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(CalcButtonWidth(L("BUTTON_STOP_AUTOBACKUP")), 0))) {
-								std::thread workerToJoin;
+								wstring taskName;
 								{
 									lock_guard<mutex> lock(g_appState.task_mutex);
 									auto it = g_appState.g_active_auto_backups.find(taskKey);
 									if (it != g_appState.g_active_auto_backups.end()) {
-										it->second.stop_flag = true;
-										workerToJoin = std::move(it->second.worker);
+										taskName = it->second.taskName;
 										g_appState.g_active_auto_backups.erase(it);
 									}
 								}
-								if (workerToJoin.joinable()) {
-									workerToJoin.join();
-								}
+								TaskCoordinator::Instance().RequestStop(taskName);
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
@@ -2256,9 +2296,13 @@ int main(int argc, char** argv)
 									lock_guard<mutex> lock(g_appState.task_mutex);
 									if (taskKey.first >= 0) {
 										AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
-										task.stop_flag = false;
-
-										task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, last_interval, &console, ref(task.stop_flag));
+										task.taskName = TaskCoordinator::AutoBackupTaskName(taskKey.first, taskKey.second);
+										const bool started = TaskCoordinator::Instance().Submit(task.taskName, {},
+											[taskName = task.taskName, configIndex = taskKey.first, worldIndex = taskKey.second, interval = last_interval](stop_token token) {
+												AutoBackupThreadFunction(configIndex, worldIndex, interval, &console, token);
+												TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
+											});
+										if (!started) g_appState.g_active_auto_backups.erase(taskKey);
 
 										ImGui::CloseCurrentPopup();
 									}
@@ -2333,22 +2377,10 @@ int main(int argc, char** argv)
 
 	// 清理
 	BroadcastEvent("event=app_shutdown");
-	std::vector<std::thread> workersToJoin;
+	TaskCoordinator::Instance().StopAndJoin();
 	{
 		lock_guard<mutex> lock(g_appState.task_mutex);
-		workersToJoin.reserve(g_appState.g_active_auto_backups.size());
-		for (auto& pair : g_appState.g_active_auto_backups) {
-			pair.second.stop_flag = true;
-			if (pair.second.worker.joinable()) {
-				workersToJoin.emplace_back(std::move(pair.second.worker));
-			}
-		}
 		g_appState.g_active_auto_backups.clear();
-	}
-	for (auto& worker : workersToJoin) {
-		if (worker.joinable()) {
-			worker.join();
-		}
 	}
 	for (auto const& [key, val] : g_worldIconTextures) {
 		if (val > 0) {
@@ -2386,11 +2418,6 @@ int main(int argc, char** argv)
 
 	glfwDestroyWindow(wc);
 	glfwTerminate();
-
-	g_stopExitWatcher = true;
-	if (g_exitWatcherThread.joinable()) {
-		g_exitWatcherThread.join();
-	}
 
 	// 清理 KnotLink
 	CleanupKnotLink();

@@ -67,7 +67,7 @@ struct TaskRunState {
     int taskId = 0;
     bool isRunning = false;
     std::atomic<bool> shouldStop{false};
-    std::thread workerThread;
+    std::jthread workerThread;
     std::wstring lastResult;
     std::wstring lastError;
     time_t lastRunTime = 0;

@@ -6,6 +6,7 @@
 #include "text_to_text.h"
 #include "PlatformCompat.h"
 #include "ProcessRunner.h"
+#include "TaskCoordinator.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -88,7 +89,9 @@ namespace TaskSystem {
                 };
 
                 g_appState.realConfigIndex = task.configIndex;
-                DoBackup(world, *console, L"TaskSystem");
+                TaskCoordinator::Instance().SubmitAndWait(L"task-system backup",
+                    {TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
+                    [world, console](stop_token) { DoBackup(world, *console, L"TaskSystem"); });
                 ConsoleLog(console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(worldData.first).c_str());
                 break;
             }
@@ -124,7 +127,7 @@ namespace TaskSystem {
         sort(sortedTasks.begin(), sortedTasks.end(), 
             [](const UnifiedTask& a, const UnifiedTask& b) { return a.id < b.id; });
 
-        vector<thread> parallelThreads;
+        vector<jthread> parallelThreads;
         
         for (size_t i = 0; i < sortedTasks.size() && !shouldExit; ++i) {
             const UnifiedTask& task = sortedTasks[i];

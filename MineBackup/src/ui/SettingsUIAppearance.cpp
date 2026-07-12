@@ -2,6 +2,7 @@
 #include "HistoryManager.h"
 #include "CloudSyncService.h"
 #include "AppPaths.h"
+#include "TaskCoordinator.h"
 #include "imgui_style.h"
 
 using namespace std;
@@ -258,58 +259,66 @@ void DrawCloudSyncSettings(Config& cfg) {
 	if (!canRunCloudActions) ImGui::BeginDisabled();
 	if (ImGui::Button(L("CLOUD_ANALYZE_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Analyze cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			AnalyzeCloudHistory(configCopy, configIndex, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_SYNC_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Sync cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_SYNC_ALL_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Sync cloud backups",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups, console);
-		}).detach();
+		});
 	}
 
 	if (ImGui::Button(L("CLOUD_UPLOAD_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Upload cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			UploadConfigurationHistorySnapshot(configCopy, configIndex, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_EXPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy]() {
+		TaskCoordinator::Instance().Submit(L"Export cloud configuration",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy](stop_token) {
 			ExportConfigToCloud(configCopy, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_IMPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy]() {
+		TaskCoordinator::Instance().Submit(L"Import cloud configuration",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy](stop_token) {
 			ImportConfigFromCloud(configCopy, console);
-		}).detach();
+		});
 	}
 
 	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Export cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			ExportHistoryToCloud(configCopy, configIndex, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_IMPORT_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Import cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			ImportHistoryFromCloud(configCopy, configIndex, true, console);
-		}).detach();
+		});
 	}
 	if (!canRunCloudActions) ImGui::EndDisabled();
 }

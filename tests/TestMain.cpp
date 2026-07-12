@@ -9,9 +9,12 @@
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
 #include "ProcessRunner.h"
+#include "TaskCoordinator.h"
+#include "InterruptedTaskRecovery.h"
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -505,6 +508,122 @@ void TestSevenZipArgumentVector(TestContext& test, const std::filesystem::path& 
 #endif
 }
 
+void TestTaskCoordinator(TestContext& test, const std::filesystem::path& root) {
+    auto& coordinator = TaskCoordinator::Instance();
+    std::atomic<int> active{0};
+    std::atomic<int> maximumActive{0};
+    std::atomic<int> completed{0};
+    const auto resource = TaskCoordinator::WorldResourceKey(L"config-id", root / "world");
+    test.Expect(resource == TaskCoordinator::WorldResourceKey(L"config-id", root / "alias" / ".." / "world"),
+        "world resource keys should normalize path aliases");
+
+    for (int index = 0; index < 3; ++index) {
+        test.Expect(coordinator.Submit(L"serialized test", {resource},
+            [&coordinator, &active, &maximumActive, &completed](std::stop_token token) {
+                const int nowActive = active.fetch_add(1) + 1;
+                int observed = maximumActive.load();
+                while (nowActive > observed && !maximumActive.compare_exchange_weak(observed, nowActive)) {}
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                active.fetch_sub(1);
+                completed.fetch_add(1);
+                coordinator.PostEvent({L"test-complete", token.stop_possible() ? L"stoppable" : L"unstoppable"});
+            }), "TaskCoordinator should accept work before shutdown");
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    std::vector<TaskEvent> events;
+    while (completed.load() != 3 && std::chrono::steady_clock::now() < deadline) {
+        auto current = coordinator.PollEvents();
+        events.insert(events.end(), current.begin(), current.end());
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    auto remaining = coordinator.PollEvents();
+    events.insert(events.end(), remaining.begin(), remaining.end());
+
+    test.Expect(completed.load() == 3, "TaskCoordinator should run all accepted work");
+    test.Expect(maximumActive.load() == 1, "tasks for one world resource should never overlap");
+    test.Expect(events.size() == 3 && std::all_of(events.begin(), events.end(), [](const TaskEvent& event) {
+        return event.type == L"test-complete" && event.message == L"stoppable";
+    }), "workers should publish immutable events and inherit a stop token");
+
+    std::atomic<bool> cancellationStarted{false};
+    std::atomic<bool> cancellationObserved{false};
+    test.Expect(coordinator.Submit(L"cancellation test", {},
+        [&cancellationStarted, &cancellationObserved](std::stop_token token) {
+            cancellationStarted = true;
+            while (!token.stop_requested()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            cancellationObserved = true;
+        }), "TaskCoordinator should accept a cancellable task");
+    const auto startDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!cancellationStarted.load() && std::chrono::steady_clock::now() < startDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    test.Expect(coordinator.RequestStop(L"cancellation test"), "a named running task should be cancellable");
+    const auto cancellationDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!cancellationObserved.load() && std::chrono::steady_clock::now() < cancellationDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    test.Expect(cancellationObserved.load(), "a cancelled task should observe its stop token promptly");
+
+    std::atomic<bool> synchronousWork{false};
+    test.Expect(coordinator.SubmitAndWait(L"synchronous test", {resource},
+        [&synchronousWork](std::stop_token) { synchronousWork = true; }) && synchronousWork.load(),
+        "SubmitAndWait should preserve resource serialization for synchronous callers");
+
+    test.Expect(coordinator.Submit(L"exception test", {}, [](std::stop_token) { throw 1; }),
+        "TaskCoordinator should contain worker exceptions");
+    const auto exceptionDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    bool exceptionReported = false;
+    while (!exceptionReported && std::chrono::steady_clock::now() < exceptionDeadline) {
+        for (const auto& event : coordinator.PollEvents()) {
+            if (event.type == L"task-failed" && event.message == L"exception test") exceptionReported = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    test.Expect(exceptionReported, "TaskCoordinator should convert worker exceptions into immutable failure events");
+
+    std::atomic<bool> shutdownStarted{false};
+    std::atomic<bool> shutdownObserved{false};
+    test.Expect(coordinator.Submit(L"shutdown test", {}, [&shutdownStarted, &shutdownObserved](std::stop_token token) {
+        shutdownStarted = true;
+        while (!token.stop_requested()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        shutdownObserved = true;
+    }), "TaskCoordinator should accept work before coordinated shutdown");
+    const auto shutdownStartDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!shutdownStarted.load() && std::chrono::steady_clock::now() < shutdownStartDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const auto shutdownBegin = std::chrono::steady_clock::now();
+    coordinator.StopAndJoin();
+    test.Expect(shutdownObserved.load(), "coordinated shutdown should request stop before joining workers");
+    test.Expect(std::chrono::steady_clock::now() - shutdownBegin < std::chrono::seconds(1),
+        "cooperative task shutdown should complete promptly");
+    test.Expect(!coordinator.IsAcceptingTasks(), "TaskCoordinator should reject work after shutdown begins");
+    test.Expect(!coordinator.Submit(L"rejected test", {}, [](std::stop_token) {}),
+        "TaskCoordinator must not accept work after shutdown");
+}
+
+void TestInterruptedTaskRecovery(TestContext& test, const std::filesystem::path& root) {
+    const auto runtime = root / "recovery-runtime";
+    const auto interruptedDirectory = runtime / "MineBackup_Filelist_interrupted";
+    const auto interruptedFile = runtime / "MineBackup_cloud_history_interrupted.json";
+    const auto unrelated = runtime / "user-owned.txt";
+    std::filesystem::create_directories(interruptedDirectory);
+    std::ofstream(interruptedDirectory / "filelist.txt") << "temporary";
+    std::ofstream(interruptedFile) << "temporary-cloud";
+    std::ofstream(unrelated) << "keep";
+
+    const auto reportPath = root / "state" / "task-recovery" / "last-interrupted.json";
+    const auto report = RecoverInterruptedTaskArtifacts(runtime, reportPath);
+    test.Expect(report.removedPaths.size() == 2 && report.removedBytes > 0,
+        "startup recovery should remove only known interrupted-task artifacts");
+    test.Expect(!std::filesystem::exists(interruptedDirectory) && !std::filesystem::exists(interruptedFile),
+        "startup recovery should remove interrupted files and directories");
+    test.Expect(std::filesystem::exists(unrelated), "startup recovery must preserve unrelated runtime files");
+    test.Expect(report.reportPath == reportPath && ReadText(reportPath).find("RemovedPaths") != std::string::npos,
+        "startup recovery should persist a report through AtomicFileWriter");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -561,6 +680,8 @@ int main(int argc, char** argv) {
     TestLegacyLocationMigration(test, temporary.path);
     TestProcessRunner(test, std::filesystem::absolute(argv[0]), temporary.path);
     TestSevenZipArgumentVector(test, temporary.path);
+    TestInterruptedTaskRecovery(test, temporary.path);
+    TestTaskCoordinator(test, temporary.path);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";

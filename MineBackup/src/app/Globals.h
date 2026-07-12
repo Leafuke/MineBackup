@@ -74,8 +74,6 @@ struct CoreValidationRuntimeState {
 struct SpecialTaskRuntimeState {
 	std::atomic<bool> tasksRunning{ false };
 	std::atomic<bool> tasksComplete{ false };
-	std::thread exitWatcherThread;
-	std::atomic<bool> stopExitWatcher{ false };
 };
 
 struct AppGlobalState {
@@ -136,8 +134,6 @@ inline std::vector<std::wstring>& restoreWhitelist = g_globals.settings.restoreW
 
 inline std::atomic<bool>& specialTasksRunning = g_globals.specialTasks.tasksRunning;
 inline std::atomic<bool>& specialTasksComplete = g_globals.specialTasks.tasksComplete;
-inline std::thread& g_exitWatcherThread = g_globals.specialTasks.exitWatcherThread;
-inline std::atomic<bool>& g_stopExitWatcher = g_globals.specialTasks.stopExitWatcher;
 inline std::atomic<bool>& g_CoreValidationRunning = g_globals.coreValidation.running;
 
 // i18n

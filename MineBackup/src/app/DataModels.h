@@ -13,6 +13,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <memory>
 #include <ctime>
 
 // 结构体们
@@ -236,8 +237,7 @@ struct CloudActiveHistoryManifest {
 };
 
 struct AutoBackupTask {
-	std::thread worker;
-	std::atomic<bool> stop_flag{ false }; // 原子布尔值，用于安全地通知线程停止
+	std::wstring taskName;
 };
 
 struct DisplayWorld { // 一个新的结构体，让 UI 不再直接读取 configs[currentConfigIndex].worlds，而使用 DisplayWorld
