@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <iomanip>
+#include <fstream>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -260,6 +261,132 @@ wstring InferLastBackupTime(const Config& config, int configIndex, const wstring
 }
 
 } // namespace
+
+bool ImportLegacyRemoteIni(
+	const filesystem::path& source,
+	PortableConfigDocument& document,
+	wstring& error) {
+	document.configs.clear();
+	error.clear();
+	error_code sizeError;
+	const auto sourceSize = filesystem::file_size(source, sizeError);
+	if (sizeError || sourceSize > PortableConfigDocument::MaximumBytes) {
+		error = L"Legacy remote config.ini is unavailable or exceeds the 1 MiB safety limit.";
+		return false;
+	}
+	ifstream input(source, ios::binary);
+	if (!input) {
+		error = L"Unable to open the selected legacy remote config.ini.";
+		return false;
+	}
+
+	map<int, Config> filtered;
+	Config* current = nullptr;
+	string encodedLine;
+	auto parseInt = [](const wstring& value, int& output) {
+		try {
+			size_t consumed = 0;
+			const int parsed = stoi(value, &consumed);
+			if (consumed != value.size()) return false;
+			output = parsed;
+			return true;
+		}
+		catch (...) { return false; }
+	};
+	while (getline(input, encodedLine)) {
+		if (!encodedLine.empty() && encodedLine.back() == '\r') encodedLine.pop_back();
+		wstring line = utf8_to_wstring(encodedLine);
+		if (line.size() >= 9 && line.front() == L'[' && line.back() == L']'
+			&& line.rfind(L"[Config", 0) == 0) {
+			try {
+				const int index = stoi(line.substr(7, line.size() - 8));
+				current = &filtered[index];
+			}
+			catch (...) { current = nullptr; }
+			continue;
+		}
+		if (!current) continue;
+		const auto delimiter = line.find(L'=');
+		if (delimiter == wstring::npos) continue;
+		const wstring key = line.substr(0, delimiter);
+		const wstring value = line.substr(delimiter + 1);
+		if (key == L"ConfigName") current->name = wstring_to_utf8(value);
+		else if (key == L"ConfigId") current->configId = value;
+		else if (key == L"WorldData") {
+			while (getline(input, encodedLine)) {
+				if (!encodedLine.empty() && encodedLine.back() == '\r') encodedLine.pop_back();
+				const wstring worldName = utf8_to_wstring(encodedLine);
+				if (worldName == L"*") break;
+				if (!getline(input, encodedLine)) break;
+				if (!encodedLine.empty() && encodedLine.back() == '\r') encodedLine.pop_back();
+				const wstring description = utf8_to_wstring(encodedLine);
+				if (FolderRewindFormat::IsSafeSinglePathSegment(worldName)) {
+					current->worlds.push_back({worldName, description});
+				}
+			}
+		}
+		else if (key == L"ZipFormat") current->zipFormat = value;
+		else if (key == L"ZipMethod") current->zipMethod = value;
+		else if (key == L"ZipLevel") parseInt(value, current->zipLevel);
+		else if (key == L"KeepCount") parseInt(value, current->keepCount);
+		else if (key == L"SmartBackup") parseInt(value, current->backupMode);
+		else if (key == L"RestoreBeforeBackup") current->backupBefore = value != L"0";
+		else if (key == L"CpuThreads") parseInt(value, current->cpuThreads);
+		else if (key == L"UseLowPriority") current->useLowPriority = value != L"0";
+		else if (key == L"SkipIfUnchanged") current->skipIfUnchanged = value != L"0";
+		else if (key == L"MaxSmartBackups") parseInt(value, current->maxSmartBackupsPerFull);
+		else if (key == L"BlacklistItem" && value.size() <= 4096) current->blacklist.push_back(value);
+		else if (key == L"CloudSyncMode") parseInt(value, current->cloudSyncMode);
+		else if (key == L"CloudTimeoutSeconds") parseInt(value, current->cloudTimeoutSeconds);
+		else if (key == L"CloudRetryCount") parseInt(value, current->cloudRetryCount);
+		else if (key == L"CloudSyncHistoryAfterUpload") current->cloudSyncHistoryAfterUpload = value != L"0";
+		else if (key == L"CloudAutoDownloadBeforeRestore") current->cloudAutoDownloadBeforeRestore = value != L"0";
+	}
+
+	set<wstring> usedIds;
+	auto isCanonicalId = [](const wstring& value) {
+		if (value.size() != 36) return false;
+		for (size_t i = 0; i < value.size(); ++i) {
+			if (i == 8 || i == 13 || i == 18 || i == 23) {
+				if (value[i] != L'-') return false;
+			}
+			else if (!iswxdigit(value[i])) return false;
+		}
+		return true;
+	};
+	for (auto& [index, config] : filtered) {
+		(void)index;
+		if (!isCanonicalId(config.configId) || usedIds.count(config.configId)) {
+			config.configId = FolderRewindFormat::GenerateGuidString();
+		}
+		usedIds.insert(config.configId);
+		config.cloudSyncEnabled = false;
+	}
+	document = PortableConfigDocument::FromLocalConfigs(filtered);
+	PortableConfigDocument verified;
+	if (!PortableConfigDocument::Parse(document.Serialize(), verified, error)) return false;
+	document = std::move(verified);
+
+	ifstream snapshotInput(source, ios::binary);
+	const string snapshotContent((istreambuf_iterator<char>(snapshotInput)), istreambuf_iterator<char>());
+	const auto snapshotDirectory = MigrationCoordinator::GetPaths().snapshotRoot
+		/ L"legacy-remote-ini" / FolderRewindFormat::GenerateGuidString();
+	AtomicFileWriter::WriteOptions options;
+	options.keepBackup = false;
+	const auto snapshot = AtomicFileWriter::WriteText(snapshotDirectory / L"config.ini", snapshotContent, options);
+	if (!snapshot.success) {
+		error = L"Legacy remote config.ini was filtered but its required recovery snapshot could not be written: " + snapshot.error;
+		return false;
+	}
+	MigrationUnitResult unit;
+	unit.unitId = L"cloud:legacy-config-ini";
+	unit.status = MigrationStatus::Succeeded;
+	unit.migratedItems = static_cast<int>(document.configs.size());
+	unit.snapshotPath = snapshotDirectory.wstring();
+	unit.message = L"A user-requested legacy remote config.ini was read through the portable whitelist; the source snapshot was retained.";
+	MigrationCoordinator::RecordUnit(unit);
+	return true;
+}
 
 MigrationUnitResult EnsureWorldMigrated(
 	int configIndex, const wstring& folderName, const wstring& fallbackPath = L"");

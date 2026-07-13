@@ -6,6 +6,7 @@
 #include "ExternalToolManager.h"
 #include "NetworkBackendFactory.h"
 #include "NetworkService.h"
+#include "Sha256.h"
 #include "imgui_style.h"
 
 #ifdef _WIN32
@@ -17,6 +18,33 @@
 #endif
 
 using namespace std;
+
+static wstring FormatPortableConfigPreview(const PortableConfigMergePreview& preview, const wchar_t* direction) {
+	wstringstream text;
+	text << direction << L"\n\nAdded: " << preview.added.size()
+		<< L"\nUpdated: " << preview.updated.size()
+		<< L"\nPreserved: " << preview.preserved.size() << L"\n";
+	auto appendIds = [&](const wchar_t* label, const vector<wstring>& ids) {
+		if (ids.empty()) return;
+		text << L"\n" << label << L":\n";
+		const size_t shown = (min)(ids.size(), static_cast<size_t>(20));
+		for (size_t index = 0; index < shown; ++index) text << L"  " << ids[index] << L"\n";
+		if (shown < ids.size()) text << L"  ... and " << (ids.size() - shown) << L" more\n";
+	};
+	appendIds(L"Added ConfigId", preview.added);
+	appendIds(L"Updated ConfigId", preview.updated);
+	appendIds(L"Preserved ConfigId", preview.preserved);
+	text << L"\nExcluded on both sides: local paths, tools, credentials, runtime state, special configs, commands, scripts and automation."
+		<< L"\n\nNo local or remote data changes until you confirm this preview.";
+	return text.str();
+}
+
+static wstring PortableConfigFingerprint(const map<int, Config>& configs) {
+	const string serialized = PortableConfigDocument::FromLocalConfigs(configs).Serialize();
+	Sha256 hash;
+	hash.Update(serialized.data(), serialized.size());
+	return utf8_to_wstring(hash.FinalHex());
+}
 
 static bool IsFontSupportChinese(const wstring& fontPath) {
 	if (fontPath.empty()) return false;
@@ -342,19 +370,74 @@ void DrawCloudSyncSettings(Config& cfg) {
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_EXPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
+		map<int, Config> configsCopy;
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			configsCopy = g_appState.configs;
+		}
 		TaskCoordinator::Instance().Submit(L"Export cloud configuration",
-			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy](stop_token) {
-			ExportConfigToCloud(configCopy, console);
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
+			const auto preparation = PreparePortableConfigUpload(configCopy, configsCopy, console);
+			TaskEvent event{L"portable-config-preview", preparation.result.detail};
+			event.values[L"success"] = preparation.result.success ? L"1" : L"0";
+			event.values[L"action"] = L"upload";
+			event.values[L"config-index"] = to_wstring(configIndex);
+			event.values[L"payload"] = utf8_to_wstring(preparation.payload);
+			event.values[L"local-fingerprint"] = PortableConfigFingerprint(configsCopy);
+			event.values[L"preview"] = FormatPortableConfigPreview(preparation.preview, L"Upload local portable fields to cloud");
+			TaskCoordinator::Instance().PostEvent(std::move(event));
 		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_IMPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
+		map<int, Config> configsCopy;
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			configsCopy = g_appState.configs;
+		}
 		TaskCoordinator::Instance().Submit(L"Import cloud configuration",
-			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy](stop_token) {
-			ImportConfigFromCloud(configCopy, console);
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
+			const auto preparation = PreparePortableConfigImport(configCopy, configsCopy, console);
+			TaskEvent event{L"portable-config-preview", preparation.result.detail};
+			event.values[L"success"] = preparation.result.success ? L"1" : L"0";
+			event.values[L"action"] = L"import";
+			event.values[L"config-index"] = to_wstring(configIndex);
+			event.values[L"payload"] = utf8_to_wstring(preparation.payload);
+			event.values[L"local-fingerprint"] = PortableConfigFingerprint(configsCopy);
+			event.values[L"preview"] = FormatPortableConfigPreview(preparation.preview, L"Import cloud portable fields to this device");
+			TaskCoordinator::Instance().PostEvent(std::move(event));
 		});
 	}
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+	ImGui::SameLine();
+	if (ImGui::Button("Import legacy remote config.ini")) {
+		if (ConfirmMessageBox(
+			"Legacy remote configuration",
+			"This manual compatibility action will read the remote config.ini without modifying it, retain a recovery snapshot, filter out paths, tools, credentials and automation, then show a second import preview. Continue?")) {
+			const Config configCopy = cfg;
+			map<int, Config> configsCopy;
+			{
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				configsCopy = g_appState.configs;
+			}
+			TaskCoordinator::Instance().Submit(L"Prepare legacy remote configuration import",
+				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+				[configCopy, configsCopy, configIndex](stop_token) {
+					const auto preparation = PrepareLegacyPortableConfigImport(configCopy, configsCopy, console);
+					TaskEvent event{L"portable-config-preview", preparation.result.detail};
+					event.values[L"success"] = preparation.result.success ? L"1" : L"0";
+					event.values[L"action"] = L"import";
+					event.values[L"config-index"] = to_wstring(configIndex);
+					event.values[L"payload"] = utf8_to_wstring(preparation.payload);
+					event.values[L"local-fingerprint"] = PortableConfigFingerprint(configsCopy);
+					event.values[L"preview"] = FormatPortableConfigPreview(
+						preparation.preview, L"Import filtered legacy remote config.ini to this device");
+					TaskCoordinator::Instance().PostEvent(std::move(event));
+				});
+		}
+	}
+#endif
 
 	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;

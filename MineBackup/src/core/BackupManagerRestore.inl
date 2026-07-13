@@ -255,6 +255,10 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 }
 
 bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] Restore is disabled until local paths are bound.");
+		return false;
+	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -335,6 +339,10 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 }
 
 bool DoRestore(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] Restore is disabled until local paths are bound.");
+		return false;
+	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {

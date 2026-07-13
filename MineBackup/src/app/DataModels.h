@@ -34,6 +34,8 @@ struct Config {
 	std::wstring configId;
 	// Runtime-only: the loaded 1.15 configuration did not persist ConfigId.
 	bool legacyConfigIdGenerated = false;
+	// Imported portable profiles cannot run destructive or automated work until local paths are bound.
+	bool pendingLocalBinding = false;
 	int cpuThreads = 0;
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;

@@ -217,6 +217,7 @@ void LoadConfigs(const filesystem::path& filename) {
 			if (cur) { // Inside a [ConfigN] section
 				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
 				else if (key == L"ConfigId") cur->configId = FolderRewindFormat::EnsureConfigId(val);
+				else if (key == L"PendingLocalBinding") cur->pendingLocalBinding = (val != L"0");
 				else if (key == L"SavePath") {
 					cur->saveRoot = val;
 				}
@@ -537,6 +538,7 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"ConfigName=" << utf8_to_wstring(c.name) << L"\n";
 		c.configId = FolderRewindFormat::EnsureConfigId(c.configId);
 		buffer << L"ConfigId=" << c.configId << L"\n";
+		buffer << L"PendingLocalBinding=" << (c.pendingLocalBinding ? 1 : 0) << L"\n";
 		buffer << L"SavePath=" << c.saveRoot << L"\n";
 		buffer << L"# One line for name, one line for description, terminated by '*'\n";
 		buffer << L"WorldData=\n";

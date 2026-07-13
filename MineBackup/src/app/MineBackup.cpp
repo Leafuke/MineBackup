@@ -29,6 +29,7 @@
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
+#include "Sha256.h"
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 #include "V15MigrationAdapter.h"
 #endif
@@ -943,6 +944,68 @@ int main(int argc, char** argv)
 					: (event.message.empty() ? L"Managed rclone installation failed." : event.message);
 				if (!g_RcloneInstallSucceeded) {
 					console.AddLog("[Tools] rclone installation failed: %s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
+				}
+			}
+			else if (event.type == L"portable-config-preview") {
+				if (event.values.at(L"success") != L"1") {
+					const wstring detail = event.message.empty() ? L"Unable to prepare the portable configuration preview." : event.message;
+					console.AddLog("[Cloud] %s", wstring_to_utf8(detail).c_str());
+					MessageBoxWin("Portable configuration", wstring_to_utf8(detail), 2);
+					continue;
+				}
+				map<int, Config> currentConfigs;
+				{
+					lock_guard<mutex> lock(g_appState.configsMutex);
+					currentConfigs = g_appState.configs;
+				}
+				const string currentPortable = PortableConfigDocument::FromLocalConfigs(currentConfigs).Serialize();
+				Sha256 currentHash;
+				currentHash.Update(currentPortable.data(), currentPortable.size());
+				if (utf8_to_wstring(currentHash.FinalHex()) != event.values.at(L"local-fingerprint")) {
+					MessageBoxWin("Portable configuration", "Local configurations changed while the preview was prepared. Please prepare the preview again.", 2);
+					continue;
+				}
+				if (!ConfirmMessageBox("Portable configuration preview", wstring_to_utf8(event.values.at(L"preview")))) {
+					console.AddLog("[Cloud] Portable configuration transfer cancelled after preview.");
+					continue;
+				}
+				const int configIndex = stoi(event.values.at(L"config-index"));
+				if (event.values.at(L"action") == L"upload") {
+					Config cloudConfig;
+					{
+						lock_guard<mutex> lock(g_appState.configsMutex);
+						auto it = g_appState.configs.find(configIndex);
+						if (it == g_appState.configs.end()) continue;
+						cloudConfig = it->second;
+					}
+					const string payload = wstring_to_utf8(event.values.at(L"payload"));
+					TaskCoordinator::Instance().Submit(L"Commit portable configuration upload",
+						{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+						[cloudConfig, payload](stop_token) {
+							CommitPortableConfigUpload(cloudConfig, payload, console);
+						});
+				}
+				else {
+					PortableConfigDocument remote;
+					wstring parseError;
+					PortableConfigMergePreview appliedPreview;
+					if (!PortableConfigDocument::Parse(wstring_to_utf8(event.values.at(L"payload")), remote, parseError)) {
+						MessageBoxWin("Portable configuration", wstring_to_utf8(parseError), 2);
+						continue;
+					}
+					bool applied = false;
+					{
+						lock_guard<mutex> lock(g_appState.configsMutex);
+						applied = PortableConfigDocument::ApplyImport(
+							g_appState.configs, remote, appliedPreview, parseError);
+					}
+					if (applied) {
+						SaveConfigs();
+						console.AddLog("[Cloud] Portable configuration import applied after confirmation.");
+					}
+					else {
+						MessageBoxWin("Portable configuration", wstring_to_utf8(parseError), 2);
+					}
 				}
 			}
 		}

@@ -177,6 +177,11 @@ void DrawConfigManagementPanel() {
 }
 
 void DrawPathSettings(Config& cfg) {
+	if (cfg.pendingLocalBinding) {
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+		ImGui::TextWrapped("This profile was imported from portable-config.json. Bind local save, backup and compression-tool paths before backup, restore, cloud writes or automatic tasks can run.");
+		ImGui::PopStyleColor();
+	}
 	char rootBufA[256];
 	strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
 
@@ -254,6 +259,35 @@ void DrawPathSettings(Config& cfg) {
 			: ImVec4(0.85f, 0.45f, 0.30f, 1.0f));
 		ImGui::TextWrapped("%s", wstring_to_utf8(toolStatus).c_str());
 		ImGui::PopStyleColor();
+	}
+	if (cfg.pendingLocalBinding) {
+		error_code bindingError;
+		const filesystem::path saveRoot = cfg.saveRoot;
+		const filesystem::path backupRoot = cfg.backupPath;
+		const bool saveRootValid = saveRoot.is_absolute() && filesystem::is_directory(saveRoot, bindingError) && !bindingError;
+		bindingError.clear();
+		bool backupRootValid = backupRoot.is_absolute() && filesystem::is_directory(backupRoot, bindingError) && !bindingError;
+		if (!backupRootValid && backupRoot.is_absolute() && !backupRoot.parent_path().empty()) {
+			bindingError.clear();
+			backupRootValid = filesystem::is_directory(backupRoot.parent_path(), bindingError) && !bindingError;
+		}
+		const bool canCompleteBinding = saveRootValid && backupRootValid && !cfg.zipPath.empty();
+		ImGui::BeginDisabled(!canCompleteBinding);
+		if (ImGui::Button("Confirm local path binding")) {
+			const auto verifiedTool = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
+			if (verifiedTool.available) {
+				cfg.zipPath = verifiedTool.executable.wstring();
+				cfg.pendingLocalBinding = false;
+				cfg.cloudSyncEnabled = false;
+				toolStatusOk = true;
+				toolStatus = L"Local binding completed. Review the cloud remote and enable cloud sync explicitly if desired.";
+			}
+			else {
+				toolStatusOk = false;
+				toolStatus = verifiedTool.diagnostic;
+			}
+		}
+		ImGui::EndDisabled();
 	}
 
 	ImGui::Spacing();

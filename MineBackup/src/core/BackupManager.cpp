@@ -1196,6 +1196,10 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 // 参数: folder: 世界信息结构体, console: 日志输出对象, comment: 用户注释
 void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
     const Config& config = folder.config;
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] This imported configuration is waiting for local path binding.");
+		return;
+	}
 
 	WorldOperationGuard opGuard(filesystem::path(folder.path), FolderState::BACKUP);
 	if (!opGuard.Acquired()) {
@@ -1621,6 +1625,10 @@ execute_backup:
     }
 }
 void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wstring& comment, Console& console) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] This imported configuration is waiting for local path binding.");
+		return;
+	}
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
 
 	filesystem::path othersPath = backupWhat;
@@ -1709,6 +1717,10 @@ static bool DeleteLocalArchiveOnly(const Config& config, const HistoryEntry& ent
 }
 
 void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelete, int configIndex, BackupDeleteMode mode, bool useSafeDelete, Console& console) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] This imported configuration is waiting for local path binding.");
+		return;
+	}
 	if (mode == BackupDeleteMode::HistoryOnly) {
 		// 仅删除历史：保留本地文件，常用于清理误导入或不再需要展示的云历史。
 		RemoveHistoryEntry(configIndex, entryToDelete.worldName, entryToDelete.backupFile);
@@ -1998,6 +2010,14 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 
 // 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
 void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, stop_token stopToken) {
+	{
+		lock_guard<mutex> lock(g_appState.configsMutex);
+		auto it = g_appState.configs.find(configIdx);
+		if (it == g_appState.configs.end() || it->second.pendingLocalBinding) {
+			if (console) console->AddLog("[Blocked] Automatic backup is disabled until local paths are bound.");
+			return;
+		}
+	}
 	console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
 
 	while (!stopToken.stop_requested()) {

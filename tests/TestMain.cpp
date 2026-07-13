@@ -15,6 +15,7 @@
 #include "RemoteContentService.h"
 #include "Sha256.h"
 #include "ExternalToolManager.h"
+#include "PortableConfigDocument.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -99,7 +100,10 @@ void TestFormat(TestContext& test) {
     const auto sanitized = FolderRewindFormat::SanitizePathSegment(L"../World");
     test.Expect(FolderRewindFormat::IsSafeSinglePathSegment(sanitized), "sanitized world name should be a safe segment");
     test.Expect(FolderRewindFormat::IsSmartBackupType(L"[Smart]-World.7z"), "smart archive should be recognized");
-    test.Expect(FolderRewindFormat::EnsureConfigId(L"").size() == 36, "empty ConfigId should produce a UUID");
+    const auto generatedConfigId = FolderRewindFormat::EnsureConfigId(L"");
+    test.Expect(generatedConfigId.size() == 36 && generatedConfigId[8] == L'-' && generatedConfigId[13] == L'-'
+        && generatedConfigId[18] == L'-' && generatedConfigId[23] == L'-',
+        "empty ConfigId should produce a canonical UUID on every platform");
 }
 
 std::string ReadFile(const std::filesystem::path& path) {
@@ -637,6 +641,110 @@ void TestExternalToolManager(TestContext& test, const std::filesystem::path& roo
 #endif
 }
 
+void TestPortableConfigDocument(TestContext& test) {
+    Config localConfig;
+    localConfig.configId = L"11111111-1111-4111-8111-111111111111";
+    localConfig.name = "Local profile";
+    localConfig.worlds = {{L"World One", L"Description"}};
+    localConfig.saveRoot = L"C:\\secret\\saves";
+    localConfig.backupPath = L"D:\\private\\backups";
+    localConfig.zipPath = L"C:\\tools\\7za.exe";
+    localConfig.rclonePath = L"C:\\tools\\rclone.exe";
+    localConfig.rcloneRemotePath = L"credential-alias:private";
+    localConfig.cloudWorkingDirectory = L"C:\\private\\cwd";
+    localConfig.zipMethod = L"zstd";
+    localConfig.zipLevel = 17;
+    localConfig.blacklist = {L"session.lock", L"cache/*"};
+    localConfig.cloudSyncEnabled = true;
+    localConfig.cloudSyncMode = 1;
+    localConfig.backupOnGameStart = true;
+
+    Config localOnly;
+    localOnly.configId = L"22222222-2222-4222-8222-222222222222";
+    localOnly.name = "Local only";
+    localOnly.worlds = {{L"LocalWorld", L""}};
+
+    std::map<int, Config> local{{0, localConfig}, {1, localOnly}};
+    const auto localDocument = PortableConfigDocument::FromLocalConfigs(local);
+    const std::string serialized = localDocument.Serialize();
+    test.Expect(serialized.find("C:\\\\secret") == std::string::npos
+        && serialized.find("D:\\\\private") == std::string::npos
+        && serialized.find("rclone.exe") == std::string::npos
+        && serialized.find("credential-alias") == std::string::npos,
+        "portable configuration should exclude paths, tools and credential-bearing remote bindings");
+    test.Expect(serialized.find("backupOnGameStart") == std::string::npos
+        && serialized.find("commands") == std::string::npos,
+        "portable configuration should exclude automation, commands and scripts");
+
+    PortableConfigDocument parsed;
+    std::wstring error;
+    test.Expect(PortableConfigDocument::Parse(serialized, parsed, error)
+        && parsed.configs.at(localConfig.configId).zipMethod == L"zstd",
+        "portable configuration should round-trip its explicit whitelist");
+    PortableConfigDocument invalid;
+    test.Expect(!PortableConfigDocument::Parse(R"({"schemaVersion":99,"configs":{}})", invalid, error),
+        "an unknown portable configuration schema should be rejected");
+    test.Expect(!PortableConfigDocument::Parse(R"({"schemaVersion":1,"configs":{"not-a-uuid":{}}})", invalid, error),
+        "portable configuration should reject a non-canonical ConfigId");
+    test.Expect(!PortableConfigDocument::Parse("{broken", invalid, error),
+        "damaged portable configuration JSON should be rejected");
+    test.Expect(!PortableConfigDocument::Parse(std::string(PortableConfigDocument::MaximumBytes + 1, 'x'), invalid, error),
+        "oversized portable configuration JSON should be rejected before parsing");
+
+    std::string injected = serialized;
+    const std::string nameField = "\"name\": \"Local profile\",";
+    const auto namePosition = injected.find(nameField);
+    if (namePosition != std::string::npos) {
+        injected.insert(namePosition + nameField.size(), "\n      \"saveRoot\": \"C:/attacker/path\",");
+    }
+    PortableConfigDocument injectedDocument;
+    test.Expect(PortableConfigDocument::Parse(injected, injectedDocument, error),
+        "unknown non-whitelisted fields should be ignored rather than adopted");
+
+    Config remoteSame = localConfig;
+    remoteSame.name = "Remote old value";
+    remoteSame.zipLevel = 1;
+    Config remoteOnly;
+    remoteOnly.configId = L"33333333-3333-4333-8333-333333333333";
+    remoteOnly.name = "Remote only";
+    remoteOnly.worlds = {{L"RemoteWorld", L"remote"}};
+    const auto remoteDocument = PortableConfigDocument::FromLocalConfigs({{0, remoteSame}, {1, remoteOnly}});
+
+    PortableConfigMergePreview uploadPreview;
+    const auto uploaded = PortableConfigDocument::MergeForUpload(local, remoteDocument, uploadPreview);
+    test.Expect(uploaded.configs.at(localConfig.configId).name == localConfig.name
+        && uploaded.configs.at(remoteOnly.configId).name == remoteOnly.name,
+        "upload merge should let local portable fields win while preserving remote-only ConfigIds");
+    test.Expect(uploadPreview.added.size() == 1 && uploadPreview.updated.size() == 1
+        && uploadPreview.preserved.size() == 1 && !uploadPreview.excludedFields.empty(),
+        "upload preview should report added, updated, preserved and excluded fields");
+
+    auto importTarget = local;
+    const auto beforePreview = importTarget;
+    const auto importPreview = PortableConfigDocument::PreviewImport(importTarget, remoteDocument);
+    test.Expect(importTarget.at(0).name == beforePreview.at(0).name
+        && importPreview.added.size() == 1 && importPreview.updated.size() == 1
+        && importPreview.preserved.size() == 1,
+        "previewing an import should not mutate local data");
+    PortableConfigMergePreview appliedPreview;
+    test.Expect(PortableConfigDocument::ApplyImport(importTarget, remoteDocument, appliedPreview, error),
+        "confirmed portable import should apply successfully");
+    test.Expect(importTarget.at(0).name == remoteSame.name && importTarget.at(0).zipLevel == remoteSame.zipLevel
+        && importTarget.at(0).saveRoot == localConfig.saveRoot
+        && importTarget.at(0).backupPath == localConfig.backupPath
+        && importTarget.at(0).rclonePath == localConfig.rclonePath,
+        "import should let remote portable fields win without overwriting local machine bindings");
+    test.Expect(importTarget.at(1).name == localOnly.name,
+        "import should preserve local-only ConfigIds");
+    const auto imported = std::find_if(importTarget.begin(), importTarget.end(), [&](const auto& item) {
+        return item.second.configId == remoteOnly.configId;
+    });
+    test.Expect(imported != importTarget.end() && imported->second.pendingLocalBinding
+        && imported->second.saveRoot.empty() && imported->second.backupPath.empty()
+        && imported->second.rclonePath.empty() && !imported->second.cloudSyncEnabled,
+        "a remote-only ConfigId should import as pending local binding with dangerous actions disabled");
+}
+
 void TestTaskCoordinator(TestContext& test, const std::filesystem::path& root) {
     auto& coordinator = TaskCoordinator::Instance();
     std::atomic<int> active{0};
@@ -904,6 +1012,7 @@ int main(int argc, char** argv) {
     TestProcessRunner(test, std::filesystem::absolute(argv[0]), temporary.path);
     TestSevenZipArgumentVector(test, temporary.path);
     TestExternalToolManager(test, temporary.path, std::filesystem::absolute(argv[0]));
+    TestPortableConfigDocument(test);
     TestInterruptedTaskRecovery(test, temporary.path);
     TestNetworkService(test, temporary.path);
     TestTaskCoordinator(test, temporary.path);

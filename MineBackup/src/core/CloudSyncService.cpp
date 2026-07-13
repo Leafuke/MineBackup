@@ -10,6 +10,10 @@
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
 #include "ExternalToolManager.h"
+#include "AtomicFileWriter.h"
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+#include "V15MigrationAdapter.h"
+#endif
 #include "i18n.h"
 #include "json.hpp"
 #include "text_to_text.h"
@@ -28,7 +32,7 @@ using namespace std;
 
 namespace {
 	const wchar_t* kCloudHistoryFileName = FolderRewindFormat::kCloudHistoryFileName;
-	const wchar_t* kCloudConfigFileName = L"config.ini";
+	const wchar_t* kPortableCloudConfigFileName = L"portable-config.json";
 	const wchar_t* kCloudStateDirName = FolderRewindFormat::kCloudStateDirName;
 	const wchar_t* kCloudActiveHistoryFileName = FolderRewindFormat::kCloudActiveHistoryFileName;
 	const wchar_t* kCloudMetadataDirName = FolderRewindFormat::kMetadataRootDirName;
@@ -152,6 +156,10 @@ namespace {
 	}
 
 	bool EnsureCloudConfigured(const Config& config, CloudCommandResult& outResult) {
+		if (config.pendingLocalBinding) {
+			outResult = MakeConfigErrorResult("CLOUD_CONFIG_INVALID", L"This configuration is waiting for local path binding.");
+			return false;
+		}
 		if (config.rcloneRemotePath.empty()) {
 			outResult = MakeConfigErrorResult("CLOUD_CONFIG_INVALID");
 			return false;
@@ -1357,74 +1365,217 @@ CloudCommandResult UploadConfigurationHistorySnapshot(const Config& config, int 
 	return result;
 }
 
-CloudCommandResult ExportConfigToCloud(const Config& config, Console& console) {
-	const int configIndex = ResolveConfigIndexForCloud(config);
-	unique_lock<mutex> lock(g_cloudMutex);
-	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_CONFIG")));
-
-	CloudCommandResult configError;
-	if (!EnsureCloudConfigured(config, configError)) {
-		UpdateConfigCloudLastResult(configIndex, configError);
-		SetCloudRuntimeState(configIndex, false, 100, configError.message, configError.message);
-		return configError;
-	}
-
-	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_config", L".ini");
-	SaveConfigs(tempPath);
-	CloudCommandResult result = ExecuteCommandWithRetry(
-		config,
-		configIndex,
-		console,
-		BuildRcloneCopyToCommand(config, tempPath.wstring(), AppendRemotePath(config.rcloneRemotePath, { kCloudConfigFileName })),
-		"CLOUD_STATUS_UPLOADING_CONFIG",
-		70);
-	error_code ec;
-	filesystem::remove(tempPath, ec);
-
-	if (result.success) {
-		result.message = utf8_to_wstring(L("CLOUD_CONFIG_EXPORT_SUCCEEDED"));
-	}
-	else {
-		result.message = utf8_to_wstring(L("CLOUD_CONFIG_EXPORT_FAILED"));
-	}
-
-	UpdateConfigCloudLastResult(configIndex, result);
-	SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
-	return result;
-}
-
-CloudCommandResult ImportConfigFromCloud(const Config& config, Console& console) {
+PortableConfigTransferPreparation PreparePortableConfigUpload(
+	const Config& config,
+	const map<int, Config>& localConfigs,
+	Console& console) {
+	PortableConfigTransferPreparation preparation;
 	const int configIndex = ResolveConfigIndexForCloud(config);
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_DOWNLOADING_CONFIG")));
-
 	CloudCommandResult configError;
 	if (!EnsureCloudConfigured(config, configError)) {
-		UpdateConfigCloudLastResult(configIndex, configError);
+		preparation.result = configError;
+		UpdateConfigCloudLastResult(configIndex, preparation.result);
 		SetCloudRuntimeState(configIndex, false, 100, configError.message, configError.message);
-		return configError;
+		return preparation;
 	}
 
-	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_config_import", L".ini");
-	CloudCommandResult result = ExecuteCommandWithRetry(
-		config,
-		configIndex,
-		console,
-		BuildRcloneCopyToCommand(config, AppendRemotePath(config.rcloneRemotePath, { kCloudConfigFileName }), tempPath.wstring()),
-		"CLOUD_STATUS_DOWNLOADING_CONFIG",
-		65);
+	PortableConfigDocument remote;
+	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_portable_config_prepare", L".json");
+	CloudCommandResult download = ExecuteCommandWithRetry(
+		config, configIndex, console,
+		BuildRcloneCopyToCommand(config,
+			AppendRemotePath(config.rcloneRemotePath, {kPortableCloudConfigFileName}), tempPath.wstring()),
+		"CLOUD_STATUS_DOWNLOADING_CONFIG", 35);
+	if (download.success) {
+		wstring parseError;
+		error_code sizeError;
+		const auto fileSize = filesystem::file_size(tempPath, sizeError);
+		if (sizeError || fileSize > PortableConfigDocument::MaximumBytes) {
+			parseError = L"portable-config.json is unavailable or exceeds the 1 MiB safety limit.";
+		}
+		else {
+			ifstream input(tempPath, ios::binary);
+			const string content((istreambuf_iterator<char>(input)), istreambuf_iterator<char>());
+			PortableConfigDocument::Parse(content, remote, parseError);
+		}
+		if (!parseError.empty()) {
+			download.success = false;
+			download.message = utf8_to_wstring(L("CLOUD_CONFIG_IMPORT_FAILED"));
+			download.detail = parseError;
+		}
+	}
+	else if (IsRemoteObjectMissing(download)) {
+		download.success = true;
+		download.exitCode = 0;
+		download.detail.clear();
+	}
+	error_code ignored;
+	filesystem::remove(tempPath, ignored);
+	if (!download.success) {
+		preparation.result = download;
+		UpdateConfigCloudLastResult(configIndex, preparation.result);
+		SetCloudRuntimeState(configIndex, false, 100, download.message, download.message);
+		return preparation;
+	}
 
-	if (result.success) {
-		LoadConfigs(tempPath);
-		SaveConfigs();
-		result.message = utf8_to_wstring(L("CLOUD_CONFIG_IMPORT_SUCCEEDED"));
+	const auto merged = PortableConfigDocument::MergeForUpload(localConfigs, remote, preparation.preview);
+	preparation.payload = merged.Serialize();
+	if (preparation.payload.size() > PortableConfigDocument::MaximumBytes) {
+		preparation.payload.clear();
+		preparation.result.success = false;
+		preparation.result.message = utf8_to_wstring(L("CLOUD_CONFIG_EXPORT_FAILED"));
+		preparation.result.detail = L"The merged portable configuration exceeds the 1 MiB safety limit.";
+		UpdateConfigCloudLastResult(configIndex, preparation.result);
+		SetCloudRuntimeState(configIndex, false, 100, preparation.result.message, preparation.result.message);
+		return preparation;
+	}
+	preparation.result.success = true;
+	preparation.result.exitCode = 0;
+	preparation.result.message = L"Portable configuration upload preview is ready.";
+	SetCloudRuntimeState(configIndex, false, 100, preparation.result.message, preparation.result.message);
+	return preparation;
+}
+
+PortableConfigTransferPreparation PreparePortableConfigImport(
+	const Config& config,
+	const map<int, Config>& localConfigs,
+	Console& console) {
+	PortableConfigTransferPreparation preparation;
+	const int configIndex = ResolveConfigIndexForCloud(config);
+	unique_lock<mutex> lock(g_cloudMutex);
+	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_DOWNLOADING_CONFIG")));
+	CloudCommandResult configError;
+	if (!EnsureCloudConfigured(config, configError)) {
+		preparation.result = configError;
+		UpdateConfigCloudLastResult(configIndex, preparation.result);
+		SetCloudRuntimeState(configIndex, false, 100, configError.message, configError.message);
+		return preparation;
+	}
+
+	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_portable_config_import", L".json");
+	preparation.result = ExecuteCommandWithRetry(
+		config, configIndex, console,
+		BuildRcloneCopyToCommand(config,
+			AppendRemotePath(config.rcloneRemotePath, {kPortableCloudConfigFileName}), tempPath.wstring()),
+		"CLOUD_STATUS_DOWNLOADING_CONFIG", 65);
+	if (preparation.result.success) {
+		PortableConfigDocument remote;
+		wstring parseError;
+		error_code sizeError;
+		const auto fileSize = filesystem::file_size(tempPath, sizeError);
+		if (sizeError || fileSize > PortableConfigDocument::MaximumBytes) {
+			parseError = L"portable-config.json is unavailable or exceeds the 1 MiB safety limit.";
+		}
+		else {
+			ifstream input(tempPath, ios::binary);
+			const string content((istreambuf_iterator<char>(input)), istreambuf_iterator<char>());
+			PortableConfigDocument::Parse(content, remote, parseError);
+		}
+		if (!parseError.empty()) {
+			preparation.result.success = false;
+			preparation.result.detail = parseError;
+		}
+		else {
+			preparation.payload = remote.Serialize();
+			preparation.preview = PortableConfigDocument::PreviewImport(localConfigs, remote);
+		}
+	}
+	error_code ignored;
+	filesystem::remove(tempPath, ignored);
+	preparation.result.message = preparation.result.success
+		? L"Portable configuration import preview is ready."
+		: utf8_to_wstring(L("CLOUD_CONFIG_IMPORT_FAILED"));
+	UpdateConfigCloudLastResult(configIndex, preparation.result);
+	SetCloudRuntimeState(configIndex, false, 100, preparation.result.message, preparation.result.message);
+	return preparation;
+}
+
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+PortableConfigTransferPreparation PrepareLegacyPortableConfigImport(
+	const Config& config,
+	const map<int, Config>& localConfigs,
+	Console& console) {
+	PortableConfigTransferPreparation preparation;
+	const int configIndex = ResolveConfigIndexForCloud(config);
+	unique_lock<mutex> lock(g_cloudMutex);
+	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_DOWNLOADING_CONFIG")));
+	CloudCommandResult configError;
+	if (!EnsureCloudConfigured(config, configError)) {
+		preparation.result = configError;
+		SetCloudRuntimeState(configIndex, false, 100, configError.message, configError.message);
+		return preparation;
+	}
+	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_legacy_remote_config", L".ini");
+	preparation.result = ExecuteCommandWithRetry(
+		config, configIndex, console,
+		BuildRcloneCopyToCommand(config,
+			AppendRemotePath(config.rcloneRemotePath, {L"config.ini"}), tempPath.wstring()),
+		"CLOUD_STATUS_DOWNLOADING_CONFIG", 50);
+	if (preparation.result.success) {
+		PortableConfigDocument filtered;
+		wstring filterError;
+		if (!V15MigrationAdapter::ImportLegacyRemoteIni(tempPath, filtered, filterError)) {
+			preparation.result.success = false;
+			preparation.result.detail = filterError;
+		}
+		else {
+			preparation.payload = filtered.Serialize();
+			preparation.preview = PortableConfigDocument::PreviewImport(localConfigs, filtered);
+		}
+	}
+	error_code ignored;
+	filesystem::remove(tempPath, ignored);
+	preparation.result.message = preparation.result.success
+		? L"Legacy remote config.ini import preview is ready."
+		: utf8_to_wstring(L("CLOUD_CONFIG_IMPORT_FAILED"));
+	UpdateConfigCloudLastResult(configIndex, preparation.result);
+	SetCloudRuntimeState(configIndex, false, 100, preparation.result.message, preparation.result.message);
+	return preparation;
+}
+#endif
+
+CloudCommandResult CommitPortableConfigUpload(
+	const Config& config,
+	const string& payload,
+	Console& console) {
+	const int configIndex = ResolveConfigIndexForCloud(config);
+	unique_lock<mutex> lock(g_cloudMutex);
+	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_CONFIG")));
+	CloudCommandResult result;
+	CloudCommandResult configError;
+	if (!EnsureCloudConfigured(config, configError)) {
+		result = configError;
 	}
 	else {
-		result.message = utf8_to_wstring(L("CLOUD_CONFIG_IMPORT_FAILED"));
+		PortableConfigDocument verified;
+		wstring parseError;
+		if (!PortableConfigDocument::Parse(payload, verified, parseError)) {
+			result = MakeConfigErrorResult("CLOUD_CONFIG_EXPORT_FAILED", parseError);
+		}
+		else {
+			const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_portable_config_upload", L".json");
+			AtomicFileWriter::WriteOptions options;
+			options.keepBackup = false;
+			const auto write = AtomicFileWriter::WriteText(tempPath, verified.Serialize(), options);
+			if (!write.success) {
+				result = MakeConfigErrorResult("CLOUD_CONFIG_EXPORT_FAILED", write.error);
+			}
+			else {
+				result = ExecuteCommandWithRetry(
+					config, configIndex, console,
+					BuildRcloneCopyToCommand(config, tempPath.wstring(),
+						AppendRemotePath(config.rcloneRemotePath, {kPortableCloudConfigFileName})),
+					"CLOUD_STATUS_UPLOADING_CONFIG", 70);
+			}
+			error_code ignored;
+			filesystem::remove(tempPath, ignored);
+		}
 	}
-
-	error_code ec;
-	filesystem::remove(tempPath, ec);
+	result.message = result.success
+		? utf8_to_wstring(L("CLOUD_CONFIG_EXPORT_SUCCEEDED"))
+		: utf8_to_wstring(L("CLOUD_CONFIG_EXPORT_FAILED"));
 	UpdateConfigCloudLastResult(configIndex, result);
 	SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
 	return result;
