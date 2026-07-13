@@ -9,6 +9,7 @@
 #include "MigrationCoordinator.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
+#include "ExternalToolManager.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "text_to_text.h"
@@ -105,14 +106,9 @@ namespace {
 		return name.empty() ? L"DefaultConfig" : name;
 	}
 
-	bool IsCommandPathConfigured(const wstring& executablePath) {
-		if (executablePath.empty()) return false;
-		if (executablePath.find(L'\\') == wstring::npos
-			&& executablePath.find(L'/') == wstring::npos
-			&& executablePath.find(L':') == wstring::npos) {
-			return true;
-		}
-		return filesystem::exists(executablePath);
+	ExternalToolResolution ResolveRcloneExecutable(const Config& config) {
+		return ExternalToolManager::ResolveRclone(
+			config.rclonePath, GetAppPaths(), TaskCoordinator::CurrentStopToken());
 	}
 
 	bool IsIncrementalBackupType(const wstring& typeOrFileName) {
@@ -156,12 +152,13 @@ namespace {
 	}
 
 	bool EnsureCloudConfigured(const Config& config, CloudCommandResult& outResult) {
-		if (config.rclonePath.empty() || config.rcloneRemotePath.empty()) {
+		if (config.rcloneRemotePath.empty()) {
 			outResult = MakeConfigErrorResult("CLOUD_CONFIG_INVALID");
 			return false;
 		}
-		if (!IsCommandPathConfigured(config.rclonePath)) {
-			outResult = MakeConfigErrorResult("CLOUD_RCLONE_NOT_FOUND");
+		const auto rclone = ResolveRcloneExecutable(config);
+		if (!rclone.available) {
+			outResult = MakeConfigErrorResult("CLOUD_RCLONE_NOT_FOUND", rclone.diagnostic);
 			return false;
 		}
 		if (!config.cloudWorkingDirectory.empty() && !filesystem::exists(config.cloudWorkingDirectory)) {
@@ -206,14 +203,14 @@ namespace {
 
 	ProcessSpec BuildRcloneCopyToCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
 		ProcessSpec spec;
-		spec.executable = config.rclonePath;
+		spec.executable = ResolveRcloneExecutable(config).executable;
 		spec.arguments = {L"copyto", sourcePath, destinationPath, L"--progress"};
 		return spec;
 	}
 
 	ProcessSpec BuildRcloneCopyCommand(const Config& config, const wstring& sourcePath, const wstring& destinationPath) {
 		ProcessSpec spec;
-		spec.executable = config.rclonePath;
+		spec.executable = ResolveRcloneExecutable(config).executable;
 		spec.arguments = {L"copy", sourcePath, destinationPath, L"--progress"};
 		return spec;
 	}

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "sevenZip": {
+    "name": "7-Zip ZS",
+    "version": "26.01 ZS v1.5.7 R1",
+    "upstream": "https://github.com/mcmilk/7-Zip-zstd/releases",
+    "windows": {
+      "architecture": "x64",
+      "resource": "7za.exe",
+      "sha256": "051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867",
+      "build": "standalone command-line executable with LZMA2, Deflate, BZip2 and zstd codecs"
+    }
+  },
+  "rclone": {
+    "name": "rclone",
+    "version": "1.74.4",
+    "upstream": "https://downloads.rclone.org/v1.74.4/",
+    "sha256Sums": "https://downloads.rclone.org/v1.74.4/SHA256SUMS",
+    "artifacts": {
+      "windows-x64": {
+        "file": "rclone-v1.74.4-windows-amd64.zip",
+        "sha256": "ef097ef9de37a57feb7d9f9c7afb34148ad3c65be8025f1d8f7f521554a701ea"
+      },
+      "linux-x64": {
+        "file": "rclone-v1.74.4-linux-amd64.zip",
+        "sha256": "fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d"
+      },
+      "macos-arm64": {
+        "file": "rclone-v1.74.4-osx-arm64.zip",
+        "sha256": "c2100e2d4a4b3be04c55cd45380cafe7647e1ad772bb055f52f00876ed701167"
+      }
+    }
+  }
+}

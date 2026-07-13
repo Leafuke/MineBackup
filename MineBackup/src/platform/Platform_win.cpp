@@ -4,7 +4,7 @@
 #include "text_to_text.h"
 #include "AppState.h"
 #include "AppPaths.h"
-#include "AtomicFileWriter.h"
+#include "ExternalToolManager.h"
 #include "Globals.h"
 #include "resource.h"
 #include "i18n.h"
@@ -484,13 +484,6 @@ wstring SelectSaveFileDialog(const wstring& defaultFileName, const wstring& filt
 }
 
 bool Extract7zToTempFile(wstring& extractedPath) {
-	const filesystem::path finalPath = GetAppPaths().toolsRoot / L"7zip" / L"7z.exe";
-
-	if (filesystem::exists(finalPath)) {
-		extractedPath = finalPath.wstring();
-		return true;
-	}
-
 	// 用主模块句柄
 	HRSRC hRes = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDR_EXE1), L"EXE");
 	if (!hRes) return false;
@@ -504,11 +497,10 @@ bool Extract7zToTempFile(wstring& extractedPath) {
 	LPVOID pData = LockResource(hData);
 	if (!pData) return false;
 
-	AtomicFileWriter::WriteOptions options;
-	options.keepBackup = false;
-	const string content(static_cast<const char*>(pData), static_cast<size_t>(dataSize));
-	if (!AtomicFileWriter::WriteText(finalPath, content, options).success) return false;
-	extractedPath = finalPath.wstring();
+	const auto install = ExternalToolManager::InstallBundledSevenZipForWindows(
+		pData, static_cast<size_t>(dataSize), GetAppPaths());
+	if (!install.success) return false;
+	extractedPath = install.executable.wstring();
 	return true;
 }
 

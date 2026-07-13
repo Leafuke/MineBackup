@@ -14,6 +14,7 @@
 #include "NetworkService.h"
 #include "RemoteContentService.h"
 #include "Sha256.h"
+#include "ExternalToolManager.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -536,6 +537,106 @@ void TestSevenZipArgumentVector(TestContext& test, const std::filesystem::path& 
 #endif
 }
 
+void TestExternalToolManager(TestContext& test, const std::filesystem::path& root, const std::filesystem::path& testExecutable) {
+#ifdef _WIN32
+    const auto asset = std::filesystem::path(__FILE__).parent_path().parent_path()
+        / "MineBackup" / "Assets" / "7za.exe";
+    const auto manifestPath = asset.parent_path() / "tool-manifest.json";
+    const std::string manifestText = ReadFile(manifestPath);
+    test.Expect(manifestText.find(ExternalToolManager::SevenZipWindowsSha256) != std::string::npos
+        && manifestText.find("1.74.4") != std::string::npos
+        && manifestText.find("ef097ef9de37a57feb7d9f9c7afb34148ad3c65be8025f1d8f7f521554a701ea") != std::string::npos,
+        "the auditable tool manifest should match compiled Windows pins");
+    std::string assetHash;
+    std::wstring hashError;
+    test.Expect(Sha256::FileHex(asset, assetHash, hashError)
+        && assetHash == ExternalToolManager::SevenZipWindowsSha256,
+        "the embedded 7-Zip asset should match the pinned supply-chain hash");
+
+    AppPaths paths;
+    paths.toolsRoot = root / "managed-tools";
+    paths.resourcesRoot = root / "resources";
+    const std::string assetBytes = ReadFile(asset);
+    const auto install = ExternalToolManager::InstallBundledSevenZipForWindows(
+        assetBytes.data(), assetBytes.size(), paths);
+    test.Expect(install.success
+        && install.executable == paths.toolsRoot / L"7zip" / ExternalToolManager::SevenZipVersion / L"7za.exe",
+        "the embedded 7-Zip should install into an immutable version directory");
+
+    const auto sevenZipProbe = ExternalToolManager::ProbeSevenZip(install.executable);
+    test.Expect(sevenZipProbe.available,
+        "the pinned 7-Zip should expose 7z, ZIP, LZMA2, Deflate, BZip2 and zstd capabilities");
+    const auto sevenZipFallback = ExternalToolManager::ResolveSevenZip(root / "missing-custom-7z.exe", paths);
+    test.Expect(sevenZipFallback.available && sevenZipFallback.fellBackFromUserPath
+        && sevenZipFallback.source == ExternalToolSource::Bundled
+        && sevenZipFallback.executable == install.executable,
+        "an invalid custom 7-Zip path should visibly fall back to the verified bundle");
+
+    const auto source = root / "codec-source";
+    std::filesystem::create_directories(source);
+    std::ofstream(source / "payload.txt") << "codec-round-trip";
+    for (const auto& [codec, archiveName] : std::vector<std::pair<std::wstring, std::wstring>>{
+        {L"LZMA2", L"lzma2.7z"}, {L"zstd", L"zstd.7z"}}) {
+        const auto archive = root / archiveName;
+        const auto restored = root / (archiveName + L"-restored");
+        ProcessSpec create;
+        create.executable = install.executable;
+        create.arguments = {L"a", L"-t7z", L"-m0=" + codec, L"-mx=1", archive.wstring(), L"payload.txt"};
+        create.workingDirectory = source;
+        auto process = ProcessRunner::Run(create);
+        test.Expect(process.status == ProcessStatus::Succeeded,
+            codec == L"LZMA2" ? "the pinned tool should create an LZMA2 archive" : "the pinned tool should create a zstd archive");
+        ProcessSpec extract;
+        extract.executable = install.executable;
+        extract.arguments = {L"x", archive.wstring(), L"-o" + restored.wstring(), L"-y"};
+        process = ProcessRunner::Run(extract);
+        test.Expect(process.status == ProcessStatus::Succeeded
+            && ReadText(restored / "payload.txt") == "codec-round-trip",
+            codec == L"LZMA2" ? "the pinned tool should restore an LZMA2 archive" : "the pinned tool should restore a zstd archive");
+    }
+
+    const auto userRclone = root / "user-rclone.exe";
+    const auto managedRclone = paths.toolsRoot / L"rclone" / L"versions"
+        / ExternalToolManager::RcloneVersion / L"rclone.exe";
+    std::filesystem::create_directories(managedRclone.parent_path());
+    std::filesystem::copy_file(testExecutable, userRclone);
+    std::filesystem::copy_file(testExecutable, managedRclone);
+    auto rclone = ExternalToolManager::ResolveRclone(userRclone, paths);
+    test.Expect(rclone.available && rclone.source == ExternalToolSource::User
+        && rclone.executable == userRclone,
+        "an absolute verified user rclone should take priority over a managed version");
+    rclone = ExternalToolManager::ResolveRclone(root / "missing-rclone.exe", paths);
+    test.Expect(rclone.available && rclone.source == ExternalToolSource::Managed
+        && rclone.fellBackFromUserPath && rclone.executable == managedRclone,
+        "an invalid user rclone should visibly fall back to the managed pinned version");
+
+    std::filesystem::remove_all(managedRclone.parent_path());
+    const auto previousVersion = paths.toolsRoot / "rclone" / "versions" / "1.70.0" / "sentinel.txt";
+    std::filesystem::create_directories(previousVersion.parent_path());
+    std::ofstream(previousVersion) << "current-version-remains";
+    auto backend = std::make_shared<FakeNetworkBackend>();
+    backend->body = "not-the-pinned-rclone-archive";
+    NetworkService network(backend);
+    auto failedInstall = ExternalToolManager::InstallPinnedRclone(network, install.executable, paths);
+    test.Expect(!failedInstall.success && ReadText(previousVersion) == "current-version-remains",
+        "a wrong rclone archive hash should not change an existing managed version");
+    backend->configuredResult.status = NetworkStatus::Truncated;
+    failedInstall = ExternalToolManager::InstallPinnedRclone(network, install.executable, paths);
+    test.Expect(!failedInstall.success && ReadText(previousVersion) == "current-version-remains",
+        "a truncated rclone download should not change an existing managed version");
+    int stagingDirectories = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(paths.toolsRoot / "rclone")) {
+        if (entry.path().filename().wstring().find(L".staging-") == 0) ++stagingDirectories;
+    }
+    test.Expect(stagingDirectories == 0,
+        "failed rclone installations should remove their private staging directories");
+#else
+    (void)test;
+    (void)root;
+    (void)testExecutable;
+#endif
+}
+
 void TestTaskCoordinator(TestContext& test, const std::filesystem::path& root) {
     auto& coordinator = TaskCoordinator::Instance();
     std::atomic<int> active{0};
@@ -743,6 +844,12 @@ void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "version") {
+        const auto executable = std::filesystem::absolute(argv[0]).wstring();
+        const bool managed = executable.find(ExternalToolManager::RcloneVersion) != std::wstring::npos;
+        std::cout << (managed ? "rclone v1.74.4\n" : "rclone v9.9.9\n");
+        return 0;
+    }
     if (argc >= 2 && std::string(argv[1]) == "--process-helper-echo") {
 #ifdef _WIN32
         _setmode(_fileno(stdout), _O_BINARY);
@@ -796,6 +903,7 @@ int main(int argc, char** argv) {
     TestLegacyLocationMigration(test, temporary.path);
     TestProcessRunner(test, std::filesystem::absolute(argv[0]), temporary.path);
     TestSevenZipArgumentVector(test, temporary.path);
+    TestExternalToolManager(test, temporary.path, std::filesystem::absolute(argv[0]));
     TestInterruptedTaskRecovery(test, temporary.path);
     TestNetworkService(test, temporary.path);
     TestTaskCoordinator(test, temporary.path);

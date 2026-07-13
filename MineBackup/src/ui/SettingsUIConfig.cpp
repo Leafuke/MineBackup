@@ -1,6 +1,7 @@
 ﻿#include "SettingsUIPrivate.h"
 
 #include "AppPaths.h"
+#include "ExternalToolManager.h"
 
 using namespace std;
 
@@ -213,15 +214,11 @@ void DrawPathSettings(Config& cfg) {
 
 	char zipBuf[256];
 	strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
-	const auto bundled7z = GetAppPaths().toolsRoot / L"7zip" / L"7z.exe";
-	if (filesystem::exists(bundled7z) && cfg.zipPath.empty()) {
-		cfg.zipPath = bundled7z.wstring();
-		ImGui::Text("%s", L("AUTODETECTED_7Z"));
-	}
-	else if (cfg.zipPath.empty()) {
-		string zipPathStr = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
-		if (filesystem::exists(zipPathStr)) {
-			cfg.zipPath = utf8_to_wstring(zipPathStr);
+	if (cfg.zipPath.empty()) {
+		const auto detected = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
+		if (detected.available) {
+			cfg.zipPath = detected.executable.wstring();
+			strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
 			ImGui::Text("%s", L("AUTODETECTED_7Z"));
 		}
 	}
@@ -236,6 +233,27 @@ void DrawPathSettings(Config& cfg) {
 	ImGui::SetNextItemWidth(-1);
 	if (ImGui::InputText("##ZipPath", zipBuf, 256)) {
 		cfg.zipPath = utf8_to_wstring(zipBuf);
+	}
+	static wstring toolStatus;
+	static bool toolStatusOk = false;
+	if (ImGui::Button("Verify compression tool")) {
+		const auto verified = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
+		toolStatusOk = verified.available;
+		if (verified.available) {
+			toolStatus = verified.fellBackFromUserPath
+				? verified.diagnostic + L" Active tool: " + verified.executable.wstring()
+				: L"Required archive formats and codecs verified: " + verified.executable.wstring();
+		}
+		else {
+			toolStatus = verified.diagnostic;
+		}
+	}
+	if (!toolStatus.empty()) {
+		ImGui::PushStyleColor(ImGuiCol_Text, toolStatusOk
+			? ImVec4(0.30f, 0.75f, 0.35f, 1.0f)
+			: ImVec4(0.85f, 0.45f, 0.30f, 1.0f));
+		ImGui::TextWrapped("%s", wstring_to_utf8(toolStatus).c_str());
+		ImGui::PopStyleColor();
 	}
 
 	ImGui::Spacing();

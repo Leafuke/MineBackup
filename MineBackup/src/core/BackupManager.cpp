@@ -14,6 +14,7 @@
 #include "MigrationCoordinator.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
+#include "ExternalToolManager.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
 #include <filesystem>
@@ -49,7 +50,9 @@ ProcessSpec MakeInternalProcess(
 	const filesystem::path& workingDirectory = {},
 	bool useLowPriority = false) {
 	ProcessSpec spec;
-	spec.executable = executable;
+	const auto resolved = ExternalToolManager::ResolveSevenZip(
+		executable, GetAppPaths(), TaskCoordinator::CurrentStopToken());
+	spec.executable = resolved.available ? resolved.executable : executable;
 	spec.arguments = std::move(arguments);
 	spec.workingDirectory = workingDirectory;
 	spec.useLowPriority = useLowPriority;

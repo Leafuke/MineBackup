@@ -364,6 +364,8 @@ FodyWeavers.xsd
 *.7z
 *.ini
 *.txt
+!LICENSES/
+!LICENSES/*.txt
 *.otf
 *.exe
 history.dat

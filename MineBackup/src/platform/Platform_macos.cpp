@@ -6,6 +6,7 @@
 #include "AppPaths.h"
 #include "Globals.h"
 #include "ProcessRunner.h"
+#include "ExternalToolManager.h"
 
 #include <atomic>
 #include <chrono>
@@ -24,7 +25,6 @@
 #include <system_error>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <mach-o/dyld.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -197,52 +197,11 @@ void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
 void EnableDarkModeWin(bool enable) {
 }
 
-static fs::path GetExecutableDirectory() {
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) == 0) {
-        return fs::path(path).parent_path();
-    }
-    return fs::current_path();
-}
-
 bool Extract7zToTempFile(std::wstring& extractedPath) {
-    const char* candidates[] = {
-        "/usr/local/bin/7z",
-        "/opt/homebrew/bin/7z",
-        "/usr/bin/7z",
-        "/opt/local/bin/7z",
-        nullptr
-    };
-    
-    for (const char** p = candidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
-    }
-    
-    fs::path exeDir = GetExecutableDirectory();
-    fs::path bundled7z = exeDir / "7z";
-    if (fs::exists(bundled7z)) {
-        extractedPath = bundled7z.wstring();
-        return true;
-    }
-    
-    const char* altCandidates[] = {
-        "/usr/local/bin/7zz",
-        "/opt/homebrew/bin/7zz",
-        nullptr
-    };
-    
-    for (const char** p = altCandidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
-    }
-    
-    return false;
+	const auto resolved = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
+	if (!resolved.available) return false;
+	extractedPath = resolved.executable.wstring();
+	return true;
 }
 
 bool ExtractFontToTempFile(std::wstring& extractedPath) {

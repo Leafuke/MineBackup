@@ -6,6 +6,7 @@
 #include "AppPaths.h"
 #include "Globals.h"
 #include "ProcessRunner.h"
+#include "ExternalToolManager.h"
 #include <GLFW/glfw3.h>
 
 #include <X11/Xlib.h>
@@ -373,14 +374,10 @@ void EnableDarkModeWin(bool enable) {
 }
 
 bool Extract7zToTempFile(std::wstring& extractedPath) {
-    const char* candidates[] = {"/usr/bin/7z", "/usr/local/bin/7z", nullptr};
-    for (const char** p = candidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
-    }
-    return false;
+	const auto resolved = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
+	if (!resolved.available) return false;
+	extractedPath = resolved.executable.wstring();
+	return true;
 }
 
 bool ExtractFontToTempFile(std::wstring& extractedPath) {

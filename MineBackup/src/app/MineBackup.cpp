@@ -935,6 +935,16 @@ int main(int argc, char** argv)
 					console.AddLog("[Network] Notice check failed: %s", wstring_to_utf8(event.message).c_str());
 				}
 			}
+			else if (event.type == L"rclone-install-complete") {
+				g_RcloneInstallRunning = false;
+				g_RcloneInstallSucceeded = event.values.at(L"success") == L"1";
+				g_RcloneInstallMessage = g_RcloneInstallSucceeded
+					? L"Managed rclone 1.74.4 is installed and verified: " + event.values.at(L"path")
+					: (event.message.empty() ? L"Managed rclone installation failed." : event.message);
+				if (!g_RcloneInstallSucceeded) {
+					console.AddLog("[Tools] rclone installation failed: %s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
+				}
+			}
 		}
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(1.0);

@@ -3,7 +3,18 @@
 #include "CloudSyncService.h"
 #include "AppPaths.h"
 #include "TaskCoordinator.h"
+#include "ExternalToolManager.h"
+#include "NetworkBackendFactory.h"
+#include "NetworkService.h"
 #include "imgui_style.h"
+
+#ifdef _WIN32
+#include "Platform_win.h"
+#elif defined(__APPLE__)
+#include "Platform_macos.h"
+#else
+#include "Platform_linux.h"
+#endif
 
 using namespace std;
 
@@ -183,6 +194,46 @@ void DrawCloudSyncSettings(Config& cfg) {
 		cfg.rclonePath = utf8_to_wstring(rclonePathBuf);
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_PATH"));
+
+	ImGui::BeginDisabled(g_RcloneInstallRunning);
+	if (ImGui::Button(g_RcloneInstallRunning ? "Installing rclone..." : "Install managed rclone 1.74.4")) {
+		const auto sevenZip = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
+		if (!sevenZip.available) {
+			g_RcloneInstallSucceeded = false;
+			g_RcloneInstallMessage = sevenZip.diagnostic;
+		}
+		else if (ConfirmMessageBox(
+			"Install rclone",
+			"MineBackup will download the pinned rclone 1.74.4 archive from downloads.rclone.org, verify its SHA-256, probe its version, and install it under this profile's tools directory. Continue?")) {
+			g_RcloneInstallRunning = true;
+			g_RcloneInstallSucceeded = false;
+			g_RcloneInstallMessage = L"Downloading and verifying rclone 1.74.4...";
+			const auto backend = CreatePlatformNetworkBackend();
+			const auto paths = GetAppPaths();
+			const auto sevenZipPath = sevenZip.executable;
+			if (!TaskCoordinator::Instance().Submit(L"install-rclone", {L"tool:rclone"},
+				[backend, paths, sevenZipPath](stop_token token) {
+					NetworkService network(backend);
+					const auto install = ExternalToolManager::InstallPinnedRclone(network, sevenZipPath, paths, token);
+					TaskEvent event{L"rclone-install-complete", install.error};
+					event.values[L"success"] = install.success ? L"1" : L"0";
+					event.values[L"path"] = install.executable.wstring();
+					TaskCoordinator::Instance().PostEvent(std::move(event));
+				})) {
+				g_RcloneInstallRunning = false;
+				g_RcloneInstallMessage = L"Another rclone installation is already running.";
+			}
+		}
+	}
+	ImGui::EndDisabled();
+	if (!g_RcloneInstallMessage.empty()) {
+		const ImVec4 color = g_RcloneInstallSucceeded
+			? ImVec4(0.30f, 0.75f, 0.35f, 1.0f)
+			: ImVec4(0.85f, 0.65f, 0.25f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, color);
+		ImGui::TextWrapped("%s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
+		ImGui::PopStyleColor();
+	}
 
 	char remotePathBuf[260];
 	strncpy_s(remotePathBuf, wstring_to_utf8(cfg.rcloneRemotePath).c_str(), sizeof(remotePathBuf));

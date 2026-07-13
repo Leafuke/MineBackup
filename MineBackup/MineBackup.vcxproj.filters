@@ -99,6 +99,9 @@
     <ClCompile Include="src\core\RemoteContentService.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\ExternalToolManager.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\AtomicFileWriter.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -255,6 +258,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\RemoteContentService.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\ExternalToolManager.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\AtomicFileWriter.h">
