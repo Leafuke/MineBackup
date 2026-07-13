@@ -49,6 +49,9 @@ inline int _getch() { return std::getchar(); }
 #include <CoreText/CoreText.h>
 #include <CoreFoundation/CoreFoundation.h>
 #endif
+#ifdef __linux__
+#include <ProcessRunner.h>
+#endif
 
 using namespace std;
 
