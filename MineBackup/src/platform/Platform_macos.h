@@ -7,7 +7,6 @@
 
 struct Console;
 
-void CheckForUpdatesThread();
 std::wstring SelectFileDialog();
 std::wstring SelectFolderDialog();
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName = L"", const std::wstring& filter = L"");
@@ -34,6 +33,5 @@ void EnableDarkModeWin(bool enable);
 bool Extract7zToTempFile(std::wstring& extractedPath);
 bool ExtractFontToTempFile(std::wstring& extractedPath);
 bool IsFileLocked(const std::wstring& path);
-void CheckForNoticesThread();
 
 #endif // !_PLATFORM_MACOS_H

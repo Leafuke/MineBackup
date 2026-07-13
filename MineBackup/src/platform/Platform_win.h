@@ -11,7 +11,6 @@ enum class LogLevel {
     Warning,
     Error
 };
-void CheckForUpdatesThread();
 void RegisterHotkeys(HWND hwnd, int hotkeyId, int key);
 void UnregisterHotkeys(HWND hwnd, int hotkeyId);
 std::wstring SelectFileDialog();
@@ -39,5 +38,4 @@ bool GetBundledIconFontResource(const void*& data, std::size_t& size);
 bool IsFileLocked(const std::wstring& path);
 std::string GetRegistryValue(const std::string& keyPath, const std::string& valueName);
 void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray = false);
-void CheckForNoticesThread();
 #endif // !_PLATFORM_WIN_H

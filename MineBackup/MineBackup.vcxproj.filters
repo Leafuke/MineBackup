@@ -96,6 +96,9 @@
     <ClCompile Include="src\core\TaskCoordinator.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\RemoteContentService.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\AtomicFileWriter.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -120,6 +123,12 @@
     <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\NetworkService.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\Sha256.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\Broadcast.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -133,6 +142,9 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Platform_win.cpp">
+      <Filter>src\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\NetworkBackend_win.cpp">
       <Filter>src\platform</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\HistoryUI.cpp">
@@ -242,6 +254,9 @@
     <ClInclude Include="src\core\TaskCoordinator.h">
       <Filter>src\core</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\RemoteContentService.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\AtomicFileWriter.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -266,6 +281,12 @@
     <ClInclude Include="src\infra\InterruptedTaskRecovery.h">
       <Filter>src\infra</Filter>
     </ClInclude>
+    <ClInclude Include="src\infra\NetworkService.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\Sha256.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\Broadcast.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -288,6 +309,9 @@
       <Filter>src\platform</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\Platform_win.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\NetworkBackendFactory.h">
       <Filter>src\platform</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\IconsFontAwesome6.h">

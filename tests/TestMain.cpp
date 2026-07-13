@@ -11,6 +11,9 @@
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
 #include "InterruptedTaskRecovery.h"
+#include "NetworkService.h"
+#include "RemoteContentService.h"
+#include "Sha256.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -56,6 +59,31 @@ struct TemporaryDirectory {
     ~TemporaryDirectory() {
         std::error_code error;
         std::filesystem::remove_all(path, error);
+    }
+};
+
+class FakeNetworkBackend final : public NetworkBackend {
+public:
+    NetworkResult configuredResult{NetworkStatus::Succeeded, 200, "https://example.test/final", 0, {}};
+    std::string body;
+    std::size_t syntheticChunkSize = 0;
+
+    NetworkResult Get(const NetworkRequest&, const NetworkChunkSink& sink, std::stop_token stopToken) override {
+        if (stopToken.stop_requested()) {
+            auto cancelled = configuredResult;
+            cancelled.status = NetworkStatus::Cancelled;
+            return cancelled;
+        }
+        if (configuredResult.status != NetworkStatus::Succeeded) return configuredResult;
+        const std::size_t size = syntheticChunkSize ? syntheticChunkSize : body.size();
+        if (size && !sink(body.empty() ? "x" : body.data(), size)) {
+            auto rejected = configuredResult;
+            rejected.status = NetworkStatus::SinkRejected;
+            return rejected;
+        }
+        auto result = configuredResult;
+        result.transferredBytes = size;
+        return result;
     }
 };
 
@@ -624,6 +652,94 @@ void TestInterruptedTaskRecovery(TestContext& test, const std::filesystem::path&
         "startup recovery should persist a report through AtomicFileWriter");
 }
 
+void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
+    Sha256 hash;
+    hash.Update("abc", 3);
+    const std::string abcHash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    test.Expect(hash.FinalHex() == abcHash, "SHA-256 should match the standard abc vector");
+
+    auto backend = std::make_shared<FakeNetworkBackend>();
+    NetworkService network(backend);
+    NetworkRequest request;
+    request.url = "https://example.test/content";
+    backend->body = "network text";
+    auto textResult = network.GetText(request);
+    test.Expect(textResult.status == NetworkStatus::Succeeded && textResult.text == backend->body,
+        "NetworkService should return bounded HTTPS text");
+
+    request.url = "http://example.test/insecure";
+    textResult = network.GetText(request);
+    test.Expect(textResult.status == NetworkStatus::InvalidRequest,
+        "NetworkService should reject an initial non-HTTPS request");
+    request.url = "https://example.test/content";
+
+    backend->syntheticChunkSize = NetworkService::MaximumTextBytes + 1;
+    textResult = network.GetText(request);
+    test.Expect(textResult.status == NetworkStatus::TooLarge && textResult.text.empty(),
+        "NetworkService should distinguish an oversized text response");
+    backend->syntheticChunkSize = 0;
+
+    backend->configuredResult.status = NetworkStatus::RedirectLimit;
+    test.Expect(network.GetText(request).status == NetworkStatus::RedirectLimit,
+        "NetworkService should preserve redirect-loop diagnostics");
+    backend->configuredResult.status = NetworkStatus::TlsError;
+    test.Expect(network.GetText(request).status == NetworkStatus::TlsError,
+        "NetworkService should preserve TLS diagnostics");
+    backend->configuredResult.status = NetworkStatus::InsecureRedirect;
+    test.Expect(network.GetText(request).status == NetworkStatus::InsecureRedirect,
+        "NetworkService should distinguish an HTTPS-to-HTTP redirect rejection");
+    backend->configuredResult.status = NetworkStatus::HttpError;
+    test.Expect(network.GetText(request).status == NetworkStatus::HttpError,
+        "NetworkService should preserve HTTP diagnostics");
+    backend->configuredResult.status = NetworkStatus::Truncated;
+    test.Expect(network.GetText(request).status == NetworkStatus::Truncated,
+        "NetworkService should distinguish a truncated response");
+    backend->configuredResult.status = NetworkStatus::Succeeded;
+
+    std::stop_source cancelled;
+    cancelled.request_stop();
+    test.Expect(network.GetText(request, cancelled.get_token()).status == NetworkStatus::Cancelled,
+        "NetworkService should preserve cancellation status");
+
+    const auto destination = root / "network" / "download.bin";
+    backend->body = "abc";
+    auto download = network.Download(request, destination, abcHash);
+    test.Expect(download.status == NetworkStatus::Succeeded && ReadText(destination) == "abc"
+        && download.sha256 == abcHash, "a verified download should commit atomically");
+
+    std::ofstream(destination, std::ios::binary | std::ios::trunc) << "current";
+    download = network.Download(request, destination, std::string(64, '0'));
+    test.Expect(download.status == NetworkStatus::HashMismatch && ReadText(destination) == "current",
+        "a hash mismatch should preserve the current destination");
+
+    backend->syntheticChunkSize = static_cast<std::size_t>(NetworkService::MaximumDownloadBytes + 1);
+    download = network.Download(request, destination, abcHash);
+    test.Expect(download.status == NetworkStatus::TooLarge && ReadText(destination) == "current",
+        "an oversized download should preserve the current destination");
+    backend->syntheticChunkSize = 0;
+    int stagingFiles = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(destination.parent_path())) {
+        if (entry.path().filename().wstring().find(L".download.") != std::wstring::npos) ++stagingFiles;
+    }
+    test.Expect(stagingFiles == 0, "failed downloads should remove their unique staging files");
+
+    backend->body = R"({"tag_name":"v9.8.7","body":"notes","assets":[{"browser_download_url":"https://evil.test/payload"}]})";
+    const auto update = CheckMineBackupUpdate(network, "1.16.0", "en_US");
+    test.Expect(update.success && update.updateAvailable && update.latestTag == "v9.8.7",
+        "update parsing should accept only the version and release notes model");
+    test.Expect(BuildMineBackupOfficialReleaseUrl(update.latestTag)
+        == "https://github.com/Leafuke/MineBackup/releases/tag/v9.8.7",
+        "the update action should construct an exact official Release URL");
+    backend->body = R"({"tag_name":"v9.8.7/../../payload","body":"notes"})";
+    test.Expect(!CheckMineBackupUpdate(network, "1.16.0", "en_US").success,
+        "update parsing should reject a tag that could alter the application-built Release URL");
+    test.Expect(BuildMineBackupOfficialReleaseUrl("v9.8.7/../../payload").empty(),
+        "the official Release URL builder should reject path-altering tags");
+    backend->body = "404: Not Found";
+    test.Expect(!CheckMineBackupNotice(network, "en_US", "").success,
+        "notice parsing should reject 404 bodies from both direct and mirror text sources");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -681,6 +797,7 @@ int main(int argc, char** argv) {
     TestProcessRunner(test, std::filesystem::absolute(argv[0]), temporary.path);
     TestSevenZipArgumentVector(test, temporary.path);
     TestInterruptedTaskRecovery(test, temporary.path);
+    TestNetworkService(test, temporary.path);
     TestTaskCoordinator(test, temporary.path);
 
     if (test.failures == 0) {

@@ -3,6 +3,13 @@ cmake_minimum_required(VERSION 3.22)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MineBackupVersion.cmake)
 project(MineBackup VERSION ${MINEBACKUP_VERSION} LANGUAGES C CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 20)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+    set(CMAKE_OBJCXX_EXTENSIONS OFF)
+endif()
+
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
@@ -130,14 +137,19 @@ if(UNIX AND NOT APPLE)
         target_compile_options(minebackup_desktop PRIVATE ${APPINDICATOR3_CFLAGS_OTHER})
     endif()
     find_package(X11 REQUIRED)
-    target_link_libraries(minebackup_desktop PUBLIC X11)
+    find_package(CURL REQUIRED)
+    target_link_libraries(minebackup_desktop PUBLIC X11 CURL::libcurl)
 endif()
 
 if(APPLE)
-    set_source_files_properties(${MINEBACKUP_PLATFORM_DIR}/Platform_macos_tray.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    set_source_files_properties(
+        ${MINEBACKUP_PLATFORM_DIR}/Platform_macos_tray.mm
+        ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_macos.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     target_link_libraries(minebackup_desktop PUBLIC
         "-framework Cocoa" "-framework Carbon" "-framework IOKit" "-framework CoreVideo"
         "-framework CoreText" "-framework CoreFoundation"
+        "-framework Foundation"
     )
     find_library(ICONV_LIB iconv)
     if(ICONV_LIB)

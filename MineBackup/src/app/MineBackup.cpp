@@ -13,6 +13,9 @@
 #include "TaskSystem.h"
 #include "TaskCoordinator.h"
 #include "InterruptedTaskRecovery.h"
+#include "NetworkBackendFactory.h"
+#include "NetworkService.h"
+#include "RemoteContentService.h"
 #include "PlatformCompat.h"
 #include "Console.h"
 #include "ConfigManager.h"
@@ -222,7 +225,11 @@ void ConsoleLog(Console* console, const char* format, ...);
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
 	(void)lpCmdLine;
-	vector<wstring> launchArguments(__wargv, __wargv + __argc);
+
+	int argc = 0;
+	wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	vector<wstring> launchArguments(argv, argv + argc);
+	LocalFree(argv);
 
 #else
 int main(int argc, char** argv)
@@ -423,15 +430,40 @@ int main(int argc, char** argv)
 		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
 	}
 
+	const auto networkBackend = CreatePlatformNetworkBackend();
 	if (g_CheckForUpdates) {
+		g_UpdateCheckDone = false;
+		g_NewVersionAvailable = false;
+		const string currentVersion = CURRENT_VERSION;
+		const string language = g_CurrentLang;
 		TaskCoordinator::Instance().Submit(L"update-check", {L"network:update"},
-			[](stop_token) { CheckForUpdatesThread(); });
+			[networkBackend, currentVersion, language](stop_token token) {
+				NetworkService network(networkBackend);
+				const auto result = CheckMineBackupUpdate(network, currentVersion, language, token);
+				TaskEvent event{L"update-check-complete", result.error};
+				event.values[L"success"] = result.success ? L"1" : L"0";
+				event.values[L"available"] = result.updateAvailable ? L"1" : L"0";
+				event.values[L"tag"] = utf8_to_wstring(result.latestTag);
+				event.values[L"notes"] = utf8_to_wstring(result.releaseNotes);
+				TaskCoordinator::Instance().PostEvent(std::move(event));
+			});
 	}
 	if (g_ReceiveNotices) {
 		g_NoticeCheckDone = false;
 		g_NewNoticeAvailable = false;
+		const string language = g_CurrentLang;
+		const string lastSeen = g_NoticeLastSeenVersion;
 		TaskCoordinator::Instance().Submit(L"notice-check", {L"network:notice"},
-			[](stop_token) { CheckForNoticesThread(); });
+			[networkBackend, language, lastSeen](stop_token token) {
+				NetworkService network(networkBackend);
+				const auto result = CheckMineBackupNotice(network, language, lastSeen, token);
+				TaskEvent event{L"notice-check-complete", result.error};
+				event.values[L"success"] = result.success ? L"1" : L"0";
+				event.values[L"available"] = result.noticeAvailable ? L"1" : L"0";
+				event.values[L"content"] = utf8_to_wstring(result.content);
+				event.values[L"content-id"] = utf8_to_wstring(result.contentId);
+				TaskCoordinator::Instance().PostEvent(std::move(event));
+			});
 	}
 	TaskCoordinator::Instance().Submit(L"game-session-watcher", {},
 		[](stop_token token) { GameSessionWatcherThread(token); });
@@ -885,6 +917,24 @@ int main(int argc, char** argv)
 					else ++it;
 				}
 			}
+			else if (event.type == L"update-check-complete") {
+				g_NewVersionAvailable = event.values.at(L"available") == L"1";
+				g_LatestVersionStr = wstring_to_utf8(event.values.at(L"tag"));
+				g_ReleaseNotes = wstring_to_utf8(event.values.at(L"notes"));
+				g_UpdateCheckDone = true;
+				if (event.values.at(L"success") != L"1" && !event.message.empty()) {
+					console.AddLog("[Network] Update check failed: %s", wstring_to_utf8(event.message).c_str());
+				}
+			}
+			else if (event.type == L"notice-check-complete") {
+				g_NewNoticeAvailable = event.values.at(L"available") == L"1";
+				g_NoticeContent = wstring_to_utf8(event.values.at(L"content"));
+				g_NoticeUpdatedAt = wstring_to_utf8(event.values.at(L"content-id"));
+				g_NoticeCheckDone = true;
+				if (event.values.at(L"success") != L"1" && !event.message.empty()) {
+					console.AddLog("[Network] Notice check failed: %s", wstring_to_utf8(event.message).c_str());
+				}
+			}
 		}
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(1.0);
@@ -1218,31 +1268,8 @@ int main(int argc, char** argv)
 						ImGui::EndChild();
 						ImGui::Separator();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(180, 0))) {
-#ifdef _WIN32
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
-#elif defined(__APPLE__)
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
-#else
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
-#endif
-							open_update_popup = false;
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(180, 0))) {
-#ifdef _WIN32
-							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
-#elif defined(__APPLE__)
-							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
-#else
-							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
-#endif
-							open_update_popup = false;
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_3"), ImVec2(180, 0))) {
-							OpenLinkInBrowser(L"https://www.123865.com/s/Zsyijv-UTuGd?pwd=mine#");
+							const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
+							if (!releaseUrl.empty()) OpenLinkInBrowser(utf8_to_wstring(releaseUrl));
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1252,7 +1279,8 @@ int main(int argc, char** argv)
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("CHECK_FOR_UPDATES"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases");
+							const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
+							if (!releaseUrl.empty()) OpenLinkInBrowser(utf8_to_wstring(releaseUrl));
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}

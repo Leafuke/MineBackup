@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <stop_token>
 #include <string>
@@ -10,6 +11,7 @@
 struct TaskEvent {
     std::wstring type;
     std::wstring message;
+    std::map<std::wstring, std::wstring> values;
 };
 
 class TaskCoordinator {

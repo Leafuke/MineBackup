@@ -114,6 +114,7 @@
     <ClCompile Include="src\core\SpecialMode.cpp" />
     <ClCompile Include="src\core\TaskSystem.cpp" />
     <ClCompile Include="src\core\TaskCoordinator.cpp" />
+    <ClCompile Include="src\core\RemoteContentService.cpp" />
     <ClCompile Include="src\infra\AtomicFileWriter.cpp" />
     <ClCompile Include="src\infra\AppPaths.cpp" />
     <ClCompile Include="src\infra\RotatingFileLog.cpp" />
@@ -122,11 +123,14 @@
     <ClCompile Include="src\infra\LegacyLocationMigration.cpp" />
     <ClCompile Include="src\infra\ProcessRunner.cpp" />
     <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp" />
+    <ClCompile Include="src\infra\NetworkService.cpp" />
+    <ClCompile Include="src\infra\Sha256.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
     <ClCompile Include="src\infra\Console.cpp" />
     <ClCompile Include="src\infra\i18n.cpp" />
     <ClCompile Include="src\platform\Platform_win.cpp" />
+    <ClCompile Include="src\platform\NetworkBackend_win.cpp" />
     <ClCompile Include="src\ui\HistoryUI.cpp" />
     <ClCompile Include="src\ui\MigrationReportUI.cpp" />
     <ClCompile Include="src\ui\SettingsUIAppearance.cpp" />
@@ -164,6 +168,7 @@
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\TaskSystem.h" />
     <ClInclude Include="src\core\TaskCoordinator.h" />
+    <ClInclude Include="src\core\RemoteContentService.h" />
     <ClInclude Include="src\infra\AtomicFileWriter.h" />
     <ClInclude Include="src\infra\AppPaths.h" />
     <ClInclude Include="src\infra\RotatingFileLog.h" />
@@ -172,6 +177,8 @@
     <ClInclude Include="src\infra\LegacyLocationMigration.h" />
     <ClInclude Include="src\infra\ProcessRunner.h" />
     <ClInclude Include="src\infra\InterruptedTaskRecovery.h" />
+    <ClInclude Include="src\infra\NetworkService.h" />
+    <ClInclude Include="src\infra\Sha256.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
     <ClInclude Include="src\infra\ConfigManager.h" />
     <ClInclude Include="src\infra\Console.h" />
@@ -180,6 +187,7 @@
     <ClInclude Include="src\platform\Platform_linux.h" />
     <ClInclude Include="src\platform\Platform_macos.h" />
     <ClInclude Include="src\platform\Platform_win.h" />
+    <ClInclude Include="src\platform\NetworkBackendFactory.h" />
     <ClInclude Include="src\ui\IconsFontAwesome6.h" />
     <ClInclude Include="src\ui\MigrationReportUI.h" />
     <ClInclude Include="src\ui\SettingsUI.h" />
