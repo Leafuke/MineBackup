@@ -864,8 +864,18 @@ int main(int argc, char** argv)
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewports
-	io.ConfigViewportsNoAutoMerge = true;                     // 不自动合并视口
+	bool enableMultiViewport = true;
+#ifdef __linux__
+	// GLFW intentionally does not expose ImGui platform-window handlers on
+	// Wayland. Keeping ViewportsEnable set would make the application call
+	// UpdatePlatformWindows with an unavailable backend and can crash on the
+	// first frame (notably with a headless Weston compositor).
+	enableMultiViewport = selectedGlfwPlatform != GLFW_PLATFORM_WAYLAND;
+#endif
+	if (enableMultiViewport) {
+		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Enable Multi-Viewports
+		io.ConfigViewportsNoAutoMerge = true;                 // 不自动合并视口
+	}
 
 	// Error Recovery
 	io.ConfigErrorRecoveryEnableAssert = true;

@@ -134,7 +134,7 @@ bool CreateTrayIcon() {
 			if (icon) {
 				// 调整图标大小适配状态栏
 				[icon setSize:NSMakeSize(18, 18)];
-				icon.template = YES;
+				[icon setTemplate:YES];
 				g_statusItem.button.image = icon;
 			} else {
 				// 回退到文字标题

@@ -14,6 +14,21 @@
 using namespace std;
 namespace fs = std::filesystem;
 
+@interface MBNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
+@end
+
+@implementation MBNotificationDelegate
+- (void)userNotificationCenter:(UNUserNotificationCenter*)center
+       willPresentNotification:(UNNotification*)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
+    (void)center;
+    (void)notification;
+    completionHandler(UNNotificationPresentationOptionBanner
+        | UNNotificationPresentationOptionList
+        | UNNotificationPresentationOptionSound);
+}
+@end
+
 namespace {
 
 NSString* NativeString(const wstring& value) {
@@ -111,21 +126,6 @@ enum class NotificationState {
 mutex g_notificationMutex;
 NotificationState g_notificationState = NotificationState::Unknown;
 wstring g_notificationDiagnostic;
-
-@interface MBNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
-@end
-
-@implementation MBNotificationDelegate
-- (void)userNotificationCenter:(UNUserNotificationCenter*)center
-       willPresentNotification:(UNNotification*)notification
-         withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
-    (void)center;
-    (void)notification;
-    completionHandler(UNNotificationPresentationOptionBanner
-        | UNNotificationPresentationOptionList
-        | UNNotificationPresentationOptionSound);
-}
-@end
 
 id<UNUserNotificationCenterDelegate> g_notificationDelegate = nil;
 

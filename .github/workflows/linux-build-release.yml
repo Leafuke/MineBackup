@@ -39,14 +39,6 @@ jobs:
           ldd build/linux-x64/bin/MineBackup | tee build/linux-x64/ldd.txt
           ! grep -F 'not found' build/linux-x64/ldd.txt
 
-      - name: Stage developer-smoke resources
-        run: |
-          mkdir -p build/linux-x64/bin/Resources/Assets
-          cp MineBackup/Assets/fontawesome-sp.otf build/linux-x64/bin/Resources/Assets/
-
-      - name: Exercise automatic X11 and Wayland selection
-        run: bash packaging/linux/verify-desktop.sh build/linux-x64/bin/MineBackup all
-
       - name: Download pinned packaging inputs
         run: |
           mkdir -p build/package-inputs build/release
@@ -56,6 +48,22 @@ jobs:
           curl --fail --location --retry 3 \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
             --output build/package-inputs/linuxdeploy-x86_64.AppImage
+          echo '3cfca42ab44519822d5299cb92f823633209dd762d903ade3fde19585c56915a  build/package-inputs/linux-gcc-x64.zip' \
+            | sha256sum --check --status
+          echo 'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  build/package-inputs/linuxdeploy-x86_64.AppImage' \
+            | sha256sum --check --status
+
+      - name: Stage developer-smoke resources
+        run: |
+          tool_dir=build/linux-x64/bin/Resources/tools/7zip/26.01-zs-v1.5.7-r1
+          mkdir -p build/linux-x64/bin/Resources/Assets "$tool_dir"
+          cp MineBackup/Assets/fontawesome-sp.otf build/linux-x64/bin/Resources/Assets/
+          cp MineBackup/Assets/tool-manifest.json build/linux-x64/bin/Resources/
+          unzip -p build/package-inputs/linux-gcc-x64.zip 7zz >"$tool_dir/7zz"
+          chmod 0755 "$tool_dir/7zz"
+
+      - name: Exercise automatic X11 and Wayland selection
+        run: bash packaging/linux/verify-desktop.sh build/linux-x64/bin/MineBackup all
 
       - name: Build deb and AppImage candidates
         run: |
