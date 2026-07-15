@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 enum class CapabilityState {
     Available,
@@ -41,6 +42,12 @@ struct DesktopPathResult {
     bool cancelled = false;
 };
 
+struct GlobalHotkeyBinding {
+    int hotkeyId = 0;
+    int key = 0;
+    std::wstring description;
+};
+
 class DesktopServices {
 public:
     virtual ~DesktopServices() = default;
@@ -59,8 +66,8 @@ public:
     [[nodiscard]] virtual CapabilityStatus Notify(
         const std::wstring& title, const std::wstring& message) = 0;
     [[nodiscard]] virtual CapabilityStatus SetTrayVisible(bool visible) = 0;
-    [[nodiscard]] virtual CapabilityStatus RegisterGlobalHotkey(int hotkeyId, int key) = 0;
-    [[nodiscard]] virtual CapabilityStatus UnregisterGlobalHotkey(int hotkeyId) = 0;
+    [[nodiscard]] virtual CapabilityStatus ConfigureGlobalHotkeys(
+        const std::vector<GlobalHotkeyBinding>& bindings) = 0;
     [[nodiscard]] virtual CapabilityStatus SetAutostart(bool enabled) = 0;
     [[nodiscard]] virtual CapabilityStatus ActivateWindow() = 0;
     [[nodiscard]] virtual CapabilityStatus RestartApplication() = 0;

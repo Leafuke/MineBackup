@@ -1,81 +1,51 @@
-name: Build & Upload MineBackup (Linux)
+name: Linux Build and Desktop Validation
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-    - name: Checkout source
-      uses: actions/checkout@v3
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake pkg-config libglfw3-dev libgl1-mesa-dev libcurl4-openssl-dev p7zip-full
+      - name: Install build and desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config p7zip-full \
+            libgl1-mesa-dev libcurl4-openssl-dev libglib2.0-dev \
+            libgtk-3-dev libayatana-appindicator3-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols xvfb weston
 
-    - name: Configure CMake
-      run: cmake -DCMAKE_BUILD_TYPE=Release .
+      - name: Configure, build and test
+        run: |
+          cmake --preset linux-x64 -DBUILD_TESTING=ON
+          cmake --build build/linux-x64 --parallel
+          ctest --preset linux-x64 --output-on-failure
 
-    - name: Build MineBackup
-      run: cmake --build . --config Release
+      - name: Verify declared dynamic libraries
+        run: |
+          ldd build/linux-x64/bin/MineBackup | tee build/linux-x64/ldd.txt
+          ! grep -F 'not found' build/linux-x64/ldd.txt
 
-    - name: Prepare release package
-      run: |
-        mkdir -p release-package/Assets
-        cp ./bin/MineBackup release-package/
-        find ./MineBackup/Assets -maxdepth 1 -type f \( -name "*.ttf" -o -name "*.otf" \) -exec cp {} release-package/Assets/ \;
+      - name: Stage developer-smoke resources
+        run: |
+          mkdir -p build/linux-x64/bin/Resources/Assets
+          cp MineBackup/Assets/fontawesome-sp.otf build/linux-x64/bin/Resources/Assets/
 
-    - name: 7z Compress Executable + Fonts
-      run: |
-        7z a MineBackup-linux.7z ./release-package/*
+      - name: Exercise automatic X11 and Wayland selection
+        run: bash packaging/linux/verify-desktop.sh build/linux-x64/bin/MineBackup all
 
-    - name: Get latest release
-      id: get_release
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const releases = await github.rest.repos.listReleases({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            per_page: 1,
-          });
-          if (!releases.data.length) throw 'No releases found';
-          const release = releases.data[0];
-          core.setOutput('upload_url', release.upload_url);
-          core.setOutput('release_id', release.id);
-
-    - name: Delete existing asset if exists
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const releaseId = Number('${{ steps.get_release.outputs.release_id }}');
-          const assetName = 'MineBackup-linux.7z';
-          const assets = await github.rest.repos.listReleaseAssets({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: releaseId,
-            per_page: 100,
-          });
-          const target = assets.data.find(a => a.name === assetName);
-          if (target) {
-            await github.rest.repos.deleteReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              asset_id: target.id,
-            });
-            core.info(`Deleted existing asset: ${assetName}`);
-          } else {
-            core.info(`No existing asset found: ${assetName}`);
-          }
-
-    - name: Upload artifact to latest release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: ./MineBackup-linux.7z
-        asset_name: MineBackup-linux.7z
-        asset_content_type: application/x-7z-compressed
+      - name: Upload validation candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-linux-desktop-validation
+          path: |
+            build/linux-x64/bin/MineBackup
+            build/linux-x64/ldd.txt

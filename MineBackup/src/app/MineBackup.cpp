@@ -569,6 +569,11 @@ int main(int argc, char** argv)
 	}
 
 	glfwSetErrorCallback(glfw_error_callback);
+#ifdef __linux__
+	// GLFW 3.4 chooses Wayland or X11 from the current desktop environment.
+	// Keep this automatic; capability fallbacks must use the selected backend below.
+	glfwInitHint(GLFW_PLATFORM, GLFW_ANY_PLATFORM);
+#endif
 	if (!glfwInit()) {
 		MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
 		return 1;
@@ -601,13 +606,27 @@ int main(int argc, char** argv)
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
 
+	auto applyLinuxWindowIdentity = []() {
+#ifdef __linux__
+		glfwWindowHintString(GLFW_WAYLAND_APP_ID, "io.github.leafuke.MineBackup");
+		glfwWindowHintString(GLFW_X11_CLASS_NAME, "MineBackup");
+		glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "minebackup");
+#endif
+	};
+	applyLinuxWindowIdentity();
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
 	const bool requestedHiddenToTray = launchSilentStartup && !isFirstRun;
+#ifdef __linux__
+	// Probe the actual AppIndicator/GTK session before deciding to create an
+	// invisible window. A compiled-in tray backend may still fail at runtime.
+	const auto startupTrayStatus = desktopServices->SetTrayVisible(true);
+#else
 	const auto startupTrayStatus = desktopServices->Capabilities().tray;
+#endif
 	const bool shouldStartHiddenToTray = requestedHiddenToTray && startupTrayStatus.IsAvailable();
 	if (requestedHiddenToTray && !shouldStartHiddenToTray) {
 		const wstring detail = startupTrayStatus.diagnostic.empty()
@@ -643,6 +662,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "OpenGL 3.0 context creation failed, trying OpenGL 2.1 fallback...\n");
 		glfwDefaultWindowHints();
 		glfwSetErrorCallback(glfw_error_callback);
+		applyLinuxWindowIdentity();
 		glsl_version = "#version 120";
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
@@ -652,6 +672,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "OpenGL 2.1 context creation failed, trying OpenGL 2.0 fallback...\n");
 		glfwDefaultWindowHints();
 		glfwSetErrorCallback(glfw_error_callback);
+		applyLinuxWindowIdentity();
 		glsl_version = "#version 110";
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
@@ -661,6 +682,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "OpenGL 2.0 context creation failed, trying default version...\n");
 		glfwDefaultWindowHints();
 		glfwSetErrorCallback(glfw_error_callback);
+		applyLinuxWindowIdentity();
 		glsl_version = "#version 110";
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
@@ -680,17 +702,29 @@ int main(int argc, char** argv)
 	glfwSwapInterval(1); // Enable vsync
 
 	desktopServices->SetNativeWindow(wc);
+#ifdef __linux__
+	const int selectedGlfwPlatform = glfwGetPlatform();
+	const char* selectedGlfwPlatformName = selectedGlfwPlatform == GLFW_PLATFORM_WAYLAND ? "Wayland"
+		: selectedGlfwPlatform == GLFW_PLATFORM_X11 ? "X11" : "Other";
+	fprintf(stderr, "[Desktop] GLFW selected platform: %s\n", selectedGlfwPlatformName);
+	console.AddLog("[Desktop] GLFW selected platform: %s", selectedGlfwPlatformName);
+#endif
 	const auto traySetup = desktopServices->SetTrayVisible(true);
 	if (!traySetup.IsAvailable() && !traySetup.diagnostic.empty()) {
 		console.AddLog("[Desktop] Tray unavailable: %s", wstring_to_utf8(traySetup.diagnostic).c_str());
 	}
-	const auto backupHotkey = desktopServices->RegisterGlobalHotkey(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-	if (!backupHotkey.IsAvailable() && !backupHotkey.diagnostic.empty()) {
-		console.AddLog("[Desktop] Backup hotkey unavailable: %s", wstring_to_utf8(backupHotkey.diagnostic).c_str());
-	}
-	const auto restoreHotkey = desktopServices->RegisterGlobalHotkey(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
-	if (!restoreHotkey.IsAvailable() && !restoreHotkey.diagnostic.empty()) {
-		console.AddLog("[Desktop] Restore hotkey unavailable: %s", wstring_to_utf8(restoreHotkey.diagnostic).c_str());
+	auto currentGlobalHotkeys = []() {
+		return vector<GlobalHotkeyBinding>{
+			{MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId,
+				utf8_to_wstring(L("HOTKEY_BACKUP_DESCRIPTION"))},
+			{MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId,
+				utf8_to_wstring(L("HOTKEY_RESTORE_DESCRIPTION"))}
+		};
+	};
+	const auto hotkeySetup = desktopServices->ConfigureGlobalHotkeys(currentGlobalHotkeys());
+	if (!hotkeySetup.IsAvailable() && !hotkeySetup.diagnostic.empty()) {
+		console.AddLog("[Desktop] Global hotkeys unavailable: %s",
+			wstring_to_utf8(hotkeySetup.diagnostic).c_str());
 	}
 
 	// 设置窗口关闭回调，用于拦截关闭按钮
@@ -933,6 +967,9 @@ int main(int argc, char** argv)
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
+#ifdef __linux__
+		PumpLinuxDesktopEvents();
+#endif
 		wstring instanceError;
 		for (const auto& request : singleInstance.PollRequests(instanceError)) {
 			g_appState.showMainApp = true;
@@ -1308,13 +1345,10 @@ int main(int argc, char** argv)
 								if (whichFunc == 1) {
 									const int previousKey = g_hotKeyBackupId;
 									g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
-									(void)desktopServices->UnregisterGlobalHotkey(MINEBACKUP_HOTKEY_ID);
-									const auto status = desktopServices->RegisterGlobalHotkey(
-										MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+									const auto status = desktopServices->ConfigureGlobalHotkeys(
+										currentGlobalHotkeys());
 									if (!status.IsAvailable()) {
 										g_hotKeyBackupId = previousKey;
-										(void)desktopServices->RegisterGlobalHotkey(
-											MINEBACKUP_HOTKEY_ID, previousKey);
 										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
 										MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 1);
 									}
@@ -1324,13 +1358,10 @@ int main(int argc, char** argv)
 								else if (whichFunc == 2) {
 									const int previousKey = g_hotKeyRestoreId;
 									g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
-									(void)desktopServices->UnregisterGlobalHotkey(MINERESTORE_HOTKEY_ID);
-									const auto status = desktopServices->RegisterGlobalHotkey(
-										MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+									const auto status = desktopServices->ConfigureGlobalHotkeys(
+										currentGlobalHotkeys());
 									if (!status.IsAvailable()) {
 										g_hotKeyRestoreId = previousKey;
-										(void)desktopServices->RegisterGlobalHotkey(
-											MINERESTORE_HOTKEY_ID, previousKey);
 										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
 										MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 1);
 									}
@@ -2575,8 +2606,7 @@ int main(int argc, char** argv)
 	automaticLog << "=== End ===\n\n";
 	RotatingFileLog::Append(paths.logsRoot / "auto_log.txt", automaticLog.str());
 
-	(void)desktopServices->UnregisterGlobalHotkey(MINEBACKUP_HOTKEY_ID);
-	(void)desktopServices->UnregisterGlobalHotkey(MINERESTORE_HOTKEY_ID);
+	(void)desktopServices->ConfigureGlobalHotkeys({});
 	(void)desktopServices->SetTrayVisible(false);
 	ResetDesktopServices();
 #ifdef _WIN32

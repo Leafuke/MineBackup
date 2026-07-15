@@ -102,6 +102,7 @@ public:
     std::filesystem::path selectedPath = L"mock/selected.txt";
     bool autostartEnabled = false;
     int activationCount = 0;
+    std::vector<GlobalHotkeyBinding> configuredHotkeys;
 
     PlatformCapabilities Capabilities() const override { return capabilities; }
     void SetNativeWindow(void* nativeWindow) override { window = nativeWindow; }
@@ -124,8 +125,11 @@ public:
         return capabilities.notifications;
     }
     CapabilityStatus SetTrayVisible(bool) override { return capabilities.tray; }
-    CapabilityStatus RegisterGlobalHotkey(int, int) override { return capabilities.globalHotkeys; }
-    CapabilityStatus UnregisterGlobalHotkey(int) override { return capabilities.globalHotkeys; }
+    CapabilityStatus ConfigureGlobalHotkeys(
+        const std::vector<GlobalHotkeyBinding>& bindings) override {
+        configuredHotkeys = bindings;
+        return capabilities.globalHotkeys;
+    }
     CapabilityStatus SetAutostart(bool enabled) override {
         autostartEnabled = enabled;
         return capabilities.autostart;
@@ -1023,6 +1027,10 @@ void TestDesktopServicesAndCapabilities(TestContext& test) {
         "desktop autostart should expose both status and the requested state");
     test.Expect(mock->ActivateWindow().IsAvailable() && mock->activationCount == 1,
         "window activation should flow through the desktop service");
+    const std::vector<GlobalHotkeyBinding> hotkeys{{1, 'B', L"Backup"}, {2, 'R', L"Restore"}};
+    test.Expect(!mock->ConfigureGlobalHotkeys(hotkeys).IsAvailable()
+        && mock->configuredHotkeys.size() == 2,
+        "global hotkeys should be configured as one coherent set for portal sessions");
 
     const auto failed = CapabilityStatus::Failed(L"synthetic desktop failure");
     test.Expect(failed.state == CapabilityState::Failed && !failed.IsAvailable()

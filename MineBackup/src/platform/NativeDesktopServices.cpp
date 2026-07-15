@@ -1,10 +1,15 @@
 #include "NativeDesktopServices.h"
 
 #include "PlatformCompat.h"
+#ifdef __linux__
+#include "LinuxDesktopPortal.h"
+#endif
 
 #include <GLFW/glfw3.h>
 
 #include <cstdlib>
+#include <cctype>
+#include <map>
 #include <set>
 #include <utility>
 #include <vector>
@@ -89,6 +94,18 @@ class NativeDesktopServices final : public DesktopServices {
 public:
     explicit NativeDesktopServices(NativeDesktopContext context) : context_(std::move(context)) {}
 
+    ~NativeDesktopServices() override {
+#ifdef __linux__
+        if (trayVisible_) ::RemoveTrayIcon();
+        for (const auto& [hotkeyId, key] : registeredHotkeys_) {
+            (void)key;
+            ::UnregisterHotkeys(hotkeyId);
+        }
+        registeredHotkeys_.clear();
+        ShutdownLinuxDesktopPortal();
+#endif
+    }
+
     PlatformCapabilities Capabilities() const override {
         PlatformCapabilities result;
 #ifdef _WIN32
@@ -120,24 +137,39 @@ public:
         result.autostart = CapabilityStatus::PermissionRequired(
             L"Login-item integration will be provided through SMAppService.");
 #else
-        result.fileDialogs = (fs::exists("/usr/bin/zenity") || fs::exists("/usr/local/bin/zenity"))
-            ? CapabilityStatus::Ready()
-            : CapabilityStatus::Unavailable(L"Install zenity to enable file dialogs.");
-        result.openUri = fs::exists("/usr/bin/xdg-open")
-            ? CapabilityStatus::Ready()
-            : CapabilityStatus::Unavailable(L"xdg-open is required to open links and folders.");
-        result.notifications = CapabilityStatus::Unavailable(
-            L"A desktop notification backend is not available in this build.");
+#ifdef MB_HAVE_GTK
+        result.fileDialogs = CapabilityStatus::Ready(
+            L"File dialogs use GtkFileChooserNative and the desktop portal when required.");
+#else
+        result.fileDialogs = CapabilityStatus::Unavailable(
+            L"This build does not include GTK3 native file-dialog support.");
+#endif
+        result.openUri = ProbeLinuxPortalInterface("org.freedesktop.portal.OpenURI");
+        result.notifications = ProbeLinuxPortalInterface(
+            "org.freedesktop.portal.Notification");
 #ifdef MB_HAVE_APPINDICATOR
-        result.tray = CapabilityStatus::Ready();
+        result.tray = ProbeLinuxStatusNotifierHost();
 #else
         result.tray = CapabilityStatus::Unavailable(
             L"This build does not include Ayatana AppIndicator support.");
 #endif
-        result.globalHotkeys = std::getenv("DISPLAY")
-            ? CapabilityStatus::Ready(L"Global hotkeys currently use the X11 backend.")
-            : CapabilityStatus::Unavailable(
-                L"Global hotkeys require an X11 display until the Portal backend is available.");
+        if (!context_.appWindow) {
+            result.globalHotkeys = CapabilityStatus::Unavailable(
+                L"The GLFW desktop backend has not been selected yet.");
+        }
+        else if (glfwGetPlatform() == GLFW_PLATFORM_X11) {
+            result.globalHotkeys = CapabilityStatus::Ready(
+                L"Global hotkeys use the X11 backend selected by GLFW.");
+        }
+        else if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
+            result.globalHotkeys = portalHotkeyStatus_.diagnostic.empty()
+                ? ProbeLinuxPortalInterface("org.freedesktop.portal.GlobalShortcuts")
+                : portalHotkeyStatus_;
+        }
+        else {
+            result.globalHotkeys = CapabilityStatus::Unavailable(
+                L"Global hotkeys are unavailable on the selected GLFW backend.");
+        }
         result.autostart = CapabilityStatus::Unavailable(
             L"Desktop autostart integration is not implemented on Linux yet.");
 #endif
@@ -176,23 +208,33 @@ public:
         const auto status = Capabilities().openUri;
         if (!status.IsAvailable()) return status;
         if (uri.empty()) return InvalidArgument(L"The URI");
+#ifdef __linux__
+        return OpenUriWithLinuxPortal(uri);
+#else
         ::OpenLinkInBrowser(uri);
         return status;
+#endif
     }
 
     CapabilityStatus OpenFolder(const fs::path& folder) override {
         const auto status = Capabilities().openUri;
         if (!status.IsAvailable()) return status;
         if (folder.empty()) return InvalidArgument(L"The folder path");
+#ifdef __linux__
+        return OpenPathWithLinuxPortal(folder, false);
+#else
         ::OpenFolder(folder.wstring());
         return status;
+#endif
     }
 
     CapabilityStatus RevealInFolder(const fs::path& folder, const fs::path& item) override {
         const auto status = Capabilities().openUri;
         if (!status.IsAvailable()) return status;
         if (folder.empty()) return InvalidArgument(L"The folder path");
-#ifdef _WIN32
+#if defined(__linux__)
+        return OpenPathWithLinuxPortal(item.empty() ? folder : item, true);
+#elif defined(_WIN32)
         const wstring focus = item.empty() ? wstring() : L"/select,\"" + item.wstring() + L"\"";
         ::OpenFolderWithFocus(folder.wstring(), focus);
 #else
@@ -201,52 +243,142 @@ public:
         return status;
     }
 
-    CapabilityStatus Notify(const wstring&, const wstring&) override {
+    CapabilityStatus Notify(const wstring& title, const wstring& message) override {
+#ifdef __linux__
+        return NotifyWithLinuxPortal(title, message);
+#else
+        (void)title;
+        (void)message;
         return Capabilities().notifications;
+#endif
     }
 
     CapabilityStatus SetTrayVisible(bool visible) override {
         const auto status = Capabilities().tray;
-        if (!status.IsAvailable()) return status;
-        if (visible == trayVisible_) return status;
-#ifdef _WIN32
-        if (visible) ::CreateTrayIcon(static_cast<HWND>(context_.messageWindow),
-            static_cast<HINSTANCE>(context_.nativeInstance));
-        else ::RemoveTrayIcon();
-#else
-        if (visible) ::CreateTrayIcon();
-        else ::RemoveTrayIcon();
-#endif
-        trayVisible_ = visible;
-        return status;
-    }
-
-    CapabilityStatus RegisterGlobalHotkey(int hotkeyId, int key) override {
-        const auto status = Capabilities().globalHotkeys;
-        if (!status.IsAvailable()) return status;
-        if (key <= 0) return CapabilityStatus::Failed(L"The hotkey must be a valid key code.");
-#ifdef _WIN32
-        if (!::RegisterHotKey(static_cast<HWND>(context_.messageWindow), hotkeyId,
-                MOD_ALT | MOD_CONTROL, static_cast<UINT>(key))) {
-            return CapabilityStatus::Failed(
-                L"The requested hotkey is already in use or could not be registered.");
+        if (!visible) {
+            if (!trayVisible_) return status;
+            ::RemoveTrayIcon();
+            trayVisible_ = false;
+            return CapabilityStatus::Ready();
         }
+        if (!status.IsAvailable()) return status;
+        if (trayVisible_) return status;
+#ifdef _WIN32
+        ::CreateTrayIcon(static_cast<HWND>(context_.messageWindow),
+            static_cast<HINSTANCE>(context_.nativeInstance));
+#elif defined(__APPLE__)
+        ::CreateTrayIcon();
 #else
-        ::RegisterHotkeys(hotkeyId, key);
+        if (!::CreateTrayIcon()) {
+            return CapabilityStatus::Failed(
+                L"Ayatana AppIndicator could not initialize in this desktop session.");
+        }
 #endif
-        registeredHotkeys_.insert(hotkeyId);
+        trayVisible_ = true;
         return status;
     }
 
-    CapabilityStatus UnregisterGlobalHotkey(int hotkeyId) override {
-        const auto status = Capabilities().globalHotkeys;
-        if (!status.IsAvailable()) return status;
-        if (!registeredHotkeys_.erase(hotkeyId)) return status;
-#ifdef _WIN32
-        ::UnregisterHotKey(static_cast<HWND>(context_.messageWindow), hotkeyId);
-#else
-        ::UnregisterHotkeys(hotkeyId);
+    CapabilityStatus ConfigureGlobalHotkeys(
+        const vector<GlobalHotkeyBinding>& bindings) override {
+        set<int> hotkeyIds;
+        set<int> keys;
+        for (const auto& binding : bindings) {
+            if (binding.hotkeyId <= 0 || binding.key <= 0) {
+                return CapabilityStatus::Failed(
+                    L"Every global hotkey must have a valid identifier and key code.");
+            }
+            if (!hotkeyIds.insert(binding.hotkeyId).second) {
+                return CapabilityStatus::Failed(
+                    L"Global hotkey identifiers must be unique.");
+            }
+            if (!keys.insert(binding.key).second) {
+                return CapabilityStatus::Failed(
+                    L"Each action must use a different global hotkey.");
+            }
+        }
+#ifdef __linux__
+        if (context_.appWindow && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
+            vector<LinuxPortalShortcutBinding> portalBindings;
+            portalBindings.reserve(bindings.size());
+            for (const auto& binding : bindings) {
+                string preferred = "CTRL+ALT+";
+                preferred.push_back(static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(binding.key))));
+                portalBindings.push_back({binding.hotkeyId,
+                    binding.hotkeyId == MINEBACKUP_HOTKEY_ID ? "backup"
+                        : binding.hotkeyId == MINERESTORE_HOTKEY_ID ? "restore"
+                        : "hotkey_" + to_string(binding.hotkeyId),
+                    binding.description, std::move(preferred)});
+            }
+            auto result = ConfigureLinuxPortalShortcuts(portalBindings, [](int hotkeyId) {
+                if (hotkeyId == MINEBACKUP_HOTKEY_ID) TriggerHotkeyBackup();
+                else if (hotkeyId == MINERESTORE_HOTKEY_ID) TriggerHotkeyRestore();
+            });
+            portalHotkeyStatus_ = result.status;
+            registeredHotkeys_.clear();
+            if (result.status.IsAvailable()) {
+                for (const auto& binding : bindings) {
+                    if (result.actualTriggers.count(binding.hotkeyId)) {
+                        registeredHotkeys_[binding.hotkeyId] = binding.key;
+                    }
+                }
+            }
+            return result.status;
+        }
 #endif
+
+        const auto status = Capabilities().globalHotkeys;
+        if (!bindings.empty() && !status.IsAvailable()) return status;
+
+        const auto previous = registeredHotkeys_;
+        for (const auto& [hotkeyId, key] : registeredHotkeys_) {
+            (void)key;
+#ifdef _WIN32
+            ::UnregisterHotKey(static_cast<HWND>(context_.messageWindow), hotkeyId);
+#else
+            ::UnregisterHotkeys(hotkeyId);
+#endif
+        }
+        registeredHotkeys_.clear();
+
+        for (const auto& binding : bindings) {
+#ifdef _WIN32
+            if (!::RegisterHotKey(static_cast<HWND>(context_.messageWindow), binding.hotkeyId,
+                    MOD_ALT | MOD_CONTROL, static_cast<UINT>(binding.key))) {
+                for (const auto& [hotkeyId, key] : registeredHotkeys_) {
+                    (void)key;
+                    ::UnregisterHotKey(static_cast<HWND>(context_.messageWindow), hotkeyId);
+                }
+                registeredHotkeys_.clear();
+                for (const auto& [hotkeyId, key] : previous) {
+                    if (::RegisterHotKey(static_cast<HWND>(context_.messageWindow), hotkeyId,
+                            MOD_ALT | MOD_CONTROL, static_cast<UINT>(key))) {
+                        registeredHotkeys_[hotkeyId] = key;
+                    }
+                }
+                return CapabilityStatus::Failed(
+                    L"A requested hotkey is already in use; the previous bindings were restored.");
+            }
+#elif defined(__linux__)
+            if (!::RegisterHotkeys(binding.hotkeyId, binding.key)) {
+                for (const auto& [hotkeyId, key] : registeredHotkeys_) {
+                    (void)key;
+                    ::UnregisterHotkeys(hotkeyId);
+                }
+                registeredHotkeys_.clear();
+                for (const auto& [hotkeyId, key] : previous) {
+                    if (::RegisterHotkeys(hotkeyId, key)) {
+                        registeredHotkeys_[hotkeyId] = key;
+                    }
+                }
+                return CapabilityStatus::Failed(
+                    L"The X11 hotkey backend could not register the requested key; the previous bindings were restored.");
+            }
+#else
+            ::RegisterHotkeys(binding.hotkeyId, binding.key);
+#endif
+            registeredHotkeys_[binding.hotkeyId] = binding.key;
+        }
         return status;
     }
 
@@ -289,7 +421,8 @@ public:
 private:
     NativeDesktopContext context_;
     bool trayVisible_ = false;
-    set<int> registeredHotkeys_;
+    map<int, int> registeredHotkeys_;
+    CapabilityStatus portalHotkeyStatus_;
 };
 
 } // namespace

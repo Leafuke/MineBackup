@@ -30,8 +30,9 @@ public:
     }
     CapabilityStatus Notify(const wstring&, const wstring&) override { return Unavailable(); }
     CapabilityStatus SetTrayVisible(bool) override { return Unavailable(); }
-    CapabilityStatus RegisterGlobalHotkey(int, int) override { return Unavailable(); }
-    CapabilityStatus UnregisterGlobalHotkey(int) override { return Unavailable(); }
+    CapabilityStatus ConfigureGlobalHotkeys(const vector<GlobalHotkeyBinding>&) override {
+        return Unavailable();
+    }
     CapabilityStatus SetAutostart(bool) override { return Unavailable(); }
     CapabilityStatus ActivateWindow() override { return Unavailable(); }
     CapabilityStatus RestartApplication() override { return Unavailable(); }

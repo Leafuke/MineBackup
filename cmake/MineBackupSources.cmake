@@ -68,7 +68,12 @@ set(MINEBACKUP_WINDOWS_SOURCES
     ${MINEBACKUP_KNOTLINK_DIR}/OpenSocketResponser.cpp
     ${MINEBACKUP_KNOTLINK_DIR}/SignalSender.cpp
 )
-set(MINEBACKUP_LINUX_SOURCES ${MINEBACKUP_PLATFORM_DIR}/Platform_linux.cpp ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.cpp ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_linux.cpp)
+set(MINEBACKUP_LINUX_SOURCES
+    ${MINEBACKUP_PLATFORM_DIR}/Platform_linux.cpp
+    ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.cpp
+    ${MINEBACKUP_PLATFORM_DIR}/LinuxDesktopPortal.cpp
+    ${MINEBACKUP_PLATFORM_DIR}/LinuxDesktopPortal.h
+    ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_linux.cpp)
 set(MINEBACKUP_MACOS_SOURCES ${MINEBACKUP_PLATFORM_DIR}/Platform_macos.cpp ${MINEBACKUP_PLATFORM_DIR}/Platform_macos_tray.mm ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.cpp ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_macos.mm)
 
 set(MINEBACKUP_IMGUI_SOURCES
