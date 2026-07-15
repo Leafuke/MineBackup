@@ -41,7 +41,7 @@ filesystem::path EnvironmentPath(const char* name) {
     return filesystem::path(value);
 #else
     const char* value = getenv(name);
-    return value && *value ? filesystem::u8path(value) : filesystem::path{};
+    return value && *value ? filesystem::path(value) : filesystem::path{};
 #endif
 }
 
@@ -200,14 +200,14 @@ filesystem::path GetExecutablePath() {
     if (_NSGetExecutablePath(buffer.data(), &size) != 0) return {};
     buffer.resize(char_traits<char>::length(buffer.c_str()));
     error_code error;
-    const auto path = filesystem::u8path(buffer);
+    const auto path = filesystem::path(buffer);
     const auto canonical = filesystem::weakly_canonical(path, error);
     return error ? path : canonical;
 #else
     array<char, 4096> buffer{};
     const ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
     if (length <= 0) return {};
-    const auto path = filesystem::u8path(string(buffer.data(), static_cast<size_t>(length)));
+    const auto path = filesystem::path(string(buffer.data(), static_cast<size_t>(length)));
     error_code error;
     const auto canonical = filesystem::weakly_canonical(path, error);
     return error ? path : canonical;

@@ -231,7 +231,7 @@
     <ResourceCompile Include="$(ProjectDir)$(IntDir)generated\MineBackup.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="7za.exe" />
+    <None Include="Assets\7za.exe" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\icons\mine10.ico" />
@@ -244,6 +244,9 @@
     <Text Include="CustomTheme.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="VerifyMineBackupSevenZip" BeforeTargets="ClCompile;ResourceCompile">
+    <Exec Command="powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(SolutionDir)cmake\VerifyWindowsSevenZip.ps1&quot;" />
+  </Target>
   <Target Name="GenerateMineBackupVersionArtifacts" BeforeTargets="ClCompile;ResourceCompile">
     <MakeDir Directories="$(ProjectDir)$(IntDir)generated" />
     <Exec Command="&quot;$(MineBackupCMakeExecutable)&quot; -DMINEBACKUP_OUTPUT_DIR=&quot;$(ProjectDir)$(IntDir)generated&quot; -P &quot;$(SolutionDir)cmake\GenerateVersionArtifacts.cmake&quot;" />

@@ -147,7 +147,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	ImGui::BeginChild("HistoryListPane", ImVec2(list_width, 0), true);
 
 	if (g_appState.g_history.find(tempCurrentConfigIndex) == g_appState.g_history.end() || g_appState.g_history.at(tempCurrentConfigIndex).empty()) {
-		ImGui::TextWrapped(L("HISTORY_EMPTY"));
+		ImGui::TextWrapped("%s", L("HISTORY_EMPTY"));
 	}
 	else {
 		auto& history_vec = g_appState.g_history.at(tempCurrentConfigIndex);
@@ -513,7 +513,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 	}
 	else {
-		ImGui::TextWrapped(L("HISTORY_SELECT_PROMPT"));
+		ImGui::TextWrapped("%s", L("HISTORY_SELECT_PROMPT"));
 	}
 	ImGui::EndChild();
 

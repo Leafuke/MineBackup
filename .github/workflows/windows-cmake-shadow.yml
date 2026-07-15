@@ -14,6 +14,10 @@ jobs:
 
       - uses: microsoft/setup-msbuild@v2
 
+      - name: Verify tracked Windows 7-Zip resource
+        shell: pwsh
+        run: .\cmake\VerifyWindowsSevenZip.ps1
+
       - name: Configure CMake MSVC build
         shell: pwsh
         run: cmake -S . -B build/windows-shadow -A x64 -DBUILD_TESTING=ON

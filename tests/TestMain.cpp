@@ -25,6 +25,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cwctype>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -38,6 +39,11 @@
 #include <shellapi.h>
 #include <fcntl.h>
 #include <io.h>
+#else
+#include <cerrno>
+#include <spawn.h>
+#include <sys/wait.h>
+extern char** environ;
 #endif
 
 namespace {
@@ -169,6 +175,39 @@ void TestFormat(TestContext& test) {
 std::string ReadFile(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+}
+
+std::filesystem::path NormalizeTestPath(const std::filesystem::path& path) {
+    std::error_code error;
+    auto normalized = std::filesystem::weakly_canonical(path, error);
+    if (!error) return normalized;
+    error.clear();
+    normalized = std::filesystem::absolute(path, error);
+    return error ? path.lexically_normal() : normalized.lexically_normal();
+}
+
+bool SamePath(const std::filesystem::path& left, const std::filesystem::path& right) {
+    const auto normalizedLeft = NormalizeTestPath(left);
+    const auto normalizedRight = NormalizeTestPath(right);
+#ifdef _WIN32
+    auto leftText = normalizedLeft.wstring();
+    auto rightText = normalizedRight.wstring();
+    std::transform(leftText.begin(), leftText.end(), leftText.begin(), ::towlower);
+    std::transform(rightText.begin(), rightText.end(), rightText.begin(), ::towlower);
+    return leftText == rightText;
+#else
+    return normalizedLeft == normalizedRight;
+#endif
+}
+
+void ExpectSamePath(TestContext& test, const std::filesystem::path& actual,
+    const std::filesystem::path& expected, const char* message) {
+    const bool same = SamePath(actual, expected);
+    if (!same) {
+        std::wcerr << L"[DETAIL] actual path: " << actual.wstring()
+            << L"\n[DETAIL] expected path: " << expected.wstring() << L'\n';
+    }
+    test.Expect(same, message);
 }
 
 void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
@@ -344,9 +383,9 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     AppPaths paths;
     test.Expect(ResolveAppPaths(options, executable, paths, error), "an absolute --data-dir should resolve");
     test.Expect(paths.mode == AppPathMode::Explicit, "--data-dir should take precedence over other modes");
-    test.Expect(paths.ConfigFile() == profile / "config" / "config.ini",
+    ExpectSamePath(test, paths.ConfigFile(), profile / "config" / "config.ini",
         "the explicit profile should own the config root");
-    test.Expect(paths.HistoryFile() == profile / "data" / "history.json",
+    ExpectSamePath(test, paths.HistoryFile(), profile / "data" / "history.json",
         "the explicit profile should own the data root");
     test.Expect(std::filesystem::is_empty(appDirectory),
         "resolving an explicit profile should not write beside the application");
@@ -358,7 +397,8 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     AppPaths pathsFromAnotherDirectory;
     const bool resolvedFromAnotherDirectory = ResolveAppPaths(options, executable, pathsFromAnotherDirectory, error);
     std::filesystem::current_path(previousWorkingDirectory);
-    test.Expect(resolvedFromAnotherDirectory && pathsFromAnotherDirectory.ConfigFile() == paths.ConfigFile(),
+    test.Expect(resolvedFromAnotherDirectory
+        && SamePath(pathsFromAnotherDirectory.ConfigFile(), paths.ConfigFile()),
         "the profile should not depend on the process working directory");
 
     LaunchOptions invalid;
@@ -378,7 +418,7 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     LaunchOptions portable;
     test.Expect(ResolveAppPaths(portable, executable, paths, error), "the Windows portable profile should resolve");
     test.Expect(paths.mode == AppPathMode::Portable
-        && paths.configRoot == appDirectory / "MineBackupData" / "config",
+        && SamePath(paths.configRoot, appDirectory / "MineBackupData" / "config"),
         "portable.flag should select the adjacent MineBackupData layout on Windows");
     std::error_code markerError;
     std::filesystem::remove(appDirectory / "portable.flag", markerError);
@@ -389,7 +429,7 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     LaunchOptions installed;
     test.Expect(ResolveAppPaths(installed, executable, paths, error), "the Windows installed profile should resolve");
     test.Expect(paths.mode == AppPathMode::Installed
-        && paths.configRoot == localAppData / "MineBackup" / "config",
+        && SamePath(paths.configRoot, localAppData / "MineBackup" / "config"),
         "the Windows installed profile should use LOCALAPPDATA");
     _wputenv_s(L"LOCALAPPDATA", previousLocalAppData.c_str());
 #elif !defined(__APPLE__)
@@ -400,7 +440,7 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     LaunchOptions portable;
     test.Expect(ResolveAppPaths(portable, executable, paths, error), "the AppImage portable profile should resolve");
     test.Expect(paths.mode == AppPathMode::Portable
-        && paths.configRoot == appDirectory / "MineBackupData" / "config",
+        && SamePath(paths.configRoot, appDirectory / "MineBackupData" / "config"),
         "portable.flag should select the adjacent MineBackupData layout for AppImage");
     unsetenv("APPIMAGE");
 
@@ -414,8 +454,8 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     unsetenv("XDG_RUNTIME_DIR");
     LaunchOptions installed;
     test.Expect(ResolveAppPaths(installed, executable, paths, error), "invalid relative XDG roots should fall back safely");
-    test.Expect(paths.configRoot == fakeHome / ".config" / "MineBackup"
-        && paths.runtimeRoot == fakeHome / ".local" / "state" / "MineBackup" / "runtime",
+    test.Expect(SamePath(paths.configRoot, fakeHome / ".config" / "MineBackup")
+        && SamePath(paths.runtimeRoot, fakeHome / ".local" / "state" / "MineBackup" / "runtime"),
         "invalid XDG and absent runtime roots should use the documented fallbacks");
 #endif
 
@@ -1171,10 +1211,30 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc >= 3 && std::string(argv[1]) == "--process-helper-spawn") {
+#ifdef _WIN32
         ProcessSpec child;
         child.executable = std::filesystem::absolute(argv[0]);
         child.arguments = {L"--process-helper-grandchild", std::filesystem::path(argv[2]).wstring()};
         return ProcessRunner::Run(child).status == ProcessStatus::Succeeded ? 0 : 1;
+#else
+        // Spawn directly so the grandchild inherits the process group created
+        // by the outer ProcessRunner. A nested ProcessRunner intentionally
+        // creates another isolation boundary and is not an inheriting child.
+        std::string executable = std::filesystem::absolute(argv[0]).string();
+        std::string mode = "--process-helper-grandchild";
+        std::vector<char*> childArguments{executable.data(), mode.data(), argv[2], nullptr};
+        pid_t child = -1;
+        if (posix_spawn(&child, executable.c_str(), nullptr, nullptr,
+                childArguments.data(), environ) != 0) {
+            return 2;
+        }
+        int status = 0;
+        pid_t waited = -1;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 1;
+#endif
     }
     TestContext test;
     TemporaryDirectory temporary;

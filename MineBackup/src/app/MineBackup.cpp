@@ -1306,7 +1306,7 @@ int main(int argc, char** argv)
 				}
 				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_CONFIG_TITLE"), &showImportConfigConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
-					ImGui::TextWrapped(L("CONFIRM_IMPORT_CONFIG_MSG"));
+					ImGui::TextWrapped("%s", L("CONFIRM_IMPORT_CONFIG_MSG"));
 					ImGui::Separator();
 					float importBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(importBtnW, 0))) {
@@ -1330,7 +1330,7 @@ int main(int argc, char** argv)
 				}
 				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_HISTORY_TITLE"), &showImportHistoryConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
-					ImGui::TextWrapped(L("CONFIRM_IMPORT_HISTORY_MSG"));
+					ImGui::TextWrapped("%s", L("CONFIRM_IMPORT_HISTORY_MSG"));
 					ImGui::Separator();
 					float histBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(histBtnW, 0))) {
@@ -1383,11 +1383,11 @@ int main(int argc, char** argv)
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
 					ImGui::Checkbox(L("BUTTON_AUTO_LOG"), &g_autoLogEnabled);
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Checkbox(L("RECEIVE_NOTICES"), &g_ReceiveNotices);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_RECEIVE_NOTICES"));
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RECEIVE_NOTICES"));
 					ImGui::Checkbox(L("STOP_AUTOBACKUP_ON_EXIT"), &g_StopAutoBackupOnExit);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
 					ImGui::Separator();
 					// 热键设置右拉栏（鼠标放上去会向右展开两个）
 					static bool waitingForHotkey = false;
@@ -1506,7 +1506,7 @@ int main(int argc, char** argv)
 					if (ImGui::BeginPopupModal(L("UPDATE_POPUP_TITLE"), &open_update_popup, ImGuiWindowFlags_AlwaysAutoResize)) {
 						ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
 						ImGui::Separator();
-						ImGui::TextWrapped(L("UPDATE_POPUP_NOTES"));
+						ImGui::TextWrapped("%s", L("UPDATE_POPUP_NOTES"));
 
 						ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 450), true);
 						ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
@@ -1542,7 +1542,7 @@ int main(int argc, char** argv)
 
 				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("NOTICE_POPUP_TITLE"), &notice_popup_opened, ImGuiWindowFlags_AlwaysAutoResize)) {
-					ImGui::TextWrapped(L("NOTICE_POPUP_DESC"));
+					ImGui::TextWrapped("%s", L("NOTICE_POPUP_DESC"));
 					ImGui::Separator();
 					ImGui::BeginChild("NoticeContent", ImVec2(ImGui::GetContentRegionAvail().x, 320), true);
 					ImGui::TextWrapped("%s", g_NoticeContent.c_str());
@@ -1598,7 +1598,7 @@ int main(int argc, char** argv)
 			
 			ImGui::SetNextWindowViewport(viewport->ID);
 			if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-				ImGui::TextWrapped(L("CLOSE_CONFIRM_MSG"));
+				ImGui::TextWrapped("%s", L("CLOSE_CONFIRM_MSG"));
 				ImGui::Separator();
 				
 				static bool tempRememberChoice = false;
@@ -1650,7 +1650,7 @@ int main(int argc, char** argv)
 			{
 				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
 				ImGui::Separator();
-				ImGui::TextWrapped("%s", wstring_to_u8string(MineFormatMessage("ABOUT_DESCRIPTION", (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId)).c_str());
+				ImGui::TextWrapped("%s", wstring_to_utf8(MineFormatMessage("ABOUT_DESCRIPTION", (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId)).c_str());
 				ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1681,7 +1681,7 @@ int main(int argc, char** argv)
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_MINEBACKUP-MOD_TIP"));	
 				
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
-				ImGui::Text(L("ABOUT_QQ_GROUP"));
+				ImGui::TextUnformatted(L("ABOUT_QQ_GROUP"));
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				ImGui::SeparatorText(L("ABOUT_LICENSE_HEADER"));
 				ImGui::Text("%s", L("ABOUT_LICENSE_TYPE"));
@@ -1700,7 +1700,7 @@ int main(int argc, char** argv)
 
 
 			ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_None);
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar);
 
 			static bool first_time_layout = true;
 			if (first_time_layout) {
@@ -1897,15 +1897,15 @@ int main(int argc, char** argv)
 					static int config_type = 0; // 0 for Normal, 1 for Special
 					static char new_config_name[128] = "New Config";
 
-					ImGui::Text(L("CONFIG_TYPE_LABEL"));
+					ImGui::TextUnformatted(L("CONFIG_TYPE_LABEL"));
 					ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
 					ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
 
 					if (config_type == 0) {
-						ImGui::TextWrapped(L("CONFIG_TYPE_NORMAL_DESC"));
+						ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));
 					}
 					else {
-						ImGui::TextWrapped(L("CONFIG_TYPE_SPECIAL_DESC"));
+						ImGui::TextWrapped("%s", L("CONFIG_TYPE_SPECIAL_DESC"));
 					}
 
 					ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
@@ -2096,7 +2096,7 @@ int main(int argc, char** argv)
 					//// 将次要信息颜色变灰，更具层次感
 					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 					if (desc_utf8.empty()) {
-						ImGui::TextWrapped(L("CARD_WORLD_NO_DESC"));
+						ImGui::TextWrapped("%s", L("CARD_WORLD_NO_DESC"));
 					}
 					else {
 						ImGui::TextWrapped("%s", desc_utf8.c_str());

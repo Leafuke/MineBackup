@@ -368,6 +368,7 @@ FodyWeavers.xsd
 !LICENSES/*.txt
 *.otf
 *.exe
+!MineBackup/Assets/7za.exe
 history.dat
 history.json
 build/

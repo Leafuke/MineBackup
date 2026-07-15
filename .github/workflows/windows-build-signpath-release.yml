@@ -18,57 +18,9 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Ensure embedded 7za.exe is available
+    - name: Verify tracked Windows 7-Zip resource
       shell: pwsh
-      run: |
-        $target7za = '.\MineBackup\Assets\7za.exe'
-        $expected7zaSha256 = '051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867'
-        if (Test-Path $target7za) {
-          $actual7zaSha256 = (Get-FileHash -Path $target7za -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual7zaSha256 -ne $expected7zaSha256) {
-            throw "Embedded 7za.exe hash mismatch. Expected $expected7zaSha256, got $actual7zaSha256"
-          }
-          Write-Host 'Found the pinned MineBackup\Assets\7za.exe in the repository workspace.'
-          exit 0
-        }
-
-        New-Item -ItemType Directory -Path .\tools -Force | Out-Null
-        $installerPath = '.\tools\7zip-zstd-x64.exe'
-        $installDir = "$env:RUNNER_TEMP\7zipzstd"
-        $releaseUrl = 'https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.01-v1.5.7-R1/7z26.01-zstd-x64.exe'
-        $expectedSha256 = '337eb2af535d1ae752a9b78bfa2c51261c395e5827bd57e8dc0eb93685c588ed'
-
-        Write-Host "Downloading $releaseUrl"
-        Invoke-WebRequest -Uri $releaseUrl -OutFile $installerPath
-
-        $actualSha256 = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actualSha256 -ne $expectedSha256) {
-          throw "7-Zip-zstd installer hash mismatch. Expected $expectedSha256, got $actualSha256"
-        }
-
-        if (Test-Path $installDir) {
-          Remove-Item -Path $installDir -Recurse -Force
-        }
-        New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-
-        $args = @('/S', "/D=$installDir")
-        $proc = Start-Process -FilePath $installerPath -ArgumentList $args -WindowStyle Hidden -Wait -PassThru
-        if ($proc.ExitCode -ne 0) {
-          throw "7-Zip-zstd installer exited with code $($proc.ExitCode)"
-        }
-
-        $found7za = Get-ChildItem -Path $installDir -Filter 7za.exe -Recurse -File | Select-Object -First 1
-        if (-not $found7za) {
-          throw '7za.exe not found after installing 7-Zip-zstd.'
-        }
-
-        $actual7zaSha256 = (Get-FileHash -Path $found7za.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual7zaSha256 -ne $expected7zaSha256) {
-          throw "Extracted 7za.exe hash mismatch. Expected $expected7zaSha256, got $actual7zaSha256"
-        }
-
-        Copy-Item -Path $found7za.FullName -Destination $target7za -Force
-        Write-Host "Prepared embedded 7za.exe from: $($found7za.FullName)"
+      run: .\cmake\VerifyWindowsSevenZip.ps1
 
     - name: Build and verify CMake MSVC shadow candidate
       shell: pwsh

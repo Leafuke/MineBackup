@@ -44,6 +44,20 @@ set(MINEBACKUP_KNOTLINK_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/KnotLink)
 set(MINEBACKUP_JSON_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/json)
 set(MINEBACKUP_STB_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/stb)
 
+if(WIN32)
+    set(MINEBACKUP_WINDOWS_7ZIP "${MINEBACKUP_SOURCE_DIR}/Assets/7za.exe")
+    set(MINEBACKUP_WINDOWS_7ZIP_SHA256
+        "051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867")
+    if(NOT EXISTS "${MINEBACKUP_WINDOWS_7ZIP}")
+        message(FATAL_ERROR "The tracked MineBackup/Assets/7za.exe resource is missing.")
+    endif()
+    file(SHA256 "${MINEBACKUP_WINDOWS_7ZIP}" MINEBACKUP_WINDOWS_7ZIP_ACTUAL_SHA256)
+    if(NOT MINEBACKUP_WINDOWS_7ZIP_ACTUAL_SHA256 STREQUAL MINEBACKUP_WINDOWS_7ZIP_SHA256)
+        message(FATAL_ERROR
+            "MineBackup/Assets/7za.exe does not match the pinned supply-chain hash.")
+    endif()
+endif()
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MineBackupSources.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MineBackupGenerateArtifacts.cmake)
 

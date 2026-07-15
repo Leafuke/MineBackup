@@ -180,10 +180,10 @@ SingleInstanceService::~SingleInstanceService() {
         CloseHandle(impl_->mutex);
     }
 #else
-    if (impl_->socketDescriptor >= 0) close(impl_->socketDescriptor);
+    if (impl_->socketDescriptor >= 0) ::close(impl_->socketDescriptor);
     if (impl_->lockDescriptor >= 0) {
-        flock(impl_->lockDescriptor, LOCK_UN);
-        close(impl_->lockDescriptor);
+        ::flock(impl_->lockDescriptor, LOCK_UN);
+        ::close(impl_->lockDescriptor);
         error_code ignored;
         filesystem::remove(impl_->socketPath, ignored);
     }
@@ -232,18 +232,18 @@ InstanceAcquireResult SingleInstanceService::Acquire(
     }
     const auto lockPath = runtimeRoot / (L"instance-" + impl_->token + L".lock");
     impl_->socketPath = runtimeRoot / (L"instance-" + impl_->token + L".sock");
-    impl_->lockDescriptor = open(lockPath.c_str(), O_RDWR | O_CREAT, 0600);
+    impl_->lockDescriptor = ::open(lockPath.c_str(), O_RDWR | O_CREAT, 0600);
     if (impl_->lockDescriptor < 0) {
         error = L"Could not open the profile instance lock.";
         return InstanceAcquireResult::Failed;
     }
-    if (flock(impl_->lockDescriptor, LOCK_EX | LOCK_NB) != 0) {
-        close(impl_->lockDescriptor);
+    if (::flock(impl_->lockDescriptor, LOCK_EX | LOCK_NB) != 0) {
+        ::close(impl_->lockDescriptor);
         impl_->lockDescriptor = -1;
         return errno == EWOULDBLOCK ? InstanceAcquireResult::AlreadyRunning : InstanceAcquireResult::Failed;
     }
     filesystem::remove(impl_->socketPath, fileError);
-    impl_->socketDescriptor = socket(AF_UNIX, SOCK_STREAM, 0);
+    impl_->socketDescriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (impl_->socketDescriptor < 0) {
         error = L"Could not create the profile instance socket.";
         return InstanceAcquireResult::Failed;
@@ -256,12 +256,13 @@ InstanceAcquireResult SingleInstanceService::Acquire(
         return InstanceAcquireResult::Failed;
     }
     memcpy(address.sun_path, nativePath.c_str(), nativePath.size() + 1);
-    if (bind(impl_->socketDescriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0
-        || chmod(impl_->socketPath.c_str(), 0600) != 0 || listen(impl_->socketDescriptor, 4) != 0) {
+    if (::bind(impl_->socketDescriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0
+        || ::chmod(impl_->socketPath.c_str(), 0600) != 0 || ::listen(impl_->socketDescriptor, 4) != 0) {
         error = L"Could not bind the profile instance socket.";
         return InstanceAcquireResult::Failed;
     }
-    fcntl(impl_->socketDescriptor, F_SETFL, fcntl(impl_->socketDescriptor, F_GETFL) | O_NONBLOCK);
+    ::fcntl(impl_->socketDescriptor, F_SETFL,
+        ::fcntl(impl_->socketDescriptor, F_GETFL) | O_NONBLOCK);
 #endif
     return InstanceAcquireResult::Acquired;
 }
@@ -284,7 +285,7 @@ bool SingleInstanceService::Send(const InstanceRequest& request, wstring& error)
         && written == message.size();
     CloseHandle(pipe);
 #else
-    const int descriptor = socket(AF_UNIX, SOCK_STREAM, 0);
+    const int descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (descriptor < 0) {
         error = L"Could not create a socket for the primary MineBackup instance.";
         return false;
@@ -293,20 +294,20 @@ bool SingleInstanceService::Send(const InstanceRequest& request, wstring& error)
     address.sun_family = AF_UNIX;
     const string nativePath = impl_->socketPath.string();
     if (nativePath.size() >= sizeof(address.sun_path)) {
-        close(descriptor);
+        ::close(descriptor);
         error = L"The profile instance socket path is too long.";
         return false;
     }
     memcpy(address.sun_path, nativePath.c_str(), nativePath.size() + 1);
-    bool success = connect(descriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+    bool success = ::connect(descriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
     size_t offset = 0;
     while (success && offset < message.size()) {
-        const ssize_t sent = write(descriptor, message.data() + offset, message.size() - offset);
+        const ssize_t sent = ::write(descriptor, message.data() + offset, message.size() - offset);
         if (sent < 0 && errno == EINTR) continue;
         if (sent <= 0) success = false;
         else offset += static_cast<size_t>(sent);
     }
-    close(descriptor);
+    ::close(descriptor);
 #endif
     if (!success) error = L"Could not deliver the request to the primary MineBackup instance.";
     return success;
@@ -335,7 +336,7 @@ vector<InstanceRequest> SingleInstanceService::PollRequests(wstring& error) {
 #else
     if (impl_->socketDescriptor < 0) return requests;
     for (;;) {
-        const int client = accept(impl_->socketDescriptor, nullptr, nullptr);
+        const int client = ::accept(impl_->socketDescriptor, nullptr, nullptr);
         if (client < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) error = L"The profile instance socket failed while accepting a request.";
             break;
@@ -343,13 +344,13 @@ vector<InstanceRequest> SingleInstanceService::PollRequests(wstring& error) {
         vector<uint8_t> message;
         array<uint8_t, 4096> buffer{};
         for (;;) {
-            const ssize_t count = read(client, buffer.data(), buffer.size());
+            const ssize_t count = ::read(client, buffer.data(), buffer.size());
             if (count < 0 && errno == EINTR) continue;
             if (count <= 0) break;
             message.insert(message.end(), buffer.begin(), buffer.begin() + count);
             if (message.size() > kMaximumPayloadBytes + sizeof(uint32_t)) break;
         }
-        close(client);
+        ::close(client);
         InstanceRequest request;
         if (DecodeRequest(message, request, error)) requests.push_back(std::move(request));
     }

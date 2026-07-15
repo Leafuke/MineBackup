@@ -198,12 +198,23 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
         return result;
     }
 
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, stdoutPipe[1], STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, stderrPipe[1], STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&actions, stdoutPipe[0]);
-    posix_spawn_file_actions_addclose(&actions, stderrPipe[0]);
+    posix_spawn_file_actions_t actions{};
+    const int actionsInitError = posix_spawn_file_actions_init(&actions);
+    if (actionsInitError != 0) {
+        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
+        result.error = L"Could not initialize process output redirection.";
+        return result;
+    }
+    int actionsError = posix_spawn_file_actions_adddup2(&actions, stdoutPipe[1], STDOUT_FILENO);
+    if (actionsError == 0) actionsError = posix_spawn_file_actions_adddup2(&actions, stderrPipe[1], STDERR_FILENO);
+    if (actionsError == 0) actionsError = posix_spawn_file_actions_addclose(&actions, stdoutPipe[0]);
+    if (actionsError == 0) actionsError = posix_spawn_file_actions_addclose(&actions, stderrPipe[0]);
+    if (actionsError != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
+        result.error = L"Could not configure process output redirection.";
+        return result;
+    }
 #if defined(__APPLE__) || defined(__GLIBC__)
     if (!spec.workingDirectory.empty()) {
         const int directoryError = posix_spawn_file_actions_addchdir_np(&actions, spec.workingDirectory.c_str());
@@ -215,10 +226,23 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
         }
     }
 #endif
-    posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
-    posix_spawnattr_setpgroup(&attributes, 0);
+    posix_spawnattr_t attributes{};
+    const int attributeInitError = posix_spawnattr_init(&attributes);
+    if (attributeInitError != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
+        result.error = L"Could not initialize the process isolation group.";
+        return result;
+    }
+    int attributeError = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    if (attributeError == 0) attributeError = posix_spawnattr_setpgroup(&attributes, 0);
+    if (attributeError != 0) {
+        posix_spawnattr_destroy(&attributes);
+        posix_spawn_file_actions_destroy(&actions);
+        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
+        result.error = L"Could not configure the process isolation group.";
+        return result;
+    }
 
     vector<string> encoded;
     encoded.push_back(spec.executable.string());

@@ -121,7 +121,7 @@ void DrawConfigManagementPanel() {
 		static int config_type = 0;
 		static char new_config_name[128] = "New Config";
 
-		ImGui::Text(L("CONFIG_TYPE_LABEL"));
+		ImGui::TextUnformatted(L("CONFIG_TYPE_LABEL"));
 		ImGui::BeginGroup();
 		ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0);
 		ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));

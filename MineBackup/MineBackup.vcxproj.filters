@@ -435,7 +435,7 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="7za.exe">
+    <None Include="Assets\7za.exe">
       <Filter>resources</Filter>
     </None>
   </ItemGroup>

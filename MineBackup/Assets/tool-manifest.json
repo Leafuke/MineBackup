@@ -6,6 +6,8 @@
     "upstream": "https://github.com/mcmilk/7-Zip-zstd/releases",
     "windows": {
       "architecture": "x64",
+      "sourceInstaller": "7z26.01-zstd-x64.exe",
+      "sourceInstallerSha256": "337eb2af535d1ae752a9b78bfa2c51261c395e5827bd57e8dc0eb93685c588ed",
       "resource": "7za.exe",
       "sha256": "051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867",
       "build": "standalone command-line executable with LZMA2, Deflate, BZip2 and zstd codecs"
