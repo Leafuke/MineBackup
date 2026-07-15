@@ -17,6 +17,7 @@
 #include "ExternalToolManager.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -2136,8 +2137,8 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		if (RunInternalProcess(MakeInternalProcess(tempConfig.zipPath, std::move(arguments), worldPath,
 			tempConfig.useLowPriority), console)) {
 			console.AddLog(L("LOG_EXPORT_SUCCESS"), wstring_to_utf8(outputPath).c_str());
-			wstring cmd = L"/select,\"" + outputPath + L"\"";
-			OpenFolderWithFocus(filesystem::path(outputPath).parent_path().wstring(), cmd);
+			(void)GetDesktopServices()->RevealInFolder(
+				filesystem::path(outputPath).parent_path(), filesystem::path(outputPath));
 		}
 		else {
 			console.AddLog(L("LOG_EXPORT_FAILED"));

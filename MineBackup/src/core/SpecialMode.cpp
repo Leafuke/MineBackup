@@ -10,6 +10,7 @@
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
 
@@ -366,7 +367,7 @@ void RunSpecialMode(int configId) {
 				g_appState.specialConfigs[configId].autoExecute = false;
 				SaveConfigs();
 				ConsoleLog(&console, L("INFO_SWITCHING_TO_GUI_MODE"));
-				ReStartApplication();
+				(void)GetDesktopServices()->RestartApplication();
 			}
 		}
 

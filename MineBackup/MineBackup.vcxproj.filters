@@ -105,6 +105,9 @@
     <ClCompile Include="src\core\PortableConfigDocument.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\SpecialConfigPolicy.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\AtomicFileWriter.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -135,6 +138,9 @@
     <ClCompile Include="src\infra\Sha256.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\DesktopServices.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\Broadcast.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -148,6 +154,9 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Platform_win.cpp">
+      <Filter>src\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\NativeDesktopServices.cpp">
       <Filter>src\platform</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\NetworkBackend_win.cpp">
@@ -269,6 +278,9 @@
     <ClInclude Include="src\core\PortableConfigDocument.h">
       <Filter>src\core</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\SpecialConfigPolicy.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\AtomicFileWriter.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -312,6 +324,12 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\PlatformCompat.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\DesktopServices.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\NativeDesktopServices.h">
       <Filter>src\platform</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\Platform_linux.h">

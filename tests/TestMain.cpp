@@ -16,6 +16,8 @@
 #include "Sha256.h"
 #include "ExternalToolManager.h"
 #include "PortableConfigDocument.h"
+#include "DesktopServices.h"
+#include "SpecialConfigPolicy.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -87,6 +89,54 @@ public:
         result.transferredBytes = size;
         return result;
     }
+};
+
+class MockDesktopServices final : public DesktopServices {
+public:
+    PlatformCapabilities capabilities{
+        CapabilityStatus::Ready(), CapabilityStatus::Ready(),
+        CapabilityStatus::Unavailable(L"notifications disabled by test"),
+        CapabilityStatus::PermissionRequired(L"tray permission required"),
+        CapabilityStatus::Unavailable(L"hotkeys disabled by test"),
+        CapabilityStatus::Ready(), CapabilityStatus::Ready()};
+    std::filesystem::path selectedPath = L"mock/selected.txt";
+    bool autostartEnabled = false;
+    int activationCount = 0;
+
+    PlatformCapabilities Capabilities() const override { return capabilities; }
+    void SetNativeWindow(void* nativeWindow) override { window = nativeWindow; }
+    DesktopPathResult SelectFile() override {
+        return {capabilities.fileDialogs, selectedPath, false};
+    }
+    DesktopPathResult SelectFolder() override {
+        return {capabilities.fileDialogs, selectedPath.parent_path(), false};
+    }
+    DesktopPathResult SelectSaveFile(const std::wstring&, const std::wstring&) override {
+        return {capabilities.fileDialogs, selectedPath, false};
+    }
+    CapabilityStatus OpenUri(const std::wstring&) override { return capabilities.openUri; }
+    CapabilityStatus OpenFolder(const std::filesystem::path&) override { return capabilities.openUri; }
+    CapabilityStatus RevealInFolder(
+        const std::filesystem::path&, const std::filesystem::path&) override {
+        return capabilities.openUri;
+    }
+    CapabilityStatus Notify(const std::wstring&, const std::wstring&) override {
+        return capabilities.notifications;
+    }
+    CapabilityStatus SetTrayVisible(bool) override { return capabilities.tray; }
+    CapabilityStatus RegisterGlobalHotkey(int, int) override { return capabilities.globalHotkeys; }
+    CapabilityStatus UnregisterGlobalHotkey(int) override { return capabilities.globalHotkeys; }
+    CapabilityStatus SetAutostart(bool enabled) override {
+        autostartEnabled = enabled;
+        return capabilities.autostart;
+    }
+    CapabilityStatus ActivateWindow() override {
+        ++activationCount;
+        return capabilities.windowActivation;
+    }
+    CapabilityStatus RestartApplication() override { return capabilities.windowActivation; }
+
+    void* window = nullptr;
 };
 
 std::string ReadText(const std::filesystem::path& path) {
@@ -949,6 +999,69 @@ void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
         "notice parsing should reject 404 bodies from both direct and mirror text sources");
 }
 
+void TestDesktopServicesAndCapabilities(TestContext& test) {
+    ResetDesktopServices();
+    const auto unavailable = GetDesktopServices();
+    test.Expect(!unavailable->Capabilities().tray.IsAvailable(),
+        "the desktop registry should provide an unavailable service before native initialization");
+    test.Expect(unavailable->SelectFile().status.state == CapabilityState::Unavailable,
+        "desktop calls before initialization should fail safely instead of dereferencing null");
+    test.Expect(!CanHideToTray(unavailable->Capabilities()),
+        "an unavailable tray must disable hide-to-tray for the current run");
+
+    auto mock = std::make_shared<MockDesktopServices>();
+    InstallDesktopServices(mock);
+    test.Expect(GetDesktopServices() == mock, "tests should be able to inject a desktop service mock");
+    test.Expect(mock->Capabilities().tray.state == CapabilityState::PermissionRequired
+        && !mock->Capabilities().tray.diagnostic.empty(),
+        "capability states should retain a user-readable degradation reason");
+    test.Expect(!CanHideToTray(mock->Capabilities()),
+        "permission-required tray state must not make the window unreachable");
+    test.Expect(mock->SelectFile().path == mock->selectedPath,
+        "desktop file selection should flow through the injected service");
+    test.Expect(mock->SetAutostart(true).IsAvailable() && mock->autostartEnabled,
+        "desktop autostart should expose both status and the requested state");
+    test.Expect(mock->ActivateWindow().IsAvailable() && mock->activationCount == 1,
+        "window activation should flow through the desktop service");
+
+    const auto failed = CapabilityStatus::Failed(L"synthetic desktop failure");
+    test.Expect(failed.state == CapabilityState::Failed && !failed.IsAvailable()
+        && failed.diagnostic == L"synthetic desktop failure",
+        "failed capabilities should retain a distinct state and diagnostic");
+
+    mock->capabilities.tray = CapabilityStatus::Ready();
+    test.Expect(CanHideToTray(mock->Capabilities()),
+        "an available tray should allow hide-to-tray for the current run");
+    ResetDesktopServices();
+}
+
+void TestSpecialConfigExecutionPolicy(TestContext& test) {
+    std::map<int, SpecialConfig> configs;
+    configs[8].autoExecute = true;
+    configs[8].runOnStartup = true;
+    configs[2].autoExecute = true;
+    configs[2].runOnStartup = true;
+    configs[5].autoExecute = true;
+    configs[5].runOnStartup = true;
+
+    const auto normalized = NormalizeSpecialConfigExecutionPolicy(configs);
+    test.Expect(normalized.autoExecuteIndex == 2 && normalized.runOnStartupIndex == 2,
+        "duplicate startup selections should retain the lowest deterministic config index");
+    test.Expect(normalized.disabledDuplicateAutoExecute == 2
+        && normalized.disabledDuplicateRunOnStartup == 2,
+        "normalization should report every disabled duplicate startup selection");
+    test.Expect(configs[2].autoExecute && !configs[5].autoExecute && !configs[8].autoExecute,
+        "at most one special configuration may auto-execute");
+
+    SetExclusiveSpecialAutoExecute(configs, 8, true);
+    test.Expect(configs[8].autoExecute && !configs[2].autoExecute && !configs[5].autoExecute,
+        "enabling a new auto-execute target should disable the old target");
+    SetExclusiveSpecialRunOnStartup(configs, 5, true);
+    test.Expect(FindSpecialRunOnStartup(configs) == 5
+        && configs[5].runOnStartup && !configs[2].runOnStartup && !configs[8].runOnStartup,
+        "OS autostart should resolve to exactly one persisted special configuration");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1016,6 +1129,8 @@ int main(int argc, char** argv) {
     TestInterruptedTaskRecovery(test, temporary.path);
     TestNetworkService(test, temporary.path);
     TestTaskCoordinator(test, temporary.path);
+    TestDesktopServicesAndCapabilities(test);
+    TestSpecialConfigExecutionPolicy(test);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";

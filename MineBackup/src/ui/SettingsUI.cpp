@@ -4,6 +4,48 @@
 
 using namespace std;
 
+namespace {
+
+const char* CapabilityStateLabel(CapabilityState state) {
+    switch (state) {
+    case CapabilityState::Available: return "Available";
+    case CapabilityState::Unavailable: return "Unavailable";
+    case CapabilityState::PermissionRequired: return "Permission required";
+    case CapabilityState::Failed: return "Failed";
+    }
+    return "Unknown";
+}
+
+void DrawCapability(const char* name, const CapabilityStatus& status) {
+    const ImVec4 color = status.state == CapabilityState::Available
+        ? ImVec4(0.35f, 0.8f, 0.45f, 1.0f)
+        : status.state == CapabilityState::Failed
+            ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+            : ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
+    ImGui::BulletText("%s", name);
+    ImGui::SameLine();
+    ImGui::TextColored(color, "%s", CapabilityStateLabel(status.state));
+    if (!status.diagnostic.empty()) {
+        ImGui::Indent();
+        ImGui::TextWrapped("%s", wstring_to_utf8(status.diagnostic).c_str());
+        ImGui::Unindent();
+    }
+}
+
+void DrawDesktopCapabilitySummary() {
+    if (!ImGui::CollapsingHeader("Desktop capabilities")) return;
+    const auto capabilities = GetDesktopServices()->Capabilities();
+    DrawCapability("File dialogs", capabilities.fileDialogs);
+    DrawCapability("Open links and folders", capabilities.openUri);
+    DrawCapability("Notifications", capabilities.notifications);
+    DrawCapability("System tray", capabilities.tray);
+    DrawCapability("Global hotkeys", capabilities.globalHotkeys);
+    DrawCapability("Autostart", capabilities.autostart);
+    DrawCapability("Window activation", capabilities.windowActivation);
+}
+
+} // namespace
+
 void ShowSettingsWindowV2() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
     bool canSaveSettings = true;
@@ -24,6 +66,11 @@ void ShowSettingsWindowV2() {
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
+
+    DrawDesktopCapabilitySummary();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
 
     // 根据配置类型显示不同的设置界面
     if (specialSetting) {

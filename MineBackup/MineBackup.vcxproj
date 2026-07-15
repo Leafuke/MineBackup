@@ -117,6 +117,7 @@
     <ClCompile Include="src\core\RemoteContentService.cpp" />
     <ClCompile Include="src\core\ExternalToolManager.cpp" />
     <ClCompile Include="src\core\PortableConfigDocument.cpp" />
+    <ClCompile Include="src\core\SpecialConfigPolicy.cpp" />
     <ClCompile Include="src\infra\AtomicFileWriter.cpp" />
     <ClCompile Include="src\infra\AppPaths.cpp" />
     <ClCompile Include="src\infra\RotatingFileLog.cpp" />
@@ -127,11 +128,13 @@
     <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp" />
     <ClCompile Include="src\infra\NetworkService.cpp" />
     <ClCompile Include="src\infra\Sha256.cpp" />
+    <ClCompile Include="src\infra\DesktopServices.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
     <ClCompile Include="src\infra\Console.cpp" />
     <ClCompile Include="src\infra\i18n.cpp" />
     <ClCompile Include="src\platform\Platform_win.cpp" />
+    <ClCompile Include="src\platform\NativeDesktopServices.cpp" />
     <ClCompile Include="src\platform\NetworkBackend_win.cpp" />
     <ClCompile Include="src\ui\HistoryUI.cpp" />
     <ClCompile Include="src\ui\MigrationReportUI.cpp" />
@@ -173,6 +176,7 @@
     <ClInclude Include="src\core\RemoteContentService.h" />
     <ClInclude Include="src\core\ExternalToolManager.h" />
     <ClInclude Include="src\core\PortableConfigDocument.h" />
+    <ClInclude Include="src\core\SpecialConfigPolicy.h" />
     <ClInclude Include="src\infra\AtomicFileWriter.h" />
     <ClInclude Include="src\infra\AppPaths.h" />
     <ClInclude Include="src\infra\RotatingFileLog.h" />
@@ -188,6 +192,8 @@
     <ClInclude Include="src\infra\Console.h" />
     <ClInclude Include="src\infra\i18n.h" />
     <ClInclude Include="src\platform\PlatformCompat.h" />
+    <ClInclude Include="src\platform\DesktopServices.h" />
+    <ClInclude Include="src\platform\NativeDesktopServices.h" />
     <ClInclude Include="src\platform\Platform_linux.h" />
     <ClInclude Include="src\platform\Platform_macos.h" />
     <ClInclude Include="src\platform\Platform_win.h" />

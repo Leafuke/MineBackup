@@ -4,6 +4,7 @@
 #include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
 #include "MigrationCoordinator.h"
+#include "SpecialConfigPolicy.h"
 #include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -181,6 +182,7 @@ void LoadConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
+	g_appState.specialConfigMode = false;
 	restoreWhitelist.clear();
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) return;
@@ -294,8 +296,6 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"SpecialConfigId") spCur->specialConfigId = FolderRewindFormat::EnsureConfigId(val);
 				else if (key == L"AutoExecute") {
 					spCur->autoExecute = (val != L"0");
-					if (spCur->autoExecute)
-						g_appState.specialConfigMode = true;
 				}
 				else if (key == L"ExitAfter") spCur->exitAfterExecution = (val != L"0");
 				else if (key == L"Theme") spCur->theme = stoi(val);
@@ -490,6 +490,22 @@ void LoadConfigs(const filesystem::path& filename) {
 		}
 		if (spCfg.zipLevel < 1) spCfg.zipLevel = 1;
 		if (spCfg.zipLevel > 22) spCfg.zipLevel = 22;
+	}
+
+	const auto executionPolicy = NormalizeSpecialConfigExecutionPolicy(g_appState.specialConfigs);
+	if (executionPolicy.autoExecuteIndex) {
+		g_appState.specialConfigMode = true;
+		g_appState.currentConfigIndex = *executionPolicy.autoExecuteIndex;
+	}
+	if (executionPolicy.disabledDuplicateAutoExecute > 0
+		|| executionPolicy.disabledDuplicateRunOnStartup > 0) {
+		MigrationUnitResult normalized;
+		normalized.unitId = L"startup:special-config-exclusivity";
+		normalized.status = MigrationStatus::Succeeded;
+		normalized.message = L"Duplicate special startup selections were disabled deterministically; the lowest configuration index was retained.";
+		normalized.migratedItems = executionPolicy.disabledDuplicateAutoExecute
+			+ executionPolicy.disabledDuplicateRunOnStartup;
+		MigrationCoordinator::RecordUnit(normalized);
 	}
 }
 

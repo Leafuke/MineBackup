@@ -187,7 +187,7 @@ void DrawPathSettings(Config& cfg) {
 
 	ImGui::Text("%s", L("SAVES_ROOT_PATH"));
 	if (ImGui::Button(L("BUTTON_SELECT_SAVES_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.saveRoot = sel;
 		}
@@ -204,7 +204,7 @@ void DrawPathSettings(Config& cfg) {
 	strncpy_s(buf, wstring_to_utf8(cfg.backupPath).c_str(), sizeof(buf));
 	ImGui::Text("%s", L("BACKUP_DEST_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_BACKUP_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.backupPath = sel;
 		}
@@ -229,7 +229,7 @@ void DrawPathSettings(Config& cfg) {
 	}
 	ImGui::Text("%s", L("7Z_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_7Z"))) {
-		wstring sel = SelectFileDialog();
+		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
 			cfg.zipPath = sel;
 		}
@@ -296,7 +296,7 @@ void DrawPathSettings(Config& cfg) {
 	strncpy_s(snapshotPathBuf, wstring_to_utf8(cfg.snapshotPath).c_str(), sizeof(snapshotPathBuf));
 	ImGui::Text("%s", L("SNAPSHOT_PATH"));
 	if (ImGui::Button(L("BUTTON_SELECT_SNAPSHOT_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.snapshotPath = sel;
 		}
@@ -318,13 +318,13 @@ void DrawModIntegrationSettings(Config& cfg) {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 
 	if (ImGui::Button(L("MOD_LINK_MINEBACKUP_MODRINTH"), ImVec2(-1, 0))) {
-		OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+		(void)GetDesktopServices()->OpenUri(L"https://modrinth.com/mod/minebackup");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_HOME"), ImVec2(-1, 0))) {
-		OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
+		(void)GetDesktopServices()->OpenUri(L"https://github.com/hxh230802/KnotLink");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_DOWNLOAD"), ImVec2(-1, 0))) {
-		OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/hxh230802/KnotLink/releases/download/v1.0.0/KnotLinkService-1.0.0.0-Installer.exe");
+		(void)GetDesktopServices()->OpenUri(L"https://gh-proxy.org/https://github.com/hxh230802/KnotLink/releases/download/v1.0.0/KnotLinkService-1.0.0.0-Installer.exe");
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_KNOTLINK_DOWNLOAD_LINK"));
 
@@ -339,7 +339,7 @@ void DrawModIntegrationSettings(Config& cfg) {
 	strncpy_s(weSnapshotPathBuf, wstring_to_utf8(cfg.weSnapshotPath).c_str(), sizeof(weSnapshotPathBuf));
 	ImGui::Text("%s", L("WE_SNAPSHOT_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_WE_SNAPSHOT_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.weSnapshotPath = sel;
 		}
@@ -512,12 +512,12 @@ static void DrawRuleListBox(const char* listId, vector<wstring>& rules, int& sel
 
 void DrawBlacklistSettings(Config& cfg) {
 	if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
-		wstring sel = SelectFileDialog();
+		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) cfg.blacklist.push_back(sel);
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) cfg.blacklist.push_back(sel);
 	}
 	ImGui::SameLine();

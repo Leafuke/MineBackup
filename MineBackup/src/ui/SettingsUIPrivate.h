@@ -7,6 +7,8 @@
 #include "i18n.h"
 #include "imgui-all.h"
 #include "text_to_text.h"
+#include "DesktopServices.h"
+#include "SpecialConfigPolicy.h"
 
 #include <algorithm>
 #include <filesystem>

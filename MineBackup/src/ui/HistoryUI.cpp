@@ -17,6 +17,7 @@
 #include "PlatformCompat.h"
 #include "AppPaths.h"
 #include "TaskCoordinator.h"
+#include "DesktopServices.h"
 
 using namespace std;
 
@@ -349,7 +350,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			ImGui::SameLine();
 
 			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"), ImVec2(restoreSelectFileBtnWidth, 0))) {
-				wstring selectedFile = SelectFileDialog();
+				wstring selectedFile = GetDesktopServices()->SelectFile().path.wstring();
 				if (!selectedFile.empty()) {
 					const Config configCopy = cfg;
 					const wstring worldName = selected_entry->worldName;
@@ -374,8 +375,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine();
 		if (!file_exists) ImGui::BeginDisabled();
 		if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_OPEN_FOLDER"), actionButtonMinWidth), 0))) {
-			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
-			OpenFolderWithFocus(backup_path.parent_path().wstring(), cmd);
+			(void)GetDesktopServices()->RevealInFolder(backup_path.parent_path(), backup_path);
 		}
 		if (!file_exists) ImGui::EndDisabled();
 		ImGui::SameLine();

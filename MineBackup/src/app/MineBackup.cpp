@@ -17,6 +17,8 @@
 #include "NetworkService.h"
 #include "RemoteContentService.h"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
+#include "NativeDesktopServices.h"
 #include "Console.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
@@ -30,6 +32,7 @@
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
 #include "Sha256.h"
+#include "SpecialConfigPolicy.h"
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 #include "V15MigrationAdapter.h"
 #endif
@@ -397,10 +400,23 @@ int main(int argc, char** argv)
 		g_appState.currentConfigIndex = index;
 		g_appState.specialConfigMode = false;
 	}
-	if (launchOptions.legacySpecialConfigIndex
+	else if (launchOptions.legacySpecialConfigIndex
 		&& g_appState.specialConfigs.count(*launchOptions.legacySpecialConfigIndex)) {
 		g_appState.currentConfigIndex = *launchOptions.legacySpecialConfigIndex;
 		g_appState.specialConfigMode = true;
+	}
+	else if (launchOptions.autostart) {
+		const auto autostartIndex = FindSpecialRunOnStartup(g_appState.specialConfigs);
+		if (autostartIndex) {
+			// Resolve through the persisted stable identity instead of treating the map index
+			// as an external launch contract.
+			const auto& stableId = g_appState.specialConfigs.at(*autostartIndex).specialConfigId;
+			const int index = findSpecialConfig(stableId);
+			if (index >= 0) {
+				g_appState.currentConfigIndex = index;
+				g_appState.specialConfigMode = true;
+			}
+		}
 	}
 
 #ifdef _WIN32
@@ -413,10 +429,23 @@ int main(int argc, char** argv)
 	}
 
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
-	CreateTrayIcon(hwnd_hidden, hInstance);
-	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-	RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+	auto desktopServices = CreateNativeDesktopServices({
+		reinterpret_cast<void*>(hInstance), reinterpret_cast<void*>(hwnd_hidden),
+		nullptr, GetExecutablePath(), paths.mode != AppPathMode::Explicit});
+#else
+	auto desktopServices = CreateNativeDesktopServices({
+		nullptr, nullptr, nullptr, GetExecutablePath(), paths.mode != AppPathMode::Explicit});
 #endif
+	InstallDesktopServices(desktopServices);
+	if (desktopServices->Capabilities().autostart.IsAvailable()) {
+		const bool autostartEnabled = g_RunOnStartup
+			|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
+		const auto autostartStatus = desktopServices->SetAutostart(autostartEnabled);
+		if (!autostartStatus.IsAvailable() && !autostartStatus.diagnostic.empty()) {
+			console.AddLog("[Desktop] Autostart reconciliation failed: %s",
+				wstring_to_utf8(autostartStatus.diagnostic).c_str());
+		}
+	}
 
 
 	
@@ -577,7 +606,19 @@ int main(int argc, char** argv)
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
-	const bool shouldStartHiddenToTray = launchSilentStartup && !isFirstRun;
+	const bool requestedHiddenToTray = launchSilentStartup && !isFirstRun;
+	const auto startupTrayStatus = desktopServices->Capabilities().tray;
+	const bool shouldStartHiddenToTray = requestedHiddenToTray && startupTrayStatus.IsAvailable();
+	if (requestedHiddenToTray && !shouldStartHiddenToTray) {
+		const wstring detail = startupTrayStatus.diagnostic.empty()
+			? L"The system tray is unavailable in this desktop session."
+			: startupTrayStatus.diagnostic;
+		console.AddLog("[Desktop] Startup-to-tray was disabled for this run: %s",
+			wstring_to_utf8(detail).c_str());
+		MessageBoxWin("MineBackup",
+			wstring_to_utf8(L"MineBackup cannot hide to the tray in this desktop session, so the main window will be shown.\n\n" + detail),
+			1);
+	}
 	g_appState.showMainApp = !isFirstRun && !shouldStartHiddenToTray;
 	if (isFirstRun) {
 		g_windowWidth *= main_scale, g_windowHeight *= main_scale;
@@ -638,29 +679,35 @@ int main(int argc, char** argv)
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
-	#ifdef __APPLE__
-	CreateTrayIcon();
-	#endif
-	#ifndef _WIN32
-	RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-	RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
-	#endif
+	desktopServices->SetNativeWindow(wc);
+	const auto traySetup = desktopServices->SetTrayVisible(true);
+	if (!traySetup.IsAvailable() && !traySetup.diagnostic.empty()) {
+		console.AddLog("[Desktop] Tray unavailable: %s", wstring_to_utf8(traySetup.diagnostic).c_str());
+	}
+	const auto backupHotkey = desktopServices->RegisterGlobalHotkey(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+	if (!backupHotkey.IsAvailable() && !backupHotkey.diagnostic.empty()) {
+		console.AddLog("[Desktop] Backup hotkey unavailable: %s", wstring_to_utf8(backupHotkey.diagnostic).c_str());
+	}
+	const auto restoreHotkey = desktopServices->RegisterGlobalHotkey(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+	if (!restoreHotkey.IsAvailable() && !restoreHotkey.diagnostic.empty()) {
+		console.AddLog("[Desktop] Restore hotkey unavailable: %s", wstring_to_utf8(restoreHotkey.diagnostic).c_str());
+	}
 
 	// 设置窗口关闭回调，用于拦截关闭按钮
 	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
 		if (g_closeAction == 1) {
 			glfwSetWindowShouldClose(window, GLFW_FALSE);
-#if defined(__APPLE__)
-			CreateTrayIcon();
-			g_appState.showMainApp = false;
-			glfwHideWindow(window);
-#elif defined(__linux__)
-			// Linux仅最小化窗口，不使用系统托盘
-			glfwIconifyWindow(window);
-#else
-			g_appState.showMainApp = false;
-			glfwHideWindow(window);
-#endif
+			auto services = GetDesktopServices();
+			if (CanHideToTray(services->Capabilities())) {
+				(void)services->SetTrayVisible(true);
+				g_appState.showMainApp = false;
+				glfwHideWindow(window);
+			}
+			else {
+				// Preserve the user's preference, but do not make the window unreachable
+				// in a session without a tray host.
+				glfwIconifyWindow(window);
+			}
 		} else if (g_closeAction == 2) {
 			SaveConfigs();
 			g_appState.done = true;
@@ -889,9 +936,11 @@ int main(int argc, char** argv)
 		wstring instanceError;
 		for (const auto& request : singleInstance.PollRequests(instanceError)) {
 			g_appState.showMainApp = true;
-			glfwShowWindow(wc);
-			glfwRestoreWindow(wc);
-			glfwFocusWindow(wc);
+			const auto activation = desktopServices->ActivateWindow();
+			if (!activation.IsAvailable() && !activation.diagnostic.empty()) {
+				console.AddLog("[Desktop] Window activation failed: %s",
+					wstring_to_utf8(activation.diagnostic).c_str());
+			}
 			if (request.type == InstanceRequestType::SelectConfig) {
 				const int index = findNormalConfig(request.stableId);
 				if (index >= 0) {
@@ -1098,7 +1147,8 @@ int main(int argc, char** argv)
 				if (ImGui::BeginMenu(L("MENU_FILE"))) {
 					// 导出配置
 					if (ImGui::MenuItem(L("MENU_EXPORT_CONFIG"))) {
-						wstring exportPath = SelectSaveFileDialog(L"config_export.ini", L"INI Files (*.ini)\0*.ini\0All Files (*.*)\0*.*\0");
+						wstring exportPath = desktopServices->SelectSaveFile(
+							L"config_export.ini", L"INI Files (*.ini)\0*.ini\0All Files (*.*)\0*.*\0").path.wstring();
 						if (!exportPath.empty()) {
 							SaveConfigs(exportPath);
 							console.AddLog(L("LOG_CONFIG_EXPORTED"), wstring_to_utf8(exportPath).c_str());
@@ -1106,7 +1156,7 @@ int main(int argc, char** argv)
 					}
 					// 导入配置
 					if (ImGui::MenuItem(L("MENU_IMPORT_CONFIG"))) {
-						wstring importPath = SelectFileDialog();
+						wstring importPath = desktopServices->SelectFile().path.wstring();
 						if (!importPath.empty() && filesystem::exists(importPath)) {
 							pendingImportPath = importPath;
 							showImportConfigConfirm = true;
@@ -1115,7 +1165,8 @@ int main(int argc, char** argv)
 					ImGui::Separator();
 					// 导出历史记录
 					if (ImGui::MenuItem(L("MENU_EXPORT_HISTORY"))) {
-						wstring exportPath = SelectSaveFileDialog(L"history_export.json", L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0");
+						wstring exportPath = desktopServices->SelectSaveFile(
+							L"history_export.json", L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0").path.wstring();
 						if (!exportPath.empty()) {
 							try {
 								if (ExportHistoryToFile(exportPath)) {
@@ -1131,7 +1182,7 @@ int main(int argc, char** argv)
 					}
 					// 导入历史记录
 					if (ImGui::MenuItem(L("MENU_IMPORT_HISTORY"))) {
-						wstring importPath = SelectFileDialog();
+						wstring importPath = desktopServices->SelectFile().path.wstring();
 						if (!importPath.empty() && filesystem::exists(importPath)) {
 							pendingImportPath = importPath;
 							showImportHistoryConfirm = true;
@@ -1203,21 +1254,27 @@ int main(int argc, char** argv)
 
 				if (ImGui::BeginMenu(L("SETTINGS"))) {
 
+					const auto desktopCapabilities = desktopServices->Capabilities();
+					ImGui::BeginDisabled(!desktopCapabilities.autostart.IsAvailable());
 					if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup)) {
-						wchar_t selfPath[MAX_PATH];
-						GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-						if (!g_RunOnStartup) {
+						const bool previous = !g_RunOnStartup;
+						const bool anySpecialStartup = FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
+						const auto status = desktopServices->SetAutostart(g_RunOnStartup || anySpecialStartup);
+						if (!status.IsAvailable()) {
+							g_RunOnStartup = previous;
+							MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 2);
+						}
+						else if (!g_RunOnStartup && !anySpecialStartup) {
 							g_SilentStartupToTray = false;
 						}
-						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup, g_SilentStartupToTray);
 					}
+					ImGui::EndDisabled();
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
-					ImGui::BeginDisabled(!g_RunOnStartup);
-					if (ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray)) {
-						wchar_t selfPath[MAX_PATH];
-						GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup, g_SilentStartupToTray);
+					if (!desktopCapabilities.autostart.IsAvailable() && !desktopCapabilities.autostart.diagnostic.empty()) {
+						ImGui::TextDisabled("%s", wstring_to_utf8(desktopCapabilities.autostart.diagnostic).c_str());
 					}
+					ImGui::BeginDisabled(!g_RunOnStartup);
+					ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray);
 					ImGui::EndDisabled();
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
 					ImGui::Checkbox(L("BUTTON_AUTO_LOG"), &g_autoLogEnabled);
@@ -1231,6 +1288,7 @@ int main(int argc, char** argv)
 					// 热键设置右拉栏（鼠标放上去会向右展开两个）
 					static bool waitingForHotkey = false;
 					static int whichFunc = 0;
+					ImGui::BeginDisabled(!desktopCapabilities.globalHotkeys.IsAvailable());
 					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
 						if (ImGui::MenuItem(L("BUTTON_BACKUP_SELECTED"))) {
 							console.AddLog(L("HOTKEY_INSTRUCTION"));
@@ -1246,28 +1304,36 @@ int main(int argc, char** argv)
 							ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Waiting...");
 							for (int key = ImGuiKey_0; key <= ImGuiKey_Z; ++key) {
 								if (ImGui::IsKeyPressed((ImGuiKey)key)) {
-									waitingForHotkey = false;
-									if (whichFunc == 1) {
-										g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
-#ifdef _WIN32
-										UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
-										RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-#else
-										UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
-										RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-#endif
-										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
+								waitingForHotkey = false;
+								if (whichFunc == 1) {
+									const int previousKey = g_hotKeyBackupId;
+									g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
+									(void)desktopServices->UnregisterGlobalHotkey(MINEBACKUP_HOTKEY_ID);
+									const auto status = desktopServices->RegisterGlobalHotkey(
+										MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
+									if (!status.IsAvailable()) {
+										g_hotKeyBackupId = previousKey;
+										(void)desktopServices->RegisterGlobalHotkey(
+											MINEBACKUP_HOTKEY_ID, previousKey);
+										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
+										MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 1);
+									}
+									console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
 										break;
 									}
-									else if (whichFunc == 2) {
-										g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
-#ifdef _WIN32
-										UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
-										RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
-#else
-										UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
-										RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
-#endif
+								else if (whichFunc == 2) {
+									const int previousKey = g_hotKeyRestoreId;
+									g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
+									(void)desktopServices->UnregisterGlobalHotkey(MINERESTORE_HOTKEY_ID);
+									const auto status = desktopServices->RegisterGlobalHotkey(
+										MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+									if (!status.IsAvailable()) {
+										g_hotKeyRestoreId = previousKey;
+										(void)desktopServices->RegisterGlobalHotkey(
+											MINERESTORE_HOTKEY_ID, previousKey);
+										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
+										MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 1);
+									}
 										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
 										break;
 									}
@@ -1276,6 +1342,11 @@ int main(int argc, char** argv)
 							}
 						}
 						ImGui::EndMenu();
+					}
+					ImGui::EndDisabled();
+					if (!desktopCapabilities.globalHotkeys.IsAvailable()
+						&& ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+						ImGui::SetTooltip("%s", wstring_to_utf8(desktopCapabilities.globalHotkeys.diagnostic).c_str());
 					}
 					ImGui::Separator();
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
@@ -1302,16 +1373,16 @@ int main(int argc, char** argv)
 				}
 				if (ImGui::BeginMenu(L("MENU_HELP"))) {
 					if (ImGui::MenuItem(L("MENU_GITHUB"))) {
-						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup");
+						(void)desktopServices->OpenUri(L"https://github.com/Leafuke/MineBackup");
 					}
 					if (ImGui::MenuItem(L("MENU_ISSUE"))) {
-						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/issues");
+						(void)desktopServices->OpenUri(L"https://github.com/Leafuke/MineBackup/issues");
 					}
 					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
-						OpenLinkInBrowser(L"https://folderrewind.top/docs/guides/minebackup-v1/overview");
+						(void)desktopServices->OpenUri(L"https://folderrewind.top/docs/guides/minebackup-v1/overview");
 					}
 					if (ImGui::MenuItem(L("SPONSOR_ME"))) {
-						OpenLinkInBrowser(L"https://afdian.com/a/MineBackup");
+						(void)desktopServices->OpenUri(L"https://afdian.com/a/MineBackup");
 					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
 						showAboutWindow = true;
@@ -1345,7 +1416,7 @@ int main(int argc, char** argv)
 						ImGui::Separator();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(180, 0))) {
 							const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
-							if (!releaseUrl.empty()) OpenLinkInBrowser(utf8_to_wstring(releaseUrl));
+							if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1356,7 +1427,7 @@ int main(int argc, char** argv)
 						ImGui::SameLine();
 						if (ImGui::Button(L("CHECK_FOR_UPDATES"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
 							const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
-							if (!releaseUrl.empty()) OpenLinkInBrowser(utf8_to_wstring(releaseUrl));
+							if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1437,29 +1508,24 @@ int main(int argc, char** argv)
 				
 				ImGui::Dummy(ImVec2(0, 10));
 
-#ifdef __linux__
-				if (ImGui::Button(L("CLOSE_MINIMIZE_WINDOW"), ImVec2(200, 0))) {
+				const bool canHideToTray = CanHideToTray(desktopServices->Capabilities());
+				const char* minimizeLabel = canHideToTray
+					? L("CLOSE_MINIMIZE_TO_TRAY") : L("CLOSE_MINIMIZE_WINDOW");
+				if (ImGui::Button(minimizeLabel, ImVec2(200, 0))) {
 					if (tempRememberChoice) {
 						g_closeAction = 1;
 						g_rememberCloseAction = true;
 					}
-					glfwIconifyWindow(wc);
-					ImGui::CloseCurrentPopup();
-				}
-#else
-				if (ImGui::Button(L("CLOSE_MINIMIZE_TO_TRAY"), ImVec2(200, 0))) {
-					if (tempRememberChoice) {
-						g_closeAction = 1;
-						g_rememberCloseAction = true;
+					if (canHideToTray) {
+						(void)desktopServices->SetTrayVisible(true);
+						g_appState.showMainApp = false;
+						glfwHideWindow(wc);
 					}
-#ifdef __APPLE__
-					CreateTrayIcon();
-#endif
-					g_appState.showMainApp = false;
-					glfwHideWindow(wc);
+					else {
+						glfwIconifyWindow(wc);
+					}
 					ImGui::CloseCurrentPopup();
 				}
-#endif
 				ImGui::SameLine();
 				if (ImGui::Button(L("CLOSE_EXIT_APP"), ImVec2(200, 0))) {
 					if (tempRememberChoice) {
@@ -1493,26 +1559,26 @@ int main(int argc, char** argv)
 
 				if (ImGui::Button(L("ABOUT_VISIT_GITHUB")))
 				{
-					OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup");
+					(void)desktopServices->OpenUri(L"https://github.com/Leafuke/MineBackup");
 				}
 				ImGui::SameLine();
 				if (ImGui::Button(L("ABOUT_VISIT_BILIBILI")))
 				{
-					OpenLinkInBrowser(L"https://space.bilibili.com/545429962");
+					(void)desktopServices->OpenUri(L"https://space.bilibili.com/545429962");
 				}
 				if (ImGui::Button(L("ABOUT_VISIT_KNOTLINK")))
 				{
-					OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
+					(void)desktopServices->OpenUri(L"https://github.com/hxh230802/KnotLink");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_KNOTLINK_TIP"));
 				if (ImGui::Button(L("ABOUT_VISIT_FOLDERREWIND")))
 				{
-					OpenLinkInBrowser(L"https://github.com/Leafuke/FolderRewind");
+					(void)desktopServices->OpenUri(L"https://github.com/Leafuke/FolderRewind");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_FOLDERREWIND_TIP"));
 				if (ImGui::Button(L("ABOUT_VISIT_MINEBACKUP-MOD")))
 				{
-					OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+					(void)desktopServices->OpenUri(L"https://modrinth.com/mod/minebackup");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_MINEBACKUP-MOD_TIP"));	
 				
@@ -1865,7 +1931,7 @@ int main(int argc, char** argv)
 					ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
 					// 点击更换图标
 					if (ImGui::IsItemClicked()) {
-						wstring sel = SelectFileDialog();
+						wstring sel = desktopServices->SelectFile().path.wstring();
 						if (!sel.empty()) {
 							// 覆盖原 icon.png - 使用跨平台路径拼接
 							wstring destPath = JoinPath(worldFolder, L"icon.png").wstring();
@@ -2115,15 +2181,15 @@ int main(int argc, char** argv)
 						if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
 							wstring path = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
 							if (filesystem::exists(path)) {
-								OpenFolder(path);
+								(void)desktopServices->OpenFolder(path);
 							}
 							else {
-								OpenFolder(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath);
+								(void)desktopServices->OpenFolder(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath);
 							}
 						}
 						if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
 							wstring path = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring();
-							OpenFolder(path);
+							(void)desktopServices->OpenFolder(path);
 						}
 
 						// 模组备份
@@ -2287,7 +2353,13 @@ int main(int argc, char** argv)
 							ImGui::InputText(L("LABEL_EXPORT_PATH"), outputPathBuf, sizeof(outputPathBuf));
 							ImGui::SameLine();
 							if (ImGui::Button(L("BUTTON_BROWSE"))) {
-								strcpy_s(outputPathBuf, MAX_PATH, wstring_to_utf8(SelectFolderDialog() + L"\\" + displayWorlds[selectedWorldIndex].name + L"_shared." + tempExportConfig.zipFormat).c_str());
+								const auto selectedFolder = desktopServices->SelectFolder();
+								if (!selectedFolder.path.empty()) {
+									const auto destination = selectedFolder.path
+										/ (displayWorlds[selectedWorldIndex].name + L"_shared." + tempExportConfig.zipFormat);
+									strcpy_s(outputPathBuf, MAX_PATH,
+										wstring_to_utf8(destination.wstring()).c_str());
+								}
 							}
 
 							if (ImGui::RadioButton("7z", &selectedFormat, 0)) { tempExportConfig.zipFormat = L"7z"; } ImGui::SameLine();
@@ -2503,15 +2575,12 @@ int main(int argc, char** argv)
 	automaticLog << "=== End ===\n\n";
 	RotatingFileLog::Append(paths.logsRoot / "auto_log.txt", automaticLog.str());
 
+	(void)desktopServices->UnregisterGlobalHotkey(MINEBACKUP_HOTKEY_ID);
+	(void)desktopServices->UnregisterGlobalHotkey(MINERESTORE_HOTKEY_ID);
+	(void)desktopServices->SetTrayVisible(false);
+	ResetDesktopServices();
 #ifdef _WIN32
-	RemoveTrayIcon();
-	UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
-	UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 	DestroyWindow(hwnd_hidden);
-#else
-	RemoveTrayIcon();
-	UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
-	UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
 #endif
 	g_worldIconTextures.clear();
 	worldIconWidths.clear();

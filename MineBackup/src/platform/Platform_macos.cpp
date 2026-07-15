@@ -188,9 +188,6 @@ void ReStartApplication() {
     MessageBoxWin("MineBackup", "Please close and reopen MineBackup to complete this operation.", 0);
 }
 
-void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray) {
-}
-
 void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
 }
 

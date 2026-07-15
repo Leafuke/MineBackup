@@ -157,7 +157,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			strncpy_s(workDirBuf, wstring_to_utf8(task.workingDirectory).c_str(), sizeof(workDirBuf));
 			ImGui::Text("%s", L("TASK_WORKDIR_LABEL"));
 			if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-				wstring sel = SelectFolderDialog();
+				wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 				if (!sel.empty()) task.workingDirectory = sel;
 			}
 			ImGui::SameLine();
@@ -287,25 +287,47 @@ void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
 	if (ImGui::BeginTabBar("SpecialConfigTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(L("TAB_STARTUP"))) {
 			ImGui::Spacing();
-			ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
+			if (ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute)) {
+				SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
+					g_appState.currentConfigIndex, spCfg.autoExecute);
+			}
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_EXECUTE_ON_STARTUP"));
 			ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
 
-#ifdef _WIN32
-			if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
-				wchar_t selfPath[MAX_PATH];
-				GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-				SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, true, g_appState.currentConfigIndex, spCfg.runOnStartup, g_SilentStartupToTray);
+			const auto services = GetDesktopServices();
+			const auto autostartCapability = services->Capabilities().autostart;
+			map<int, bool> previousStartupSelections;
+			for (const auto& [index, config] : g_appState.specialConfigs) {
+				previousStartupSelections[index] = config.runOnStartup;
 			}
-#endif
+			ImGui::BeginDisabled(!autostartCapability.IsAvailable());
+			if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
+				SetExclusiveSpecialRunOnStartup(g_appState.specialConfigs,
+					g_appState.currentConfigIndex, spCfg.runOnStartup);
+				const bool enabled = g_RunOnStartup
+					|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
+				const auto status = services->SetAutostart(enabled);
+				if (!status.IsAvailable()) {
+					for (const auto& [index, selected] : previousStartupSelections) {
+						g_appState.specialConfigs[index].runOnStartup = selected;
+					}
+					MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 2);
+				}
+			}
+			ImGui::EndDisabled();
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+				&& !autostartCapability.IsAvailable()) {
+				ImGui::SetTooltip("%s", wstring_to_utf8(autostartCapability.diagnostic).c_str());
+			}
 
 			ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
 
 			ImGui::Spacing();
 			if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
-				g_appState.specialConfigs[g_appState.currentConfigIndex].autoExecute = true;
+				SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
+					g_appState.currentConfigIndex, true);
 				SaveConfigs();
-				ReStartApplication();
+				(void)services->RestartApplication();
 				g_appState.done = true;
 			}
 			ImGui::EndTabItem();

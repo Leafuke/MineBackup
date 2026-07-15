@@ -2,6 +2,7 @@
 
 #include "MigrationCoordinator.h"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
 #include "imgui-all.h"
 #include "text_to_text.h"
 
@@ -26,7 +27,9 @@ void DrawSettings() {
             if (std::filesystem::exists(snapshot)) {
                 ImGui::SameLine();
                 ImGui::PushID((wstring_to_utf8(unit.unitId) + "_snapshot").c_str());
-                if (ImGui::SmallButton("Open")) OpenFolder(snapshot.parent_path().wstring());
+                if (ImGui::SmallButton("Open")) {
+                    (void)GetDesktopServices()->OpenFolder(snapshot.parent_path());
+                }
                 ImGui::PopID();
             }
         }

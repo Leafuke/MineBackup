@@ -327,43 +327,6 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 	}
 }
 
-// configType: 1 特殊配置
-void SetAutoStart(const string& appName, const wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray) {
-	HKEY hKey;
-	const wstring keyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-
-	// LSTATUS是Windows API中标准返回类型
-	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_WRITE, &hKey);
-
-	if (status == ERROR_SUCCESS) {
-		if (enable) {
-			wstring command;
-			if (configType) // 特殊配置
-				command = L"\"" + appPath + L"\" -specialcfg " + to_wstring(configId);
-			else // 普通配置
-				command = L"\"" + appPath + L"\" -cfg " + to_wstring(configId);
-			if (silentStartupToTray)
-				command += L" --silent-startup";
-
-			// RegSetValueExW 需要6个参数: HKEY, LPCWSTR, DWORD, DWORD, const BYTE*, DWORD
-			RegSetValueExW(
-				hKey,
-				utf8_to_wstring(appName).c_str(),
-				0,
-				REG_SZ,
-				(const BYTE*)command.c_str(),
-				(DWORD)((command.length() + 1) * sizeof(wchar_t))
-			);
-		}
-		else {
-			// RegDeleteValueW 需要2个参数: HKEY, LPCWSTR
-			RegDeleteValueW(hKey, utf8_to_wstring(appName).c_str());
-		}
-		RegCloseKey(hKey);
-	}
-}
-
-
 static std::filesystem::path g_logFilePath;
 
 void SetLogFilePath(const std::string& path) {

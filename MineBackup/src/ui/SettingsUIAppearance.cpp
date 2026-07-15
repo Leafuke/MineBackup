@@ -9,14 +9,6 @@
 #include "Sha256.h"
 #include "imgui_style.h"
 
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
-
 using namespace std;
 
 static wstring FormatPortableConfigPreview(const PortableConfigMergePreview& preview, const wchar_t* direction) {
@@ -126,7 +118,7 @@ void DrawAppearanceSettings(Config& cfg) {
 
 		if (oldLang != g_CurrentLang) {
 			SaveConfigs();
-			ReStartApplication();
+			(void)GetDesktopServices()->RestartApplication();
 		}
 
 		prev_lang_idx = lang_idx;
@@ -141,7 +133,7 @@ void DrawAppearanceSettings(Config& cfg) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 		if (cfg.theme == 7 && !filesystem::exists(customThemePath)) {
 			ImGuiTheme::WriteDefaultCustomTheme(customThemePath);
-			OpenFolder(customThemePath.wstring());
+			(void)GetDesktopServices()->OpenFolder(customThemePath);
 		}
 		else {
 			ApplyTheme(cfg.theme);
@@ -164,7 +156,7 @@ void DrawAppearanceSettings(Config& cfg) {
 	char Fonts[256];
 	strncpy_s(Fonts, wstring_to_utf8(cfg.fontPath).c_str(), sizeof(Fonts));
 	if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
-		wstring sel = SelectFileDialog();
+		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
 			cfg.fontPath = sel;
 			Fontss = sel;
@@ -210,7 +202,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
 	ImGui::Text("%s", L("RCLONE_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_RCLONE"))) {
-		wstring selected = SelectFileDialog();
+		wstring selected = GetDesktopServices()->SelectFile().path.wstring();
 		if (!selected.empty()) {
 			cfg.rclonePath = selected;
 			strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
@@ -276,7 +268,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));
 	ImGui::Text("%s", L("CLOUD_WORKDIR_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-		wstring selected = SelectFolderDialog();
+		wstring selected = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!selected.empty()) {
 			cfg.cloudWorkingDirectory = selected;
 			strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));

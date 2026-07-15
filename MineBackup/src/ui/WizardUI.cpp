@@ -8,6 +8,7 @@
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
 
 using namespace std;
 
@@ -76,7 +77,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		// 字体路径设置
 		ImGui::Text(L("WIZARD_FONT_PATH"));
 		if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
-			wstring selected_file = SelectFileDialog();
+			wstring selected_file = GetDesktopServices()->SelectFile().path.wstring();
 			if (!selected_file.empty()) {
 				strncpy_s(wizardFontPath, wstring_to_utf8(selected_file).c_str(), sizeof(wizardFontPath));
 				Fontss = selected_file;
@@ -100,7 +101,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				// 打开自定义主题编辑器
 				ImGuiTheme::WriteDefaultCustomTheme(customThemePath);
 				// 打开 custom_theme.json 文件供用户编辑
-				OpenFolder(customThemePath.wstring());
+				(void)GetDesktopServices()->OpenFolder(customThemePath);
 			}
 			else {
 				ApplyTheme(themeId);
@@ -212,7 +213,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 			}
 		}
 		if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-			wstring selected_folder = SelectFolderDialog();
+			wstring selected_folder = GetDesktopServices()->SelectFolder().path.wstring();
 			if (!selected_folder.empty()) {
 				strncpy_s(saveRootPath, wstring_to_utf8(selected_folder).c_str(), sizeof(saveRootPath));
 			}
@@ -242,7 +243,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
 		if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-			wstring selected_folder = SelectFolderDialog();
+			wstring selected_folder = GetDesktopServices()->SelectFolder().path.wstring();
 			if (!selected_folder.empty()) {
 				strncpy_s(backupPath, wstring_to_utf8(selected_folder).c_str(), sizeof(backupPath));
 			}
@@ -296,7 +297,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 			}
 		}
 		if (ImGui::Button(L("BUTTON_SELECT_FILE"))) {
-			wstring selected_file = SelectFileDialog();
+			wstring selected_file = GetDesktopServices()->SelectFile().path.wstring();
 			if (!selected_file.empty()) {
 				strncpy_s(zipPath, wstring_to_utf8(selected_file).c_str(), sizeof(zipPath));
 			}
