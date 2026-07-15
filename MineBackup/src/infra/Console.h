@@ -6,7 +6,7 @@
 #include "imgui/imgui.h"
 #include "AppState.h"
 #include "AppPaths.h"
-#include "PlatformCompat.h"
+#include "DesktopServices.h"
 #include "i18n.h"
 #include "text_to_text.h"
 
@@ -215,7 +215,7 @@ struct Console
 			}
 			out.close();
 			// 自动打开日志所在目录 并选中该文件
-			OpenFolderWithFocus(logPath.parent_path().wstring(), L"/select,\"" + logPath.wstring() + L"\"");
+			(void)GetDesktopServices()->RevealInFolder(logPath.parent_path(), logPath);
 		}
 		ImGui::Separator();
 

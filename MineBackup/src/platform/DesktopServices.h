@@ -69,6 +69,7 @@ public:
     [[nodiscard]] virtual CapabilityStatus ConfigureGlobalHotkeys(
         const std::vector<GlobalHotkeyBinding>& bindings) = 0;
     [[nodiscard]] virtual CapabilityStatus SetAutostart(bool enabled) = 0;
+    [[nodiscard]] virtual CapabilityStatus OpenAutostartSettings() = 0;
     [[nodiscard]] virtual CapabilityStatus ActivateWindow() = 0;
     [[nodiscard]] virtual CapabilityStatus RestartApplication() = 0;
 };

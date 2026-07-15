@@ -1,82 +1,73 @@
-name: Build & Upload MineBackup (macOS)
+name: macOS Native Desktop Validation
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-26]
+    runs-on: ${{ matrix.runner }}
     steps:
-    - name: Checkout source
-      uses: actions/checkout@v3
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        brew update
-        # removed brew install glfw to force static fallback in CMake
+      - name: Install validation tools
+        run: brew install ninja sevenzip
 
-    - name: Configure CMake
-      run: cmake -DCMAKE_BUILD_TYPE=Release .
+      - name: Configure, build and test arm64 candidate
+        run: |
+          test "$(uname -m)" = arm64
+          cmake --preset macos-arm64 -DBUILD_TESTING=ON
+          cmake --build build/macos-arm64 --parallel
+          ctest --preset macos-arm64 --output-on-failure
 
-    - name: Build MineBackup
-      run: cmake --build . --config Release
+      - name: Verify bundle metadata and architecture
+        run: |
+          app=build/macos-arm64/bin/MineBackup.app
+          test -d "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = "io.github.leafuke.MineBackup"
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "1.16.0"
+          test "$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")" = "15.0"
+          lipo -info "$app/Contents/MacOS/MineBackup" | tee build/macos-arm64/lipo.txt
+          grep -Fq 'arm64' build/macos-arm64/lipo.txt
+          ! grep -Fq 'x86_64' build/macos-arm64/lipo.txt
 
-    - name: Prepare release package
-      run: |
-        mkdir -p release-package/Assets
-        cp ./bin/MineBackup release-package/
-        find ./MineBackup/Assets -maxdepth 1 -type f \( -name "*.ttf" -o -name "*.otf" \) -exec cp {} release-package/Assets/ \;
+      - name: Ad-hoc sign and verify app
+        run: |
+          app=build/macos-arm64/bin/MineBackup.app
+          codesign --force --sign - --timestamp=none "$app"
+          codesign --verify --strict --verbose=2 "$app"
 
-    - name: Zip executable + fonts
-      run: |
-        cd release-package
-        zip -r ../MineBackup-macos.zip .
+      - name: Run from a read-only app bundle
+        run: |
+          app=build/macos-arm64/bin/MineBackup.app
+          profile="$RUNNER_TEMP/minebackup-profile-${{ matrix.runner }}"
+          chmod -R a-w "$app"
+          "$app/Contents/MacOS/MineBackup" --data-dir "$profile" \
+            >build/macos-arm64/smoke.log 2>&1 &
+          pid=$!
+          sleep 8
+          if ! kill -0 "$pid" 2>/dev/null; then
+            cat build/macos-arm64/smoke.log
+            exit 1
+          fi
+          kill -TERM "$pid"
+          wait "$pid" || true
+          test -d "$profile/config"
+          test ! -w "$app"
 
-    - name: Get latest release
-      id: get_release
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const releases = await github.rest.repos.listReleases({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            per_page: 1,
-          });
-          if (!releases.data.length) throw 'No releases found';
-          const release = releases.data[0];
-          core.setOutput('upload_url', release.upload_url);
-          core.setOutput('release_id', release.id);
-
-    - name: Delete existing asset if exists
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const releaseId = Number('${{ steps.get_release.outputs.release_id }}');
-          const assetName = 'MineBackup-macos.zip';
-          const assets = await github.rest.repos.listReleaseAssets({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: releaseId,
-            per_page: 100,
-          });
-          const target = assets.data.find(a => a.name === assetName);
-          if (target) {
-            await github.rest.repos.deleteReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              asset_id: target.id,
-            });
-            core.info(`Deleted existing asset: ${assetName}`);
-          } else {
-            core.info(`No existing asset found: ${assetName}`);
-          }
-
-    - name: Upload artifact to latest release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: ./MineBackup-macos.zip
-        asset_name: MineBackup-macos.zip
-        asset_content_type: application/zip
+      - name: Upload native validation candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-${{ matrix.runner }}-native-validation
+          path: |
+            build/macos-arm64/bin/MineBackup.app
+            build/macos-arm64/lipo.txt
+            build/macos-arm64/smoke.log

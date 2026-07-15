@@ -34,6 +34,7 @@ public:
         return Unavailable();
     }
     CapabilityStatus SetAutostart(bool) override { return Unavailable(); }
+    CapabilityStatus OpenAutostartSettings() override { return Unavailable(); }
     CapabilityStatus ActivateWindow() override { return Unavailable(); }
     CapabilityStatus RestartApplication() override { return Unavailable(); }
 

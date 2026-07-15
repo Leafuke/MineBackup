@@ -1,29 +1,17 @@
 #include "Platform_macos.h"
 #include "text_to_text.h"
 #include "i18n.h"
-#include "Console.h"
-#include "AppState.h"
 #include "AppPaths.h"
-#include "Globals.h"
-#include "ProcessRunner.h"
 #include "ExternalToolManager.h"
+#include "MacDesktopBridge.h"
 
-#include <atomic>
+#include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
-#include <fstream>
-#include <cstdio>
-#include <algorithm>
-#include <functional>
-#include <vector>
-#include <sstream>
-#include <cctype>
-#include <limits.h>
-#include <thread>
 #include <system_error>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/file.h>
@@ -33,46 +21,19 @@ using namespace std;
 namespace fs = std::filesystem;
 
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
-    CFStringRef titleText = CFStringCreateWithCString(kCFAllocatorDefault, title.c_str(), kCFStringEncodingUTF8);
-    CFStringRef messageText = CFStringCreateWithCString(kCFAllocatorDefault, message.c_str(), kCFStringEncodingUTF8);
-    const CFOptionFlags level = iconType == 2 ? kCFUserNotificationStopAlertLevel
-        : iconType == 1 ? kCFUserNotificationCautionAlertLevel : kCFUserNotificationNoteAlertLevel;
-    CFOptionFlags response = 0;
-    CFUserNotificationDisplayAlert(0, level, nullptr, nullptr, nullptr, titleText, messageText,
-        CFSTR("OK"), nullptr, nullptr, &response);
-    if (titleText) CFRelease(titleText);
-    if (messageText) CFRelease(messageText);
-}
-
-static std::wstring RunOsaScript(const std::string& script) {
-    ProcessSpec spec;
-    spec.executable = L"/usr/bin/osascript";
-    spec.arguments = {L"-e", utf8_to_wstring(script)};
-    spec.maximumCapturedBytes = 4096;
-    const auto process = ProcessRunner::Run(spec);
-    if (process.status != ProcessStatus::Succeeded) return L"";
-    std::string output = process.standardOutput;
-    
-    if (output.empty()) return L"";
-    if (!output.empty() && output.back() == '\n') output.pop_back();
-    return utf8_to_wstring(output);
+    MacShowAlert(title, message, iconType);
 }
 
 std::wstring SelectFileDialog() {
-    return RunOsaScript("choose file");
+    return MacSelectFile().path.wstring();
 }
 
 std::wstring SelectFolderDialog() {
-    return RunOsaScript("POSIX path of (choose folder)");
+    return MacSelectFolder().path.wstring();
 }
 
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName, const std::wstring& filter) {
-    std::string script = "POSIX path of (choose file name";
-    if (!defaultFileName.empty()) {
-        script += " default name \"" + wstring_to_utf8(defaultFileName) + "\"";
-    }
-    script += ")";
-    return RunOsaScript(script);
+    return MacSelectSaveFile(defaultFileName, filter).path.wstring();
 }
 
 std::wstring GetDocumentsPath() {
@@ -167,21 +128,15 @@ std::string GetRegistryValue(const std::string& key, const std::string& valueNam
 }
 
 void OpenLinkInBrowser(const std::wstring& url) {
-    if (url.empty()) return;
-    ProcessRunner::Run({L"/usr/bin/open", {url}});
+    (void)MacOpenUri(url);
 }
 
 void OpenFolder(const std::wstring& folderPath) {
-    if (folderPath.empty()) return;
-    ProcessRunner::Run({L"/usr/bin/open", {folderPath}});
+    (void)MacOpenFolder(fs::path(folderPath));
 }
 
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus) {
-    if (!focus.empty()) {
-        ProcessRunner::Run({L"/usr/bin/open", {L"-R", focus}});
-    } else {
-        OpenFolder(folderPath);
-    }
+    (void)MacRevealInFolder(fs::path(folderPath), fs::path(focus));
 }
 
 void ReStartApplication() {
@@ -189,9 +144,12 @@ void ReStartApplication() {
 }
 
 void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
+	(void)path;
+	(void)isHidden;
 }
 
 void EnableDarkModeWin(bool enable) {
+	(void)enable;
 }
 
 bool Extract7zToTempFile(std::wstring& extractedPath) {
@@ -220,16 +178,7 @@ bool ExtractFontToTempFile(std::wstring& extractedPath) {
 }
 
 bool ConfirmMessageBox(const std::string& title, const std::string& message) {
-    CFStringRef titleText = CFStringCreateWithCString(kCFAllocatorDefault, title.c_str(), kCFStringEncodingUTF8);
-    CFStringRef messageText = CFStringCreateWithCString(kCFAllocatorDefault, message.c_str(), kCFStringEncodingUTF8);
-    CFStringRef acceptText = CFSTR("Import");
-    CFStringRef declineText = CFSTR("Not now");
-    CFOptionFlags response = 1;
-    const SInt32 status = CFUserNotificationDisplayAlert(0, kCFUserNotificationCautionAlertLevel,
-        nullptr, nullptr, nullptr, titleText, messageText, acceptText, declineText, nullptr, &response);
-    if (titleText) CFRelease(titleText);
-    if (messageText) CFRelease(messageText);
-    return status == 0 && response == kCFUserNotificationDefaultResponse;
+    return MacConfirmAlert(title, message);
 }
 
 bool IsFileLocked(const std::wstring& path) {

@@ -101,6 +101,7 @@ public:
         CapabilityStatus::Ready(), CapabilityStatus::Ready()};
     std::filesystem::path selectedPath = L"mock/selected.txt";
     bool autostartEnabled = false;
+    int autostartSettingsOpenCount = 0;
     int activationCount = 0;
     std::vector<GlobalHotkeyBinding> configuredHotkeys;
 
@@ -132,6 +133,10 @@ public:
     }
     CapabilityStatus SetAutostart(bool enabled) override {
         autostartEnabled = enabled;
+        return capabilities.autostart;
+    }
+    CapabilityStatus OpenAutostartSettings() override {
+        ++autostartSettingsOpenCount;
         return capabilities.autostart;
     }
     CapabilityStatus ActivateWindow() override {
@@ -1025,6 +1030,9 @@ void TestDesktopServicesAndCapabilities(TestContext& test) {
         "desktop file selection should flow through the injected service");
     test.Expect(mock->SetAutostart(true).IsAvailable() && mock->autostartEnabled,
         "desktop autostart should expose both status and the requested state");
+    test.Expect(mock->OpenAutostartSettings().IsAvailable()
+        && mock->autostartSettingsOpenCount == 1,
+        "desktop services should expose the platform autostart settings entry");
     test.Expect(mock->ActivateWindow().IsAvailable() && mock->activationCount == 1,
         "window activation should flow through the desktop service");
     const std::vector<GlobalHotkeyBinding> hotkeys{{1, 'B', L"Backup"}, {2, 'R', L"Restore"}};

@@ -13,9 +13,9 @@ std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName = L"", con
 std::wstring GetLastOpenTime(const std::wstring& worldPath);
 std::wstring GetLastBackupTime(const std::wstring& backupDir);
 std::wstring GetDocumentsPath();
-void CreateTrayIcon();
+bool CreateTrayIcon();
 void RemoveTrayIcon();
-void RegisterHotkeys(int hotkeyId, int key);
+bool RegisterHotkeys(int hotkeyId, int key);
 void UnregisterHotkeys(int hotkeyId);
 void TriggerHotkeyBackup(std::string comment = "Hotkey");
 void TriggerHotkeyRestore(const std::string& backupFile = "");

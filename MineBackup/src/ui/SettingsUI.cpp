@@ -41,6 +41,14 @@ void DrawDesktopCapabilitySummary() {
     DrawCapability("System tray", capabilities.tray);
     DrawCapability("Global hotkeys", capabilities.globalHotkeys);
     DrawCapability("Autostart", capabilities.autostart);
+    if (capabilities.autostart.state == CapabilityState::PermissionRequired) {
+        if (ImGui::Button(L("OPEN_AUTOSTART_SETTINGS"))) {
+            const auto result = GetDesktopServices()->OpenAutostartSettings();
+            if (!result.IsAvailable() && !result.diagnostic.empty()) {
+                MessageBoxWin("MineBackup", wstring_to_utf8(result.diagnostic), 1);
+            }
+        }
+    }
     DrawCapability("Window activation", capabilities.windowActivation);
 }
 

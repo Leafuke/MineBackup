@@ -47,6 +47,7 @@ inline int _getch() { return std::getchar(); }
 #include <fstream>
 #include <system_error>
 #ifdef __APPLE__
+#include "MacDesktopBridge.h"
 #include <mach-o/dyld.h>
 #include <limits.h>
 #include <CoreText/CoreText.h>
@@ -248,6 +249,10 @@ int main(int argc, char** argv)
 	}
 	launchArguments.insert(launchArguments.begin(), L"MineBackup");
 #endif
+	#ifdef __APPLE__
+	// Install before migration prompts or GLFW can pump the Cocoa launch event.
+	MacBeginLaunchObservation();
+	#endif
 	const filesystem::path originalWorkingDirectory = filesystem::current_path();
 	(void)originalWorkingDirectory;
 	LaunchOptions launchOptions;
@@ -262,7 +267,13 @@ int main(int argc, char** argv)
 		return 2;
 	}
 	SetCurrentAppPaths(std::move(appPaths));
-	const bool launchSilentStartup = launchOptions.silentStartup || launchOptions.autostart;
+	bool launchSilentStartup = launchOptions.silentStartup || launchOptions.autostart;
+	#ifdef __APPLE__
+	const bool hasExplicitLaunchTarget = launchOptions.autostart
+		|| !launchOptions.runSpecialId.empty()
+		|| !launchOptions.selectConfigId.empty()
+		|| launchOptions.legacySpecialConfigIndex.has_value();
+	#endif
 	const auto& paths = GetAppPaths();
 	SingleInstanceService singleInstance;
 	const auto instanceResult = singleInstance.Acquire(paths.profileIdentity, paths.runtimeRoot, launchError);
@@ -382,6 +393,18 @@ int main(int argc, char** argv)
 		}
 		return -1;
 	};
+	auto selectAutostartSpecial = [&]() {
+		const auto autostartIndex = FindSpecialRunOnStartup(g_appState.specialConfigs);
+		if (!autostartIndex) return false;
+		// Resolve through the persisted stable identity instead of treating the map
+		// index as an external launch contract.
+		const auto& stableId = g_appState.specialConfigs.at(*autostartIndex).specialConfigId;
+		const int index = findSpecialConfig(stableId);
+		if (index < 0) return false;
+		g_appState.currentConfigIndex = index;
+		g_appState.specialConfigMode = true;
+		return true;
+	};
 	if (!launchOptions.runSpecialId.empty()) {
 		const int index = findSpecialConfig(launchOptions.runSpecialId);
 		if (index < 0) {
@@ -406,18 +429,45 @@ int main(int argc, char** argv)
 		g_appState.specialConfigMode = true;
 	}
 	else if (launchOptions.autostart) {
-		const auto autostartIndex = FindSpecialRunOnStartup(g_appState.specialConfigs);
-		if (autostartIndex) {
-			// Resolve through the persisted stable identity instead of treating the map index
-			// as an external launch contract.
-			const auto& stableId = g_appState.specialConfigs.at(*autostartIndex).specialConfigId;
-			const int index = findSpecialConfig(stableId);
-			if (index >= 0) {
-				g_appState.currentConfigIndex = index;
-				g_appState.specialConfigMode = true;
-			}
-		}
+		(void)selectAutostartSpecial();
 	}
+	auto runSelectedSpecialMode = [&]() {
+		bool hide = false;
+		if (g_appState.specialConfigs.count(g_appState.currentConfigIndex)) {
+			hide = g_appState.specialConfigs[g_appState.currentConfigIndex].hideWindow;
+		}
+
+		#ifdef _WIN32
+		if (!hide) {
+			AllocConsole(); // Create a console window
+			// Redirect standard I/O to the new console
+			FILE* pCout, * pCerr, * pCin;
+			freopen_s(&pCout, "CONOUT$", "w", stdout);
+			freopen_s(&pCerr, "CONOUT$", "w", stderr);
+			freopen_s(&pCin, "CONIN$", "r", stdin);
+			// 将 stdout 和 stderr 设置为 UTF-8 编码
+			SetConsoleOutputCP(CP_UTF8);
+		}
+		#endif
+
+		RunSpecialMode(g_appState.currentConfigIndex);
+
+		// 将捕获到的所有日志写入文件
+		ostringstream specialModeLog;
+		for (const char* item : console.Items) specialModeLog << item << '\n';
+		specialModeLog << L("SPECIAL_MODE_LOG_END") << "\n\n";
+		if (!RotatingFileLog::Append(paths.logsRoot / "special_mode_log.txt", specialModeLog.str())) {
+			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
+		}
+
+		#ifdef _WIN32
+		if (!hide) {
+			FreeConsole();
+		}
+		#endif
+		Sleep(3000);
+		return 0;
+	};
 
 #ifdef _WIN32
 	if (g_autoLogEnabled)
@@ -446,6 +496,26 @@ int main(int argc, char** argv)
 				wstring_to_utf8(autostartStatus.diagnostic).c_str());
 		}
 	}
+
+	bool glfwInitialized = false;
+	#ifdef __APPLE__
+	// The login-item marker is delivered while GLFW pumps Cocoa's launch event.
+	// Probe only when a previously selected explicit/special launch does not need
+	// the window system, preserving the headless special-mode path.
+	if (!g_appState.specialConfigMode) {
+		glfwSetErrorCallback(glfw_error_callback);
+		if (!glfwInit()) {
+			MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
+			return 1;
+		}
+		glfwInitialized = true;
+		if (!hasExplicitLaunchTarget && MacWasLaunchedAsLoginItem()) {
+			launchOptions.autostart = true;
+			launchSilentStartup = true;
+			(void)selectAutostartSpecial();
+		}
+	}
+	#endif
 
 
 	
@@ -528,55 +598,24 @@ int main(int argc, char** argv)
 		});
 	}
 
-
-	if (g_appState.specialConfigMode)
-	{
-		bool hide = false;
-		if (g_appState.specialConfigs.count(g_appState.currentConfigIndex)) {
-			hide = g_appState.specialConfigs[g_appState.currentConfigIndex].hideWindow;
-		}
-
-		#ifdef _WIN32
-		if (!hide) {
-			AllocConsole(); // Create a console window
-			// Redirect standard I/O to the new console
-			FILE* pCout, * pCerr, * pCin;
-			freopen_s(&pCout, "CONOUT$", "w", stdout);
-			freopen_s(&pCerr, "CONOUT$", "w", stderr);
-			freopen_s(&pCin, "CONIN$", "r", stdin);
-			// 将 stdout 和 stderr 设置为 UTF-8 编码
-			SetConsoleOutputCP(CP_UTF8);
-		}
-		#endif
-
-		RunSpecialMode(g_appState.currentConfigIndex);
-
-		// 将捕获到的所有日志写入文件
-		ostringstream specialModeLog;
-		for (const char* item : console.Items) specialModeLog << item << '\n';
-		specialModeLog << L("SPECIAL_MODE_LOG_END") << "\n\n";
-		if (!RotatingFileLog::Append(paths.logsRoot / "special_mode_log.txt", specialModeLog.str())) {
-			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
-		}
-
-		#ifdef _WIN32
-		if (!hide) {
-			FreeConsole();
-		}
-		#endif
-		Sleep(3000);
-		return 0;
+	if (g_appState.specialConfigMode) {
+		const int result = runSelectedSpecialMode();
+		if (glfwInitialized) glfwTerminate();
+		return result;
 	}
 
-	glfwSetErrorCallback(glfw_error_callback);
-#ifdef __linux__
-	// GLFW 3.4 chooses Wayland or X11 from the current desktop environment.
-	// Keep this automatic; capability fallbacks must use the selected backend below.
-	glfwInitHint(GLFW_PLATFORM, GLFW_ANY_PLATFORM);
-#endif
-	if (!glfwInit()) {
-		MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
-		return 1;
+	if (!glfwInitialized) {
+		glfwSetErrorCallback(glfw_error_callback);
+		#ifdef __linux__
+		// GLFW 3.4 chooses Wayland or X11 from the current desktop environment.
+		// Keep this automatic; capability fallbacks must use the selected backend below.
+		glfwInitHint(GLFW_PLATFORM, GLFW_ANY_PLATFORM);
+		#endif
+		if (!glfwInit()) {
+			MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
+			return 1;
+		}
+		glfwInitialized = true;
 	}
 
 	// Decide GL+GLSL versions

@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.22)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MineBackupVersion.cmake)
+if(CMAKE_HOST_APPLE OR CMAKE_SYSTEM_NAME MATCHES "^(Darwin|iOS|tvOS|watchOS)$")
+    # These values must exist before project() enables the Apple toolchain.
+    set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "MineBackup macOS architecture" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0 CACHE STRING "MineBackup macOS deployment target" FORCE)
+endif()
 project(MineBackup VERSION ${MINEBACKUP_VERSION} LANGUAGES C CXX)
 
 if(APPLE)
@@ -160,12 +165,22 @@ endif()
 if(APPLE)
     set_source_files_properties(
         ${MINEBACKUP_PLATFORM_DIR}/Platform_macos_tray.mm
+        ${MINEBACKUP_PLATFORM_DIR}/MacDesktopBridge.mm
         ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_macos.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    set_target_properties(MineBackup PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST ${MINEBACKUP_GENERATED_DIR}/Info.plist)
+    set(MINEBACKUP_MACOS_RESOURCES
+        ${MINEBACKUP_SOURCE_DIR}/Assets/fontawesome-sp.otf)
+    set_source_files_properties(${MINEBACKUP_MACOS_RESOURCES}
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/Assets")
+    target_sources(MineBackup PRIVATE ${MINEBACKUP_MACOS_RESOURCES})
     target_link_libraries(minebackup_desktop PUBLIC
         "-framework Cocoa" "-framework Carbon" "-framework IOKit" "-framework CoreVideo"
         "-framework CoreText" "-framework CoreFoundation"
-        "-framework Foundation"
+        "-framework Foundation" "-framework ServiceManagement"
+        "-framework UserNotifications"
     )
     find_library(ICONV_LIB iconv)
     if(ICONV_LIB)

@@ -3,6 +3,8 @@
 #include "PlatformCompat.h"
 #ifdef __linux__
 #include "LinuxDesktopPortal.h"
+#elif defined(__APPLE__)
+#include "MacDesktopBridge.h"
 #endif
 
 #include <GLFW/glfw3.h>
@@ -95,14 +97,16 @@ public:
     explicit NativeDesktopServices(NativeDesktopContext context) : context_(std::move(context)) {}
 
     ~NativeDesktopServices() override {
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         if (trayVisible_) ::RemoveTrayIcon();
         for (const auto& [hotkeyId, key] : registeredHotkeys_) {
             (void)key;
             ::UnregisterHotkeys(hotkeyId);
         }
         registeredHotkeys_.clear();
+#ifdef __linux__
         ShutdownLinuxDesktopPortal();
+#endif
 #endif
     }
 
@@ -124,18 +128,18 @@ public:
             : CapabilityStatus::Unavailable(
                 L"Autostart is unavailable for an explicit --data-dir profile because the startup entry intentionally contains only --autostart.");
 #elif defined(__APPLE__)
-        result.fileDialogs = fs::exists("/usr/bin/osascript")
-            ? CapabilityStatus::Ready()
-            : CapabilityStatus::Unavailable(L"The macOS file-dialog helper is unavailable.");
-        result.openUri = fs::exists("/usr/bin/open")
-            ? CapabilityStatus::Ready()
-            : CapabilityStatus::Unavailable(L"The macOS open service is unavailable.");
-        result.notifications = CapabilityStatus::Unavailable(
-            L"Native macOS notifications are not implemented yet.");
-        result.tray = CapabilityStatus::Ready();
-        result.globalHotkeys = CapabilityStatus::Ready();
-        result.autostart = CapabilityStatus::PermissionRequired(
-            L"Login-item integration will be provided through SMAppService.");
+        result.fileDialogs = CapabilityStatus::Ready(
+            L"File dialogs use native NSOpenPanel and NSSavePanel services.");
+        result.openUri = CapabilityStatus::Ready(
+            L"Links and files use the native NSWorkspace service.");
+        result.notifications = MacNotificationCapability();
+        result.tray = CapabilityStatus::Ready(L"The menu-bar item uses NSStatusItem.");
+        result.globalHotkeys = CapabilityStatus::Ready(
+            L"Global hotkeys use the isolated macOS EventHotKey bridge.");
+        result.autostart = context_.autostartAllowed
+            ? MacAutostartCapability()
+            : CapabilityStatus::Unavailable(
+                L"Autostart is unavailable for an explicit --data-dir profile because the login item opens the default profile.");
 #else
 #ifdef MB_HAVE_GTK
         result.fileDialogs = CapabilityStatus::Ready(
@@ -184,24 +188,36 @@ public:
     }
 
     DesktopPathResult SelectFile() override {
+#ifdef __APPLE__
+        return MacSelectFile();
+#else
         const auto status = Capabilities().fileDialogs;
         if (!status.IsAvailable()) return {status, {}, false};
         const auto path = ::SelectFileDialog();
         return {status, fs::path(path), path.empty()};
+#endif
     }
 
     DesktopPathResult SelectFolder() override {
+#ifdef __APPLE__
+        return MacSelectFolder();
+#else
         const auto status = Capabilities().fileDialogs;
         if (!status.IsAvailable()) return {status, {}, false};
         const auto path = ::SelectFolderDialog();
         return {status, fs::path(path), path.empty()};
+#endif
     }
 
     DesktopPathResult SelectSaveFile(const wstring& defaultFileName, const wstring& filter) override {
+#ifdef __APPLE__
+        return MacSelectSaveFile(defaultFileName, filter);
+#else
         const auto status = Capabilities().fileDialogs;
         if (!status.IsAvailable()) return {status, {}, false};
         const auto path = ::SelectSaveFileDialog(defaultFileName, filter);
         return {status, fs::path(path), path.empty()};
+#endif
     }
 
     CapabilityStatus OpenUri(const wstring& uri) override {
@@ -210,6 +226,8 @@ public:
         if (uri.empty()) return InvalidArgument(L"The URI");
 #ifdef __linux__
         return OpenUriWithLinuxPortal(uri);
+#elif defined(__APPLE__)
+        return MacOpenUri(uri);
 #else
         ::OpenLinkInBrowser(uri);
         return status;
@@ -222,6 +240,8 @@ public:
         if (folder.empty()) return InvalidArgument(L"The folder path");
 #ifdef __linux__
         return OpenPathWithLinuxPortal(folder, false);
+#elif defined(__APPLE__)
+        return MacOpenFolder(folder);
 #else
         ::OpenFolder(folder.wstring());
         return status;
@@ -237,6 +257,8 @@ public:
 #elif defined(_WIN32)
         const wstring focus = item.empty() ? wstring() : L"/select,\"" + item.wstring() + L"\"";
         ::OpenFolderWithFocus(folder.wstring(), focus);
+#elif defined(__APPLE__)
+        return MacRevealInFolder(folder, item);
 #else
         ::OpenFolderWithFocus(folder.wstring(), item.wstring());
 #endif
@@ -246,6 +268,8 @@ public:
     CapabilityStatus Notify(const wstring& title, const wstring& message) override {
 #ifdef __linux__
         return NotifyWithLinuxPortal(title, message);
+#elif defined(__APPLE__)
+        return MacNotify(title, message);
 #else
         (void)title;
         (void)message;
@@ -267,7 +291,10 @@ public:
         ::CreateTrayIcon(static_cast<HWND>(context_.messageWindow),
             static_cast<HINSTANCE>(context_.nativeInstance));
 #elif defined(__APPLE__)
-        ::CreateTrayIcon();
+        if (!::CreateTrayIcon()) {
+            return CapabilityStatus::Failed(
+                L"The native macOS menu-bar item could not be created.");
+        }
 #else
         if (!::CreateTrayIcon()) {
             return CapabilityStatus::Failed(
@@ -374,6 +401,21 @@ public:
                 return CapabilityStatus::Failed(
                     L"The X11 hotkey backend could not register the requested key; the previous bindings were restored.");
             }
+#elif defined(__APPLE__)
+            if (!::RegisterHotkeys(binding.hotkeyId, binding.key)) {
+                for (const auto& [hotkeyId, key] : registeredHotkeys_) {
+                    (void)key;
+                    ::UnregisterHotkeys(hotkeyId);
+                }
+                registeredHotkeys_.clear();
+                for (const auto& [hotkeyId, key] : previous) {
+                    if (::RegisterHotkeys(hotkeyId, key)) {
+                        registeredHotkeys_[hotkeyId] = key;
+                    }
+                }
+                return CapabilityStatus::Failed(
+                    L"A macOS global hotkey could not be registered; the previous bindings were restored.");
+            }
 #else
             ::RegisterHotkeys(binding.hotkeyId, binding.key);
 #endif
@@ -383,6 +425,10 @@ public:
     }
 
     CapabilityStatus SetAutostart(bool enabled) override {
+#ifdef __APPLE__
+        if (!context_.autostartAllowed) return Capabilities().autostart;
+        return MacSetAutostart(enabled);
+#else
         const auto status = Capabilities().autostart;
         if (!status.IsAvailable()) return status;
 #ifdef _WIN32
@@ -391,11 +437,25 @@ public:
         (void)enabled;
         return status;
 #endif
+#endif
+    }
+
+    CapabilityStatus OpenAutostartSettings() override {
+#ifdef __APPLE__
+        return MacOpenAutostartSettings();
+#else
+        return CapabilityStatus::Unavailable(
+            L"This platform does not provide a separate autostart settings entry.");
+#endif
     }
 
     CapabilityStatus ActivateWindow() override {
         const auto status = Capabilities().windowActivation;
         if (!status.IsAvailable()) return status;
+#ifdef __APPLE__
+        const auto activation = MacActivateApplication();
+        if (!activation.IsAvailable()) return activation;
+#endif
         auto* window = static_cast<GLFWwindow*>(context_.appWindow);
         glfwShowWindow(window);
         glfwRestoreWindow(window);
