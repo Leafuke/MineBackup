@@ -57,5 +57,18 @@ bool ParseLaunchOptions(const vector<wstring>& arguments, LaunchOptions& options
             return false;
         }
     }
+    const bool hasProfileLaunchOptions = options.dataDirectory.has_value()
+        || options.autostart || options.silentStartup
+        || !options.selectConfigId.empty() || !options.runSpecialId.empty()
+        || options.legacySpecialConfigIndex.has_value();
+    if (!options.legacyServiceCleanup.empty()
+        && (hasProfileLaunchOptions || options.legacyServiceMode)) {
+        error = L"--cleanup-legacy-service must be used by itself.";
+        return false;
+    }
+    if (options.legacyServiceMode && hasProfileLaunchOptions) {
+        error = L"--service must be used by itself.";
+        return false;
+    }
     return true;
 }

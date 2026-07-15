@@ -108,6 +108,9 @@
     <ClCompile Include="src\core\SpecialConfigPolicy.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\LegacyServicePolicy.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\AtomicFileWriter.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -279,6 +282,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\SpecialConfigPolicy.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\LegacyServicePolicy.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\AtomicFileWriter.h">

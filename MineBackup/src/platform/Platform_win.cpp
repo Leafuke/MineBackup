@@ -23,12 +23,21 @@
 #include <sstream>
 #include <wchar.h>
 #include <functional>
+#include <memory>
 #include <vector>
 #include <cctype>
 #pragma comment(lib, "dwmapi.lib")
 using namespace std;
 
-NOTIFYICONDATA nid = { 0 };
+NOTIFYICONDATAW nid = { 0 };
+HICON g_trayIcon = nullptr;
+bool g_trayIconAdded = false;
+constexpr UINT WM_MINEBACKUP_TRAY_NOTIFY = WM_APP + 0x120;
+
+struct TrayNotificationRequest {
+	wstring title;
+	wstring message;
+};
 
 LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -134,29 +143,62 @@ HWND CreateHiddenWindow(HINSTANCE hInstance) {
 	return hwnd_hidden;
 }
 
-void RegisterHotkeys(HWND hwnd, int hotkeyId, int key) {
-	RegisterHotKey(hwnd, hotkeyId, MOD_ALT | MOD_CONTROL, key);
-}
-void UnregisterHotkeys(HWND hwnd, int hotKeyId) {
-	::UnregisterHotKey(hwnd, hotKeyId);
-}
-void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance) {
+bool CreateTrayIcon(HWND hwnd, HINSTANCE hInstance) {
+	if (g_trayIconAdded) return true;
 	// 初始化托盘图标 (nid)
-	nid.cbSize = sizeof(NOTIFYICONDATA);
+	nid = {};
+	nid.cbSize = sizeof(NOTIFYICONDATAW);
 	nid.hWnd = hwnd;
 	nid.uID = 1;
 	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	nid.uCallbackMessage = WM_USER + 1;
-	nid.hIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICON3), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
-#ifdef UNICODE
+	g_trayIcon = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_ICON3),
+		IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
+	if (!g_trayIcon) return false;
+	nid.hIcon = g_trayIcon;
 	wcscpy_s(nid.szTip, L"MineBackup");
-#else
-	strcpy_s(nid.szTip, "MineBackup");
-#endif
-	Shell_NotifyIcon(NIM_ADD, &nid);
+	if (!Shell_NotifyIconW(NIM_ADD, &nid)) {
+		DestroyIcon(g_trayIcon);
+		g_trayIcon = nullptr;
+		return false;
+	}
+	g_trayIconAdded = true;
+	NOTIFYICONDATAW version = nid;
+	version.uVersion = NOTIFYICON_VERSION_4;
+	(void)Shell_NotifyIconW(NIM_SETVERSION, &version);
+	return true;
 }
 void RemoveTrayIcon() {
-	Shell_NotifyIcon(NIM_DELETE, &nid);
+	if (g_trayIconAdded) {
+		(void)Shell_NotifyIconW(NIM_DELETE, &nid);
+		g_trayIconAdded = false;
+	}
+	if (g_trayIcon) {
+		DestroyIcon(g_trayIcon);
+		g_trayIcon = nullptr;
+	}
+	nid = {};
+}
+
+bool ShowTrayNotification(const wstring& title, const wstring& message) {
+	if (title.empty() || message.empty() || !g_trayIconAdded || !nid.hWnd) return false;
+	DWORD windowThread = GetWindowThreadProcessId(nid.hWnd, nullptr);
+	if (windowThread != GetCurrentThreadId()) {
+		auto request = make_unique<TrayNotificationRequest>(
+			TrayNotificationRequest{title, message});
+		if (!PostMessageW(nid.hWnd, WM_MINEBACKUP_TRAY_NOTIFY, 0,
+				reinterpret_cast<LPARAM>(request.get()))) {
+			return false;
+		}
+		(void)request.release();
+		return true;
+	}
+	NOTIFYICONDATAW notification = nid;
+	notification.uFlags = NIF_INFO;
+	wcsncpy_s(notification.szInfoTitle, title.c_str(), _TRUNCATE);
+	wcsncpy_s(notification.szInfo, message.c_str(), _TRUNCATE);
+	notification.dwInfoFlags = NIIF_INFO;
+	return Shell_NotifyIconW(NIM_MODIFY, &notification) == TRUE;
 }
 
 bool IsFileLocked(const wstring& path) {
@@ -181,12 +223,27 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	switch (msg)
 	{
-	case WM_USER + 1: // 托盘图标消息
-		if (lParam == WM_LBUTTONUP) {
-			g_appState.showMainApp = true;
-			glfwShowWindow(wc);
+	case WM_MINEBACKUP_TRAY_NOTIFY: {
+		unique_ptr<TrayNotificationRequest> request(
+			reinterpret_cast<TrayNotificationRequest*>(lParam));
+		if (request) {
+			(void)ShowTrayNotification(request->title, request->message);
 		}
-		else if (lParam == WM_RBUTTONUP) {
+		return 0;
+	}
+	case WM_USER + 1: // 托盘图标消息
+		if (LOWORD(lParam) == WM_LBUTTONUP || LOWORD(lParam) == NIN_SELECT
+			|| LOWORD(lParam) == NIN_KEYSELECT
+			|| LOWORD(lParam) == NIN_BALLOONUSERCLICK) {
+			g_appState.showMainApp = true;
+			if (wc) {
+				glfwShowWindow(wc);
+				glfwRestoreWindow(wc);
+				glfwFocusWindow(wc);
+				SetForegroundWindow(glfwGetWin32Window(wc));
+			}
+		}
+		else if (LOWORD(lParam) == WM_RBUTTONUP || LOWORD(lParam) == WM_CONTEXTMENU) {
 			HMENU hMenu = CreatePopupMenu();
 			AppendMenuW(hMenu, MF_STRING, 1001, utf8_to_wstring((string)L("OPEN")).c_str());
 			AppendMenuW(hMenu, MF_STRING, 1002, utf8_to_wstring((string)L("EXIT")).c_str());
@@ -224,14 +281,18 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		switch (LOWORD(wParam)) {
 		case 1001:  // 点击“打开界面”
 			g_appState.showMainApp = true;
-			glfwShowWindow(wc);
-			SetForegroundWindow(hWnd);
+			if (wc) {
+				glfwShowWindow(wc);
+				glfwRestoreWindow(wc);
+				glfwFocusWindow(wc);
+				SetForegroundWindow(glfwGetWin32Window(wc));
+			}
 			break;
 		case 1002:  // 点击“关闭”
 			// 先移除托盘图标，再退出程序
 			SaveConfigs();
 			g_appState.done = true;
-			Shell_NotifyIcon(NIM_DELETE, &nid);
+			RemoveTrayIcon();
 			PostQuitMessage(0);
 			break;
 		}
@@ -242,7 +303,7 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			return 0;
 		break;
 	case WM_DESTROY:
-		Shell_NotifyIcon(NIM_DELETE, &nid);  // 清理托盘图标
+		RemoveTrayIcon();
 		g_appState.done = true;
 		::PostQuitMessage(0);
 		return 0;

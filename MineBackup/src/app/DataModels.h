@@ -126,7 +126,8 @@ struct UnifiedTaskV2 {
 	bool notifyOnError = true;
 };
 
-// 服务模式配置
+// 1.16 read-only compatibility model. Preserved in the local profile so the UI
+// can locate and safely remove a legacy Windows service; never edited or synced.
 struct ServiceConfig {
 	bool installAsService = false;
 	std::wstring serviceName = L"MineBackupService";
@@ -156,9 +157,9 @@ struct SpecialConfig {
 	bool hideWindow = false;
 	bool backupOnGameStart = false;
 	
-	// Windows服务模式
+	// Legacy Windows Service Mode compatibility (removed in 1.17).
 	ServiceConfig serviceConfig;
-	bool useServiceMode = false;                     // 是否使用服务模式
+	bool useServiceMode = false;
 };
 
 struct HistoryEntry {

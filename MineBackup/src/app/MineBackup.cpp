@@ -261,6 +261,26 @@ int main(int argc, char** argv)
 		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
 		return 2;
 	}
+	if (!launchOptions.legacyServiceCleanup.empty()) {
+		wstring cleanupError;
+		if (!TaskSystem::RemoveLegacyServiceAfterValidation(
+				launchOptions.legacyServiceCleanup, cleanupError)) {
+			MessageBoxWin("MineBackup legacy service cleanup",
+				wstring_to_utf8(cleanupError), 2);
+			return 7;
+		}
+		MessageBoxWin("MineBackup legacy service cleanup",
+			"The validated legacy MineBackup service was removed.", 0);
+		return 0;
+	}
+	if (launchOptions.legacyServiceMode) {
+		#ifdef _WIN32
+		OutputDebugStringW(L"MineBackup: --service is deprecated and disabled in 1.16.\n");
+		#else
+		fputs("MineBackup: --service is deprecated and disabled in 1.16.\n", stderr);
+		#endif
+		return 6;
+	}
 	AppPaths appPaths;
 	if (!ResolveAppPaths(launchOptions, GetExecutablePath(), appPaths, launchError)) {
 		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
@@ -494,6 +514,14 @@ int main(int argc, char** argv)
 		if (!autostartStatus.IsAvailable() && !autostartStatus.diagnostic.empty()) {
 			console.AddLog("[Desktop] Autostart reconciliation failed: %s",
 				wstring_to_utf8(autostartStatus.diagnostic).c_str());
+		}
+		else if (!autostartStatus.diagnostic.empty()) {
+			console.AddLog("[Desktop] Autostart reconciliation: %s",
+				wstring_to_utf8(autostartStatus.diagnostic).c_str());
+			if (!launchSilentStartup) {
+				MessageBoxWin("MineBackup startup entry",
+					wstring_to_utf8(autostartStatus.diagnostic), 0);
+			}
 		}
 	}
 

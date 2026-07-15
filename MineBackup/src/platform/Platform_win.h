@@ -11,16 +11,15 @@ enum class LogLevel {
     Warning,
     Error
 };
-void RegisterHotkeys(HWND hwnd, int hotkeyId, int key);
-void UnregisterHotkeys(HWND hwnd, int hotkeyId);
 std::wstring SelectFileDialog();
 std::wstring SelectFolderDialog();
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName = L"", const std::wstring& filter = L"");
 std::wstring GetDocumentsPath();
 std::wstring GetLastOpenTime(const std::wstring& worldPath);
 std::wstring GetLastBackupTime(const std::wstring& backupDir);
-void CreateTrayIcon(HWND hwnd, HINSTANCE hInstance);
+bool CreateTrayIcon(HWND hwnd, HINSTANCE hInstance);
 void RemoveTrayIcon();
+bool ShowTrayNotification(const std::wstring& title, const std::wstring& message);
 void TriggerHotkeyBackup(std::string comment = "Hotkey");
 void TriggerHotkeyRestore(const std::string& backupFile = "");
 void SetFileAttributesWin(const std::wstring& path, bool isHidden);

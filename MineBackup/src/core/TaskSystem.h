@@ -7,6 +7,7 @@
 #include <atomic>
 #include <thread>
 #include <functional>
+#include <filesystem>
 
 // 任务类型枚举
 enum class TaskType {
@@ -60,8 +61,6 @@ struct UnifiedTask {
     bool notifyOnError = true;                     // 错误时通知
 };
 
-struct ServiceConfig;
-
 // 任务运行状态
 struct TaskRunState {
     int taskId = 0;
@@ -77,19 +76,45 @@ struct TaskRunState {
 // 前向声明
 struct Console;
 
+namespace TaskSystem {
+
+enum class LegacyServiceState {
+    Unsupported,
+    NotInstalled,
+    Removable,
+    Unsafe,
+    QueryFailed
+};
+
+struct LegacyServiceInspection {
+    LegacyServiceState state = LegacyServiceState::Unsupported;
+    std::wstring serviceName;
+    std::wstring imagePath;
+    std::filesystem::path executable;
+    bool running = false;
+    std::wstring diagnostic;
+
+    [[nodiscard]] bool CanRemove() const noexcept {
+        return state == LegacyServiceState::Removable;
+    }
+};
+
+} // namespace TaskSystem
+
 // 任务系统管理函数声明
 namespace TaskSystem {
     // 任务执行
     void ExecuteTask(const UnifiedTask& task, Console* console);
     void ExecuteAllTasks(const std::vector<UnifiedTask>& tasks, Console* console, bool& shouldExit);
     
-    // Windows服务相关（使用AppState.h中的ServiceConfig）
-    bool InstallService(const ServiceConfig& config);
-    bool UninstallService(const std::wstring& serviceName);
-    bool IsServiceInstalled(const std::wstring& serviceName);
-    bool MineStartService(const std::wstring& serviceName);
-    bool StopService(const std::wstring& serviceName);
-    bool IsServiceRunning(const std::wstring& serviceName);
+    // 1.16 only: inspect and remove an already-installed legacy Windows service.
+    // There is deliberately no install/start API.
+    [[nodiscard]] LegacyServiceInspection InspectLegacyService(
+        const std::wstring& serviceName);
+    bool RequestElevatedLegacyServiceRemoval(
+        const std::wstring& serviceName, std::wstring& error);
+    bool RemoveLegacyServiceAfterValidation(
+        const std::wstring& serviceName, std::wstring& error);
     
     // 任务序列化
     std::wstring SerializeTask(const UnifiedTask& task);

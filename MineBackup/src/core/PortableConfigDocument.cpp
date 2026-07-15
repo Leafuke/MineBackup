@@ -16,7 +16,9 @@ const vector<wstring> kExcludedFields = {
     L"saveRoot", L"backupPath", L"zipPath", L"fontPath", L"rclonePath",
     L"rcloneRemotePath", L"cloudWorkingDirectory", L"snapshotPath", L"othersPath",
     L"weSnapshotPath", L"credentials", L"windowState", L"runtimeResults",
-    L"specialConfigs", L"commands", L"scripts", L"automation"};
+    L"specialConfigs", L"commands", L"scripts", L"automation",
+    L"useServiceMode", L"serviceName", L"serviceDisplayName",
+    L"serviceAutoStart", L"serviceDelayedStart"};
 
 bool IsCanonicalConfigId(const wstring& value) {
     if (value.size() != 36) return false;

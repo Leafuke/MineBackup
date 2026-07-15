@@ -118,6 +118,7 @@
     <ClCompile Include="src\core\ExternalToolManager.cpp" />
     <ClCompile Include="src\core\PortableConfigDocument.cpp" />
     <ClCompile Include="src\core\SpecialConfigPolicy.cpp" />
+    <ClCompile Include="src\core\LegacyServicePolicy.cpp" />
     <ClCompile Include="src\infra\AtomicFileWriter.cpp" />
     <ClCompile Include="src\infra\AppPaths.cpp" />
     <ClCompile Include="src\infra\RotatingFileLog.cpp" />
@@ -177,6 +178,7 @@
     <ClInclude Include="src\core\ExternalToolManager.h" />
     <ClInclude Include="src\core\PortableConfigDocument.h" />
     <ClInclude Include="src\core\SpecialConfigPolicy.h" />
+    <ClInclude Include="src\core\LegacyServicePolicy.h" />
     <ClInclude Include="src\infra\AtomicFileWriter.h" />
     <ClInclude Include="src\infra\AppPaths.h" />
     <ClInclude Include="src\infra\RotatingFileLog.h" />

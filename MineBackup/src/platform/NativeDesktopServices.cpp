@@ -40,6 +40,35 @@ CapabilityStatus ConfigureWindowsAutostart(const fs::path& executablePath, bool 
             + to_wstring(openStatus) + L").");
     }
 
+    DWORD existingType = REG_NONE;
+    DWORD existingBytes = 0;
+    LSTATUS queryStatus = RegQueryValueExW(key, L"MineBackup", nullptr,
+        &existingType, nullptr, &existingBytes);
+    bool existingValue = queryStatus == ERROR_SUCCESS;
+    wstring existingCommand;
+    if (existingValue) {
+        vector<wchar_t> value(existingBytes / sizeof(wchar_t) + 1, L'\0');
+        queryStatus = RegQueryValueExW(key, L"MineBackup", nullptr,
+            &existingType, reinterpret_cast<BYTE*>(value.data()), &existingBytes);
+        if (queryStatus != ERROR_SUCCESS) {
+            RegCloseKey(key);
+            return CapabilityStatus::Failed(
+                L"MineBackup could not read its existing startup entry (error "
+                + to_wstring(queryStatus) + L").");
+        }
+        const size_t characterCount = existingBytes / sizeof(wchar_t);
+        existingCommand.assign(value.data(), characterCount);
+        while (!existingCommand.empty() && existingCommand.back() == L'\0') {
+            existingCommand.pop_back();
+        }
+    }
+    else if (queryStatus != ERROR_FILE_NOT_FOUND) {
+        RegCloseKey(key);
+        return CapabilityStatus::Failed(
+            L"MineBackup could not inspect its existing startup entry (error "
+            + to_wstring(queryStatus) + L").");
+    }
+
     vector<wstring> legacyValues;
     DWORD index = 0;
     for (;;) {
@@ -70,15 +99,29 @@ CapabilityStatus ConfigureWindowsAutostart(const fs::path& executablePath, bool 
     }
 
     LSTATUS writeStatus = ERROR_SUCCESS;
+    wstring diagnostic;
     if (enabled) {
         const wstring command = L"\"" + executablePath.wstring() + L"\" --autostart";
-        writeStatus = RegSetValueExW(key, L"MineBackup", 0, REG_SZ,
-            reinterpret_cast<const BYTE*>(command.c_str()),
-            static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+        const bool unchanged = existingValue && existingType == REG_SZ
+            && existingCommand.size() == command.size()
+            && _wcsicmp(existingCommand.c_str(), command.c_str()) == 0;
+        if (!unchanged) {
+            writeStatus = RegSetValueExW(key, L"MineBackup", 0, REG_SZ,
+                reinterpret_cast<const BYTE*>(command.c_str()),
+                static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+            diagnostic = existingValue
+                ? L"MineBackup repaired its current-user startup entry after the application path or arguments changed."
+                : L"MineBackup created its current-user startup entry.";
+        }
     }
     else {
-        writeStatus = RegDeleteValueW(key, L"MineBackup");
-        if (writeStatus == ERROR_FILE_NOT_FOUND) writeStatus = ERROR_SUCCESS;
+        if (existingValue) {
+            writeStatus = RegDeleteValueW(key, L"MineBackup");
+            if (writeStatus == ERROR_FILE_NOT_FOUND) writeStatus = ERROR_SUCCESS;
+            if (writeStatus == ERROR_SUCCESS) {
+                diagnostic = L"MineBackup removed its obsolete current-user startup entry.";
+            }
+        }
     }
     RegCloseKey(key);
     if (writeStatus != ERROR_SUCCESS) {
@@ -86,9 +129,11 @@ CapabilityStatus ConfigureWindowsAutostart(const fs::path& executablePath, bool 
             L"MineBackup could not update its startup entry (error "
             + to_wstring(writeStatus) + L").");
     }
-    return CapabilityStatus::Ready(
-        enabled ? L"MineBackup will be started with --autostart."
-                : L"MineBackup was removed from current-user startup.");
+    if (!legacyValues.empty()) {
+        if (!diagnostic.empty()) diagnostic += L" ";
+        diagnostic += L"Legacy per-task startup entries were removed.";
+    }
+    return CapabilityStatus::Ready(std::move(diagnostic));
 }
 #endif
 
@@ -97,16 +142,18 @@ public:
     explicit NativeDesktopServices(NativeDesktopContext context) : context_(std::move(context)) {}
 
     ~NativeDesktopServices() override {
-#if defined(__linux__) || defined(__APPLE__)
         if (trayVisible_) ::RemoveTrayIcon();
         for (const auto& [hotkeyId, key] : registeredHotkeys_) {
             (void)key;
+#ifdef _WIN32
+            ::UnregisterHotKey(static_cast<HWND>(context_.messageWindow), hotkeyId);
+#else
             ::UnregisterHotkeys(hotkeyId);
+#endif
         }
         registeredHotkeys_.clear();
 #ifdef __linux__
         ShutdownLinuxDesktopPortal();
-#endif
 #endif
     }
 
@@ -115,8 +162,9 @@ public:
 #ifdef _WIN32
         result.fileDialogs = CapabilityStatus::Ready();
         result.openUri = CapabilityStatus::Ready();
-        result.notifications = CapabilityStatus::Unavailable(
-            L"Native Windows notifications are not implemented yet.");
+        result.notifications = context_.messageWindow
+            ? CapabilityStatus::Ready(L"Notifications use the native Windows tray balloon service.")
+            : CapabilityStatus::Failed(L"The Windows notification message window is unavailable.");
         result.tray = context_.messageWindow && context_.nativeInstance
             ? CapabilityStatus::Ready()
             : CapabilityStatus::Failed(L"The Windows tray message window is unavailable.");
@@ -270,6 +318,17 @@ public:
         return NotifyWithLinuxPortal(title, message);
 #elif defined(__APPLE__)
         return MacNotify(title, message);
+#elif defined(_WIN32)
+        const auto status = Capabilities().notifications;
+        if (!status.IsAvailable()) return status;
+        if (title.empty() || message.empty()) {
+            return CapabilityStatus::Failed(
+                L"Notification title and message must not be empty.");
+        }
+        return ::ShowTrayNotification(title, message)
+            ? status
+            : CapabilityStatus::Failed(
+                L"Windows could not display the tray notification. Ensure the tray icon is available.");
 #else
         (void)title;
         (void)message;
@@ -288,8 +347,11 @@ public:
         if (!status.IsAvailable()) return status;
         if (trayVisible_) return status;
 #ifdef _WIN32
-        ::CreateTrayIcon(static_cast<HWND>(context_.messageWindow),
-            static_cast<HINSTANCE>(context_.nativeInstance));
+        if (!::CreateTrayIcon(static_cast<HWND>(context_.messageWindow),
+                static_cast<HINSTANCE>(context_.nativeInstance))) {
+            return CapabilityStatus::Failed(
+                L"The native Windows tray icon could not be created.");
+        }
 #elif defined(__APPLE__)
         if (!::CreateTrayIcon()) {
             return CapabilityStatus::Failed(

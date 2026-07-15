@@ -28,12 +28,14 @@ jobs:
           cmake --build build/windows-shadow --config Release --parallel
           ctest --test-dir build/windows-shadow -C Release --output-on-failure
           ./cmake/VerifyWindowsArtifact.ps1 -Executable build/windows-shadow/bin/Release/MineBackup.exe
+          ./cmake/SmokeTestWindowsArtifact.ps1 -Executable build/windows-shadow/bin/Release/MineBackup.exe
 
       - name: Build and verify formal MSBuild candidate
         shell: pwsh
         run: |
           msbuild ./MineBackup.sln /p:Configuration=Release /p:Platform=x64 /m
           ./cmake/VerifyWindowsArtifact.ps1 -Executable x64/Release/MineBackup.exe
+          ./cmake/SmokeTestWindowsArtifact.ps1 -Executable x64/Release/MineBackup.exe
 
       - uses: actions/upload-artifact@v4
         with:

@@ -11,6 +11,7 @@
 #include "SpecialConfigPolicy.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <sstream>
 #include <thread>

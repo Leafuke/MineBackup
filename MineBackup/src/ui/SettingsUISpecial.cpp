@@ -202,79 +202,57 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 
 void DrawServiceSettings(SpecialConfig& spCfg) {
 	ImGui::SeparatorText(L("SERVICE_MODE_TITLE"));
-
 	ImGui::TextWrapped("%s", L("SERVICE_MODE_DESC"));
 	ImGui::Spacing();
 
-	ImGui::Checkbox(L("SERVICE_ENABLE"), &spCfg.useServiceMode);
-
-	ImGui::BeginDisabled(!spCfg.useServiceMode);
-
-	char serviceNameBuf[128];
-	strncpy_s(serviceNameBuf, wstring_to_utf8(spCfg.serviceConfig.serviceName).c_str(), sizeof(serviceNameBuf));
-	ImGui::SetNextItemWidth(300);
-	if (ImGui::InputText(L("SERVICE_NAME"), serviceNameBuf, sizeof(serviceNameBuf))) {
-		spCfg.serviceConfig.serviceName = utf8_to_wstring(serviceNameBuf);
-	}
-
-	char displayNameBuf[256];
-	strncpy_s(displayNameBuf, wstring_to_utf8(spCfg.serviceConfig.serviceDisplayName).c_str(), sizeof(displayNameBuf));
-	ImGui::SetNextItemWidth(300);
-	if (ImGui::InputText(L("SERVICE_DISPLAY_NAME"), displayNameBuf, sizeof(displayNameBuf))) {
-		spCfg.serviceConfig.serviceDisplayName = utf8_to_wstring(displayNameBuf);
-	}
-
-	ImGui::Checkbox(L("SERVICE_AUTO_START"), &spCfg.serviceConfig.startWithSystem);
-	ImGui::Checkbox(L("SERVICE_DELAYED_START"), &spCfg.serviceConfig.delayedStart);
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SERVICE_DELAYED_START"));
-
-	ImGui::Spacing();
-
 #ifdef _WIN32
-	bool isInstalled = TaskSystem::IsServiceInstalled(spCfg.serviceConfig.serviceName);
-	bool isRunning = isInstalled && TaskSystem::IsServiceRunning(spCfg.serviceConfig.serviceName);
-
-	if (isInstalled) {
-		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", L("SERVICE_STATUS_INSTALLED"));
-		if (isRunning) {
-			ImGui::SameLine();
-			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "(%s)", L("SERVICE_STATUS_RUNNING"));
+	ImGui::Text("%s: %s", L("SERVICE_CONFIGURED_NAME"),
+		wstring_to_utf8(spCfg.serviceConfig.serviceName).c_str());
+	static wstring cachedServiceName;
+	static TaskSystem::LegacyServiceInspection cachedInspection;
+	static auto inspectedAt = chrono::steady_clock::time_point{};
+	const auto now = chrono::steady_clock::now();
+	if (cachedServiceName != spCfg.serviceConfig.serviceName
+		|| now - inspectedAt >= chrono::seconds(2)) {
+		cachedServiceName = spCfg.serviceConfig.serviceName;
+		cachedInspection = TaskSystem::InspectLegacyService(cachedServiceName);
+		inspectedAt = now;
+	}
+	const auto& inspection = cachedInspection;
+	if (!inspection.imagePath.empty()) {
+		ImGui::TextWrapped("%s: %s", L("SERVICE_IMAGE_PATH"),
+			wstring_to_utf8(inspection.imagePath).c_str());
+	}
+	if (inspection.state == TaskSystem::LegacyServiceState::NotInstalled) {
+		ImGui::TextDisabled("%s", L("SERVICE_STATUS_NOT_INSTALLED"));
+	}
+	else if (inspection.CanRemove()) {
+		ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "%s%s",
+			L("SERVICE_SAFE_TO_REMOVE"), inspection.running ? L("SERVICE_STATUS_RUNNING_SUFFIX") : "");
+		if (ImGui::Button(L("SERVICE_REMOVE_VALIDATED"))) {
+			const string prompt = string(L("SERVICE_REMOVE_CONFIRM")) + "\n\n"
+				+ wstring_to_utf8(inspection.imagePath);
+			if (ConfirmMessageBox("MineBackup", prompt)) {
+				wstring error;
+				if (!TaskSystem::RequestElevatedLegacyServiceRemoval(
+						spCfg.serviceConfig.serviceName, error)) {
+					MessageBoxWin("MineBackup", wstring_to_utf8(error), 2);
+				}
+				else {
+					MessageBoxWin("MineBackup", L("SERVICE_REMOVAL_LAUNCHED"), 0);
+					inspectedAt = chrono::steady_clock::time_point{};
+				}
+			}
 		}
 	}
 	else {
-		ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "%s", L("SERVICE_STATUS_NOT_INSTALLED"));
-	}
-
-	ImGui::Spacing();
-
-	if (!isInstalled) {
-		if (ImGui::Button(L("SERVICE_INSTALL"))) {
-			if (TaskSystem::InstallService(spCfg.serviceConfig)) {
-			}
-		}
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SERVICE_INSTALL"));
-	}
-	else {
-		if (ImGui::Button(L("SERVICE_UNINSTALL"))) {
-			TaskSystem::UninstallService(spCfg.serviceConfig.serviceName);
-		}
-		ImGui::SameLine();
-		if (!isRunning) {
-			if (ImGui::Button(L("SERVICE_START"))) {
-				TaskSystem::MineStartService(spCfg.serviceConfig.serviceName);
-			}
-		}
-		else {
-			if (ImGui::Button(L("SERVICE_STOP"))) {
-				TaskSystem::StopService(spCfg.serviceConfig.serviceName);
-			}
-		}
+		ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.25f, 1.0f), "%s",
+			L("SERVICE_UNSAFE_MANUAL"));
+		ImGui::TextWrapped("%s", wstring_to_utf8(inspection.diagnostic).c_str());
 	}
 #else
 	ImGui::TextDisabled("%s", L("SERVICE_NOT_SUPPORTED"));
 #endif
-
-	ImGui::EndDisabled();
 }
 
 void DrawSpecialConfigSettings(SpecialConfig& spCfg) {

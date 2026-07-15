@@ -640,7 +640,9 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
 		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
 		buffer << L"Theme=" << sc.theme << L"\n";
-		// 服务模式配置
+		// 1.16 preserves these local, read-only values solely so a custom-named
+		// legacy service remains discoverable until the user removes it. They are
+		// excluded from portable configuration and are removed from the model in 1.17.
 		buffer << L"UseServiceMode=" << (sc.useServiceMode ? 1 : 0) << L"\n";
 		buffer << L"ServiceName=" << sc.serviceConfig.serviceName << L"\n";
 		buffer << L"ServiceDisplayName=" << sc.serviceConfig.serviceDisplayName << L"\n";

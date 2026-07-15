@@ -18,6 +18,7 @@
 #include "PortableConfigDocument.h"
 #include "DesktopServices.h"
 #include "SpecialConfigPolicy.h"
+#include "LegacyServicePolicy.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -323,6 +324,19 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
         "a launch option with a missing value should be rejected");
     test.Expect(!ParseLaunchOptions({L"MineBackup", L"--unknown"}, rejected, error),
         "an unknown launch option should be rejected explicitly");
+    test.Expect(ParseLaunchOptions(
+        {L"MineBackup", L"--cleanup-legacy-service", L"MineBackupService"},
+        rejected, error) && rejected.legacyServiceCleanup == L"MineBackupService",
+        "the internal legacy service cleanup option should parse by itself");
+    test.Expect(!ParseLaunchOptions(
+        {L"MineBackup", L"--cleanup-legacy-service", L"MineBackupService", L"--autostart"},
+        rejected, error), "legacy service cleanup must reject profile launch options");
+    test.Expect(ParseLaunchOptions({L"MineBackup", L"--service"}, rejected, error)
+        && rejected.legacyServiceMode,
+        "the deprecated service option should remain recognizable for a controlled refusal");
+    test.Expect(!ParseLaunchOptions(
+        {L"MineBackup", L"--service", L"--silent-startup"}, rejected, error),
+        "the deprecated service option must reject mixed launch modes");
 
     const auto appDirectory = root / "read-only-app-layout";
     std::filesystem::create_directories(appDirectory);
@@ -407,6 +421,37 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
 
     test.Expect(ResolveAppPaths(options, executable, paths, error) && paths.mode == AppPathMode::Explicit,
         "--data-dir should remain authoritative when a portable marker is present");
+}
+
+void TestLegacyServicePolicy(TestContext& test) {
+#ifdef _WIN32
+    const std::wstring executable = L"C:\\Program Files\\MineBackup\\MineBackup.exe";
+#else
+    const std::wstring executable = L"/opt/MineBackup/MineBackup.exe";
+#endif
+    const auto quoted = ParseLegacyServiceImagePath(L"\"" + executable + L"\" --service");
+    test.Expect(quoted.valid && quoted.executable.filename() == L"MineBackup.exe",
+        "a quoted legacy MineBackup service ImagePath should be accepted");
+    test.Expect(ParseLegacyServiceImagePath(executable + L" --SERVICE").valid,
+        "the unquoted legacy ImagePath and case-insensitive service flag should be accepted");
+    test.Expect(!ParseLegacyServiceImagePath(executable).valid,
+        "a service ImagePath without --service must be rejected");
+    test.Expect(!ParseLegacyServiceImagePath(executable + L" --service --extra").valid,
+        "a service ImagePath with extra arguments must be rejected");
+    test.Expect(!ParseLegacyServiceImagePath(executable + L" --service --service").valid,
+        "duplicate service arguments must be rejected");
+    test.Expect(!ParseLegacyServiceImagePath(L"MineBackup.exe --service").valid,
+        "a relative service executable must be rejected");
+    test.Expect(!ParseLegacyServiceImagePath(L"\"" + executable + L" --service").valid,
+        "an unbalanced quote in the service ImagePath must be rejected");
+    std::wstring embeddedNull = executable;
+    embeddedNull.push_back(L'\0');
+    embeddedNull += L" --service";
+    test.Expect(!ParseLegacyServiceImagePath(embeddedNull).valid,
+        "an embedded null in the service ImagePath must be rejected");
+    test.Expect(!ParseLegacyServiceImagePath(
+        std::filesystem::path(executable).parent_path().wstring() + L"\\Other.exe --service").valid,
+        "a service ImagePath pointing to another executable must be rejected");
 }
 
 void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
@@ -777,6 +822,11 @@ void TestPortableConfigDocument(TestContext& test) {
     test.Expect(uploadPreview.added.size() == 1 && uploadPreview.updated.size() == 1
         && uploadPreview.preserved.size() == 1 && !uploadPreview.excludedFields.empty(),
         "upload preview should report added, updated, preserved and excluded fields");
+    test.Expect(std::find(uploadPreview.excludedFields.begin(), uploadPreview.excludedFields.end(),
+            L"useServiceMode") != uploadPreview.excludedFields.end()
+        && std::find(uploadPreview.excludedFields.begin(), uploadPreview.excludedFields.end(),
+            L"serviceName") != uploadPreview.excludedFields.end(),
+        "portable configuration previews should explicitly exclude legacy Service Mode fields");
 
     auto importTarget = local;
     const auto beforePreview = importTarget;
@@ -1135,6 +1185,7 @@ int main(int argc, char** argv) {
     TestMigrationCoordinator(test, temporary.path);
     TestRotatingLog(test, temporary.path);
     TestLaunchOptionsAndAppPaths(test, temporary.path);
+    TestLegacyServicePolicy(test);
     TestSingleInstance(test, temporary.path);
     TestLegacyLocationDiscovery(test, temporary.path);
     TestLegacyLocationMigration(test, temporary.path);
