@@ -1,6 +1,10 @@
 name: Linux Build and Desktop Validation
 
 on:
+  workflow_call:
+  pull_request:
+  push:
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
@@ -18,6 +22,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config p7zip-full \
+            python3-pil unzip curl \
             libgl1-mesa-dev libcurl4-openssl-dev libglib2.0-dev \
             libgtk-3-dev libayatana-appindicator3-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
@@ -42,10 +47,62 @@ jobs:
       - name: Exercise automatic X11 and Wayland selection
         run: bash packaging/linux/verify-desktop.sh build/linux-x64/bin/MineBackup all
 
-      - name: Upload validation candidate
+      - name: Download pinned packaging inputs
+        run: |
+          mkdir -p build/package-inputs build/release
+          curl --fail --location --retry 3 \
+            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.01-v1.5.7-R1/linux-gcc-x64.zip \
+            --output build/package-inputs/linux-gcc-x64.zip
+          curl --fail --location --retry 3 \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
+            --output build/package-inputs/linuxdeploy-x86_64.AppImage
+
+      - name: Build deb and AppImage candidates
+        run: |
+          bash packaging/linux/build-packages.sh \
+            build/linux-x64/bin/MineBackup build/release \
+            build/package-inputs/linux-gcc-x64.zip \
+            build/package-inputs/linuxdeploy-x86_64.AppImage
+          test -f build/release/minebackup_1.16.0_amd64.deb
+          test -x build/release/MineBackup-1.16.0-x86_64.AppImage
+
+      - name: Verify package dependency declarations
+        run: |
+          dpkg-deb --contents build/release/minebackup_1.16.0_amd64.deb
+          dpkg-deb --field build/release/minebackup_1.16.0_amd64.deb Depends | tee build/release/deb-depends.txt
+          mkdir -p build/release/deb-extract
+          dpkg-deb --extract build/release/minebackup_1.16.0_amd64.deb build/release/deb-extract
+          ldd build/release/deb-extract/usr/bin/MineBackup | tee build/release/deb-ldd.txt
+          ! grep -F 'not found' build/release/deb-ldd.txt
+
+      - name: Create Linux cross-restore fixtures
+        run: |
+          mkdir -p build/cross-restore
+          unzip -p build/package-inputs/linux-gcc-x64.zip 7zz >build/cross-restore/7zz
+          chmod 0755 build/cross-restore/7zz
+          printf %s 'MineBackup 1.16 cross-restore fixture: linux' >build/cross-restore/linux.txt
+          build/cross-restore/7zz a -y -t7z -m0=lzma2 \
+            build/cross-restore/linux-lzma2.7z build/cross-restore/linux.txt
+          build/cross-restore/7zz a -y -t7z -m0=zstd \
+            build/cross-restore/linux-zstd.7z build/cross-restore/linux.txt
+
+      - name: Upload Linux release candidates
         uses: actions/upload-artifact@v4
         with:
-          name: minebackup-linux-desktop-validation
+          name: minebackup-linux-candidates
+          if-no-files-found: error
+          retention-days: 14
           path: |
-            build/linux-x64/bin/MineBackup
-            build/linux-x64/ldd.txt
+            build/release/minebackup_1.16.0_amd64.deb
+            build/release/MineBackup-1.16.0-x86_64.AppImage
+            build/release/deb-depends.txt
+            build/release/deb-ldd.txt
+
+      - name: Upload Linux cross-restore fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-linux-restore-fixtures
+          path: build/cross-restore
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

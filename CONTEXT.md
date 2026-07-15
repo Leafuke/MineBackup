@@ -33,3 +33,8 @@
 - **便携配置文档（Portable Config Document）**：云端 `portable-config.json` 的版本化白名单模型，以 ConfigId 为唯一键，仅包含名称、逻辑世界定义、备份/压缩/保留/黑名单和可迁移云策略；不包含任何本机路径、工具、凭据、命令、脚本、自动化或运行结果。
 - **方向性合并（Directional Merge）**：上传时本地白名单字段覆盖同 ConfigId 的远端字段并保留远端独有配置；导入时远端白名单字段覆盖同 ConfigId 的本地字段并保留本地独有配置。两个方向都必须先生成预览并再次确认。
 - **待绑定配置（Pending Local Binding）**：从远端新增到本机、尚未绑定存档根、备份根和压缩工具的配置；绑定完成前禁止备份、恢复、删除、云写入和自动任务，且不继承远端的启用状态或本机路径。
+- **能力状态（Capability Status）**：桌面服务返回的 Available、Unavailable、PermissionRequired 或 Failed 及其诊断；运行期降级不得悄悄覆盖用户保存的偏好。
+- **旧服务清理（Legacy Service Cleanup）**：1.16 对旧 Windows Service Mode 的唯一支持边界；只能读取并验证旧服务，在用户确认和 UAC 后删除，不能安装或启动服务。
+- **发布候选（Release Candidate Artifact）**：平台工作流为同一提交生成、尚未对公众发布的固定名称资产；平台工作流无权查找或修改 GitHub Release。
+- **发布清单（Release Manifest）**：汇合任务生成的版本化 JSON，记录版本、提交、各资产大小/SHA-256、平台门禁和经审批的平台缺失豁免；所有正式资产必须可追溯到同一提交。
+- **原子发布门禁（Atomic Release Gate）**：所有非豁免平台成功后，唯一发布任务把精确标签的草稿 Release 连同全部候选上传完整，再转为公开；失败时草稿保持未发布，绝不上传到“最新 Release”。

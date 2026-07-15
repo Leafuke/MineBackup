@@ -24,6 +24,30 @@ codesign --verify --strict --verbose=2 "$app"
 `lipo` must report only `arm64`. Repeat the build and startup smoke on macOS 15
 and macOS 26.
 
+## Build and mount the DMG
+
+On macOS 15 arm64, build the pinned 7-Zip ZS source and package from the inside
+out:
+
+```bash
+git init build/7zip-zstd
+git -C build/7zip-zstd remote add origin https://github.com/mcmilk/7-Zip-zstd.git
+git -C build/7zip-zstd fetch --depth 1 origin d8d651b72a6a85353a23d3f19e0fd2d96c0f36b4
+git -C build/7zip-zstd checkout --detach FETCH_HEAD
+bash packaging/macos/build-sevenzip.sh build/7zip-zstd build/package-inputs/7zz
+MINEBACKUP_CODESIGN_IDENTITY=- bash packaging/macos/build-dmg.sh \
+  build/macos-arm64/bin/MineBackup.app build/package-inputs/7zz build/release
+
+hdiutil attach build/release/MineBackup-1.16.0-macos-arm64.dmg
+codesign --verify --strict --verbose=2 /Volumes/'MineBackup 1.16.0'/MineBackup.app
+```
+
+The packaging script signs the nested `7zz`, main executable and `.app` in that
+order and never uses `codesign --deep`. Copy the app to `/Applications`, launch,
+then detach the DMG. The package is ad-hoc signed but not notarized: document
+only **Privacy & Security → Open Anyway**. Do not disable Gatekeeper or suggest
+`xattr`.
+
 ## Read-only app and data locations
 
 ```bash

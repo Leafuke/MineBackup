@@ -37,6 +37,32 @@ packaging/linux/verify-desktop.sh build/linux-x64/bin/MineBackup all
 The expected output captured by the helper is `X11` under Xvfb and `Wayland`
 under headless Weston.
 
+## Package build and install
+
+The release workflow downloads the pinned 7-Zip ZS and linuxdeploy inputs and
+runs:
+
+```bash
+bash packaging/linux/build-packages.sh \
+  build/linux-x64/bin/MineBackup build/release \
+  build/package-inputs/linux-gcc-x64.zip \
+  build/package-inputs/linuxdeploy-x86_64.AppImage
+
+sudo apt install ./build/release/minebackup_1.16.0_amd64.deb
+MineBackup --data-dir "$(mktemp -d)/profile"
+
+build/release/MineBackup-1.16.0-x86_64.AppImage \
+  --data-dir "$(mktemp -d)/profile"
+```
+
+Inspect `dpkg-deb --contents` and `dpkg-deb --field ... Depends`, then run
+`ldd /usr/bin/MineBackup` and reject every `not found`. Extract the AppImage and
+confirm it contains the binary, desktop entry, icon, licenses, font and pinned
+`Resources/tools/7zip/26.01-zs-v1.5.7-r1/7zz` equivalent under
+`usr/share/MineBackup`. Move the AppImage and verify a previously enabled
+autostart path is repaired on the next normal launch. Place `portable.flag`
+beside it and confirm only that case uses adjacent `MineBackupData`.
+
 ## Manual capability checks
 
 1. In an X11 session, bind both hotkeys and verify backup and restore fire. Lock

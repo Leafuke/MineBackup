@@ -22,7 +22,7 @@ For Windows 10 and above users, it is recommended to prioritize the combination 
 ---
 
 ## ✨ Why MineBackup?
-- 🎯 **Plug-and-Play** — A single executable. Download, double-click, done.
+- 🎯 **Native distribution** — A signed Windows executable, Linux deb/AppImage and an arm64 macOS DMG.
 - 🖥 **Clean, Fast GUI** — Powered by ImGui. Simple layout, snappy response.
 - 💾 **Secure Backups** — One click to safeguard your Minecraft saves.
 - 🔄 **Quick Restores** — Roll back to any previous state from a `.7z` file or local backup.
@@ -30,7 +30,7 @@ For Windows 10 and above users, it is recommended to prioritize the combination 
 - 🧠 **Smart Mode** — Git-like incremental backups to save time and storage.
 - 📁 **Custom Paths** — Store backups wherever you want.
 - 🌏 **Multi-language** — Currently supports English and Chinese — more are welcome!
-- 💻 **Multi-platform** — Currently supports Windows, Linux and MacOS.
+- 💻 **Multi-platform** — Windows x64, Linux x86_64 and macOS 15+ arm64 share the same backup data contracts.
 
 💡 **Pro tip:** It works on any folder, not just Minecraft worlds.
 
@@ -40,8 +40,14 @@ For Windows 10 and above users, it is recommended to prioritize the combination 
 
 ### 1️⃣ Download & Run
 1. Go to the [latest release](https://github.com/Leafuke/MineBackup/releases).
-2. Download the single Windows executable.
-3. Double-click to run — **no installation required**.
+2. Download `MineBackup-windows-x64.exe`, the Ubuntu `.deb`, the Linux
+   AppImage, or `MineBackup-1.16.0-macos-arm64.dmg`.
+3. Verify the asset against `SHA256SUMS`, then install or run it normally.
+
+See the [platform support matrix](docs/platform-support.md) for supported OS
+versions and honest Linux desktop degradation. The macOS build is not notarized;
+use **Privacy & Security → Open Anyway** if prompted, without disabling
+Gatekeeper or running `xattr` commands.
 
 ### 2️⃣ Basic Actions - Basic
 | Feature      | How to Use |
@@ -80,18 +86,24 @@ See [Developer & Advanced User Guide](https://folderrewind.top/docs/plugins/knot
 ## ⚙️ Installation & Build
 
 **Requirements:**
-- Windows/Linux/MacOS
-- C++20 compiler
-- ImGui library linked
-- 7-Zip executable
+- Windows with MSVC, Linux x86_64, or Apple Silicon macOS 15+
+- CMake 3.22+ and a C++20 compiler
+- Platform packages listed in the verification guide for that platform
 
 **Build:**
 ```bash
-# Clone the repo
 git clone https://github.com/Leafuke/MineBackup.git
 cd MineBackup
+cmake --preset <windows-msvc-x64|linux-x64|macos-arm64>
+cmake --build --preset windows-msvc-x64-release  # Windows
+# On Linux/macOS: cmake --build build/<preset> --parallel
+```
 
-````
+MineBackup stores data in a platform profile, not beside the executable. Read
+[data locations, portable mode and 1.15 migration](docs/data-and-migration.md)
+before moving an existing installation. Windows Service Mode is deprecated and
+cannot be newly installed or started. rclone is optional, not bundled, and is
+downloaded only after explicit confirmation with version/hash validation.
 
 ---
 
@@ -117,7 +129,7 @@ cd MineBackup
 ## 🤝 Contributing & Support
 
 * **Report bugs / request features:** [GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
-* **Help translate:** Edit [`i18n.h`](MineBackup/i18n.cpp) and submit a pull request.
+* **Help translate:** Edit [`i18n.h`](MineBackup/src/infra/i18n.h) and submit a pull request.
 * **Improve docs:** Visit the [official documentation](https://folderrewind.top) to submit suggestions for improvement. This is the official website for the second-generation FolderRewind, and it will also add documentation support for the first-generation MineBackup in the future.
 
 ---

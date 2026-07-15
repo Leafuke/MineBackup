@@ -1,0 +1,322 @@
+name: Atomic Three-Platform Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing annotated tag that points at this workflow commit
+        required: true
+        default: v1.16.0
+        type: string
+      omit_platform:
+        description: Security-only waiver; normal releases must use none
+        required: true
+        default: none
+        type: choice
+        options: [none, windows, linux, macos]
+      waiver_reason:
+        description: Required explanation when a platform is omitted
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: minebackup-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.omit_platform != 'windows' }}
+    uses: ./.github/workflows/windows-build-signpath-release.yml
+    secrets: inherit
+
+  linux:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.omit_platform != 'linux' }}
+    uses: ./.github/workflows/linux-build-release.yml
+
+  macos:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.omit_platform != 'macos' }}
+    uses: ./.github/workflows/macos-build-release.yml
+
+  cross-restore-windows:
+    runs-on: windows-latest
+    needs: [windows, linux, macos]
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-windows-restore-fixtures
+          path: fixtures/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-linux-restore-fixtures
+          path: fixtures/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-macos-restore-fixtures
+          path: fixtures/macos
+      - name: Restore every platform archive on Windows
+        shell: pwsh
+        run: |
+          $tool = (Resolve-Path .\fixtures\windows\7za.exe).Path
+          foreach ($archive in Get-ChildItem .\fixtures -Filter *.7z -Recurse) {
+            $platform = $archive.BaseName.Split('-')[0]
+            $output = Join-Path $env:RUNNER_TEMP ("restore-" + $archive.BaseName)
+            & $tool x -y "-o$output" $archive.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Could not restore $($archive.Name)" }
+            $expected = Get-ChildItem .\fixtures -Filter "$platform.txt" -Recurse | Select-Object -First 1
+            $actual = Get-ChildItem $output -Filter "$platform.txt" -Recurse | Select-Object -First 1
+            if (-not $expected -or -not $actual) {
+              throw "Restored payload is missing for $($archive.Name)"
+            }
+            $expectedHash = (Get-FileHash $expected.FullName -Algorithm SHA256).Hash
+            $actualHash = (Get-FileHash $actual.FullName -Algorithm SHA256).Hash
+            if ($expectedHash -ne $actualHash) {
+              throw "Restored payload mismatch for $($archive.Name)"
+            }
+          }
+
+  cross-restore-linux:
+    runs-on: ubuntu-22.04
+    needs: [windows, linux, macos]
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-windows-restore-fixtures
+          path: fixtures/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-linux-restore-fixtures
+          path: fixtures/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-macos-restore-fixtures
+          path: fixtures/macos
+      - name: Restore every platform archive on Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool="$PWD/fixtures/linux/7zz"
+          chmod 0755 "$tool"
+          while IFS= read -r archive; do
+            base="$(basename "$archive" .7z)"
+            platform="${base%%-*}"
+            output="$RUNNER_TEMP/restore-$base"
+            "$tool" x -y "-o$output" "$archive"
+            expected="$(find fixtures -name "$platform.txt" -type f | head -n 1)"
+            actual="$(find "$output" -name "$platform.txt" -type f | head -n 1)"
+            cmp "$expected" "$actual"
+          done < <(find fixtures -name '*.7z' -type f | sort)
+
+  cross-restore-macos:
+    runs-on: macos-15
+    needs: [windows, linux, macos]
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-windows-restore-fixtures
+          path: fixtures/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-linux-restore-fixtures
+          path: fixtures/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: minebackup-macos-restore-fixtures
+          path: fixtures/macos
+      - name: Restore every platform archive on macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool="$PWD/fixtures/macos/7zz"
+          chmod 0755 "$tool"
+          while IFS= read -r archive; do
+            base="$(basename "$archive" .7z)"
+            platform="${base%%-*}"
+            output="$RUNNER_TEMP/restore-$base"
+            "$tool" x -y "-o$output" "$archive"
+            expected="$(find fixtures -name "$platform.txt" -type f | head -n 1)"
+            actual="$(find "$output" -name "$platform.txt" -type f | head -n 1)"
+            cmp "$expected" "$actual"
+          done < <(find fixtures -name '*.7z' -type f | sort)
+
+  assemble:
+    runs-on: ubuntu-22.04
+    needs: [windows, linux, macos, cross-restore-windows, cross-restore-linux, cross-restore-macos]
+    if: >-
+      ${{ always()
+          && (needs.windows.result == 'success'
+              || (github.event_name == 'workflow_dispatch' && inputs.omit_platform == 'windows' && needs.windows.result == 'skipped'))
+          && (needs.linux.result == 'success'
+              || (github.event_name == 'workflow_dispatch' && inputs.omit_platform == 'linux' && needs.linux.result == 'skipped'))
+          && (needs.macos.result == 'success'
+              || (github.event_name == 'workflow_dispatch' && inputs.omit_platform == 'macos' && needs.macos.result == 'skipped'))
+          && ((needs.cross-restore-windows.result == 'success'
+               && needs.cross-restore-linux.result == 'success'
+               && needs.cross-restore-macos.result == 'success')
+              || (github.event_name == 'workflow_dispatch' && inputs.omit_platform != 'none'
+                  && needs.cross-restore-windows.result == 'skipped'
+                  && needs.cross-restore-linux.result == 'skipped'
+                  && needs.cross-restore-macos.result == 'skipped')) }}
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and verify release identity
+        id: identity
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ inputs.release_tag }}
+          OMIT_PLATFORM: ${{ inputs.omit_platform }}
+          WAIVER_REASON: ${{ inputs.waiver_reason }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            tag="$DISPATCH_TAG"
+            omitted="$OMIT_PLATFORM"
+          else
+            tag="$GITHUB_REF_NAME"
+            omitted=none
+          fi
+          [[ "$tag" == v1.16.0 ]] || { echo "Only v1.16.0 is supported by this release workflow" >&2; exit 1; }
+          [[ "$(git cat-file -t "$tag")" == tag ]] || { echo "The release tag must be annotated" >&2; exit 1; }
+          [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]] || {
+            echo "The release tag does not point at the workflow commit" >&2
+            exit 1
+          }
+          if [[ "$omitted" != none && -z "${WAIVER_REASON// }" ]]; then
+            echo "A platform waiver requires a reason" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
+          echo "omitted=$omitted" >>"$GITHUB_OUTPUT"
+
+      - name: Download Windows candidate
+        if: steps.identity.outputs.omitted != 'windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: minebackup-windows-candidate
+          path: candidate
+
+      - name: Download Linux candidates
+        if: steps.identity.outputs.omitted != 'linux'
+        uses: actions/download-artifact@v4
+        with:
+          name: minebackup-linux-candidates
+          path: candidate
+
+      - name: Download macOS candidate
+        if: steps.identity.outputs.omitted != 'macos'
+        uses: actions/download-artifact@v4
+        with:
+          name: minebackup-macos-candidate
+          path: candidate
+
+      - name: Remove validation-only files from candidate directory
+        shell: bash
+        run: |
+          rm -f candidate/deb-depends.txt candidate/deb-ldd.txt
+
+      - name: Generate and audit release manifest
+        shell: bash
+        env:
+          OMITTED: ${{ steps.identity.outputs.omitted }}
+          WAIVER_REASON: ${{ inputs.waiver_reason }}
+        run: |
+          set -euo pipefail
+          python3 packaging/generate_release_manifest.py \
+            --assets-dir candidate \
+            --commit "$GITHUB_SHA" \
+            --version "${{ steps.identity.outputs.version }}" \
+            --omitted-platform "$OMITTED" \
+            --waiver-reason "$WAIVER_REASON" \
+            --dependency-manifest packaging/dependency-manifest.json
+          cp packaging/dependency-manifest.json candidate/dependency-manifest.json
+          python3 -m json.tool candidate/release-manifest.json >/dev/null
+          (cd candidate && sha256sum --check SHA256SUMS)
+          jq -e --arg commit "${GITHUB_SHA,,}" '.commit == $commit' \
+            candidate/release-manifest.json >/dev/null
+
+      - name: Upload immutable release candidate bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-${{ steps.identity.outputs.version }}-release-candidate
+          path: candidate
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    runs-on: ubuntu-22.04
+    needs: assemble
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Download audited release candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: minebackup-1.16.0-release-candidate
+          path: candidate
+
+      - name: Create or resume draft for this exact tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          omitted="$(jq -r '.omittedPlatform // "none"' candidate/release-manifest.json)"
+          waiver_reason="$(jq -r '.waiverReason // ""' candidate/release-manifest.json)"
+          {
+            echo "MineBackup 1.16.0 release for commit \`$GITHUB_SHA\`."
+            echo
+            if [[ "$omitted" == none ]]; then
+              echo "Windows, Linux and macOS candidates and the three-platform cross-restore gate passed."
+            else
+              printf 'Security release waiver: **%s** assets and cross-platform restore checks were omitted.\n\n' "$omitted"
+              printf 'Approved reason: %s\n' "$waiver_reason"
+            fi
+            echo
+            echo "See \`release-manifest.json\` for asset hashes, dependency provenance and gate status."
+          } >"$notes_file"
+
+          if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
+            [[ "$(jq -r .draft <<<"$release_json")" == true ]] || {
+              echo "A published release already exists for $RELEASE_TAG; refusing to modify it" >&2
+              exit 1
+            }
+            jq -r '.assets[].id' <<<"$release_json" | while read -r asset_id; do
+              [[ -z "$asset_id" ]] || gh api -X DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done
+            gh release edit "$RELEASE_TAG" --draft=true \
+              --title "MineBackup 1.16.0" --notes-file "$notes_file"
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "MineBackup 1.16.0" \
+              --notes-file "$notes_file"
+          fi
+
+      - name: Upload all assets and publish draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find candidate -maxdepth 1 -type f -print | sort)
+          [[ ${#assets[@]} -ge 5 ]] || { echo "release bundle is incomplete" >&2; exit 1; }
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest=false
