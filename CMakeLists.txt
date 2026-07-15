@@ -4,7 +4,9 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MineBackupVersion.cmake)
 project(MineBackup VERSION ${MINEBACKUP_VERSION} LANGUAGES C CXX)
 
 if(APPLE)
+    enable_language(OBJC)
     enable_language(OBJCXX)
+
     set(CMAKE_OBJCXX_STANDARD 20)
     set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
     set(CMAKE_OBJCXX_EXTENSIONS OFF)
