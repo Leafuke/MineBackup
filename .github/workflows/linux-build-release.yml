@@ -12,7 +12,10 @@ permissions:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -21,7 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config p7zip-full \
+            build-essential gcc-13 g++-13 cmake ninja-build pkg-config p7zip-full \
             python3-pil unzip curl \
             libgl1-mesa-dev libcurl4-openssl-dev libglib2.0-dev \
             libgtk-3-dev libayatana-appindicator3-dev \

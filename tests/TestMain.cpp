@@ -177,6 +177,19 @@ void TestFormat(TestContext& test) {
         "empty ConfigId should produce a canonical UUID on every platform");
 }
 
+void TestUnicodeFilesystemPath(TestContext& test, const std::filesystem::path& root) {
+    const std::wstring unicodeSegment = L"\u4E2D\u6587\u8DEF\u5F84";
+    const std::filesystem::path unicodePath(unicodeSegment);
+    test.Expect(unicodePath.wstring() == unicodeSegment,
+        "the supported standard library should round-trip a Unicode filesystem path");
+
+    std::error_code error;
+    const auto directory = root / unicodePath;
+    std::filesystem::create_directories(directory, error);
+    test.Expect(!error && std::filesystem::is_directory(directory),
+        "the supported standard library should create a Unicode directory");
+}
+
 std::string ReadFile(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -1258,6 +1271,7 @@ int main(int argc, char** argv) {
     TestContext test;
     TemporaryDirectory temporary;
     TestFormat(test);
+    TestUnicodeFilesystemPath(test, temporary.path);
     TestAtomicWriter(test, temporary.path);
     TestMetadataRoundTrip(test, temporary.path);
     TestHistoryRoundTrip(test, temporary.path);

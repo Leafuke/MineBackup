@@ -82,7 +82,7 @@ jobs:
           }
 
   cross-restore-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [windows, linux, macos]
     if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' }}
     steps:
@@ -148,7 +148,7 @@ jobs:
           done < <(find fixtures -name '*.7z' -type f | sort)
 
   assemble:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [windows, linux, macos, cross-restore-windows, cross-restore-linux, cross-restore-macos]
     if: >-
       ${{ always()
@@ -257,7 +257,7 @@ jobs:
           retention-days: 30
 
   publish:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: assemble
     environment: release
     permissions:

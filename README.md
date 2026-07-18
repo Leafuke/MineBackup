@@ -86,7 +86,8 @@ See [Developer & Advanced User Guide](https://folderrewind.top/docs/plugins/knot
 ## ⚙️ Installation & Build
 
 **Requirements:**
-- Windows with MSVC, Linux x86_64, or Apple Silicon macOS 15+
+- Windows with MSVC, Ubuntu 24.04+ x86_64 (or an equivalent glibc 2.39+
+  distribution), or Apple Silicon macOS 15+
 - CMake 3.22+ and a C++20 compiler
 - Platform packages listed in the verification guide for that platform
 

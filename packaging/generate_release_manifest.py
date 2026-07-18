@@ -73,7 +73,7 @@ def main() -> None:
 
     platform_gate_descriptions = {
         "windows": "MSBuild formal candidate plus CMake/MSVC shadow, CTest, PE resources, /MT and startup smoke",
-        "linux": "Ubuntu 22.04 build, CTest, X11/Wayland smoke, deb and AppImage layout/dependency checks",
+        "linux": "Ubuntu 24.04/GCC 13 build, CTest, X11/Wayland smoke, deb and AppImage layout/dependency checks",
         "macos": "macOS 15 and 26 arm64 build/CTest/startup; macOS 15 nested signing and DMG verification",
     }
     gates = {

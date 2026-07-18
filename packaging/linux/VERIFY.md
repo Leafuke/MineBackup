@@ -81,5 +81,5 @@ beside it and confirm only that case uses adjacent `MineBackupData`.
 6. Run with an Ayatana-compatible tray host. Confirm Open and Exit work and that
    no second GLib main loop or tray thread remains after exit.
 
-Repeat the packaged smoke on Ubuntu 22.04, 24.04 and 26.04. Repeat the AppImage
-smoke on those releases and Debian 12 and 13.
+Repeat the packaged smoke on Ubuntu 24.04 and 26.04. Repeat the AppImage smoke
+on those releases and Debian 13. Ubuntu 22.04 and Debian 12 are unsupported.

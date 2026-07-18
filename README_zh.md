@@ -81,7 +81,8 @@ Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 ## ⚙️ 安装与编译
 
 **运行环境**：
-- Windows + MSVC、Linux x86_64，或 Apple Silicon macOS 15+
+- Windows + MSVC、Ubuntu 24.04+ x86_64（或同等的 glibc 2.39+ 发行版），
+  或 Apple Silicon macOS 15+
 - CMake 3.22+ 与 C++20 编译器
 - 对应平台验证文档中列出的开发依赖
 

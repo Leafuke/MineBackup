@@ -71,7 +71,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: MineBackup contributors
-Depends: libc6, libstdc++6, libgcc-s1, libgl1, libcurl4, libglib2.0-0, libgtk-3-0, libayatana-appindicator3-1, libx11-6, libxrandr2, libxinerama1, libxcursor1, libxi6, libwayland-client0, libxkbcommon0
+Depends: libc6 (>= 2.39), libstdc++6 (>= 13.2), libgcc-s1, libgl1, libcurl4, libglib2.0-0, libgtk-3-0, libayatana-appindicator3-1, libx11-6, libxrandr2, libxinerama1, libxcursor1, libxi6, libwayland-client0, libxkbcommon0
 Description: Cross-platform Minecraft world backup manager
  MineBackup provides local backup, restore, history and optional cloud workflows.
 EOF

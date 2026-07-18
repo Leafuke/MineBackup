@@ -3,7 +3,7 @@
 MineBackup builds GLFW 3.4 statically with both the X11 and Wayland backends. The
 remaining desktop libraries are dynamic and must be declared by the package.
 
-## Ubuntu 22.04 build packages
+## Ubuntu 24.04 build packages
 
 ```text
 build-essential cmake ninja-build pkg-config
@@ -20,7 +20,8 @@ historical implementation.
 ## Runtime libraries
 
 The `.deb` dependency generator must account for at least the libraries below;
-the exact package names are resolved on the Ubuntu 22.04 packaging baseline.
+the exact package names are resolved on the Ubuntu 24.04 packaging baseline.
+The release binary requires glibc 2.39 or later and libstdc++ 13.2 or later.
 
 ```text
 libc6 libstdc++6 libgcc-s1 libgl1 libcurl4 libglib2.0-0
@@ -35,5 +36,6 @@ OpenURI, notifications and Wayland global shortcuts. A StatusNotifier host is
 required for the tray icon. Neither is a hard process-start dependency.
 
 Before accepting a package, run `ldd` on its installed executable and reject any
-`not found` entry. AppImage validation must additionally run on Ubuntu 22.04,
-24.04 and 26.04 and Debian 12 and 13 without inheriting build-host library paths.
+`not found` entry. AppImage validation must additionally run on Ubuntu 24.04 and
+26.04 and Debian 13 without inheriting build-host library paths. Ubuntu 22.04
+and Debian 12 are below the supported glibc baseline.

@@ -17,7 +17,7 @@ run_smoke() {
     shift 3
 
     set +e
-    timeout --kill-after=2s 15s "$@" "${executable}" --data-dir "${profile}" >"${log}" 2>&1
+    LC_ALL=C timeout --kill-after=2s 15s "$@" "${executable}" --data-dir "${profile}" >"${log}" 2>&1
     local status=$?
     set -e
     if [[ ${status} -ne 0 && ${status} -ne 124 ]]; then
@@ -39,7 +39,7 @@ run_x11() (
     local root
     root="$(mktemp -d)"
     trap 'rm -rf "${root}"' EXIT
-    run_smoke X11 "${root}/profile" "${root}/minebackup.log" \
+    run_smoke X11 "${root}/MineBackup-中文/profile" "${root}/minebackup.log" \
         xvfb-run -a env -u WAYLAND_DISPLAY
 )
 
@@ -61,7 +61,7 @@ run_wayland() (
         cat "${root}/weston.log" >&2
         return 1
     fi
-    run_smoke Wayland "${root}/profile" "${root}/minebackup.log" \
+    run_smoke Wayland "${root}/MineBackup-中文/profile" "${root}/minebackup.log" \
         env -u DISPLAY XDG_RUNTIME_DIR="${runtime}" WAYLAND_DISPLAY=minebackup-wayland
 )
 
