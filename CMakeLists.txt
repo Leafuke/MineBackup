@@ -71,6 +71,9 @@ minebackup_generate_artifacts(${MINEBACKUP_GENERATED_DIR} ${MINEBACKUP_SOURCE_DI
 
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
+if(NOT WIN32)
+    find_package(Iconv REQUIRED)
+endif()
 
 include(FetchContent)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -82,8 +85,12 @@ if(UNIX AND NOT APPLE)
     set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
 endif()
 FetchContent_Declare(glfw
-    URL https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
-    URL_HASH SHA256=b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9
+    # GLFW 3.4 crashes during glfwInit() when a Wayland compositor has no
+    # wl_seat, as is intentional for headless Weston. Pin the upstream fix
+    # until it is included in a tagged GLFW release:
+    # https://github.com/glfw/glfw/issues/2517
+    URL https://github.com/glfw/glfw/archive/3573c5a890b4878bb7357f71daaf49260c6fef15.zip
+    URL_HASH SHA256=dba78a22b73c231560ef3817b7fde606170711af733c8c8065ad2e6f0285bd07
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(glfw)
@@ -116,8 +123,12 @@ target_compile_definitions(minebackup_data_core PUBLIC MINEBACKUP_ENABLE_V15_MIG
 target_compile_definitions(minebackup_desktop PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)
 target_include_directories(minebackup_data_core PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
 target_include_directories(minebackup_desktop PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+target_link_libraries(minebackup_data_core PUBLIC Threads::Threads)
+if(NOT WIN32)
+    target_link_libraries(minebackup_data_core PUBLIC Iconv::Iconv)
+endif()
 target_link_libraries(minebackup_desktop PUBLIC
-    minebackup_data_core OpenGL::GL Threads::Threads minebackup_third_party_imgui
+    minebackup_data_core OpenGL::GL minebackup_third_party_imgui
 )
 target_link_libraries(MineBackup PRIVATE minebackup_desktop)
 
@@ -130,6 +141,16 @@ else()
     target_compile_options(minebackup_data_core PRIVATE -fno-strict-aliasing)
     target_compile_options(minebackup_desktop PRIVATE -fno-strict-aliasing)
     target_compile_options(minebackup_third_party_imgui PRIVATE -fno-strict-aliasing)
+endif()
+
+if(APPLE
+        AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"
+        AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 18.0)
+    # Xcode 16's libc++ still gates std::jthread/std::stop_token and their
+    # runtime support behind this option. PUBLIC compile and link usage
+    # requirements also cover every final consumer of the static data core.
+    target_compile_options(minebackup_data_core PUBLIC -fexperimental-library)
+    target_link_options(minebackup_data_core PUBLIC -fexperimental-library)
 endif()
 
 if(WIN32)
@@ -196,10 +217,6 @@ if(APPLE)
         "-framework Foundation" "-framework ServiceManagement"
         "-framework UserNotifications"
     )
-    find_library(ICONV_LIB iconv)
-    if(ICONV_LIB)
-        target_link_libraries(minebackup_desktop PUBLIC ${ICONV_LIB})
-    endif()
 endif()
 
 set_target_properties(MineBackup PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
