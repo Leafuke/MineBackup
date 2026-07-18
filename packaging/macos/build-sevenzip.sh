@@ -16,8 +16,14 @@ pinned_commit=d8d651b72a6a85353a23d3f19e0fd2d96c0f36b4
   exit 3
 }
 
+# The pinned 7-Zip ZS makefile enables -Werror.  AppleClang 17 diagnoses
+# warnings in its bundled BLAKE3 and MD4 sources that newer AppleClang accepts.
+# Keep the upstream warning set, but do not turn third-party warnings into
+# errors; the pinned revision and the resulting binary are verified below.
 make -C "$source_root/CPP/7zip/Bundles/Alone2" \
-  -f ../../cmpl_mac_arm64.mak -j"$(sysctl -n hw.logicalcpu)"
+  -f ../../cmpl_mac_arm64.mak \
+  CFLAGS_WARN_WALL="-Wall -Wextra" \
+  -j"$(sysctl -n hw.logicalcpu)"
 built="$source_root/CPP/7zip/Bundles/Alone2/b/m_arm64/7zz"
 [[ -x "$built" ]] || { echo "7zz build output was not produced" >&2; exit 4; }
 mkdir -p "$(dirname "$output")"
