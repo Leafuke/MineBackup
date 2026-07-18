@@ -502,31 +502,43 @@ void TestLegacyServicePolicy(TestContext& test) {
 }
 
 void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
+#ifdef _WIN32
     const auto runtime = root / "single-instance";
+#else
+    // sockaddr_un::sun_path is only 104 bytes on macOS.  The per-runner
+    // temporary directory is much longer than the application's real runtime
+    // path, so use a unique short POSIX test endpoint below /tmp.
+    const auto runtime = std::filesystem::path("/tmp") / root.filename();
+#endif
     std::wstring error;
-    SingleInstanceService primary;
-    test.Expect(primary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::Acquired,
-        "the first instance should acquire its profile lock");
+    {
+        SingleInstanceService primary;
+        test.Expect(primary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::Acquired,
+            "the first instance should acquire its profile lock");
 
-    SingleInstanceService secondary;
-    test.Expect(secondary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::AlreadyRunning,
-        "a second instance of the same profile should be rejected");
-    test.Expect(secondary.Send({InstanceRequestType::SelectConfig, L"stable-config-id"}, error),
-        "the second instance should deliver a bounded IPC request");
-    const auto requests = primary.PollRequests(error);
-    if (requests.empty() && !error.empty()) {
-        std::wcerr << L"[DETAIL] single-instance IPC: " << error << L'\n';
+        SingleInstanceService secondary;
+        test.Expect(secondary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::AlreadyRunning,
+            "a second instance of the same profile should be rejected");
+        test.Expect(secondary.Send({InstanceRequestType::SelectConfig, L"stable-config-id"}, error),
+            "the second instance should deliver a bounded IPC request");
+        const auto requests = primary.PollRequests(error);
+        if (requests.empty() && !error.empty()) {
+            std::wcerr << L"[DETAIL] single-instance IPC: " << error << L'\n';
+        }
+        test.Expect(requests.size() == 1 && requests.front().type == InstanceRequestType::SelectConfig
+            && requests.front().stableId == L"stable-config-id", "the primary instance should decode the IPC request");
+
+        const std::wstring oversizedId(70u * 1024u, L'x');
+        test.Expect(!secondary.Send({InstanceRequestType::SelectConfig, oversizedId}, error),
+            "instance IPC should reject payloads above the protocol limit");
+
+        SingleInstanceService otherProfile;
+        test.Expect(otherProfile.Acquire(L"profile-two", runtime, error) == InstanceAcquireResult::Acquired,
+            "a different profile should acquire an independent lock");
     }
-    test.Expect(requests.size() == 1 && requests.front().type == InstanceRequestType::SelectConfig
-        && requests.front().stableId == L"stable-config-id", "the primary instance should decode the IPC request");
-
-    const std::wstring oversizedId(70u * 1024u, L'x');
-    test.Expect(!secondary.Send({InstanceRequestType::SelectConfig, oversizedId}, error),
-        "instance IPC should reject payloads above the protocol limit");
-
-    SingleInstanceService otherProfile;
-    test.Expect(otherProfile.Acquire(L"profile-two", runtime, error) == InstanceAcquireResult::Acquired,
-        "a different profile should acquire an independent lock");
+    std::error_code cleanupError;
+    std::filesystem::remove_all(runtime, cleanupError);
+    test.Expect(!cleanupError, "the single-instance test runtime should be removable");
 }
 
 void TestLegacyLocationDiscovery(TestContext& test, const std::filesystem::path& root) {
