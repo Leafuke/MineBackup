@@ -63,7 +63,12 @@ struct TemporaryDirectory {
 
     TemporaryDirectory() {
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        path = std::filesystem::temp_directory_path() / ("MineBackupDataTests-" + std::to_string(stamp));
+        // macOS reports its temporary directory below /var, which is a
+        // system symlink to /private/var.  Resolve that trusted platform
+        // alias before exercising code that deliberately rejects linked
+        // ancestors supplied as part of an application data path.
+        path = std::filesystem::canonical(std::filesystem::temp_directory_path())
+            / ("MineBackupDataTests-" + std::to_string(stamp));
         std::filesystem::create_directories(path);
     }
 
@@ -218,9 +223,11 @@ void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
     test.Expect(ReadFile(target.wstring() + L".bak") == "first", "atomic backup should contain the previous value");
 
     int temporaryFiles = 0;
-    for (const auto& entry : std::filesystem::directory_iterator(target.parent_path())) {
+    std::error_code iterationError;
+    for (const auto& entry : std::filesystem::directory_iterator(target.parent_path(), iterationError)) {
         if (entry.path().filename().wstring().find(L".tmp.") != std::wstring::npos) ++temporaryFiles;
     }
+    test.Expect(!iterationError, "the atomic write directory should remain inspectable");
     test.Expect(temporaryFiles == 0, "successful atomic writes should not leave temporary files");
 
     const auto concurrentTarget = root / "atomic" / "concurrent.txt";
