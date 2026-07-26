@@ -136,8 +136,16 @@ HWND CreateHiddenWindow(HINSTANCE hInstance) {
 	wc_hidden.lpszClassName = HIDDEN_CLASS_NAME;
 	RegisterClassW(&wc_hidden);
 
-	HWND hwnd_hidden = CreateWindowExW(0, HIDDEN_CLASS_NAME, L"MineBackup Hidden Window", 0,
-		0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
+	HWND hwnd_hidden = CreateWindowExW(
+		WS_EX_TOOLWINDOW,
+		HIDDEN_CLASS_NAME,
+		L"MineBackup Hidden Window",
+		WS_POPUP,
+		0, 0, 0, 0,
+		nullptr,
+		nullptr,
+		hInstance,
+		nullptr);
 	if (hwnd_hidden == NULL)
 		return NULL; // 创建失败
 	return hwnd_hidden;
@@ -252,7 +260,10 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			POINT pt;
 			GetCursorPos(&pt);
 
-			// 显示菜单（TPM_BOTTOMALIGN：菜单底部对齐鼠标位置）
+			// The tray owner must be a foreground-capable top-level window before
+			// TrackPopupMenu starts its modal loop, otherwise Windows dismisses
+			// the menu as soon as it appears.
+			SetForegroundWindow(hWnd);
 			TrackPopupMenu(
 				hMenu,
 				TPM_BOTTOMALIGN | TPM_LEFTBUTTON,  // 菜单样式
@@ -262,8 +273,9 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 				NULL
 			);
 
-			// 必须调用此函数，否则菜单可能无法正常关闭
-			SetForegroundWindow(hWnd);
+			// Complete the tray-menu modal loop so a subsequent right-click can
+			// open the menu normally.
+			PostMessageW(hWnd, WM_NULL, 0, 0);
 			// 销毁菜单（避免内存泄漏）
 			DestroyMenu(hMenu);
 			break;
