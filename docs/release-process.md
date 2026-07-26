@@ -34,4 +34,16 @@ Package and platform-specific commands are in `packaging/windows/VERIFY.md`,
 `packaging/linux/VERIFY.md` and `packaging/macos/VERIFY.md`. Cross-platform
 acceptance must additionally create Full, Smart and Clean Restore fixtures with
 both LZMA2 and zstd on each platform and restore each fixture on the other two
-platforms. KnotLink and WorldEdit need compile/basic smoke only.
+platforms. KnotLink is a release gate: run the strict protocol, command,
+SDK-lifecycle and server-manager CTest targets on Windows, Ubuntu 24.04 and
+macOS arm64. On Windows, additionally verify an installed KnotLinkService
+3.0.0.0 can be detected and started, then exercise `PING`,
+`GET_CAPABILITIES`, disable/re-enable, and restart. With mod 3.1.0 or newer,
+verify handshake, hot backup, hot restore and rejoin events. Confirm that
+`BACKUP 0 0`, `SEND ...` and `RESTORE_CURRENT ...` create no task.
+
+The failure-path acceptance is equally important: no installed server,
+unknown/old version, refused connection, remote disconnect, repeated stop and
+application exit must remain bounded. A server that does not expose ports 6370
+and 6378 within 10 seconds must leave MineBackup interactive and display the
+failure reason.

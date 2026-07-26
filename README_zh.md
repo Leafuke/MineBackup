@@ -68,13 +68,17 @@ Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 - **Alt + Ctrl + Z**：将你当前运行的世界还原到上一个备份版本！需要配合MineBackup-Mod联动模组。
 
 ### 📌 KnotLink 消息交互
-通过 KnotLink 协议，MineBackup 可以与其他应用或 Mod 进行简单的文本消息通信。详情请参见 [MineBackup](https://modrinth.com/mod/minebackup) Mod。
+MineBackup 现已与 FolderRewind 使用完全相同的严格 KnotLink v2 参数化
+契约：载荷固定为 `key=value;key2=value2`，值使用 RFC 3986
+percent-encoding；旧式位置参数和自由文本命令会被直接拒绝。联动模组最低
+版本为 **3.1.0**。
 
-- **支持的指令**：
+Windows 需要 **3.0.0 或更高版本**的 KnotLinkService。MineBackup 会检测
+安装版本、智能启动兼容的已停止服务，并阻止未知或过旧版本。Linux 与 macOS
+保留客户端接入能力，但在上游发布对应服务端前不会内置或托管服务端。
 
-待补充，可见 [MineBackup-Mod](https://github.com/Leafuke/MineBackup-Mod)
-
-> 🔍 **开发者请看**：[KnotLink 协议详情](https://folderrewind.top/docs/plugins/knotlink)
+命令、关联元数据、生命周期事件、当前世界参数和完整示例见
+[MineBackup KnotLink v2 协议说明](docs/knotlink-v2.md)。
 
 ---
 
@@ -136,7 +140,7 @@ cmake --build --preset windows-msvc-x64-release  # Windows
 * [**7-Zip-zstd**](https://github.com/mcmilk/7-Zip-zstd) - Zstd 压缩支持
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI 框架
 * [**stb**](https://github.com/nothings/stb) — 图片加载
-* [**KnotLink**](https://github.com/hxh230802/KnotLink) — 程序间消息通信框架，由 @hxh230802 开发
+* [**KnotLink**](https://github.com/KnotLink-Protocol/KnotLink) — 程序间消息通信框架
 * [**Font-Awesome**](https://github.com/FortAwesome/Font-Awesome) - Icons
 
 ---
