@@ -1,81 +1,119 @@
-name: Build & Upload MineBackup (Linux)
+name: Linux Build and Desktop Validation
 
 on:
+  workflow_call:
+  pull_request:
+  push:
+    branches: [develop]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
     steps:
-    - name: Checkout source
-      uses: actions/checkout@v3
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake pkg-config libglfw3-dev libgl1-mesa-dev p7zip-full
+      - name: Install build and desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-13 g++-13 cmake ninja-build pkg-config p7zip-full \
+            python3-pil unzip curl \
+            libgl1-mesa-dev libcurl4-openssl-dev libglib2.0-dev \
+            libgtk-3-dev libayatana-appindicator3-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols xvfb weston
 
-    - name: Configure CMake
-      run: cmake -DCMAKE_BUILD_TYPE=Release .
+      - name: Configure, build and test
+        run: |
+          cmake --preset linux-x64 -DBUILD_TESTING=ON
+          cmake --build build/linux-x64 --parallel
+          ctest --preset linux-x64 --output-on-failure
 
-    - name: Build MineBackup
-      run: cmake --build . --config Release
+      - name: Verify declared dynamic libraries
+        run: |
+          ldd build/linux-x64/bin/MineBackup | tee build/linux-x64/ldd.txt
+          ! grep -F 'not found' build/linux-x64/ldd.txt
 
-    - name: Prepare release package
-      run: |
-        mkdir -p release-package/Assets
-        cp ./bin/MineBackup release-package/
-        find ./MineBackup/Assets -maxdepth 1 -type f \( -name "*.ttf" -o -name "*.otf" \) -exec cp {} release-package/Assets/ \;
+      - name: Download pinned packaging inputs
+        run: |
+          mkdir -p build/package-inputs build/release
+          curl --fail --location --retry 3 \
+            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.01-v1.5.7-R1/linux-gcc-x64.zip \
+            --output build/package-inputs/linux-gcc-x64.zip
+          curl --fail --location --retry 3 \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
+            --output build/package-inputs/linuxdeploy-x86_64.AppImage
+          echo '3cfca42ab44519822d5299cb92f823633209dd762d903ade3fde19585c56915a  build/package-inputs/linux-gcc-x64.zip' \
+            | sha256sum --check --status
+          echo 'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  build/package-inputs/linuxdeploy-x86_64.AppImage' \
+            | sha256sum --check --status
 
-    - name: 7z Compress Executable + Fonts
-      run: |
-        7z a MineBackup-linux.7z ./release-package/*
+      - name: Stage developer-smoke resources
+        run: |
+          tool_dir=build/linux-x64/bin/Resources/tools/7zip/26.01-zs-v1.5.7-r1
+          mkdir -p build/linux-x64/bin/Resources/Assets "$tool_dir"
+          cp MineBackup/Assets/fontawesome-sp.otf build/linux-x64/bin/Resources/Assets/
+          cp MineBackup/Assets/tool-manifest.json build/linux-x64/bin/Resources/
+          unzip -p build/package-inputs/linux-gcc-x64.zip 7zz >"$tool_dir/7zz"
+          chmod 0755 "$tool_dir/7zz"
 
-    - name: Get latest release
-      id: get_release
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const releases = await github.rest.repos.listReleases({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            per_page: 1,
-          });
-          if (!releases.data.length) throw 'No releases found';
-          const release = releases.data[0];
-          core.setOutput('upload_url', release.upload_url);
-          core.setOutput('release_id', release.id);
+      - name: Exercise automatic X11 and Wayland selection
+        run: bash packaging/linux/verify-desktop.sh build/linux-x64/bin/MineBackup all
 
-    - name: Delete existing asset if exists
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const releaseId = Number('${{ steps.get_release.outputs.release_id }}');
-          const assetName = 'MineBackup-linux.7z';
-          const assets = await github.rest.repos.listReleaseAssets({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: releaseId,
-            per_page: 100,
-          });
-          const target = assets.data.find(a => a.name === assetName);
-          if (target) {
-            await github.rest.repos.deleteReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              asset_id: target.id,
-            });
-            core.info(`Deleted existing asset: ${assetName}`);
-          } else {
-            core.info(`No existing asset found: ${assetName}`);
-          }
+      - name: Build deb and AppImage candidates
+        run: |
+          bash packaging/linux/build-packages.sh \
+            build/linux-x64/bin/MineBackup build/release \
+            build/package-inputs/linux-gcc-x64.zip \
+            build/package-inputs/linuxdeploy-x86_64.AppImage
+          test -f build/release/minebackup_1.16.0_amd64.deb
+          test -x build/release/MineBackup-1.16.0-x86_64.AppImage
 
-    - name: Upload artifact to latest release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: ./MineBackup-linux.7z
-        asset_name: MineBackup-linux.7z
-        asset_content_type: application/x-7z-compressed
+      - name: Verify package dependency declarations
+        run: |
+          dpkg-deb --contents build/release/minebackup_1.16.0_amd64.deb
+          dpkg-deb --field build/release/minebackup_1.16.0_amd64.deb Depends | tee build/release/deb-depends.txt
+          mkdir -p build/release/deb-extract
+          dpkg-deb --extract build/release/minebackup_1.16.0_amd64.deb build/release/deb-extract
+          ldd build/release/deb-extract/usr/bin/MineBackup | tee build/release/deb-ldd.txt
+          ! grep -F 'not found' build/release/deb-ldd.txt
+
+      - name: Create Linux cross-restore fixtures
+        run: |
+          mkdir -p build/cross-restore
+          unzip -p build/package-inputs/linux-gcc-x64.zip 7zz >build/cross-restore/7zz
+          chmod 0755 build/cross-restore/7zz
+          printf %s 'MineBackup 1.16 cross-restore fixture: linux' >build/cross-restore/linux.txt
+          build/cross-restore/7zz a -y -t7z -m0=lzma2 \
+            build/cross-restore/linux-lzma2.7z build/cross-restore/linux.txt
+          build/cross-restore/7zz a -y -t7z -m0=zstd \
+            build/cross-restore/linux-zstd.7z build/cross-restore/linux.txt
+
+      - name: Upload Linux release candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-linux-candidates
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/release/minebackup_1.16.0_amd64.deb
+            build/release/MineBackup-1.16.0-x86_64.AppImage
+            build/release/deb-depends.txt
+            build/release/deb-ldd.txt
+
+      - name: Upload Linux cross-restore fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-linux-restore-fixtures
+          path: build/cross-restore
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

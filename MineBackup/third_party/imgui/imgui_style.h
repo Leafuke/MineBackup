@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include "json.hpp"
 #include <fstream>
+#include <filesystem>
 #include <sstream>
 #include <iomanip>
 
@@ -805,11 +806,11 @@ namespace ImGuiTheme {
         }
     }
 
-    inline void ApplyCustom() {
+    inline void ApplyCustom(const std::filesystem::path& themePath) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
         try {
-            std::ifstream file("custom_theme.json");
+            std::ifstream file(themePath);
             if (file.is_open()) {
                 nlohmann::json j;
                 file >> j;
@@ -864,7 +865,7 @@ namespace ImGuiTheme {
         }
     }
 
-    inline void WriteDefaultCustomTheme() {
+    inline void WriteDefaultCustomTheme(const std::filesystem::path& themePath) {
         nlohmann::json j;
         ImGuiStyle& style = ImGui::GetStyle();
         j["window_rounding"] = style.WindowRounding;
@@ -897,7 +898,7 @@ namespace ImGuiTheme {
             };
         }
 
-        std::ofstream file("custom_theme.json");
+        std::ofstream file(themePath);
         if (file.is_open()) {
             file << j.dump(4);
             file.close();

@@ -3,26 +3,40 @@
 #include "i18n.h"
 #include "Console.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "Globals.h"
-#include "json.hpp"
+#include "ProcessRunner.h"
+#include "ExternalToolManager.h"
 #include <GLFW/glfw3.h>
 
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 
-#ifdef MB_HAVE_APPINDICATOR
+#ifdef MB_HAVE_GTK
 #include <gtk/gtk.h>
+static bool g_gtkInitialized = false;
+static bool EnsureGtkInitialized() {
+    if (g_gtkInitialized) return true;
+    int argc = 0;
+    char** argv = nullptr;
+    g_gtkInitialized = gtk_init_check(&argc, &argv) != FALSE;
+    return g_gtkInitialized;
+}
+#endif
+#ifdef MB_HAVE_APPINDICATOR
+#ifdef MB_USE_AYATANA_APPINDICATOR
+#include <libayatana-appindicator/app-indicator.h>
+#else
 #include <libappindicator/app-indicator.h>
 #endif
+#endif
 
-#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <cstdio>
 #include <algorithm>
-#include <thread>
 #include <system_error>
 #include <unistd.h>
 #include <cctype>
@@ -31,185 +45,13 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <cstring>
-#include <tuple>
-#include <cstdint>
 
 using namespace std;
 namespace fs = std::filesystem;
 
-// 根据当前语言从文本中提取对应部分
-// 文本格式: "中文内容\n---\n英文内容"
-static string ExtractLocalizedContent(const string& content) {
-	size_t sepPos = content.find("---");
-	if (sepPos == string::npos) {
-		return content;
-	}
-	
-	size_t beforeSep = sepPos;
-	while (beforeSep > 0 && (content[beforeSep - 1] == '\n' || content[beforeSep - 1] == '\r' || content[beforeSep - 1] == ' ')) {
-		beforeSep--;
-	}
-	
-	size_t afterSep = sepPos + 3;
-	while (afterSep < content.size() && (content[afterSep] == '\n' || content[afterSep] == '\r' || content[afterSep] == ' ' || content[afterSep] == '-')) {
-		afterSep++;
-	}
-	
-	string chineseContent = content.substr(0, beforeSep);
-	string englishContent = afterSep < content.size() ? content.substr(afterSep) : "";
-	
-	while (!chineseContent.empty() && (chineseContent.back() == '\n' || chineseContent.back() == '\r' || chineseContent.back() == ' ')) {
-		chineseContent.pop_back();
-	}
-	while (!englishContent.empty() && (englishContent.back() == '\n' || englishContent.back() == '\r' || englishContent.back() == ' ')) {
-		englishContent.pop_back();
-	}
-	
-	if (g_CurrentLang == "zh_CN") {
-		return chineseContent.empty() ? content : chineseContent;
-	} else {
-		return englishContent.empty() ? content : englishContent;
-	}
-}
-
-static string ToLowerAscii(const string& value) {
-    string lowered = value;
-    for (char& ch : lowered) {
-        ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
-    }
-    return lowered;
-}
-
-static string TrimAsciiWhitespace(const string& value) {
-    size_t begin = 0;
-    while (begin < value.size() && isspace(static_cast<unsigned char>(value[begin]))) {
-        ++begin;
-    }
-    size_t end = value.size();
-    while (end > begin && isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-    return value.substr(begin, end - begin);
-}
-
-static string NormalizeNoticeText(const string& value) {
-    string normalized;
-    normalized.reserve(value.size());
-    for (size_t i = 0; i < value.size(); ++i) {
-        if (value[i] == '\r') {
-            if (i + 1 < value.size() && value[i + 1] == '\n') {
-                ++i;
-            }
-            normalized.push_back('\n');
-        } else {
-            normalized.push_back(value[i]);
-        }
-    }
-    return TrimAsciiWhitespace(normalized);
-}
-
-static bool IsLikely404Body(const string& body) {
-    string lowered = ToLowerAscii(TrimAsciiWhitespace(body));
-    if (lowered.empty()) return true;
-    if (lowered == "404" || lowered == "404: not found" || lowered == "not found") return true;
-    if (lowered.find("<title>404") != string::npos) return true;
-    if (lowered.find("404 not found") != string::npos) return true;
-    if (lowered.find("error 404") != string::npos) return true;
-    return false;
-}
-
-static string BuildMirrorUrl(const string& directUrl) {
-    const string mirrorPrefix = "https://gh-proxy.org/";
-    if (directUrl.rfind(mirrorPrefix, 0) == 0) {
-        return directUrl;
-    }
-    return mirrorPrefix + directUrl;
-}
-
-static string BuildStableContentId(const string& text) {
-    uint64_t hash = 1469598103934665603ull;
-    for (unsigned char ch : text) {
-        hash ^= ch;
-        hash *= 1099511628211ull;
-    }
-    ostringstream oss;
-    oss << "notice-v1-" << hex << hash;
-    return oss.str();
-}
-
-static tuple<int, int, int, int> ParseVersionTuple(const string& ver) {
-    try {
-        size_t p1 = ver.find('.');
-        size_t p2 = (p1 != string::npos) ? ver.find('.', p1 + 1) : string::npos;
-        size_t p3 = ver.find('-');
-        if (p1 == string::npos || p2 == string::npos) return {0, 0, 0, 0};
-
-        int major = stoi(ver.substr(0, p1));
-        int minor = stoi(ver.substr(p1 + 1, p2 - p1 - 1));
-        int patch = (p3 == string::npos) ? stoi(ver.substr(p2 + 1)) : stoi(ver.substr(p2 + 1, p3 - p2 - 1));
-        int sp = 0;
-        if (p3 != string::npos) {
-            size_t spPos = ver.find("sp", p3);
-            if (spPos != string::npos) {
-                sp = stoi(ver.substr(spPos + 2));
-            }
-        }
-        return {major, minor, patch, sp};
-    } catch (...) {
-        return {0, 0, 0, 0};
-    }
-}
-
-static bool FetchHttpText(const string& url, string& outBody) {
-    outBody.clear();
-    string cmd = "curl -L -s --connect-timeout 8 --max-time 20 -w \"\\n%{http_code}\" -H 'User-Agent: MineBackup' '" + url + "' 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return false;
-
-    char buffer[4096];
-    string result;
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    pclose(pipe);
-
-    size_t splitPos = result.rfind('\n');
-    if (splitPos == string::npos) return false;
-    string statusText = TrimAsciiWhitespace(result.substr(splitPos + 1));
-    string body = result.substr(0, splitPos);
-    if (statusText != "200") return false;
-
-    body = TrimAsciiWhitespace(body);
-    if (body.empty()) return false;
-    outBody = body;
-    return true;
-}
-
-static bool FetchWithMirrorFallback(const string& directUrl, bool reject404Body, string& outBody) {
-    vector<string> candidates = {directUrl, BuildMirrorUrl(directUrl)};
-    for (const string& candidate : candidates) {
-        string body;
-        if (!FetchHttpText(candidate, body)) {
-            continue;
-        }
-        if (reject404Body && IsLikely404Body(body)) {
-            continue;
-        }
-        outBody = body;
-        return true;
-    }
-    return false;
-}
-
-static atomic<bool> g_trayThreadRunning(false);
-static thread g_trayThread;
-
 #ifdef MB_HAVE_APPINDICATOR
 static AppIndicator* g_indicator = nullptr;
-static gboolean TrayQuitIdle(gpointer) {
-    gtk_main_quit();
-    return G_SOURCE_REMOVE;
-}
+static GtkWidget* g_trayMenu = nullptr;
 
 static void TrayMenuOpen(GtkMenuItem*, gpointer) {
     g_appState.showMainApp = true;
@@ -226,12 +68,13 @@ static void TrayMenuExit(GtkMenuItem*, gpointer) {
 }
 #endif
 
-static atomic<bool> g_hotkeyThreadRunning(false);
-static thread g_hotkeyThread;
 static Display* g_hotkeyDisplay = nullptr;
 static Window g_hotkeyRoot = 0;
 static int g_backupKeycode = 0;
 static int g_restoreKeycode = 0;
+static Display* g_hotkeyErrorDisplay = nullptr;
+static bool g_hotkeyGrabFailed = false;
+static XErrorHandler g_previousXErrorHandler = nullptr;
 
 static int X11KeycodeFromAscii(Display* display, int key) {
     if (!display) return 0;
@@ -250,6 +93,15 @@ static void UngrabKeyWithMask(Display* display, Window root, int keycode, unsign
     XUngrabKey(display, keycode, mask, root);
 }
 
+static int HotkeyXErrorHandler(Display* display, XErrorEvent* event) {
+    (void)event;
+    if (display == g_hotkeyErrorDisplay) {
+        g_hotkeyGrabFailed = true;
+        return 0;
+    }
+    return g_previousXErrorHandler ? g_previousXErrorHandler(display, event) : 0;
+}
+
 static void ApplyGrabMasks(Display* display, Window root, int keycode, bool grab) {
     const unsigned int baseMask = ControlMask | Mod1Mask;
     const unsigned int masks[] = {
@@ -264,149 +116,64 @@ static void ApplyGrabMasks(Display* display, Window root, int keycode, bool grab
     }
 }
 
-static void HotkeyEventLoop() {
-    while (g_hotkeyThreadRunning) {
-        if (!g_hotkeyDisplay) break;
-        while (XPending(g_hotkeyDisplay)) {
-            XEvent ev;
-            XNextEvent(g_hotkeyDisplay, &ev);
-            if (ev.type == KeyPress) {
-                unsigned int state = ev.xkey.state;
-                if ((state & ControlMask) && (state & Mod1Mask)) {
-                    if (ev.xkey.keycode == g_backupKeycode) {
-                        TriggerHotkeyBackup();
-                    } else if (ev.xkey.keycode == g_restoreKeycode) {
-                        TriggerHotkeyRestore();
-                    }
-                }
-            }
-        }
-        this_thread::sleep_for(chrono::milliseconds(50));
-    }
-}
-
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
     (void)iconType;
     std::cout << "[" << title << "] " << message << std::endl;
 }
 
-void CheckForUpdatesThread() {
-    g_NewVersionAvailable = false;
-    g_LatestVersionStr.clear();
-    g_ReleaseNotes.clear();
-
-    const string apiUrl = "https://api.github.com/repos/Leafuke/MineBackup/releases/latest";
-    vector<string> candidates = {apiUrl, BuildMirrorUrl(apiUrl)};
-    for (const string& candidate : candidates) {
-        string body;
-        if (!FetchHttpText(candidate, body) || IsLikely404Body(body)) {
-            continue;
-        }
-
-        try {
-            nlohmann::json parsed = nlohmann::json::parse(body);
-            if (!parsed.contains("tag_name") || !parsed["tag_name"].is_string()) {
-                continue;
-            }
-
-            string version = parsed["tag_name"].get<string>();
-            if (!version.empty() && (version[0] == 'v' || version[0] == 'V')) {
-                version = version.substr(1);
-            }
-            if (version.empty()) {
-                continue;
-            }
-
-            if (ParseVersionTuple(version) > ParseVersionTuple(CURRENT_VERSION)) {
-                g_LatestVersionStr = "v" + version;
-                g_NewVersionAvailable = true;
-
-                string rawNotes;
-                if (parsed.contains("body") && parsed["body"].is_string()) {
-                    rawNotes = parsed["body"].get<string>();
-                }
-                for (size_t i = 0; i + 1 < rawNotes.size(); ++i) {
-                    if (rawNotes[i] == '#') {
-                        rawNotes[i] = ' ';
-                    } else if (rawNotes[i] == '\\' && rawNotes[i + 1] == 'n') {
-                        rawNotes[i] = '\n';
-                        rawNotes[i + 1] = ' ';
-                    } else if (rawNotes[i] == '\\') {
-                        rawNotes[i] = ' ';
-                        rawNotes[i + 1] = ' ';
-                    }
-                }
-                g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
-            }
-            break;
-        } catch (...) {
-            continue;
+static std::wstring RunNativeFileChooser(
+    int action, const char* title, const std::wstring& defaultFileName = {}) {
+#ifdef MB_HAVE_GTK
+    if (!EnsureGtkInitialized()) return L"";
+    auto* dialog = gtk_file_chooser_native_new(title, nullptr,
+        static_cast<GtkFileChooserAction>(action), "Select", "Cancel");
+    if (!dialog) return L"";
+    if (!defaultFileName.empty()) {
+        gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog),
+            wstring_to_utf8(defaultFileName).c_str());
+    }
+    const int response = gtk_native_dialog_run(GTK_NATIVE_DIALOG(dialog));
+    std::wstring selected;
+    if (response == GTK_RESPONSE_ACCEPT) {
+        char* filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        if (filename) {
+            selected = utf8_to_wstring(filename);
+            g_free(filename);
         }
     }
-    
-    g_UpdateCheckDone = true;
-}
-
-void CheckForNoticesThread() {
-    g_NewNoticeAvailable = false;
-    g_NoticeContent.clear();
-    g_NoticeUpdatedAt.clear();
-    
-    string langUrl = string("https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice") + ((g_CurrentLang == "zh_CN") ? "_zh" : "_en");
-    string fallbackUrl = "https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice";
-
-    string result;
-    bool fromFallback = false;
-    if (!FetchWithMirrorFallback(langUrl, true, result)) {
-        if (FetchWithMirrorFallback(fallbackUrl, true, result)) {
-            fromFallback = true;
-        }
-    }
-
-    if (!result.empty()) {
-        string shownNotice = fromFallback ? ExtractLocalizedContent(result) : result;
-        shownNotice = NormalizeNoticeText(shownNotice);
-        if (!shownNotice.empty() && !IsLikely404Body(shownNotice)) {
-            g_NoticeUpdatedAt = BuildStableContentId(shownNotice);
-            if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
-                g_NoticeContent = shownNotice;
-                g_NewNoticeAvailable = true;
-            }
-        }
-    }
-    
-    g_NoticeCheckDone = true;
-}
-
-static std::wstring RunZenity(const std::string& args) {
-    std::string cmd = "zenity --file-selection " + args + " 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return L"";
-    char buffer[4096] = {0};
-    std::string output;
-    if (fgets(buffer, sizeof(buffer), pipe)) {
-        output = buffer;
-    }
-    pclose(pipe);
-    if (output.empty()) return L"";
-    if (!output.empty() && output.back() == '\n') output.pop_back();
-    return utf8_to_wstring(output);
+    g_object_unref(dialog);
+    return selected;
+#else
+    (void)action;
+    (void)title;
+    (void)defaultFileName;
+    return L"";
+#endif
 }
 
 std::wstring SelectFileDialog() {
-    return RunZenity("--title=\"Select File\"");
+#ifdef MB_HAVE_GTK
+    return RunNativeFileChooser(GTK_FILE_CHOOSER_ACTION_OPEN, "Select File");
+#else
+    return L"";
+#endif
 }
 
 std::wstring SelectFolderDialog() {
-    return RunZenity("--directory --title=\"Select Folder\"");
+#ifdef MB_HAVE_GTK
+    return RunNativeFileChooser(GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Select Folder");
+#else
+    return L"";
+#endif
 }
 
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName, const std::wstring& filter) {
-    std::string args = "--save --confirm-overwrite --title=\"Save File\"";
-    if (!defaultFileName.empty()) {
-        args += " --filename=\"" + wstring_to_utf8(defaultFileName) + "\"";
-    }
-    return RunZenity(args);
+    (void)filter;
+#ifdef MB_HAVE_GTK
+    return RunNativeFileChooser(GTK_FILE_CHOOSER_ACTION_SAVE, "Save File", defaultFileName);
+#else
+    return L"";
+#endif
 }
 
 std::wstring GetDocumentsPath() {
@@ -467,88 +234,108 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
     return L"N/A";
 }
 
-void CreateTrayIcon() {
-    if (g_trayThreadRunning) return;
+bool CreateTrayIcon() {
 #ifdef MB_HAVE_APPINDICATOR
-    g_trayThreadRunning = true;
-    g_trayThread = thread([]() {
-        int argc = 0;
-        char** argv = nullptr;
-        gtk_init(&argc, &argv);
-        g_indicator = app_indicator_new("minebackup", "applications-system", APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
-        app_indicator_set_status(g_indicator, APP_INDICATOR_STATUS_ACTIVE);
+    if (g_indicator) return true;
+    if (!EnsureGtkInitialized()) return false;
+    g_indicator = app_indicator_new("minebackup", "minebackup",
+        APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+    if (!g_indicator) return false;
+    app_indicator_set_status(g_indicator, APP_INDICATOR_STATUS_ACTIVE);
 
-        GtkWidget* menu = gtk_menu_new();
-        GtkWidget* open_item = gtk_menu_item_new_with_label(L("OPEN"));
-        GtkWidget* exit_item = gtk_menu_item_new_with_label(L("EXIT"));
+    g_trayMenu = gtk_menu_new();
+    GtkWidget* open_item = gtk_menu_item_new_with_label(L("OPEN"));
+    GtkWidget* exit_item = gtk_menu_item_new_with_label(L("EXIT"));
 
-        g_signal_connect(open_item, "activate", G_CALLBACK(TrayMenuOpen), nullptr);
-        g_signal_connect(exit_item, "activate", G_CALLBACK(TrayMenuExit), nullptr);
+    g_signal_connect(open_item, "activate", G_CALLBACK(TrayMenuOpen), nullptr);
+    g_signal_connect(exit_item, "activate", G_CALLBACK(TrayMenuExit), nullptr);
 
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), open_item);
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), exit_item);
-        gtk_widget_show_all(menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(g_trayMenu), open_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(g_trayMenu), exit_item);
+    gtk_widget_show_all(g_trayMenu);
 
-        app_indicator_set_menu(g_indicator, GTK_MENU(menu));
-        gtk_main();
-        g_indicator = nullptr;
-    });
+    app_indicator_set_menu(g_indicator, GTK_MENU(g_trayMenu));
+    return true;
 #else
-    if (!isatty(STDIN_FILENO)) return;
-    g_trayThreadRunning = true;
-    g_trayThread = thread([]() {
-        while (g_trayThreadRunning) {
-            fd_set set;
-            FD_ZERO(&set);
-            FD_SET(STDIN_FILENO, &set);
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 200000;
-            int res = select(STDIN_FILENO + 1, &set, nullptr, nullptr, &tv);
-            if (!g_trayThreadRunning) break;
-            if (res > 0 && FD_ISSET(STDIN_FILENO, &set)) {
-                char buf[64];
-                (void)read(STDIN_FILENO, buf, sizeof(buf));
-                g_appState.showMainApp = true;
-                if (wc) {
-                    glfwShowWindow(wc);
-                    glfwFocusWindow(wc);
-                    glfwPostEmptyEvent();
-                }
-            }
-        }
-    });
+    return false;
 #endif
 }
 
 void RemoveTrayIcon() {
-    g_trayThreadRunning = false;
 #ifdef MB_HAVE_APPINDICATOR
     if (g_indicator) {
-        g_idle_add(TrayQuitIdle, nullptr);
+        app_indicator_set_status(g_indicator, APP_INDICATOR_STATUS_PASSIVE);
+        g_clear_object(&g_indicator);
+    }
+    if (g_trayMenu) {
+        gtk_widget_destroy(g_trayMenu);
+        g_trayMenu = nullptr;
     }
 #endif
-    if (g_trayThread.joinable()) {
-        g_trayThread.join();
+}
+
+void PumpLinuxDesktopEvents() {
+#ifdef MB_HAVE_GTK
+    GMainContext* context = g_main_context_default();
+    while (g_main_context_pending(context)) {
+        g_main_context_iteration(context, FALSE);
+    }
+#endif
+    // The dedicated hotkey Display is opened, read and closed exclusively by
+    // the GLFW main thread. This avoids relying on process-wide XInitThreads.
+    while (g_hotkeyDisplay && XPending(g_hotkeyDisplay)) {
+        XEvent event;
+        XNextEvent(g_hotkeyDisplay, &event);
+        if (event.type != KeyPress) continue;
+        const unsigned int state = event.xkey.state;
+        if ((state & ControlMask) == 0 || (state & Mod1Mask) == 0) continue;
+        if (event.xkey.keycode == g_backupKeycode) TriggerHotkeyBackup();
+        else if (event.xkey.keycode == g_restoreKeycode) TriggerHotkeyRestore();
     }
 }
 
-void RegisterHotkeys(int hotkeyId, int key) {
+static bool GrabKeyChecked(Display* display, Window root, int keycode) {
+    // Drain older errors before installing a short-lived process-wide handler;
+    // XSync below guarantees all errors from these grabs are observed here.
+    XSync(display, False);
+    g_hotkeyErrorDisplay = display;
+    g_hotkeyGrabFailed = false;
+    g_previousXErrorHandler = XSetErrorHandler(HotkeyXErrorHandler);
+    ApplyGrabMasks(display, root, keycode, true);
+    XSync(display, False);
+    XSetErrorHandler(g_previousXErrorHandler);
+    g_previousXErrorHandler = nullptr;
+    g_hotkeyErrorDisplay = nullptr;
+    if (!g_hotkeyGrabFailed) return true;
+
+    ApplyGrabMasks(display, root, keycode, false);
+    XSync(display, False);
+    return false;
+}
+
+static void CloseHotkeyDisplayIfUnused() {
+    if (!g_hotkeyDisplay || g_backupKeycode != 0 || g_restoreKeycode != 0) return;
+    XCloseDisplay(g_hotkeyDisplay);
+    g_hotkeyDisplay = nullptr;
+    g_hotkeyRoot = 0;
+}
+
+bool RegisterHotkeys(int hotkeyId, int key) {
     if (!g_hotkeyDisplay) {
         g_hotkeyDisplay = XOpenDisplay(nullptr);
-        if (!g_hotkeyDisplay) return;
+        if (!g_hotkeyDisplay) return false;
         g_hotkeyRoot = DefaultRootWindow(g_hotkeyDisplay);
     }
-    if (!g_hotkeyThreadRunning) {
-        g_hotkeyThreadRunning = true;
-        g_hotkeyThread = thread(HotkeyEventLoop);
-    }
     int keycode = X11KeycodeFromAscii(g_hotkeyDisplay, key);
-    if (keycode == 0) return;
+    if (keycode == 0
+        || (hotkeyId != MINEBACKUP_HOTKEY_ID && hotkeyId != MINERESTORE_HOTKEY_ID)
+        || !GrabKeyChecked(g_hotkeyDisplay, g_hotkeyRoot, keycode)) {
+        CloseHotkeyDisplayIfUnused();
+        return false;
+    }
     if (hotkeyId == MINEBACKUP_HOTKEY_ID) g_backupKeycode = keycode;
-    if (hotkeyId == MINERESTORE_HOTKEY_ID) g_restoreKeycode = keycode;
-    ApplyGrabMasks(g_hotkeyDisplay, g_hotkeyRoot, keycode, true);
-    XSync(g_hotkeyDisplay, False);
+    else g_restoreKeycode = keycode;
+    return true;
 }
 
 void UnregisterHotkeys(int hotkeyId) {
@@ -566,13 +353,7 @@ void UnregisterHotkeys(int hotkeyId) {
         ApplyGrabMasks(g_hotkeyDisplay, g_hotkeyRoot, keycode, false);
         XSync(g_hotkeyDisplay, False);
     }
-    if (g_backupKeycode == 0 && g_restoreKeycode == 0) {
-        g_hotkeyThreadRunning = false;
-        if (g_hotkeyThread.joinable()) g_hotkeyThread.join();
-        XCloseDisplay(g_hotkeyDisplay);
-        g_hotkeyDisplay = nullptr;
-        g_hotkeyRoot = 0;
-    }
+    CloseHotkeyDisplayIfUnused();
 }
 
 void GetUserDefaultUILanguageWin() {
@@ -594,16 +375,18 @@ std::string GetRegistryValue(const std::string& key, const std::string& valueNam
 
 void OpenLinkInBrowser(const std::wstring& url) {
     if (url.empty()) return;
-    std::string u8 = wstring_to_utf8(url);
-    std::string cmd = "xdg-open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    ProcessSpec spec;
+    spec.executable = L"/usr/bin/xdg-open";
+    spec.arguments = {url};
+    ProcessRunner::Run(spec);
 }
 
 void OpenFolder(const std::wstring& folderPath) {
     if (folderPath.empty()) return;
-    std::string u8 = wstring_to_utf8(folderPath);
-    std::string cmd = "xdg-open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    ProcessSpec spec;
+    spec.executable = L"/usr/bin/xdg-open";
+    spec.arguments = {folderPath};
+    ProcessRunner::Run(spec);
 }
 
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus) {
@@ -613,9 +396,6 @@ void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus
 void ReStartApplication() {
 }
 
-void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray) {
-}
-
 void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
 }
 
@@ -623,57 +403,45 @@ void EnableDarkModeWin(bool enable) {
 }
 
 bool Extract7zToTempFile(std::wstring& extractedPath) {
-    const char* candidates[] = {"/usr/bin/7z", "/usr/local/bin/7z", nullptr};
-    for (const char** p = candidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool CopyBundledFontToTemp(const fs::path& source, std::wstring& extractedPath) {
-    std::error_code ec;
-    if (!fs::exists(source, ec)) return false;
-
-    fs::path tempDir = fs::temp_directory_path(ec);
-    if (ec) {
-        extractedPath = source.wstring();
-        return true;
-    }
-
-    fs::path dest = tempDir / source.filename();
-    fs::copy_file(source, dest, fs::copy_options::overwrite_existing, ec);
-    if (!ec && fs::exists(dest, ec)) {
-        extractedPath = dest.wstring();
-        return true;
-    }
-
-    extractedPath = source.wstring();
-    return true;
+	const auto resolved = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
+	if (!resolved.available) return false;
+	extractedPath = resolved.executable.wstring();
+	return true;
 }
 
 bool ExtractFontToTempFile(std::wstring& extractedPath) {
-    auto exeDir = []() -> fs::path {
-        char buf[4096];
-        ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (len <= 0) return fs::current_path();
-        buf[len] = '\0';
-        return fs::path(buf).parent_path();
-    }();
-
+	const auto resourcesRoot = GetAppPaths().resourcesRoot;
     const fs::path bundledCandidates[] = {
-        exeDir / "fontawesome-sp.otf",
-        exeDir / "fa-solid-900.ttf",
-        exeDir / "fa-regular-400.ttf",
-        exeDir / "Assets" / "fontawesome-sp.otf"
+		resourcesRoot / "fontawesome-sp.otf",
+		resourcesRoot / "fa-solid-900.ttf",
+		resourcesRoot / "fa-regular-400.ttf",
+		resourcesRoot / "Assets" / "fontawesome-sp.otf"
     };
-    for (const auto& p : bundledCandidates) {
-        if (CopyBundledFontToTemp(p, extractedPath)) return true;
-    }
+	for (const auto& path : bundledCandidates) {
+		std::error_code error;
+		if (fs::is_regular_file(path, error)) {
+			extractedPath = path.wstring();
+			return true;
+		}
+	}
 
     return false;
+}
+
+bool ConfirmMessageBox(const std::string& title, const std::string& message) {
+#ifdef MB_HAVE_GTK
+    if (!gtk_init_check(nullptr, nullptr)) return false;
+    GtkWidget* dialog = gtk_message_dialog_new(nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+        GTK_BUTTONS_YES_NO, "%s", message.c_str());
+    gtk_window_set_title(GTK_WINDOW(dialog), title.c_str());
+    const bool accepted = gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_YES;
+    gtk_widget_destroy(dialog);
+    while (gtk_events_pending()) gtk_main_iteration();
+    return accepted;
+#else
+    std::cout << "[" << title << "] " << message << std::endl;
+    return false;
+#endif
 }
 
 bool IsFileLocked(const std::wstring& path) {
@@ -723,41 +491,4 @@ bool IsFileLocked(const std::wstring& path) {
     }
     close(fd);
     return false;
-}
-
-bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory) {
-    (void)useLowPriority;
-    console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
-
-    std::error_code ec;
-    fs::path oldCwd = fs::current_path(ec);
-    if (!workingDirectory.empty() && fs::exists(workingDirectory)) {
-        fs::current_path(workingDirectory, ec);
-    }
-
-    std::string cmd = wstring_to_utf8(command);
-    int ret = std::system(cmd.c_str());
-
-    if (!workingDirectory.empty()) {
-        fs::current_path(oldCwd, ec);
-    }
-
-    if (ret == 0) {
-        console.AddLog(L("LOG_SUCCESS_CMD"));
-        return true;
-    }
-    console.AddLog(L("LOG_ERROR_CMD_FAILED"), ret);
-    return false;
-}
-
-bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory) {
-    (void)timeoutSeconds;
-    timedOut = false;
-    errorMessage.clear();
-    bool success = RunCommandInBackground(command, console, useLowPriority, workingDirectory);
-    exitCode = success ? 0 : 1;
-    if (!success) {
-        errorMessage = "Command failed.";
-    }
-    return success;
 }

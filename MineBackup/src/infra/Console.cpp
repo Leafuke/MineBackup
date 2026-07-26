@@ -4,6 +4,7 @@
 #include "i18n.h"
 #include "ConfigManager.h"
 #include "BackupManager.h"
+#include "TaskCoordinator.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -133,7 +134,8 @@ string ProcessCommand(const string& commandStr, Console* console) {
 	else if (command == "BACKUP") {
 		int config_idx, world_idx;
 		string comment_part;
-		if (!(ss >> config_idx >> world_idx) || g_appState.configs.find(config_idx) == g_appState.configs.end() || world_idx >= g_appState.configs[config_idx].worlds.size()) {
+		if (!(ss >> config_idx >> world_idx) || g_appState.configs.find(config_idx) == g_appState.configs.end()
+			|| world_idx < 0 || world_idx >= static_cast<int>(g_appState.configs[config_idx].worlds.size())) {
 			BroadcastEvent("ERROR:Invalid arguments. Usage: BACKUP <config_idx> <world_idx> [comment]");
 			return "ERROR:Invalid arguments. Usage: BACKUP <config_idx> <world_idx> [comment]";
 		}
@@ -150,12 +152,11 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		// 释放锁后再启动后台线程，避免新线程与当前线程争用同一互斥锁
 		lock.unlock();
 
-		// 在后台线程中执行备份，避免阻塞命令处理器
-		thread([=]() {
-			lock_guard<mutex> thread_lock(g_appState.configsMutex);
-			if (g_appState.configs.count(config_idx)) // 确保配置仍然存在
-				DoBackup(world, *console, utf8_to_wstring(comment_part));
-			}).detach();
+		TaskCoordinator::Instance().Submit(L"KnotLink backup",
+			{ TaskCoordinator::WorldResourceKey(world.config.configId, world.path) },
+			[world, console, comment = utf8_to_wstring(comment_part)](stop_token) {
+				DoBackup(world, *console, comment);
+			});
 		return "OK:Backup started for world '" + worldNameUtf8 + "'";
 	}
 	else if (command == "RESTORE") {
@@ -175,6 +176,8 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		}
 
 		string worldNameUtf8 = wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first);
+		const Config configCopy = g_appState.configs[config_idx];
+		const wstring worldName = configCopy.worlds[world_idx].first;
 
 		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
 		BroadcastEvent("event=restore_started;config=" + to_string(config_idx) + ";world=" + worldNameUtf8);
@@ -182,13 +185,11 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		// 释放锁后再启动后台线程
 		lock.unlock();
 
-		// In a background thread to avoid blocking
-		thread([=]() {
-			lock_guard<mutex> thread_lock(g_appState.configsMutex);
-			if (g_appState.configs.count(config_idx)) {
-				DoRestore(g_appState.configs[config_idx], g_appState.configs[config_idx].worlds[world_idx].first, utf8_to_wstring(backup_file), *console, 0);
-			}
-			}).detach();
+		TaskCoordinator::Instance().Submit(L"KnotLink restore",
+			{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, worldName)) },
+			[configCopy, worldName, backupFile = utf8_to_wstring(backup_file), console](stop_token) {
+				DoRestore(configCopy, worldName, backupFile, *console, 0);
+			});
 
 		return "OK:Restore started for world '" + worldNameUtf8 + "'";
 	}
@@ -204,18 +205,17 @@ string ProcessCommand(const string& commandStr, Console* console) {
 
 		BroadcastEvent("event=mods_backup_started;config=" + to_string(config_idx));
 		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
+		const Config configCopy = g_appState.configs[config_idx];
+		const filesystem::path modsPath = filesystem::path(configCopy.saveRoot).parent_path() / "mods";
 
 		// 释放锁后再启动后台线程
 		lock.unlock();
 
-		thread([=]() {
-			lock_guard<mutex> thread_lock(g_appState.configsMutex);
-			if (g_appState.configs.count(config_idx)) {
-				filesystem::path tempPath = g_appState.configs[config_idx].saveRoot;
-				filesystem::path modsPath = tempPath.parent_path() / "mods";
-				DoOthersBackup(g_appState.configs[config_idx], modsPath, utf8_to_wstring(comment_part), *console);
-			}
-			}).detach();
+		TaskCoordinator::Instance().Submit(L"KnotLink mods backup",
+			{ TaskCoordinator::WorldResourceKey(configCopy.configId, modsPath) },
+			[configCopy, modsPath, console, comment = utf8_to_wstring(comment_part)](stop_token) {
+				DoOthersBackup(configCopy, modsPath, comment, *console);
+			});
 		return "OK:Mods backup started.";
 	}
 	else if (command == "BACKUP_CURRENT") { // 直接调用备份正在运行的世界的函数
@@ -263,12 +263,15 @@ string ProcessCommand(const string& commandStr, Console* console) {
 
 		// 从全局Map中获取或创建一个新的任务实例
 		AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
-		task.stop_flag = false; // 重置停止标记
-
-		// 创建新线程，并传入所有必要的参数。
-		// 使用 std::ref 将 stop_flag 的引用传递给线程，以便能远程控制其停止。
-		task.worker = thread(AutoBackupThreadFunction, config_idx, world_idx, interval_minutes, console, ref(task.stop_flag));
-		// 注意：不再使用 detach()，以便程序退出时可以正确等待线程结束
+		task.taskName = TaskCoordinator::AutoBackupTaskName(config_idx, world_idx);
+		if (!TaskCoordinator::Instance().Submit(task.taskName, {},
+			[taskName = task.taskName, config_idx, world_idx, interval_minutes, console](stop_token token) {
+				AutoBackupThreadFunction(config_idx, world_idx, interval_minutes, console, token);
+				TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
+			})) {
+			g_appState.g_active_auto_backups.erase(taskKey);
+			return "ERROR:Application is shutting down.";
+		}
 
 		// 构造成功信息并广播事件
 		std::string success_msg = "OK:Auto-backup started for world '" + wstring_to_utf8(world_name) + "' with an interval of " + std::to_string(interval_minutes) + " minutes.";
@@ -292,7 +295,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		// 释放 configsMutex 后再获取 task_mutex，避免持有 configsMutex 时 join 工作线程导致死锁
 		lock.unlock();
 
-		std::thread workerToJoin;
+		wstring taskName;
 		{
 			// 使用互斥锁保护访问
 			std::lock_guard<std::mutex> task_lock(g_appState.task_mutex);
@@ -307,14 +310,10 @@ string ProcessCommand(const string& commandStr, Console* console) {
 
 			// 发送停止信号并摘出线程句柄，避免持锁 join 导致死锁
 			console->AddLog("[KnotLink] Received command to stop auto-backup for world '%s'.", wstring_to_utf8(world_name).c_str());
-			it->second.stop_flag = true;
-			workerToJoin = std::move(it->second.worker);
+			taskName = it->second.taskName;
 			g_appState.g_active_auto_backups.erase(it);
 		}
-
-		if (workerToJoin.joinable()) {
-			workerToJoin.join();
-		}
+		TaskCoordinator::Instance().RequestStop(taskName);
 
 		// 构造成功信息并广播事件
 		std::string success_msg = "OK:Auto-backup task for world '" + wstring_to_utf8(world_name) + "' has been stopped.";
@@ -427,27 +426,25 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		}
 
 		string worldNameUtf8 = wstring_to_utf8(g_appState.configs[config_idx].worlds[world_idx].first);
+		const Config configCopy = g_appState.configs[config_idx];
+		const wstring worldName = configCopy.worlds[world_idx].first;
 		console->AddLog(L("KNOTLINK_COMMAND_SUCCESS"), command.c_str());
 		BroadcastEvent("event=we_snapshot_completed;config=" + to_string(config_idx) + ";world=" + worldNameUtf8);
 
 		// 释放锁后再启动后台线程
 		lock.unlock();
 
-		thread([=]() {
-			lock_guard<mutex> thread_lock(g_appState.configsMutex);
-			if (g_appState.configs.count(config_idx)) {
-				AddBackupToWESnapshots(g_appState.configs[config_idx], g_appState.configs[config_idx].worlds[world_idx].first, utf8_to_wstring(backup_file), *console);
-			}
-			}).detach();
+		TaskCoordinator::Instance().Submit(L"KnotLink WorldEdit snapshot",
+			{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, worldName)) },
+			[configCopy, worldName, backupFile = utf8_to_wstring(backup_file), console](stop_token) {
+				AddBackupToWESnapshots(configCopy, worldName, backupFile, *console);
+			});
 
 		return "OK:Snapshot completed for world '" + worldNameUtf8 + "'";
 	}
 	else if (command == "RESTORE_CURRENT_LATEST") {
 		lock.unlock();
-		thread([]() {
-			std::this_thread::sleep_for(std::chrono::milliseconds(50));
-			TriggerHotkeyRestore("");
-			}).detach();
+		TriggerHotkeyRestore("");
 		return "OK:Restore Started";
 	}
 	else if (command == "RESTORE_CURRENT") {
@@ -460,10 +457,7 @@ string ProcessCommand(const string& commandStr, Console* console) {
 		}
 
 		lock.unlock();
-		thread([backup_file]() {
-			std::this_thread::sleep_for(std::chrono::milliseconds(50));
-			TriggerHotkeyRestore(backup_file);
-			}).detach();
+		TriggerHotkeyRestore(backup_file);
 		return "OK:Restore Started";
 	}
 	else if (command == "SEND") {

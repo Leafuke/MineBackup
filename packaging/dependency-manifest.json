@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "mineBackupVersion": "1.16.0",
+  "dependencies": [
+    {
+      "name": "GLFW",
+      "version": "3.4",
+      "source": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip",
+      "sha256": "b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9",
+      "distribution": "statically linked"
+    },
+    {
+      "name": "7-Zip ZS",
+      "version": "26.01-v1.5.7-R1",
+      "source": "https://github.com/mcmilk/7-Zip-zstd/releases/tag/v26.01-v1.5.7-R1",
+      "sourceCommit": "d8d651b72a6a85353a23d3f19e0fd2d96c0f36b4",
+      "artifacts": {
+        "windowsInstaller": "337eb2af535d1ae752a9b78bfa2c51261c395e5827bd57e8dc0eb93685c588ed",
+        "windowsEmbedded7za": "051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867",
+        "linuxGccX64Zip": "3cfca42ab44519822d5299cb92f823633209dd762d903ade3fde19585c56915a"
+      },
+      "distribution": "bundled command-line executable"
+    },
+    {
+      "name": "rclone",
+      "version": "1.74.4",
+      "source": "https://downloads.rclone.org/v1.74.4/",
+      "artifacts": {
+        "windows-x64": "ef097ef9de37a57feb7d9f9c7afb34148ad3c65be8025f1d8f7f521554a701ea",
+        "linux-x64": "fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d",
+        "macos-arm64": "c2100e2d4a4b3be04c55cd45380cafe7647e1ad772bb055f52f00876ed701167"
+      },
+      "distribution": "downloaded only after explicit user confirmation; not in application packages"
+    },
+    {
+      "name": "linuxdeploy",
+      "version": "1-alpha-20251107-1",
+      "source": "https://github.com/linuxdeploy/linuxdeploy/releases/tag/1-alpha-20251107-1",
+      "sha256": "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d",
+      "distribution": "build-time only"
+    }
+  ]
+}

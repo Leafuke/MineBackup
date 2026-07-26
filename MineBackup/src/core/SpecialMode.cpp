@@ -10,6 +10,9 @@
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
+#include "ProcessRunner.h"
+#include "TaskCoordinator.h"
 
 #ifdef _WIN32
 #include <conio.h>
@@ -23,6 +26,34 @@ inline int _getch_special() { return std::getchar(); }
 #include <fstream>
 
 using namespace std;
+
+namespace {
+bool WaitForSpecialTask(std::stop_token stopToken, const atomic<bool>& shouldExit, chrono::milliseconds duration) {
+	const auto deadline = chrono::steady_clock::now() + duration;
+	while (!stopToken.stop_requested() && !shouldExit && chrono::steady_clock::now() < deadline) {
+		this_thread::sleep_for(chrono::milliseconds(100));
+	}
+	return stopToken.stop_requested() || shouldExit;
+}
+
+bool RunSpecialBackup(const MyFolder& world, Console& output) {
+	return TaskCoordinator::Instance().SubmitAndWait(L"special-mode backup",
+		{ TaskCoordinator::WorldResourceKey(world.config.configId, world.path) },
+		[world, &output](stop_token) { DoBackup(world, output, L"SpecialMode"); });
+}
+
+void RunUserShellTask(const wstring& command, const filesystem::path& workingDirectory, Console& output) {
+	ShellTaskSpec spec;
+	spec.command = command;
+	spec.workingDirectory = workingDirectory;
+	const auto result = ProcessRunner::RunShellTask(spec);
+	if (!result.standardOutput.empty()) output.AddLog("%s", result.standardOutput.c_str());
+	if (!result.standardError.empty()) output.AddLog("%s", result.standardError.c_str());
+	if (result.status != ProcessStatus::Succeeded) {
+		output.AddLog("[Error] Shell task failed with exit code %d.", result.exitCode);
+	}
+}
+}
 
 // 前向声明
 extern Console console;
@@ -53,7 +84,7 @@ void RunSpecialMode(int configId) {
 
 	// 设置控制台标题和头部信息
 #ifdef _WIN32
-	system(("title MineBackup - Automated Task: " + utf8_to_gbk(spCfg.name)).c_str());
+	SetConsoleTitleW((L"MineBackup - Automated Task: " + utf8_to_wstring(spCfg.name)).c_str());
 #endif
 	ConsoleLog(&console, L("AUTOMATED_TASK_RUNNER_HEADER"));
 	ConsoleLog(&console, L("EXECUTING_CONFIG_NAME"), (spCfg.name.c_str()));
@@ -64,17 +95,13 @@ void RunSpecialMode(int configId) {
 	}
 
 	atomic<bool> shouldExit = false;
-	vector<thread> taskThreads;
+	vector<jthread> taskThreads;
 	static Console dummyConsole; // 用于传递给 DoBackup
 
 	// --- 1. 执行旧版一次性命令（向后兼容）---
 	for (const auto& cmd : spCfg.commands) {
 		ConsoleLog(&console, L("LOG_CMD_EXECUTING"), wstring_to_utf8(cmd).c_str());
-#ifdef _WIN32
-		system(utf8_to_gbk(wstring_to_utf8(cmd)).c_str());
-#else
-		system(wstring_to_utf8(cmd).c_str());
-#endif
+		RunUserShellTask(cmd, {}, console);
 	}
 
 	// --- 2. 如果有新版统一任务，使用新版系统 ---
@@ -87,7 +114,7 @@ void RunSpecialMode(int configId) {
 			[](const UnifiedTaskV2& a, const UnifiedTaskV2& b) { return a.id < b.id; });
 
 		// 跟踪并行任务
-		vector<thread> parallelThreads;
+		vector<jthread> parallelThreads;
 
 		for (size_t i = 0; i < sortedTasks.size() && !shouldExit; ++i) {
 			const UnifiedTaskV2& task = sortedTasks[i];
@@ -98,7 +125,7 @@ void RunSpecialMode(int configId) {
 			}
 
 			// 创建任务执行函数
-			auto executeTask = [&spCfg, &shouldExit](const UnifiedTaskV2& task) {
+			auto executeTask = [&spCfg, &shouldExit](const UnifiedTaskV2& task, stop_token stopToken = {}) {
 				ConsoleLog(&console, L("TASK_EXECUTING"), task.name.c_str());
 
 				switch (task.type) {
@@ -128,18 +155,17 @@ void RunSpecialMode(int configId) {
 						if (task.triggerMode == TaskTrigger::Once) {
 							ConsoleLog(&console, L("TASK_QUEUE_ONETIME_BACKUP"), wstring_to_utf8(worldData.first).c_str());
 							g_appState.realConfigIndex = task.configIndex;
-							DoBackup(world, console, L"SpecialMode");
+							RunSpecialBackup(world, console);
 							ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(worldData.first).c_str());
 						}
 						else if (task.triggerMode == TaskTrigger::Interval) {
 							// 间隔备份：在循环中执行
 							ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-							while (!shouldExit) {
-								this_thread::sleep_for(chrono::minutes(task.intervalMinutes));
-								if (shouldExit) break;
+							while (!shouldExit && !stopToken.stop_requested()) {
+								if (WaitForSpecialTask(stopToken, shouldExit, chrono::minutes(task.intervalMinutes))) break;
 								ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
 								g_appState.realConfigIndex = task.configIndex;
-								DoBackup(world, console, L"SpecialMode");
+								RunSpecialBackup(world, console);
 								ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(world.name).c_str());
 							}
 							ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
@@ -147,7 +173,7 @@ void RunSpecialMode(int configId) {
 						else if (task.triggerMode == TaskTrigger::Scheduled) {
 							// 计划备份
 							ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-							while (!shouldExit) {
+							while (!shouldExit && !stopToken.stop_requested()) {
 								time_t now_t = time(nullptr);
 								tm local_tm;
 								localtime_s(&local_tm, &now_t);
@@ -174,15 +200,15 @@ void RunSpecialMode(int configId) {
 								time_buf2[strlen(time_buf2) - 1] = '\0';
 								ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), wstring_to_utf8(world.name).c_str(), time_buf2);
 
-								while (time(nullptr) < next_run_t && !shouldExit) {
+								while (time(nullptr) < next_run_t && !shouldExit && !stopToken.stop_requested()) {
 									this_thread::sleep_for(chrono::seconds(1));
 								}
 
-								if (shouldExit) break;
+								if (shouldExit || stopToken.stop_requested()) break;
 
 								ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
 								g_appState.realConfigIndex = task.configIndex;
-								DoBackup(world, console, L"SpecialMode");
+								RunSpecialBackup(world, console);
 								ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(world.name).c_str());
 							}
 							ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
@@ -192,17 +218,7 @@ void RunSpecialMode(int configId) {
 
 					case TaskTypeV2::Command: {
 						ConsoleLog(&console, L("LOG_CMD_EXECUTING"), wstring_to_utf8(task.command).c_str());
-#ifdef _WIN32
-						wstring workDir = task.workingDirectory.empty() ? L"." : task.workingDirectory;
-						RunCommandInBackground(task.command, console, false, workDir);
-#else
-						if (!task.workingDirectory.empty()) {
-							string cmdWithCd = "cd \"" + wstring_to_utf8(task.workingDirectory) + "\" && " + wstring_to_utf8(task.command);
-							system(cmdWithCd.c_str());
-						} else {
-							system(wstring_to_utf8(task.command).c_str());
-						}
-#endif
+						RunUserShellTask(task.command, task.workingDirectory, console);
 						ConsoleLog(&console, L("TASK_COMMAND_COMPLETED"), task.name.c_str());
 						break;
 					}
@@ -218,15 +234,16 @@ void RunSpecialMode(int configId) {
 			bool needsBackgroundThread = (task.type == TaskTypeV2::Backup && 
 				(task.triggerMode == TaskTrigger::Interval || task.triggerMode == TaskTrigger::Scheduled));
 
-			if (task.executionMode == TaskExecMode::Parallel || needsBackgroundThread) {
-				// 并行执行或需要后台线程
-				taskThreads.emplace_back([task, executeTask]() {
-					executeTask(task);
+			if (needsBackgroundThread) {
+				// 周期和计划任务必须保持在可取消的后台线程中。
+				taskThreads.emplace_back([task, executeTask](stop_token stopToken) {
+					executeTask(task, stopToken);
 				});
-				// 如果是并行一次性任务，短暂等待以确保启动
-				if (task.executionMode == TaskExecMode::Parallel && !needsBackgroundThread) {
-					this_thread::sleep_for(chrono::milliseconds(50));
-				}
+			}
+			else if (task.executionMode == TaskExecMode::Parallel) {
+				parallelThreads.emplace_back([task, executeTask](stop_token stopToken) {
+					executeTask(task, stopToken);
+				});
 			} else {
 				// 顺序执行：等待之前的并行任务完成
 				for (auto& t : parallelThreads) {
@@ -270,20 +287,20 @@ void RunSpecialMode(int configId) {
 			if (task.backupType == 0) { // 类型 0: 一次性备份
 				ConsoleLog(&console, L("TASK_QUEUE_ONETIME_BACKUP"), wstring_to_utf8(worldData.first).c_str());
 				g_appState.realConfigIndex = task.configIndex;
-				DoBackup(world, dummyConsole, L"SpecialMode");
+				RunSpecialBackup(world, dummyConsole);
 				ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(worldData.first).c_str());
 			}
 			else { // 类型 1 (间隔) 和 2 (计划) 在后台线程运行
-				taskThreads.emplace_back([task, world, &shouldExit]() {
+				taskThreads.emplace_back([task, world, &shouldExit](stop_token stopToken) {
 					ConsoleLog(&console, L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
 
-					while (!shouldExit) {
+					while (!shouldExit && !stopToken.stop_requested()) {
 						time_t next_run_t = 0;
 						if (task.backupType == 1) { // 间隔备份
-							this_thread::sleep_for(chrono::minutes(task.intervalMinutes));
+							if (WaitForSpecialTask(stopToken, shouldExit, chrono::minutes(task.intervalMinutes))) break;
 						}
 						else { // 计划备份
-							while (true) {
+							while (!stopToken.stop_requested() && !shouldExit) {
 								time_t now_t = time(nullptr);
 								tm local_tm;
 								localtime_s(&local_tm, &now_t);
@@ -306,24 +323,25 @@ void RunSpecialMode(int configId) {
 								}
 
 								if (next_run_t > now_t) break;
-								this_thread::sleep_for(chrono::seconds(1));
+								this_thread::sleep_for(chrono::milliseconds(100));
 							}
+							if (stopToken.stop_requested() || shouldExit) break;
 
 							char time_buf2[26];
 							ctime_s(time_buf2, sizeof(time_buf2), &next_run_t);
 							time_buf2[strlen(time_buf2) - 1] = '\0';
 							ConsoleLog(&console, L("SCHEDULE_NEXT_BACKUP_AT"), wstring_to_utf8(world.name).c_str(), time_buf2);
 
-							while (time(nullptr) < next_run_t && !shouldExit) {
+							while (time(nullptr) < next_run_t && !shouldExit && !stopToken.stop_requested()) {
 								this_thread::sleep_for(chrono::seconds(1));
 							}
 						}
 
-						if (shouldExit) break;
+						if (shouldExit || stopToken.stop_requested()) break;
 
 						ConsoleLog(&console, L("BACKUP_PERFORMING_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
 						g_appState.realConfigIndex = task.configIndex;
-						DoBackup(world, console, L"SpecialMode");
+						RunSpecialBackup(world, console);
 						ConsoleLog(&console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(world.name).c_str());
 					}
 					ConsoleLog(&console, L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
@@ -339,23 +357,17 @@ void RunSpecialMode(int configId) {
 		if (!spCfg.hideWindow && _kbhit()) {
 			char c = tolower(_getch_special());
 			if (c == 'q') {
-				g_stopExitWatcher = true;
-				if (g_exitWatcherThread.joinable()) {
-					g_exitWatcherThread.join();
-				}
+				TaskCoordinator::Instance().RequestStop(L"game-session-watcher");
 				shouldExit = true;
 				ConsoleLog(&console, L("INFO_QUIT_SIGNAL_RECEIVED"));
 			}
 			else if (c == 'm') {
-				g_stopExitWatcher = true;
-				if (g_exitWatcherThread.joinable()) {
-					g_exitWatcherThread.join();
-				}
+				TaskCoordinator::Instance().RequestStop(L"game-session-watcher");
 				shouldExit = true;
 				g_appState.specialConfigs[configId].autoExecute = false;
 				SaveConfigs();
 				ConsoleLog(&console, L("INFO_SWITCHING_TO_GUI_MODE"));
-				ReStartApplication();
+				(void)GetDesktopServices()->RestartApplication();
 			}
 		}
 
@@ -370,21 +382,23 @@ void RunSpecialMode(int configId) {
 	// --- 4. 清理 ---
 	for (auto& t : taskThreads) {
 		if (t.joinable()) {
+			t.request_stop();
 			t.join();
 		}
 	}
 
 	// 停止所有启动的任务
+	vector<wstring> autoBackupTaskNames;
 	{
 		lock_guard<mutex> lock(g_appState.task_mutex);
 		for (auto& kv : g_appState.g_active_auto_backups) {
-			kv.second.stop_flag = true;
+			autoBackupTaskNames.push_back(kv.second.taskName);
 		}
+		g_appState.g_active_auto_backups.clear();
 	}
-	for (auto& kv : g_appState.g_active_auto_backups) {
-		if (kv.second.worker.joinable()) kv.second.worker.join();
+	for (const auto& taskName : autoBackupTaskNames) {
+		TaskCoordinator::Instance().RequestStop(taskName);
 	}
-	g_appState.g_active_auto_backups.clear();
 
 	ConsoleLog(&console, L("INFO_ALL_TASKS_SHUT_DOWN"));
 

@@ -1,17 +1,15 @@
-name: Build & Sign MineBackup (Windows)
+name: Windows Signed Release Candidate
 
 on:
+  workflow_call:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   build-and-sign:
     runs-on: windows-latest
     permissions:
       actions: read
-      contents: write
+      contents: read
 
     steps:
     - name: Checkout source
@@ -20,47 +18,19 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Ensure embedded 7za.exe is available
+    - name: Verify tracked Windows 7-Zip resource
+      shell: pwsh
+      run: .\cmake\VerifyWindowsSevenZip.ps1
+
+    - name: Build and verify CMake MSVC shadow candidate
       shell: pwsh
       run: |
-        $target7za = '.\MineBackup\Assets\7za.exe'
-        if (Test-Path $target7za) {
-          Write-Host 'Found existing MineBackup\Assets\7za.exe in repository workspace.'
-          exit 0
-        }
-
-        New-Item -ItemType Directory -Path .\tools -Force | Out-Null
-        $installerPath = '.\tools\7zip-zstd-x64.exe'
-        $installDir = "$env:RUNNER_TEMP\7zipzstd"
-        $releaseUrl = 'https://github.com/mcmilk/7-Zip-zstd/releases/download/v25.01-v1.5.7-R4/7z25.01-zstd-x64.exe'
-        $expectedSha256 = '5a55a8b6abb09d4b5ddd64c95f22a5270cb46752fb7a5353073508922b141596'
-
-        Write-Host "Downloading $releaseUrl"
-        Invoke-WebRequest -Uri $releaseUrl -OutFile $installerPath
-
-        $actualSha256 = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actualSha256 -ne $expectedSha256) {
-          throw "7-Zip-zstd installer hash mismatch. Expected $expectedSha256, got $actualSha256"
-        }
-
-        if (Test-Path $installDir) {
-          Remove-Item -Path $installDir -Recurse -Force
-        }
-        New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-
-        $args = @('/S', "/D=$installDir")
-        $proc = Start-Process -FilePath $installerPath -ArgumentList $args -Wait -PassThru
-        if ($proc.ExitCode -ne 0) {
-          throw "7-Zip-zstd installer exited with code $($proc.ExitCode)"
-        }
-
-        $found7za = Get-ChildItem -Path $installDir -Filter 7za.exe -Recurse -File | Select-Object -First 1
-        if (-not $found7za) {
-          throw '7za.exe not found after installing 7-Zip-zstd.'
-        }
-
-        Copy-Item -Path $found7za.FullName -Destination $target7za -Force
-        Write-Host "Prepared embedded 7za.exe from: $($found7za.FullName)"
+        cmake --preset windows-msvc-x64
+        cmake --build --preset windows-msvc-x64-release
+        ctest --preset windows-msvc-x64-release --output-on-failure
+        .\cmake\VerifyWindowsArtifact.ps1 -Executable .\build\windows-msvc-x64\bin\Release\MineBackup.exe
+        .\cmake\SmokeTestWindowsArtifact.ps1 -Executable .\build\windows-msvc-x64\bin\Release\MineBackup.exe
+        cmake --build --preset windows-msvc-x64-release --target check_msbuild_source_parity
 
     - name: Build Release x64
       shell: pwsh
@@ -92,6 +62,12 @@ jobs:
         New-Item -ItemType Directory -Path .\out\unsigned -Force | Out-Null
         Copy-Item -Path $exePath -Destination .\out\unsigned\MineBackup.exe -Force
         Write-Host "Unsigned artifact: $exePath"
+
+    - name: Verify unsigned executable
+      shell: pwsh
+      run: |
+        .\cmake\VerifyWindowsArtifact.ps1 -Executable .\out\unsigned\MineBackup.exe
+        .\cmake\SmokeTestWindowsArtifact.ps1 -Executable .\out\unsigned\MineBackup.exe
 
     - name: Upload unsigned artifact
       id: upload_unsigned
@@ -136,8 +112,14 @@ jobs:
         }
 
         New-Item -ItemType Directory -Path .\out\release -Force | Out-Null
-        Copy-Item -Path $signedExe -Destination .\out\release\MineBackup.exe -Force
+        Copy-Item -Path $signedExe -Destination .\out\release\MineBackup-windows-x64.exe -Force
         Write-Host "Signed artifact: $signedExe"
+
+    - name: Verify signed executable
+      shell: pwsh
+      run: |
+        .\cmake\VerifyWindowsArtifact.ps1 -Executable .\out\release\MineBackup-windows-x64.exe
+        .\cmake\SmokeTestWindowsArtifact.ps1 -Executable .\out\release\MineBackup-windows-x64.exe
 
     - name: Print SignPath links
       shell: pwsh
@@ -147,51 +129,34 @@ jobs:
         Write-Host "Signing Request URL: ${{ steps.signpath.outputs.signing-request-web-url }}"
         Write-Host "Signed Download URL: ${{ steps.signpath.outputs.signed-artifact-download-url }}"
 
-    - name: Get latest release
-      id: get_release
-      uses: actions/github-script@v7
+    - name: Upload signed Windows release candidate
+      uses: actions/upload-artifact@v4
       with:
-        script: |
-          const releases = await github.rest.repos.listReleases({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            per_page: 1,
-          });
-          if (!releases.data.length) throw 'No releases found';
-          const release = releases.data[0];
-          core.setOutput('upload_url', release.upload_url);
-          core.setOutput('release_id', release.id);
+        name: minebackup-windows-candidate
+        path: .\out\release\MineBackup-windows-x64.exe
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 14
 
-    - name: Delete existing asset if exists
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const releaseId = Number('${{ steps.get_release.outputs.release_id }}');
-          const assetName = 'MineBackup-windows-x64.exe';
-          const assets = await github.rest.repos.listReleaseAssets({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: releaseId,
-            per_page: 100,
-          });
-          const target = assets.data.find(a => a.name === assetName);
-          if (target) {
-            await github.rest.repos.deleteReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              asset_id: target.id,
-            });
-            core.info(`Deleted existing asset: ${assetName}`);
-          } else {
-            core.info(`No existing asset found: ${assetName}`);
-          }
+    - name: Create Windows cross-restore fixtures
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Path .\out\cross-restore -Force | Out-Null
+        Set-Content -LiteralPath .\out\cross-restore\windows.txt `
+          -Value 'MineBackup 1.16 cross-restore fixture: windows' -Encoding utf8 -NoNewline
+        & .\MineBackup\Assets\7za.exe a -y -t7z -m0=lzma2 `
+          .\out\cross-restore\windows-lzma2.7z .\out\cross-restore\windows.txt
+        if ($LASTEXITCODE -ne 0) { throw 'Windows LZMA2 fixture creation failed.' }
+        & .\MineBackup\Assets\7za.exe a -y -t7z -m0=zstd `
+          .\out\cross-restore\windows-zstd.7z .\out\cross-restore\windows.txt
+        if ($LASTEXITCODE -ne 0) { throw 'Windows zstd fixture creation failed.' }
+        Copy-Item .\MineBackup\Assets\7za.exe .\out\cross-restore\7za.exe
 
-    - name: Upload signed artifact to latest release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload Windows cross-restore fixtures
+      uses: actions/upload-artifact@v4
       with:
-        upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: .\out\release\MineBackup.exe
-        asset_name: MineBackup-windows-x64.exe
-        asset_content_type: application/octet-stream
+        name: minebackup-windows-restore-fixtures
+        path: .\out\cross-restore
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 14

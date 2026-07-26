@@ -18,7 +18,7 @@
 ---
 
 ## ✨ 为什么选择 MineBackup？
-- 🎯 **即点即用** — 单文件可执行，下载后双击运行，无需安装。
+- 🎯 **原生分发** — 提供签名 Windows 单 EXE、Linux deb/AppImage 和 arm64 macOS DMG。
 - 🖥 **简洁直观的 GUI** — 基于 ImGui，功能布局清晰、响应迅速。
 - 💾 **安全备份** — 一键备份 Minecraft 存档，避免数据丢失。
 - 🔄 **快速还原** — 支持从 `.7z` 文件或本地目录恢复任意版本。
@@ -26,7 +26,7 @@
 - 🧠 **智能模式** — 类 Git 增量备份，节省时间与空间。
 - 📁 **自定义路径** — 将备份保存到任意磁盘或外接设备。
 - 🌏 **多语言支持** — 已支持中/英双语，欢迎贡献更多翻译。
-- 💻 **多平台支持** — 目前支持 Windows、Linux 和 MacOS。
+- 💻 **多平台支持** — Windows x64、Linux x86_64 与 macOS 15+ arm64 共用同一备份数据契约。
 
 💡 **不仅仅是 Minecraft**：你可以用它来备份任何文件夹，完全不局限于游戏存档。
 
@@ -36,8 +36,13 @@
 
 ### 1️⃣ 下载 & 运行
 1. 前往 [最新发布页](https://github.com/Leafuke/MineBackup/releases)。
-2. 下载适用于 Windows 的单文件版本。
-3. 双击运行 — **就是这么简单**。
+2. 下载 `MineBackup-windows-x64.exe`、Ubuntu `.deb`、Linux AppImage 或
+   `MineBackup-1.16.0-macos-arm64.dmg`。
+3. 使用 `SHA256SUMS` 核对文件后再正常安装或运行。
+
+各系统版本与 Linux 桌面能力降级规则见[平台支持矩阵](docs/platform-support.md)。
+macOS 包尚未公证；若系统拦截，请使用“隐私与安全性 → 仍要打开”，不要关闭
+Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 
 ### 2️⃣ 基础操作
 | 功能       | 操作方式 |
@@ -76,10 +81,10 @@
 ## ⚙️ 安装与编译
 
 **运行环境**：
-- Windows 系统
-- C++20 编译器
-- 链接 ImGui 库
-- 附带 7-Zip 
+- Windows + MSVC、Ubuntu 24.04+ x86_64（或同等的 glibc 2.39+ 发行版），
+  或 Apple Silicon macOS 15+
+- CMake 3.22+ 与 C++20 编译器
+- 对应平台验证文档中列出的开发依赖
 
 **编译步骤**：
 ```bash
@@ -87,8 +92,14 @@
 git clone https://github.com/Leafuke/MineBackup.git
 cd MineBackup
 
-# 使用 Visual Studio 打开并编译
-````
+cmake --preset <windows-msvc-x64|linux-x64|macos-arm64>
+cmake --build --preset windows-msvc-x64-release  # Windows
+# Linux/macOS: cmake --build build/<preset> --parallel
+```
+
+配置不再要求与 EXE 同目录；默认数据目录、便携模式与 1.15 迁移说明见
+[数据与迁移文档](docs/data-and-migration.md)。Windows Service Mode 已弃用，
+不能再安装或启动。rclone 不随包分发，只会在用户确认后下载固定版本并验证哈希。
 
 ---
 
@@ -114,7 +125,7 @@ cd MineBackup
 ## 🤝 贡献与支持
 
 * **报告问题 / 提交建议**：[GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
-* **多语言支持**：翻译 [`i18n.h`](MineBackup/i18n.cpp)，让更多玩家用上自己的语言。
+* **多语言支持**：翻译 [`i18n.h`](MineBackup/src/infra/i18n.h)，让更多玩家用上自己的语言。
 * **文档改进**：访问 [官方文档](https://folderrewind.top) 提交改进建议。
 
 ---

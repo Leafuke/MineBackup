@@ -4,6 +4,16 @@
 
 #include "AppState.h"
 #include "Console.h"
+#include "PortableConfigDocument.h"
+
+#include <map>
+#include <string>
+
+struct PortableConfigTransferPreparation {
+	CloudCommandResult result;
+	std::string payload;
+	PortableConfigMergePreview preview;
+};
 
 bool CanUseCloudActions(const Config& config);
 bool HasHistoryCloudCopy(const HistoryEntry& entry);
@@ -17,8 +27,24 @@ CloudCommandResult DownloadHistoryEntry(const Config& config, int configIndex, c
 CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int configIndex, const std::wstring& worldName, Console& console);
 bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const HistoryEntry& targetEntry, Console& console);
 CloudCommandResult UploadConfigurationHistorySnapshot(const Config& config, int configIndex, Console& console);
-CloudCommandResult ExportConfigToCloud(const Config& config, Console& console);
-CloudCommandResult ImportConfigFromCloud(const Config& config, Console& console);
+PortableConfigTransferPreparation PreparePortableConfigUpload(
+	const Config& cloudConfig,
+	const std::map<int, Config>& localConfigs,
+	Console& console);
+PortableConfigTransferPreparation PreparePortableConfigImport(
+	const Config& cloudConfig,
+	const std::map<int, Config>& localConfigs,
+	Console& console);
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+PortableConfigTransferPreparation PrepareLegacyPortableConfigImport(
+	const Config& cloudConfig,
+	const std::map<int, Config>& localConfigs,
+	Console& console);
+#endif
+CloudCommandResult CommitPortableConfigUpload(
+	const Config& cloudConfig,
+	const std::string& payload,
+	Console& console);
 CloudCommandResult ExportHistoryToCloud(const Config& config, int configIndex, Console& console);
 CloudCommandResult ImportHistoryFromCloud(const Config& config, int configIndex, bool mergeExisting, Console& console);
 int ResolveConfigIndexForCloud(const Config& config);

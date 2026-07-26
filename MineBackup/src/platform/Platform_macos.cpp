@@ -1,337 +1,39 @@
 #include "Platform_macos.h"
 #include "text_to_text.h"
 #include "i18n.h"
-#include "Console.h"
-#include "AppState.h"
-#include "Globals.h"
-#include "json.hpp"
+#include "AppPaths.h"
+#include "ExternalToolManager.h"
+#include "MacDesktopBridge.h"
 
-#include <atomic>
+#include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
-#include <fstream>
-#include <cstdio>
-#include <algorithm>
-#include <functional>
-#include <vector>
-#include <sstream>
-#include <cctype>
-#include <limits.h>
-#include <thread>
 #include <system_error>
-#include <sys/wait.h>
 #include <unistd.h>
-#include <mach-o/dyld.h>
 #include <fcntl.h>
 #include <sys/file.h>
-#include <tuple>
-#include <cstdint>
+#include <CoreFoundation/CoreFoundation.h>
 
 using namespace std;
 namespace fs = std::filesystem;
 
-static string ExtractLocalizedContent(const string& content) {
-	size_t sepPos = content.find("---");
-	if (sepPos == string::npos) {
-		return content;
-	}
-	
-	size_t beforeSep = sepPos;
-	while (beforeSep > 0 && (content[beforeSep - 1] == '\n' || content[beforeSep - 1] == '\r' || content[beforeSep - 1] == ' ')) {
-		beforeSep--;
-	}
-	
-	size_t afterSep = sepPos + 3;
-	while (afterSep < content.size() && (content[afterSep] == '\n' || content[afterSep] == '\r' || content[afterSep] == ' ' || content[afterSep] == '-')) {
-		afterSep++;
-	}
-	
-	string chineseContent = content.substr(0, beforeSep);
-	string englishContent = afterSep < content.size() ? content.substr(afterSep) : "";
-	
-	while (!chineseContent.empty() && (chineseContent.back() == '\n' || chineseContent.back() == '\r' || chineseContent.back() == ' ')) {
-		chineseContent.pop_back();
-	}
-	while (!englishContent.empty() && (englishContent.back() == '\n' || englishContent.back() == '\r' || englishContent.back() == ' ')) {
-		englishContent.pop_back();
-	}
-	
-	if (g_CurrentLang == "zh_CN") {
-		return chineseContent.empty() ? content : chineseContent;
-	} else {
-		return englishContent.empty() ? content : englishContent;
-	}
-}
-
-static string ToLowerAscii(const string& value) {
-    string lowered = value;
-    for (char& ch : lowered) {
-        ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
-    }
-    return lowered;
-}
-
-static string TrimAsciiWhitespace(const string& value) {
-    size_t begin = 0;
-    while (begin < value.size() && isspace(static_cast<unsigned char>(value[begin]))) {
-        ++begin;
-    }
-    size_t end = value.size();
-    while (end > begin && isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-    return value.substr(begin, end - begin);
-}
-
-static string NormalizeNoticeText(const string& value) {
-    string normalized;
-    normalized.reserve(value.size());
-    for (size_t i = 0; i < value.size(); ++i) {
-        if (value[i] == '\r') {
-            if (i + 1 < value.size() && value[i + 1] == '\n') {
-                ++i;
-            }
-            normalized.push_back('\n');
-        } else {
-            normalized.push_back(value[i]);
-        }
-    }
-    return TrimAsciiWhitespace(normalized);
-}
-
-static bool IsLikely404Body(const string& body) {
-    string lowered = ToLowerAscii(TrimAsciiWhitespace(body));
-    if (lowered.empty()) return true;
-    if (lowered == "404" || lowered == "404: not found" || lowered == "not found") return true;
-    if (lowered.find("<title>404") != string::npos) return true;
-    if (lowered.find("404 not found") != string::npos) return true;
-    if (lowered.find("error 404") != string::npos) return true;
-    return false;
-}
-
-static string BuildMirrorUrl(const string& directUrl) {
-    const string mirrorPrefix = "https://gh-proxy.org/";
-    if (directUrl.rfind(mirrorPrefix, 0) == 0) {
-        return directUrl;
-    }
-    return mirrorPrefix + directUrl;
-}
-
-static string BuildStableContentId(const string& text) {
-    uint64_t hash = 1469598103934665603ull;
-    for (unsigned char ch : text) {
-        hash ^= ch;
-        hash *= 1099511628211ull;
-    }
-    ostringstream oss;
-    oss << "notice-v1-" << hex << hash;
-    return oss.str();
-}
-
-static tuple<int, int, int, int> ParseVersionTuple(const string& ver) {
-    try {
-        size_t p1 = ver.find('.');
-        size_t p2 = (p1 != string::npos) ? ver.find('.', p1 + 1) : string::npos;
-        size_t p3 = ver.find('-');
-        if (p1 == string::npos || p2 == string::npos) return {0, 0, 0, 0};
-
-        int major = stoi(ver.substr(0, p1));
-        int minor = stoi(ver.substr(p1 + 1, p2 - p1 - 1));
-        int patch = (p3 == string::npos) ? stoi(ver.substr(p2 + 1)) : stoi(ver.substr(p2 + 1, p3 - p2 - 1));
-        int sp = 0;
-        if (p3 != string::npos) {
-            size_t spPos = ver.find("sp", p3);
-            if (spPos != string::npos) {
-                sp = stoi(ver.substr(spPos + 2));
-            }
-        }
-        return {major, minor, patch, sp};
-    } catch (...) {
-        return {0, 0, 0, 0};
-    }
-}
-
-static bool FetchHttpText(const string& url, string& outBody) {
-    outBody.clear();
-    string cmd = "curl -L -s --connect-timeout 8 --max-time 20 -w \"\\n%{http_code}\" -H 'User-Agent: MineBackup' '" + url + "' 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return false;
-
-    char buffer[4096];
-    string result;
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    pclose(pipe);
-
-    size_t splitPos = result.rfind('\n');
-    if (splitPos == string::npos) return false;
-    string statusText = TrimAsciiWhitespace(result.substr(splitPos + 1));
-    string body = result.substr(0, splitPos);
-    if (statusText != "200") return false;
-
-    body = TrimAsciiWhitespace(body);
-    if (body.empty()) return false;
-    outBody = body;
-    return true;
-}
-
-static bool FetchWithMirrorFallback(const string& directUrl, bool reject404Body, string& outBody) {
-    vector<string> candidates = {directUrl, BuildMirrorUrl(directUrl)};
-    for (const string& candidate : candidates) {
-        string body;
-        if (!FetchHttpText(candidate, body)) {
-            continue;
-        }
-        if (reject404Body && IsLikely404Body(body)) {
-            continue;
-        }
-        outBody = body;
-        return true;
-    }
-    return false;
-}
-
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType) {
-    (void)iconType;
-    std::string icon = "note";
-    if (iconType == 1) icon = "caution";
-    else if (iconType == 2) icon = "stop";
-    
-    std::string escaped_message = message;
-    size_t pos = 0;
-    while ((pos = escaped_message.find('"', pos)) != std::string::npos) {
-        escaped_message.replace(pos, 1, "\\\"");
-        pos += 2;
-    }
-    
-    std::string cmd = "osascript -e 'display dialog \"" + escaped_message + 
-                      "\" with title \"" + title + "\" with icon " + icon + " buttons {\"OK\"}' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
-}
-
-void CheckForUpdatesThread() {
-    g_NewVersionAvailable = false;
-    g_LatestVersionStr.clear();
-    g_ReleaseNotes.clear();
-
-    const string apiUrl = "https://api.github.com/repos/Leafuke/MineBackup/releases/latest";
-    vector<string> candidates = {apiUrl, BuildMirrorUrl(apiUrl)};
-    for (const string& candidate : candidates) {
-        string body;
-        if (!FetchHttpText(candidate, body) || IsLikely404Body(body)) {
-            continue;
-        }
-
-        try {
-            nlohmann::json parsed = nlohmann::json::parse(body);
-            if (!parsed.contains("tag_name") || !parsed["tag_name"].is_string()) {
-                continue;
-            }
-
-            string version = parsed["tag_name"].get<string>();
-            if (!version.empty() && (version[0] == 'v' || version[0] == 'V')) {
-                version = version.substr(1);
-            }
-            if (version.empty()) {
-                continue;
-            }
-
-            if (ParseVersionTuple(version) > ParseVersionTuple(CURRENT_VERSION)) {
-                g_LatestVersionStr = "v" + version;
-                g_NewVersionAvailable = true;
-
-                string rawNotes;
-                if (parsed.contains("body") && parsed["body"].is_string()) {
-                    rawNotes = parsed["body"].get<string>();
-                }
-                for (size_t i = 0; i + 1 < rawNotes.size(); ++i) {
-                    if (rawNotes[i] == '#') {
-                        rawNotes[i] = ' ';
-                    } else if (rawNotes[i] == '\\' && rawNotes[i + 1] == 'n') {
-                        rawNotes[i] = '\n';
-                        rawNotes[i + 1] = ' ';
-                    } else if (rawNotes[i] == '\\') {
-                        rawNotes[i] = ' ';
-                        rawNotes[i + 1] = ' ';
-                    }
-                }
-                g_ReleaseNotes = ExtractLocalizedContent(rawNotes);
-            }
-            break;
-        } catch (...) {
-            continue;
-        }
-    }
-    
-    g_UpdateCheckDone = true;
-}
-
-void CheckForNoticesThread() {
-    g_NewNoticeAvailable = false;
-    g_NoticeContent.clear();
-    g_NoticeUpdatedAt.clear();
-    
-    string langUrl = string("https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice") + ((g_CurrentLang == "zh_CN") ? "_zh" : "_en");
-    string fallbackUrl = "https://raw.githubusercontent.com/Leafuke/MineBackup/develop/notice";
-
-    string result;
-    bool fromFallback = false;
-    if (!FetchWithMirrorFallback(langUrl, true, result)) {
-        if (FetchWithMirrorFallback(fallbackUrl, true, result)) {
-            fromFallback = true;
-        }
-    }
-
-    if (!result.empty()) {
-        string shownNotice = fromFallback ? ExtractLocalizedContent(result) : result;
-        shownNotice = NormalizeNoticeText(shownNotice);
-        if (!shownNotice.empty() && !IsLikely404Body(shownNotice)) {
-            g_NoticeUpdatedAt = BuildStableContentId(shownNotice);
-            if (g_NoticeUpdatedAt != g_NoticeLastSeenVersion) {
-                g_NoticeContent = shownNotice;
-                g_NewNoticeAvailable = true;
-            }
-        }
-    }
-    
-    g_NoticeCheckDone = true;
-}
-
-static std::wstring RunOsaScript(const std::string& script) {
-    std::string cmd = "osascript -e '" + script + "' 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return L"";
-    
-    char buffer[4096] = {0};
-    std::string output;
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-    pclose(pipe);
-    
-    if (output.empty()) return L"";
-    if (!output.empty() && output.back() == '\n') output.pop_back();
-    return utf8_to_wstring(output);
+    MacShowAlert(title, message, iconType);
 }
 
 std::wstring SelectFileDialog() {
-    return RunOsaScript("choose file");
+    return MacSelectFile().path.wstring();
 }
 
 std::wstring SelectFolderDialog() {
-    return RunOsaScript("POSIX path of (choose folder)");
+    return MacSelectFolder().path.wstring();
 }
 
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName, const std::wstring& filter) {
-    std::string script = "POSIX path of (choose file name";
-    if (!defaultFileName.empty()) {
-        script += " default name \"" + wstring_to_utf8(defaultFileName) + "\"";
-    }
-    script += ")";
-    return RunOsaScript(script);
+    return MacSelectSaveFile(defaultFileName, filter).path.wstring();
 }
 
 std::wstring GetDocumentsPath() {
@@ -403,19 +105,18 @@ void GetUserDefaultUILanguageWin() {
         }
     }
     
-    FILE* pipe = popen("defaults read -g AppleLanguages 2>/dev/null | head -2 | tail -1 | tr -d ' \"'", "r");
-    if (pipe) {
-        char buffer[64] = {0};
-        if (fgets(buffer, sizeof(buffer), pipe)) {
-            std::string lang(buffer);
-            if (lang.rfind("zh", 0) == 0) {
-                SetLanguage("zh_CN");
-                pclose(pipe);
-                return;
-            }
+    CFArrayRef languages = CFLocaleCopyPreferredLanguages();
+    if (languages && CFArrayGetCount(languages) > 0) {
+        CFStringRef language = static_cast<CFStringRef>(CFArrayGetValueAtIndex(languages, 0));
+        char buffer[64] = {};
+        if (language && CFStringGetCString(language, buffer, sizeof(buffer), kCFStringEncodingUTF8)
+            && string(buffer).rfind("zh", 0) == 0) {
+            CFRelease(languages);
+            SetLanguage("zh_CN");
+            return;
         }
-        pclose(pipe);
     }
+    if (languages) CFRelease(languages);
     
     SetLanguage("en_US");
 }
@@ -427,136 +128,57 @@ std::string GetRegistryValue(const std::string& key, const std::string& valueNam
 }
 
 void OpenLinkInBrowser(const std::wstring& url) {
-    if (url.empty()) return;
-    std::string u8 = wstring_to_utf8(url);
-    std::string cmd = "open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    (void)MacOpenUri(url);
 }
 
 void OpenFolder(const std::wstring& folderPath) {
-    if (folderPath.empty()) return;
-    std::string u8 = wstring_to_utf8(folderPath);
-    std::string cmd = "open '" + u8 + "' >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    (void)MacOpenFolder(fs::path(folderPath));
 }
 
 void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus) {
-    if (!focus.empty()) {
-        std::string u8 = wstring_to_utf8(focus);
-        std::string cmd = "open -R '" + u8 + "' >/dev/null 2>&1 &";
-        std::system(cmd.c_str());
-    } else {
-        OpenFolder(folderPath);
-    }
+    (void)MacRevealInFolder(fs::path(folderPath), fs::path(focus));
 }
 
 void ReStartApplication() {
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) == 0) {
-        std::string cmd = std::string(path) + " &";
-        std::system(cmd.c_str());
-        exit(0);
-    }
-}
-
-void SetAutoStart(const std::string& appName, const std::wstring& appPath, bool configType, int& configId, bool& enable, bool silentStartupToTray) {
+    MessageBoxWin("MineBackup", L("RESTART_REQUIRED_MESSAGE"), 0);
 }
 
 void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
+	(void)path;
+	(void)isHidden;
 }
 
 void EnableDarkModeWin(bool enable) {
-}
-
-static fs::path GetExecutableDirectory() {
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) == 0) {
-        return fs::path(path).parent_path();
-    }
-    return fs::current_path();
+	(void)enable;
 }
 
 bool Extract7zToTempFile(std::wstring& extractedPath) {
-    const char* candidates[] = {
-        "/usr/local/bin/7z",
-        "/opt/homebrew/bin/7z",
-        "/usr/bin/7z",
-        "/opt/local/bin/7z",
-        nullptr
-    };
-    
-    for (const char** p = candidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
-    }
-    
-    fs::path exeDir = GetExecutableDirectory();
-    fs::path bundled7z = exeDir / "7z";
-    if (fs::exists(bundled7z)) {
-        extractedPath = bundled7z.wstring();
-        return true;
-    }
-    
-    const char* altCandidates[] = {
-        "/usr/local/bin/7zz",
-        "/opt/homebrew/bin/7zz",
-        nullptr
-    };
-    
-    for (const char** p = altCandidates; *p; ++p) {
-        if (fs::exists(*p)) {
-            extractedPath = fs::path(*p).wstring();
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-static bool CopyBundledFontToTemp(const fs::path& source, std::wstring& extractedPath) {
-    std::error_code ec;
-    if (!fs::exists(source, ec)) return false;
-
-    fs::path tempDir = fs::temp_directory_path(ec);
-    if (ec) {
-        extractedPath = source.wstring();
-        return true;
-    }
-
-    fs::path dest = tempDir / source.filename();
-    fs::copy_file(source, dest, fs::copy_options::overwrite_existing, ec);
-    if (!ec && fs::exists(dest, ec)) {
-        extractedPath = dest.wstring();
-        return true;
-    }
-
-    extractedPath = source.wstring();
-    return true;
+	const auto resolved = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
+	if (!resolved.available) return false;
+	extractedPath = resolved.executable.wstring();
+	return true;
 }
 
 bool ExtractFontToTempFile(std::wstring& extractedPath) {
-    fs::path exeDir = GetExecutableDirectory();
-    
+	const auto resourcesRoot = GetAppPaths().resourcesRoot;
     const fs::path bundledCandidates[] = {
-        exeDir / "fontawesome-sp.otf",
-        exeDir / "fa-solid-900.ttf",
-        exeDir / "fa-regular-400.ttf",
-        exeDir / "Assets" / "fontawesome-sp.otf",
-        exeDir / "../Resources/fontawesome-sp.otf",  // For .app bundles
-        exeDir / "../Resources/fa-solid-900.ttf",
-        exeDir / "../Resources/fa-regular-400.ttf",
-        exeDir / "../Resources/Assets/fontawesome-sp.otf"
+		resourcesRoot / "fontawesome-sp.otf",
+		resourcesRoot / "fa-solid-900.ttf",
+		resourcesRoot / "fa-regular-400.ttf",
+		resourcesRoot / "Assets" / "fontawesome-sp.otf"
     };
-    
-    for (const auto& p : bundledCandidates) {
-        if (CopyBundledFontToTemp(p, extractedPath)) return true;
-    }
-    
+	for (const auto& path : bundledCandidates) {
+		std::error_code error;
+		if (fs::is_regular_file(path, error)) {
+			extractedPath = path.wstring();
+			return true;
+		}
+	}
     return false;
+}
+
+bool ConfirmMessageBox(const std::string& title, const std::string& message) {
+    return MacConfirmAlert(title, message);
 }
 
 bool IsFileLocked(const std::wstring& path) {
@@ -601,46 +223,4 @@ bool IsFileLocked(const std::wstring& path) {
     }
     close(fd);
     return false;
-}
-
-bool RunCommandInBackground(const std::wstring& command, Console& console, bool useLowPriority, const std::wstring& workingDirectory) {
-    console.AddLog(L("LOG_EXEC_CMD"), wstring_to_utf8(command).c_str());
-    
-    std::error_code ec;
-    fs::path oldCwd = fs::current_path(ec);
-    if (!workingDirectory.empty() && fs::exists(workingDirectory)) {
-        fs::current_path(workingDirectory, ec);
-    }
-    
-    std::string cmd = wstring_to_utf8(command);
-    
-    if (useLowPriority) {
-        cmd = "nice -n 10 " + cmd;
-    }
-    
-    int ret = std::system(cmd.c_str());
-    
-    if (!workingDirectory.empty()) {
-        fs::current_path(oldCwd, ec);
-    }
-    
-    if (ret == 0) {
-        console.AddLog(L("LOG_SUCCESS_CMD"));
-        return true;
-    }
-    
-    console.AddLog(L("LOG_ERROR_CMD_FAILED"), WEXITSTATUS(ret));
-    return false;
-}
-
-bool RunCommandWithResult(const std::wstring& command, Console& console, bool useLowPriority, int timeoutSeconds, int& exitCode, bool& timedOut, std::string& errorMessage, const std::wstring& workingDirectory) {
-    (void)timeoutSeconds;
-    timedOut = false;
-    errorMessage.clear();
-    bool success = RunCommandInBackground(command, console, useLowPriority, workingDirectory);
-    exitCode = success ? 0 : 1;
-    if (!success) {
-        errorMessage = "Command failed.";
-    }
-    return success;
 }

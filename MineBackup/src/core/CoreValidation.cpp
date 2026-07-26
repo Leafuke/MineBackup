@@ -1,4 +1,5 @@
 #include "CoreValidation.h"
+#include "TaskCoordinator.h"
 
 #include "BackupManager.h"
 #include "ConfigManager.h"
@@ -7,7 +8,8 @@
 #include "FolderRewindMetadataStore.h"
 #include "Globals.h"
 #include "HistoryManager.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
+#include "AppPaths.h"
 #include "i18n.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
@@ -411,7 +413,7 @@ namespace {
 	}
 
 	static bool AssertFolderRewindHistoryItem(ValidationContext& ctx, const Config& cfg, const MyFolder& world, const wstring& backupFile, const wstring& expectedBackupType) {
-		ifstream historyIn(filesystem::path(L"history.json"), ios::binary);
+		ifstream historyIn(GetAppPaths().HistoryFile(), ios::binary);
 		nlohmann::json historyRoot = nlohmann::json::parse(historyIn, nullptr, false);
 		if (!ctx.Require(!historyRoot.is_discarded() && historyRoot.is_array(), "[Validation] history.json parses as array.", "[Validation] history.json parse failed.")) return false;
 
@@ -615,9 +617,9 @@ namespace {
 		cfg.name = "LegacyCloudConfig";
 		cfg.cloudSyncEnabled = true;
 		cfg.rcloneRemotePath = L"test:FolderRewind";
-		cfg.configId = MigrationService::GenerateLegacyConfigId(cfg, kValidationConfigIndex);
+		cfg.configId = MigrationCoordinator::GenerateLegacyConfigId(cfg, kValidationConfigIndex);
 		Config secondDevice = cfg;
-		if (!ctx.Require(cfg.configId == MigrationService::GenerateLegacyConfigId(secondDevice, 999),
+		if (!ctx.Require(cfg.configId == MigrationCoordinator::GenerateLegacyConfigId(secondDevice, 999),
 			"[Validation] Legacy ConfigId is deterministic across devices.", "[Validation] Legacy ConfigId is not deterministic.")) return false;
 		g_appState.configs[kValidationConfigIndex] = cfg;
 
@@ -656,8 +658,20 @@ namespace {
 		writeRecord(fullName, "Full", L"");
 		writeRecord(smartName, "Smart", fullName);
 
-		const MigrationUnitResult result = MigrationService::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
+		const MigrationUnitResult result = MigrationCoordinator::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
 		if (!ctx.Require(result.status == MigrationStatus::Succeeded, "[Validation] 1.15 metadata migrated.", "[Validation] 1.15 metadata migration failed.")) return false;
+		const filesystem::path snapshotRoot(result.snapshotPath);
+		if (!ctx.Require(filesystem::exists(snapshotRoot / L"metadata.json")
+			&& filesystem::exists(snapshotRoot / (fullName + L".json"))
+			&& filesystem::exists(snapshotRoot / (smartName + L".json")),
+			"[Validation] Legacy metadata recovery snapshot contains summary and records.",
+			"[Validation] Legacy metadata recovery snapshot is incomplete.")) return false;
+		if (!ctx.Require(
+			MigrationCoordinator::HigherPriorityStatus(MigrationStatus::Succeeded, MigrationStatus::Pending) == MigrationStatus::Pending
+			&& MigrationCoordinator::HigherPriorityStatus(MigrationStatus::Pending, MigrationStatus::Degraded) == MigrationStatus::Degraded
+			&& MigrationCoordinator::HigherPriorityStatus(MigrationStatus::Degraded, MigrationStatus::Failed) == MigrationStatus::Failed,
+			"[Validation] Migration report priority is Failed > Degraded > Pending > Succeeded.",
+			"[Validation] Migration report priority is incorrect.")) return false;
 		FolderRewindFormat::MetadataState state;
 		if (!ctx.Require(FolderRewindMetadataStore::LoadState(metadataDir, state) && state.lastBackupFileName == smartName,
 			"[Validation] Migrated state references the original archive name.", "[Validation] Migrated state is invalid.")) return false;
@@ -679,7 +693,7 @@ namespace {
 			return false;
 		}
 
-		const filesystem::path sandboxRoot = filesystem::temp_directory_path() / L"MineBackup_CoreValidation" /
+		const filesystem::path sandboxRoot = GetAppPaths().runtimeRoot / L"MineBackup_CoreValidation" /
 			to_wstring(chrono::steady_clock::now().time_since_epoch().count());
 		ValidationCleanupGuard cleanup;
 		cleanup.sandboxRoot = sandboxRoot;
@@ -732,7 +746,7 @@ void StartCoreValidationAsync(bool automatic, Console& console) {
 	}
 
 	console.AddLog("[Info] [Validation] %s", automatic ? L("VAL_INFO_QUEUED_AUTO") : L("VAL_INFO_QUEUED_MANUAL"));
-	thread([automatic, &console]() {
+	if (!TaskCoordinator::Instance().Submit(L"core-validation", {L"validation"}, [automatic, &console](stop_token) {
 		bool passed = false;
 		try {
 			passed = RunCoreValidation(console, automatic);
@@ -746,5 +760,8 @@ void StartCoreValidationAsync(bool automatic, Console& console) {
 		SaveConfigs();
 		console.AddLog("[Info] [Validation] %s", passed ? L("VAL_INFO_PASSED") : L("VAL_INFO_FAILED_RETRY"));
 		g_CoreValidationRunning.store(false);
-	}).detach();
+	})) {
+		g_CoreValidationRunning.store(false);
+		console.AddLog("[Error] [Validation] Task coordinator is shutting down.");
+	}
 }

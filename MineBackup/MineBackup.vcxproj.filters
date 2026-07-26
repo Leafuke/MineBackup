@@ -45,6 +45,9 @@
     <ClCompile Include="src\app\AppState.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\app\LaunchOptions.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
     <ClCompile Include="src\app\Globals.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
@@ -72,7 +75,10 @@
 	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
-	<ClCompile Include="src\core\MigrationService.cpp">
+	<ClCompile Include="src\core\MigrationCoordinator.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\V15MigrationAdapter.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
     <ClCompile Include="src\core\GameSessionManager.cpp">
@@ -86,6 +92,57 @@
     </ClCompile>
     <ClCompile Include="src\core\TaskSystem.cpp">
       <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\TaskCoordinator.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\RemoteContentService.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\ExternalToolManager.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\PortableConfigDocument.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\SpecialConfigPolicy.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\LegacyServicePolicy.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\AtomicFileWriter.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\AppPaths.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\RotatingFileLog.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\SingleInstanceService.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\LegacyLocationDiscovery.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\LegacyLocationMigration.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\ProcessRunner.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\NetworkService.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\Sha256.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\DesktopServices.cpp">
+      <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\Broadcast.cpp">
       <Filter>src\infra</Filter>
@@ -102,7 +159,16 @@
     <ClCompile Include="src\platform\Platform_win.cpp">
       <Filter>src\platform</Filter>
     </ClCompile>
+    <ClCompile Include="src\platform\NativeDesktopServices.cpp">
+      <Filter>src\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\NetworkBackend_win.cpp">
+      <Filter>src\platform</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\HistoryUI.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\MigrationReportUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\SettingsUIAppearance.cpp">
@@ -161,6 +227,9 @@
     <ClInclude Include="src\app\Globals.h">
       <Filter>src\app</Filter>
     </ClInclude>
+    <ClInclude Include="src\app\LaunchOptions.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
     <ClInclude Include="src\app\MainUI.h">
       <Filter>src\app</Filter>
     </ClInclude>
@@ -188,7 +257,10 @@
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
-	<ClInclude Include="src\core\MigrationService.h">
+	<ClInclude Include="src\core\MigrationCoordinator.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\V15MigrationAdapter.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
     <ClInclude Include="src\core\HistoryManager.h">
@@ -196,6 +268,54 @@
     </ClInclude>
     <ClInclude Include="src\core\TaskSystem.h">
       <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\TaskCoordinator.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\RemoteContentService.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\ExternalToolManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\PortableConfigDocument.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\SpecialConfigPolicy.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\LegacyServicePolicy.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\AtomicFileWriter.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\AppPaths.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\RotatingFileLog.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\SingleInstanceService.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\LegacyLocationDiscovery.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\LegacyLocationMigration.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\ProcessRunner.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\InterruptedTaskRecovery.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\NetworkService.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\Sha256.h">
+      <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\Broadcast.h">
       <Filter>src\infra</Filter>
@@ -212,6 +332,12 @@
     <ClInclude Include="src\platform\PlatformCompat.h">
       <Filter>src\platform</Filter>
     </ClInclude>
+    <ClInclude Include="src\platform\DesktopServices.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\NativeDesktopServices.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
     <ClInclude Include="src\platform\Platform_linux.h">
       <Filter>src\platform</Filter>
     </ClInclude>
@@ -221,7 +347,13 @@
     <ClInclude Include="src\platform\Platform_win.h">
       <Filter>src\platform</Filter>
     </ClInclude>
+    <ClInclude Include="src\platform\NetworkBackendFactory.h">
+      <Filter>src\platform</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\IconsFontAwesome6.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\MigrationReportUI.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\SettingsUI.h">
@@ -303,7 +435,7 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="7za.exe">
+    <None Include="Assets\7za.exe">
       <Filter>resources</Filter>
     </None>
   </ItemGroup>

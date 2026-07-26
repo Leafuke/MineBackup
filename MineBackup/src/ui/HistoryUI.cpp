@@ -15,6 +15,9 @@
 #include "BackupManager.h"
 #include "CloudSyncService.h"
 #include "PlatformCompat.h"
+#include "AppPaths.h"
+#include "TaskCoordinator.h"
+#include "DesktopServices.h"
 
 using namespace std;
 
@@ -75,25 +78,28 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	if (ImGui::Button(L("HISTORY_CLOUD_ANALYZE"), ImVec2(CalcButtonWidth(L("HISTORY_CLOUD_ANALYZE"), toolbarButtonMinWidth), 0))) {
 		Config configCopy = cfg;
 		const int configIndex = tempCurrentConfigIndex;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Analyze cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			AnalyzeCloudHistory(configCopy, configIndex, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_HISTORY"), ImVec2(CalcButtonWidth(L("HISTORY_CLOUD_SYNC_HISTORY"), toolbarButtonMinWidth), 0))) {
 		Config configCopy = cfg;
 		const int configIndex = tempCurrentConfigIndex;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Sync cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("HISTORY_CLOUD_SYNC_ALL"), ImVec2(CalcButtonWidth(L("HISTORY_CLOUD_SYNC_ALL"), toolbarButtonMinWidth), 0))) {
 		Config configCopy = cfg;
 		const int configIndex = tempCurrentConfigIndex;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Sync cloud backups",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups, console);
-		}).detach();
+		});
 	}
 	if (!CanUseCloudActions(cfg)) ImGui::EndDisabled();
 
@@ -141,7 +147,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	ImGui::BeginChild("HistoryListPane", ImVec2(list_width, 0), true);
 
 	if (g_appState.g_history.find(tempCurrentConfigIndex) == g_appState.g_history.end() || g_appState.g_history.at(tempCurrentConfigIndex).empty()) {
-		ImGui::TextWrapped(L("HISTORY_EMPTY"));
+		ImGui::TextWrapped("%s", L("HISTORY_EMPTY"));
 	}
 	else {
 		auto& history_vec = g_appState.g_history.at(tempCurrentConfigIndex);
@@ -323,22 +329,37 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			float restoreCancelBtnWidth = CalcButtonWidth(L("BUTTON_CANCEL"), dialogButtonMinWidth);
 
 			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"), ImVec2(restoreConfirmBtnWidth, 0))) {
-				if (cfg.backupBefore) {
-					MyFolder world = { JoinPath(cfg.saveRoot, selected_entry->worldName).wstring(), selected_entry->worldName, L"", cfg, tempCurrentConfigIndex, -1 };
-					DoBackup(world, ref(console), L"BeforeRestore");
-				}
-				// 传递 customRestoreBuf, 只有在 mode 3 时它才可能有内容
-				thread restore_thread(DoRestore, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console), restore_method, customRestoreBuf);
-				restore_thread.detach();
+				const Config configCopy = cfg;
+				const HistoryEntry entryCopy = *selected_entry;
+				const int configIndex = tempCurrentConfigIndex;
+				const int restoreMethod = restore_method;
+				const string customItems = customRestoreBuf;
+				const auto worldPath = JoinPath(configCopy.saveRoot, entryCopy.worldName);
+				TaskCoordinator::Instance().Submit(L"Restore backup",
+					{ TaskCoordinator::WorldResourceKey(configCopy.configId, worldPath) },
+					[configCopy, entryCopy, configIndex, restoreMethod, customItems, worldPath](stop_token) {
+						if (configCopy.backupBefore) {
+							MyFolder world = { worldPath.wstring(), entryCopy.worldName, L"", configCopy, configIndex, -1 };
+							DoBackup(world, console, L"BeforeRestore");
+						}
+						DoRestore(configCopy, entryCopy.worldName, entryCopy.backupFile, console,
+							restoreMethod, customItems);
+					});
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
 
 			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"), ImVec2(restoreSelectFileBtnWidth, 0))) {
-				wstring selectedFile = SelectFileDialog();
+				wstring selectedFile = GetDesktopServices()->SelectFile().path.wstring();
 				if (!selectedFile.empty()) {
-					thread restore_thread(DoRestore2, cfg, selected_entry->worldName, selectedFile, ref(console), restore_method);
-					restore_thread.detach();
+					const Config configCopy = cfg;
+					const wstring worldName = selected_entry->worldName;
+					const int restoreMethod = restore_method;
+					TaskCoordinator::Instance().Submit(L"Restore custom backup",
+						{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, worldName)) },
+						[configCopy, worldName, selectedFile, restoreMethod](stop_token) {
+							DoRestore2(configCopy, worldName, selectedFile, console, restoreMethod);
+						});
 					ImGui::CloseCurrentPopup(); // Close method choice
 					//entry_for_action = nullptr; // Reset selection
 				}
@@ -354,8 +375,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		ImGui::SameLine();
 		if (!file_exists) ImGui::BeginDisabled();
 		if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"), ImVec2(CalcButtonWidth(L("HISTORY_BUTTON_OPEN_FOLDER"), actionButtonMinWidth), 0))) {
-			wstring cmd = L"/select,\"" + backup_path.wstring() + L"\"";
-			OpenFolderWithFocus(backup_path.parent_path().wstring(), cmd);
+			(void)GetDesktopServices()->RevealInFolder(backup_path.parent_path(), backup_path);
 		}
 		if (!file_exists) ImGui::EndDisabled();
 		ImGui::SameLine();
@@ -372,9 +392,10 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			const Config configCopy = cfg;
 			const HistoryEntry entryCopy = *selected_entry;
 			const int configIndex = tempCurrentConfigIndex;
-			thread([configCopy, configIndex, entryCopy]() {
+			TaskCoordinator::Instance().Submit(L"Upload backup",
+				{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex, entryCopy](stop_token) {
 				UploadHistoryEntry(configCopy, configIndex, entryCopy, console);
-			}).detach();
+			});
 		}
 		if (!canUseCloud || !file_exists) ImGui::EndDisabled();
 		ImGui::SameLine();
@@ -383,16 +404,22 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			const Config configCopy = cfg;
 			const HistoryEntry entryCopy = *selected_entry;
 			const int configIndex = tempCurrentConfigIndex;
-			thread([configCopy, configIndex, entryCopy]() {
+			TaskCoordinator::Instance().Submit(L"Download backup",
+				{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex, entryCopy](stop_token) {
 				DownloadHistoryEntry(configCopy, configIndex, entryCopy, console);
-			}).detach();
+			});
 		}
 		if (!canUseCloud || !has_cloud_copy) ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (!cfg.enableWEIntegration || !file_exists) ImGui::BeginDisabled();
 		if (ImGui::Button(L("BUTTON_ADD_TO_WE"), ImVec2(CalcButtonWidth(L("BUTTON_ADD_TO_WE"), compactButtonMinWidth), 0))) {
-			thread we_thread(AddBackupToWESnapshots, cfg, selected_entry->worldName, selected_entry->backupFile, ref(console));
-			we_thread.detach();
+			const Config configCopy = cfg;
+			const HistoryEntry entryCopy = *selected_entry;
+			TaskCoordinator::Instance().Submit(L"Create WorldEdit snapshot",
+				{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, entryCopy.worldName)) },
+				[configCopy, entryCopy](stop_token) {
+					AddBackupToWESnapshots(configCopy, entryCopy.worldName, entryCopy.backupFile, console);
+				});
 		}
 
 		if (!cfg.enableWEIntegration || !file_exists) ImGui::EndDisabled();
@@ -444,10 +471,11 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					? BackupDeleteMode::HistoryOnly
 					: (deleteMode == 1 ? BackupDeleteMode::LocalArchiveOnly : BackupDeleteMode::LocalArchiveAndHistory);
 				const bool useSafeDeleteForThread = safeDeleteSelected;
-				thread deleteThread([configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread]() mutable {
+				TaskCoordinator::Instance().Submit(L"Delete backup",
+					{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, entryCopy.worldName)) },
+					[configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread](stop_token) mutable {
 					DeleteBackupWithMode(configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread, console);
 				});
-				deleteThread.detach();
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();
 			}
@@ -485,7 +513,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 	}
 	else {
-		ImGui::TextWrapped(L("HISTORY_SELECT_PROMPT"));
+		ImGui::TextWrapped("%s", L("HISTORY_SELECT_PROMPT"));
 	}
 	ImGui::EndChild();
 

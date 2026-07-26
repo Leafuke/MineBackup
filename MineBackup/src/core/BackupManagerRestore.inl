@@ -1,8 +1,8 @@
 ﻿static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
 	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
 	for (const auto& backup : archives) {
-		wstring testCommand = L"\"" + config.zipPath + L"\" t \"" + backup.wstring() + L"\" -y";
-		if (!RunCommandInBackground(testCommand, console, config.useLowPriority)) {
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
+			{L"t", backup.wstring(), L"-y"}, {}, config.useLowPriority), console)) {
 			console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());
 			return false;
 		}
@@ -11,12 +11,14 @@
 	return true;
 }
 
-static bool ApplyRestoreChain(const vector<filesystem::path>& backupsToApply, const filesystem::path& destinationFolder, const Config& config, Console& console, const wstring& filesToExtractStr = L"") {
+static bool ApplyRestoreChain(const vector<filesystem::path>& backupsToApply, const filesystem::path& destinationFolder,
+	const Config& config, Console& console, const vector<wstring>& filesToExtract = {}) {
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
-		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y" + filesToExtractStr;
-		if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+		vector<wstring> arguments = {L"x", backup.wstring(), L"-o" + destinationFolder.wstring(), L"-y"};
+		arguments.insert(arguments.end(), filesToExtract.begin(), filesToExtract.end());
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority), console)) {
 			return false;
 		}
 	}
@@ -225,7 +227,7 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 
 		wstringstream fileNameBuilder;
 		fileNameBuilder << L"MineBackup_Restore_" << chrono::steady_clock::now().time_since_epoch().count() << L"_" << i << L".txt";
-		filesystem::path listFile = filesystem::temp_directory_path() / fileNameBuilder.str();
+		filesystem::path listFile = GetAppPaths().runtimeRoot / fileNameBuilder.str();
 		try {
 			ofstream out(listFile, ios::binary | ios::trunc);
 			for (const auto& file : group.files) {
@@ -235,8 +237,9 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 			}
 			out.close();
 
-			wstring command = L"\"" + config.zipPath + L"\" x \"" + group.archive.wstring() + L"\" @\"" + listFile.wstring() + L"\" -o\"" + destinationFolder.wstring() + L"\" -y";
-			if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+			if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
+				{L"x", group.archive.wstring(), L"@" + listFile.wstring(), L"-o" + destinationFolder.wstring(), L"-y"},
+				{}, config.useLowPriority), console)) {
 				filesystem::remove(listFile);
 				return false;
 			}
@@ -252,6 +255,10 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 }
 
 bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] Restore is disabled until local paths are bound.");
+		return false;
+	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -332,6 +339,10 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 }
 
 bool DoRestore(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] Restore is disabled until local paths are bound.");
+		return false;
+	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
@@ -368,7 +379,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	filesystem::path sourceDir = JoinPath(config.backupPath, worldName);
 	filesystem::path targetBackupPath = sourceDir / backupFile;
 	const int resolvedConfigIndex = ResolveConfigIndexForCloud(config);
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, resolvedConfigIndex, worldName, destinationFolder.wstring());
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, resolvedConfigIndex, worldName, destinationFolder.wstring());
 	if ((migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded)
 		&& IsIncrementalBackupType(backupFile) && restoreMethod == 0) {
 		console.AddLog("[Error] Exact Smart restore is unavailable until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
@@ -439,7 +450,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		backupsToApply.push_back(targetBackupPath);
 	}
 
-	wstring filesToExtractStr;
+	vector<wstring> filesToExtract;
 	if (restoreMethod == 3 && !customRestoreList.empty()) {
 		console.AddLog(L("LOG_CUSTOM_RESTORE_START"));
 		stringstream ss(customRestoreList);
@@ -448,7 +459,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 			item.erase(0, item.find_first_not_of(" \t\n\r"));
 			item.erase(item.find_last_not_of(" \t\n\r") + 1);
 			if (!item.empty()) {
-				filesToExtractStr += L" \"" + utf8_to_wstring(item) + L"\"";
+				filesToExtract.push_back(utf8_to_wstring(item));
 			}
 		}
 	}
@@ -492,7 +503,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		restoreSucceeded = ApplySmartRestorePlan(smartRestorePlan, destinationFolder, config, console);
 	}
 	else {
-		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console, filesToExtractStr);
+		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console, filesToExtract);
 	}
 
 	if (restoreSucceeded) {

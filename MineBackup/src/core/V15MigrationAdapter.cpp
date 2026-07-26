@@ -1,30 +1,24 @@
-#include "MigrationService.h"
+#include "V15MigrationAdapter.h"
 
+#include "AtomicFileWriter.h"
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
 #include "LegacyMineBackup15Reader.h"
+#include "MigrationCoordinator.h"
 #include "PlatformCompat.h"
-#ifdef _WIN32
-#include "Platform_win.h"
-#elif defined(__APPLE__)
-#include "Platform_macos.h"
-#else
-#include "Platform_linux.h"
-#endif
-#include "imgui-all.h"
-#include "json.hpp"
 #include "text_to_text.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <fstream>
 #include <iomanip>
+#include <fstream>
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -32,14 +26,10 @@
 
 using namespace std;
 
-namespace MigrationService {
+namespace V15MigrationAdapter {
 namespace {
 
-mutex g_mutex;
 recursive_mutex g_executionMutex;
-MigrationReport g_report;
-bool g_showSummary = false;
-bool g_historyPersistenceBlocked = false;
 
 struct Sha1 {
 	array<uint32_t, 5> h{ 0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u };
@@ -109,13 +99,17 @@ wstring SafeStamp() {
 }
 
 filesystem::path SnapshotPath(const filesystem::path& source, const wstring& label) {
-	return source.parent_path() / (source.stem().wstring() + L".v1.15." + SafeStamp() + L"." + label + source.extension().wstring());
+	const auto root = MigrationCoordinator::GetPaths().snapshotRoot /
+		(SafeStamp() + L"-" + FolderRewindFormat::GenerateGuidString());
+	return root / (source.stem().wstring() + L"." + label + source.extension().wstring());
 }
 
 bool CopySnapshot(const filesystem::path& source, filesystem::path& snapshot) {
 	error_code ec;
 	if (!filesystem::exists(source, ec) || ec) return true;
 	snapshot = SnapshotPath(source, L"bak");
+	filesystem::create_directories(snapshot.parent_path(), ec);
+	if (ec) return false;
 	filesystem::copy_file(source, snapshot, filesystem::copy_options::overwrite_existing, ec);
 	return !ec;
 }
@@ -123,56 +117,45 @@ bool CopySnapshot(const filesystem::path& source, filesystem::path& snapshot) {
 void PreserveInvalidFile(const filesystem::path& source) {
 	error_code ec;
 	if (!filesystem::exists(source, ec) || ec) return;
-	filesystem::copy_file(source, source.wstring() + L".invalid." + SafeStamp(), filesystem::copy_options::overwrite_existing, ec);
+	const auto snapshot = SnapshotPath(source, L"invalid");
+	filesystem::create_directories(snapshot.parent_path(), ec);
+	if (!ec) filesystem::copy_file(source, snapshot, filesystem::copy_options::overwrite_existing, ec);
 }
 
-bool ReplaceFileAtomically(const filesystem::path& temp, const filesystem::path& target) {
-#ifdef _WIN32
-	SetFileAttributesW(target.c_str(), FILE_ATTRIBUTE_NORMAL);
-	return MoveFileExW(temp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
-#else
+bool CreateWorldMetadataSnapshot(
+	const Config& config,
+	const FolderRewindFormat::StoragePaths& paths,
+	filesystem::path& snapshotRoot,
+	wstring& error) {
+	error.clear();
+	(void)config;
+	snapshotRoot = MigrationCoordinator::GetPaths().snapshotRoot /
+		(SafeStamp() + L"-" + FolderRewindFormat::GenerateGuidString())
+		/ FolderRewindFormat::kMetadataRootDirName / paths.folderName;
 	error_code ec;
-	filesystem::rename(temp, target, ec);
-	return !ec;
-#endif
+	filesystem::create_directories(snapshotRoot, ec);
+	if (ec) { error = L"Could not create the world metadata recovery snapshot directory."; return false; }
+
+	int copied = 0;
+	for (const auto& entry : filesystem::directory_iterator(paths.metadataDir, ec)) {
+		if (ec) { error = L"Could not enumerate legacy metadata for recovery snapshot."; return false; }
+		if (!entry.is_regular_file(ec) || ec || entry.path().extension() != L".json") { ec.clear(); continue; }
+		const wstring fileName = entry.path().filename().wstring();
+		// state.json belongs to the new format. Legacy metadata.json and every adjacent record are preserved.
+		if (_wcsicmp(fileName.c_str(), FolderRewindFormat::kMetadataStateFileName) == 0) continue;
+		filesystem::copy_file(entry.path(), snapshotRoot / entry.path().filename(), filesystem::copy_options::overwrite_existing, ec);
+		if (ec) { error = L"Could not copy a legacy metadata file into the recovery snapshot."; return false; }
+		++copied;
+	}
+	if (copied == 0 || !filesystem::exists(snapshotRoot / L"metadata.json")) {
+		error = L"The world metadata recovery snapshot is incomplete.";
+		return false;
+	}
+	return true;
 }
 
 void AddOrReplaceUnit(const MigrationUnitResult& unit) {
-	lock_guard<mutex> lock(g_mutex);
-	auto it = find_if(g_report.units.begin(), g_report.units.end(), [&](const MigrationUnitResult& value) { return value.unitId == unit.unitId; });
-	if (it == g_report.units.end()) g_report.units.push_back(unit); else *it = unit;
-	g_report.updatedAtUtc = FolderRewindFormat::MakeUtcTimestampString();
-	g_report.status = MigrationStatus::NotNeeded;
-	for (const auto& item : g_report.units) {
-		if (item.status == MigrationStatus::Failed) { g_report.status = MigrationStatus::Failed; break; }
-		if (item.status == MigrationStatus::Degraded) g_report.status = MigrationStatus::Degraded;
-		else if (item.status == MigrationStatus::Succeeded && g_report.status == MigrationStatus::NotNeeded) g_report.status = MigrationStatus::Succeeded;
-		else if (item.status == MigrationStatus::Pending && g_report.status == MigrationStatus::NotNeeded) g_report.status = MigrationStatus::Pending;
-	}
-	try {
-		filesystem::create_directories(L".migration");
-		nlohmann::json root;
-		root["Version"] = "1.15-to-1.16";
-		root["UpdatedAtUtc"] = wstring_to_utf8(g_report.updatedAtUtc);
-		root["Status"] = static_cast<int>(g_report.status);
-		root["Units"] = nlohmann::json::array();
-		for (const auto& item : g_report.units) {
-			nlohmann::json value;
-			value["UnitId"] = wstring_to_utf8(item.unitId);
-			value["Status"] = static_cast<int>(item.status);
-			value["Message"] = wstring_to_utf8(item.message);
-			value["SnapshotPath"] = wstring_to_utf8(item.snapshotPath);
-			value["MigratedItems"] = item.migratedItems;
-			value["SkippedItems"] = item.skippedItems;
-			root["Units"].push_back(std::move(value));
-		}
-		const filesystem::path target = filesystem::path(L".migration") / L"1.15-to-1.16.json";
-		const filesystem::path temp = target.wstring() + L".tmp";
-		ofstream out(temp, ios::binary | ios::trunc);
-		out << root.dump(2); out.close();
-		ReplaceFileAtomically(temp, target);
-	}
-	catch (...) {}
+	MigrationCoordinator::RecordUnit(unit);
 }
 
 bool SameHistoryIdentity(const HistoryEntry& a, const HistoryEntry& b) {
@@ -202,7 +185,7 @@ void MergeHistory(map<int, vector<HistoryEntry>>& history) {
 MigrationUnitResult MigrateHistory() {
 	MigrationUnitResult unit;
 	unit.unitId = L"startup:history";
-	const filesystem::path path = L"history.json";
+	const filesystem::path path = MigrationCoordinator::GetPaths().historyFile;
 	if (!filesystem::exists(path) || !LegacyMineBackup15Reader::IsLegacyHistoryFile(path)) {
 		unit.status = MigrationStatus::NotNeeded;
 		unit.message = L"History already uses the FolderRewind schema.";
@@ -211,57 +194,204 @@ MigrationUnitResult MigrateHistory() {
 	LegacyMineBackup15Reader::HistoryReadResult read;
 	if (!LegacyMineBackup15Reader::ReadHistory(path, g_appState.configs, read)) {
 		unit.status = MigrationStatus::Failed; unit.message = L"Could not parse the 1.15 history file.";
-		g_historyPersistenceBlocked = true; return unit;
+		MigrationCoordinator::SetHistoryPersistenceBlocked(true); return unit;
 	}
 	size_t migratedCount = 0;
 	for (const auto& [configIndex, entries] : read.history) migratedCount += entries.size();
 	if (read.sourceItems > 0 && migratedCount == 0) {
 		unit.status = MigrationStatus::Failed;
 		unit.message = L"No 1.15 history entries could be mapped safely; the original file was not replaced.";
-		g_historyPersistenceBlocked = true;
+		MigrationCoordinator::SetHistoryPersistenceBlocked(true);
 		return unit;
 	}
 	MergeHistory(read.history);
 	filesystem::path snapshot;
 	if (!CopySnapshot(path, snapshot)) {
 		unit.status = MigrationStatus::Failed; unit.message = L"Could not create the history recovery snapshot.";
-		g_historyPersistenceBlocked = true; return unit;
+		MigrationCoordinator::SetHistoryPersistenceBlocked(true); return unit;
 	}
 	unit.snapshotPath = snapshot.wstring();
 	if (!read.unmigrated.empty()) {
-		ofstream lost(SnapshotPath(path, L"unmigrated"), ios::binary | ios::trunc);
-		lost << read.unmigrated.dump(2);
+		const auto lostPath = SnapshotPath(path, L"unmigrated");
+		AtomicFileWriter::WriteText(lostPath, read.unmigrated.dump(2), {false, true});
 	}
-	const filesystem::path temp = path.parent_path() / L"history.json.migration.tmp";
-	if (!FolderRewindHistoryStore::SaveHistoryFile(temp, g_appState.configs, read.history)) {
+	if (!FolderRewindHistoryStore::SaveHistoryFile(path, g_appState.configs, read.history)) {
 		unit.status = MigrationStatus::Failed; unit.message = L"Could not write converted history.";
-		g_historyPersistenceBlocked = true; return unit;
+		MigrationCoordinator::SetHistoryPersistenceBlocked(true); return unit;
 	}
 	map<int, vector<HistoryEntry>> verify;
-	if (!FolderRewindHistoryStore::LoadHistoryFile(temp, g_appState.configs, verify) || !ReplaceFileAtomically(temp, path)) {
-		error_code ec; filesystem::remove(temp, ec);
-		unit.status = MigrationStatus::Failed; unit.message = L"Converted history failed validation or atomic replacement.";
-		g_historyPersistenceBlocked = true; return unit;
+	if (!FolderRewindHistoryStore::LoadHistoryFile(path, g_appState.configs, verify)) {
+		unit.status = MigrationStatus::Failed; unit.message = L"Converted history failed validation after atomic replacement.";
+		MigrationCoordinator::SetHistoryPersistenceBlocked(true); return unit;
 	}
 	unit.migratedItems = read.sourceItems - static_cast<int>(read.unmigrated.size());
 	unit.skippedItems = static_cast<int>(read.unmigrated.size());
 	unit.status = read.unmigrated.empty() ? MigrationStatus::Succeeded : MigrationStatus::Degraded;
 	unit.message = read.unmigrated.empty() ? L"1.15 history migrated." : L"History migrated; unmapped items were preserved in a recovery file.";
-	g_historyPersistenceBlocked = false;
+	MigrationCoordinator::SetHistoryPersistenceBlocked(false);
 	return unit;
 }
 
-wstring InferLastBackupTime(const Config& config, const wstring& folderName, const LegacyMineBackup15Reader::MetadataSummary& summary, const vector<FolderRewindFormat::ChangeRecord>& records) {
+wstring NormalizeHistoryTimestamp(wstring value) {
+	// 1.15 normally used yyyy-MM-dd_HH-mm-ss; FolderRewind accepts an ISO local DateTime.
+	if (value.size() >= 19 && value[10] == L'_') {
+		value[10] = L'T';
+		if (value[13] == L'-') value[13] = L':';
+		if (value[16] == L'-') value[16] = L':';
+	}
+	return value;
+}
+
+wstring InferLastBackupTime(const Config& config, int configIndex, const wstring& folderName, const LegacyMineBackup15Reader::MetadataSummary& summary, const vector<FolderRewindFormat::ChangeRecord>& records) {
 	for (auto it = records.rbegin(); it != records.rend(); ++it) if (!it->createdAtUtc.empty()) return it->createdAtUtc;
 	error_code ec;
 	auto archive = filesystem::path(config.backupPath) / folderName / summary.lastBackupFileName;
-	if (filesystem::exists(archive, ec) && !ec) return FolderRewindFormat::FormatFileTimeUtc(filesystem::last_write_time(archive, ec));
-	auto historyIt = g_appState.g_history.find(-1);
-	(void)historyIt;
+	if (filesystem::exists(archive, ec) && !ec) {
+		const auto archiveTime = filesystem::last_write_time(archive, ec);
+		if (!ec) return FolderRewindFormat::FormatFileTimeUtc(archiveTime);
+	}
+	auto historyIt = g_appState.g_history.find(configIndex);
+	if (historyIt != g_appState.g_history.end()) {
+		for (auto it = historyIt->second.rbegin(); it != historyIt->second.rend(); ++it) {
+			if (it->worldName == folderName && it->backupFile == summary.lastBackupFileName && !it->timestamp_str.empty())
+				return NormalizeHistoryTimestamp(it->timestamp_str);
+		}
+	}
 	return L"";
 }
 
 } // namespace
+
+bool ImportLegacyRemoteIni(
+	const filesystem::path& source,
+	PortableConfigDocument& document,
+	wstring& error) {
+	document.configs.clear();
+	error.clear();
+	error_code sizeError;
+	const auto sourceSize = filesystem::file_size(source, sizeError);
+	if (sizeError || sourceSize > PortableConfigDocument::MaximumBytes) {
+		error = L"Legacy remote config.ini is unavailable or exceeds the 1 MiB safety limit.";
+		return false;
+	}
+	ifstream input(source, ios::binary);
+	if (!input) {
+		error = L"Unable to open the selected legacy remote config.ini.";
+		return false;
+	}
+
+	map<int, Config> filtered;
+	Config* current = nullptr;
+	string encodedLine;
+	auto parseInt = [](const wstring& value, int& output) {
+		try {
+			size_t consumed = 0;
+			const int parsed = stoi(value, &consumed);
+			if (consumed != value.size()) return false;
+			output = parsed;
+			return true;
+		}
+		catch (...) { return false; }
+	};
+	while (getline(input, encodedLine)) {
+		if (!encodedLine.empty() && encodedLine.back() == '\r') encodedLine.pop_back();
+		wstring line = utf8_to_wstring(encodedLine);
+		if (line.size() >= 9 && line.front() == L'[' && line.back() == L']'
+			&& line.rfind(L"[Config", 0) == 0) {
+			try {
+				const int index = stoi(line.substr(7, line.size() - 8));
+				current = &filtered[index];
+			}
+			catch (...) { current = nullptr; }
+			continue;
+		}
+		if (!current) continue;
+		const auto delimiter = line.find(L'=');
+		if (delimiter == wstring::npos) continue;
+		const wstring key = line.substr(0, delimiter);
+		const wstring value = line.substr(delimiter + 1);
+		if (key == L"ConfigName") current->name = wstring_to_utf8(value);
+		else if (key == L"ConfigId") current->configId = value;
+		else if (key == L"WorldData") {
+			while (getline(input, encodedLine)) {
+				if (!encodedLine.empty() && encodedLine.back() == '\r') encodedLine.pop_back();
+				const wstring worldName = utf8_to_wstring(encodedLine);
+				if (worldName == L"*") break;
+				if (!getline(input, encodedLine)) break;
+				if (!encodedLine.empty() && encodedLine.back() == '\r') encodedLine.pop_back();
+				const wstring description = utf8_to_wstring(encodedLine);
+				if (FolderRewindFormat::IsSafeSinglePathSegment(worldName)) {
+					current->worlds.push_back({worldName, description});
+				}
+			}
+		}
+		else if (key == L"ZipFormat") current->zipFormat = value;
+		else if (key == L"ZipMethod") current->zipMethod = value;
+		else if (key == L"ZipLevel") parseInt(value, current->zipLevel);
+		else if (key == L"KeepCount") parseInt(value, current->keepCount);
+		else if (key == L"SmartBackup") parseInt(value, current->backupMode);
+		else if (key == L"RestoreBeforeBackup") current->backupBefore = value != L"0";
+		else if (key == L"CpuThreads") parseInt(value, current->cpuThreads);
+		else if (key == L"UseLowPriority") current->useLowPriority = value != L"0";
+		else if (key == L"SkipIfUnchanged") current->skipIfUnchanged = value != L"0";
+		else if (key == L"MaxSmartBackups") parseInt(value, current->maxSmartBackupsPerFull);
+		else if (key == L"BlacklistItem" && value.size() <= 4096) current->blacklist.push_back(value);
+		else if (key == L"CloudSyncMode") parseInt(value, current->cloudSyncMode);
+		else if (key == L"CloudTimeoutSeconds") parseInt(value, current->cloudTimeoutSeconds);
+		else if (key == L"CloudRetryCount") parseInt(value, current->cloudRetryCount);
+		else if (key == L"CloudSyncHistoryAfterUpload") current->cloudSyncHistoryAfterUpload = value != L"0";
+		else if (key == L"CloudAutoDownloadBeforeRestore") current->cloudAutoDownloadBeforeRestore = value != L"0";
+	}
+
+	set<wstring> usedIds;
+	auto isCanonicalId = [](const wstring& value) {
+		if (value.size() != 36) return false;
+		for (size_t i = 0; i < value.size(); ++i) {
+			if (i == 8 || i == 13 || i == 18 || i == 23) {
+				if (value[i] != L'-') return false;
+			}
+			else if (!iswxdigit(value[i])) return false;
+		}
+		return true;
+	};
+	for (auto& [index, config] : filtered) {
+		(void)index;
+		if (!isCanonicalId(config.configId) || usedIds.count(config.configId)) {
+			config.configId = FolderRewindFormat::GenerateGuidString();
+		}
+		usedIds.insert(config.configId);
+		config.cloudSyncEnabled = false;
+	}
+	document = PortableConfigDocument::FromLocalConfigs(filtered);
+	PortableConfigDocument verified;
+	if (!PortableConfigDocument::Parse(document.Serialize(), verified, error)) return false;
+	document = std::move(verified);
+
+	ifstream snapshotInput(source, ios::binary);
+	const string snapshotContent((istreambuf_iterator<char>(snapshotInput)), istreambuf_iterator<char>());
+	const auto snapshotDirectory = MigrationCoordinator::GetPaths().snapshotRoot
+		/ L"legacy-remote-ini" / FolderRewindFormat::GenerateGuidString();
+	AtomicFileWriter::WriteOptions options;
+	options.keepBackup = false;
+	const auto snapshot = AtomicFileWriter::WriteText(snapshotDirectory / L"config.ini", snapshotContent, options);
+	if (!snapshot.success) {
+		error = L"Legacy remote config.ini was filtered but its required recovery snapshot could not be written: " + snapshot.error;
+		return false;
+	}
+	MigrationUnitResult unit;
+	unit.unitId = L"cloud:legacy-config-ini";
+	unit.status = MigrationStatus::Succeeded;
+	unit.migratedItems = static_cast<int>(document.configs.size());
+	unit.snapshotPath = snapshotDirectory.wstring();
+	unit.message = L"A user-requested legacy remote config.ini was read through the portable whitelist; the source snapshot was retained.";
+	MigrationCoordinator::RecordUnit(unit);
+	return true;
+}
+
+MigrationUnitResult EnsureWorldMigrated(
+	int configIndex, const wstring& folderName, const wstring& fallbackPath = L"");
+MigrationUnitResult EnsureWorldMigrated(
+	const Config& config, int configIndex, const wstring& folderName, const wstring& fallbackPath = L"");
 
 wstring GenerateLegacyConfigId(const Config& config, int configIndex) {
 	wstring identity;
@@ -276,9 +406,6 @@ wstring GenerateLegacyConfigId(const Config& config, int configIndex) {
 }
 
 MigrationReport RunStartupMigration() {
-#if !MINEBACKUP_ENABLE_V15_MIGRATION
-	return GetMigrationReport();
-#else
 	MigrationUnitResult configUnit;
 	configUnit.unitId = L"startup:config";
 	bool changed = false;
@@ -287,14 +414,26 @@ MigrationReport RunStartupMigration() {
 		changed = true;
 		configUnit.migratedItems++;
 	}
+	for (auto& [index, config] : g_appState.specialConfigs) {
+		if (!config.legacySpecialConfigIdGenerated) continue;
+		changed = true;
+		configUnit.migratedItems++;
+	}
 	if (changed) {
 		filesystem::path snapshot;
-		if (CopySnapshot(L"config.ini", snapshot)) {
+		const auto configPath = MigrationCoordinator::GetPaths().configFile;
+		if (CopySnapshot(configPath, snapshot)) {
 			configUnit.snapshotPath = snapshot.wstring();
-			SaveConfigs();
-			configUnit.status = MigrationStatus::Succeeded;
-			configUnit.message = L"Stable ConfigId values were persisted for 1.15 configurations.";
-			for (auto& [index, config] : g_appState.configs) config.legacyConfigIdGenerated = false;
+			if (SaveConfigs(configPath)) {
+				configUnit.status = MigrationStatus::Succeeded;
+				configUnit.message = L"Stable ConfigId values were persisted for 1.15 configurations.";
+				for (auto& [index, config] : g_appState.configs) config.legacyConfigIdGenerated = false;
+				for (auto& [index, config] : g_appState.specialConfigs) config.legacySpecialConfigIdGenerated = false;
+			}
+			else {
+				configUnit.status = MigrationStatus::Failed;
+				configUnit.message = L"The migrated configuration failed its atomic commit.";
+			}
 		}
 		else {
 			configUnit.status = MigrationStatus::Failed;
@@ -306,17 +445,33 @@ MigrationReport RunStartupMigration() {
 		configUnit.message = L"Configuration identities are current.";
 	}
 	AddOrReplaceUnit(configUnit);
-	auto history = MigrateHistory();
-	AddOrReplaceUnit(history);
-	{
-		lock_guard<mutex> lock(g_mutex);
-		g_showSummary = configUnit.status != MigrationStatus::NotNeeded || history.status != MigrationStatus::NotNeeded;
+	const bool configBlocked = configUnit.status == MigrationStatus::Failed;
+	MigrationCoordinator::SetConfigurationPersistenceBlocked(configBlocked);
+	MigrationUnitResult history;
+	if (configBlocked) {
+		history.unitId = L"startup:history";
+		history.status = MigrationStatus::Pending;
+		history.message = L"History migration is waiting for the configuration transaction to succeed.";
+		MigrationCoordinator::SetHistoryPersistenceBlocked(true);
 	}
-	return GetMigrationReport();
-#endif
+	else {
+		history = MigrateHistory();
+	}
+	AddOrReplaceUnit(history);
+	MigrationCoordinator::SetStartupSummaryVisible(
+		configUnit.status != MigrationStatus::NotNeeded || history.status != MigrationStatus::NotNeeded);
+	return MigrationCoordinator::GetMigrationReport();
 }
 
 MigrationUnitResult EnsureWorldMigrated(int configIndex, const wstring& folderName, const wstring& fallbackPath) {
+	if (MigrationCoordinator::IsConfigurationPersistenceBlocked()) {
+		MigrationUnitResult pending;
+		pending.unitId = L"world:" + to_wstring(configIndex) + L":" + folderName;
+		pending.status = MigrationStatus::Pending;
+		pending.message = L"World migration is waiting for the configuration transaction to succeed.";
+		AddOrReplaceUnit(pending);
+		return pending;
+	}
 	auto it = g_appState.configs.find(configIndex);
 	if (it == g_appState.configs.end()) {
 		MigrationUnitResult result; result.unitId = L"world:" + to_wstring(configIndex) + L":" + folderName;
@@ -329,9 +484,12 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 	lock_guard<recursive_mutex> migrationLock(g_executionMutex);
 	MigrationUnitResult unit;
 	unit.unitId = L"world:" + to_wstring(configIndex) + L":" + folderName;
-#if !MINEBACKUP_ENABLE_V15_MIGRATION
-	unit.status = MigrationStatus::NotNeeded; return unit;
-#else
+	if (MigrationCoordinator::IsConfigurationPersistenceBlocked()) {
+		unit.status = MigrationStatus::Pending;
+		unit.message = L"World migration is waiting for the configuration transaction to succeed.";
+		AddOrReplaceUnit(unit);
+		return unit;
+	}
 	FolderRewindFormat::StoragePaths paths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, folderName, fallbackPath, paths)) {
 		unit.status = MigrationStatus::Failed; unit.message = L"World storage path is invalid."; AddOrReplaceUnit(unit); return unit;
@@ -342,7 +500,6 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 	}
 	FolderRewindFormat::MetadataState current;
 	const bool validNewState = FolderRewindMetadataStore::LoadState(paths.metadataDir, current);
-	if (!validNewState && filesystem::exists(paths.statePath)) PreserveInvalidFile(paths.statePath);
 	LegacyMineBackup15Reader::MetadataSummary legacy;
 	wstring error;
 	if (!LegacyMineBackup15Reader::ReadMetadataSummary(paths.metadataDir, legacy, error)) {
@@ -361,6 +518,31 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 		unit.message = L"The FolderRewind chain has advanced beyond the retained 1.15 metadata.";
 		AddOrReplaceUnit(unit); return unit;
 	}
+	if (validNewState) {
+		bool allRecordsMigrated = true;
+		for (const auto& legacyRecord : legacy.recordIndex) {
+			FolderRewindFormat::ChangeRecord existing;
+			if (!FolderRewindMetadataStore::LoadRecord(paths.metadataDir, legacyRecord.archiveFileName, existing)) {
+				allRecordsMigrated = false;
+				break;
+			}
+		}
+		if (allRecordsMigrated) {
+			unit.status = MigrationStatus::NotNeeded;
+			unit.message = L"FolderRewind state and records are already complete; retained 1.15 files were not reprocessed.";
+			AddOrReplaceUnit(unit);
+			return unit;
+		}
+	}
+	filesystem::path recoverySnapshot;
+	if (!CreateWorldMetadataSnapshot(config, paths, recoverySnapshot, error)) {
+		unit.status = MigrationStatus::Failed;
+		unit.message = error;
+		AddOrReplaceUnit(unit);
+		return unit;
+	}
+	unit.snapshotPath = recoverySnapshot.wstring();
+	if (!validNewState && filesystem::exists(paths.statePath)) PreserveInvalidFile(paths.statePath);
 
 	vector<FolderRewindFormat::ChangeRecord> convertedRecords;
 	bool degraded = false;
@@ -395,7 +577,7 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 		if (value.lastWriteTimeUtc.empty()) { degraded = true; continue; }
 		next.fileStates[FolderRewindFormat::NormalizeRelativePath(name)] = std::move(value);
 	}
-	next.lastBackupTime = InferLastBackupTime(config, paths.folderName, legacy, convertedRecords);
+	next.lastBackupTime = InferLastBackupTime(config, configIndex, paths.folderName, legacy, convertedRecords);
 	if (next.lastBackupTime.empty()) degraded = true;
 	error_code ec;
 	if (!filesystem::exists(paths.backupSubDir / next.lastBackupFileName, ec) || ec) degraded = true;
@@ -434,15 +616,19 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 	}
 	unit.status = degraded ? MigrationStatus::Degraded : MigrationStatus::Succeeded;
 	unit.message = degraded ? L"Available records were migrated; the next backup will be forced Full." : L"1.15 metadata migrated without changing archive files.";
-	unit.snapshotPath = legacyPath.wstring();
 	AddOrReplaceUnit(unit);
 	return unit;
-#endif
 }
 
 MigrationUnitResult EnsureCloudMigrated(int configIndex) {
 	MigrationUnitResult unit;
 	unit.unitId = L"cloud:" + to_wstring(configIndex);
+	if (MigrationCoordinator::IsConfigurationPersistenceBlocked()) {
+		unit.status = MigrationStatus::Pending;
+		unit.message = L"Cloud migration is waiting for the configuration transaction to succeed.";
+		AddOrReplaceUnit(unit);
+		return unit;
+	}
 	auto it = g_appState.configs.find(configIndex);
 	if (it == g_appState.configs.end()) { unit.status = MigrationStatus::Failed; unit.message = L"Configuration not found."; return unit; }
 	const wstring identity = LowerNormalized(it->second.rcloneRemotePath) + L"|" + LowerNormalized(utf8_to_wstring(it->second.name));
@@ -480,36 +666,22 @@ bool RetryMigration(const wstring& unitId) {
 	return false;
 }
 
-MigrationReport GetMigrationReport() { lock_guard<mutex> lock(g_mutex); return g_report; }
-bool ShouldShowStartupSummary() { lock_guard<mutex> lock(g_mutex); return g_showSummary; }
-void DismissStartupSummary() { lock_guard<mutex> lock(g_mutex); g_showSummary = false; }
-bool IsHistoryPersistenceBlocked() { return g_historyPersistenceBlocked; }
-
-void DrawMigrationSettings() {
-	const auto report = GetMigrationReport();
-	ImGui::SeparatorText("MineBackup 1.15 -> 1.16 migration");
-	ImGui::TextWrapped("Migration is one-way. Recovery snapshots are retained and archive files are never renamed.");
-	for (const auto& unit : report.units) {
-		const char* state = unit.status == MigrationStatus::Succeeded ? "Succeeded" : unit.status == MigrationStatus::Degraded ? "Degraded"
-			: unit.status == MigrationStatus::Failed ? "Failed" : unit.status == MigrationStatus::Pending ? "Pending" : "Not needed";
-		ImGui::BulletText("%s: %s", wstring_to_utf8(unit.unitId).c_str(), state);
-		if (!unit.message.empty()) ImGui::TextWrapped("%s", wstring_to_utf8(unit.message).c_str());
-		if (!unit.snapshotPath.empty()) {
-			ImGui::TextWrapped("Recovery snapshot: %s", wstring_to_utf8(unit.snapshotPath).c_str());
-			const filesystem::path snapshot(unit.snapshotPath);
-			if (filesystem::exists(snapshot)) {
-				ImGui::SameLine();
-				ImGui::PushID((wstring_to_utf8(unit.unitId) + "_snapshot").c_str());
-				if (ImGui::SmallButton("Open")) OpenFolder(snapshot.parent_path().wstring());
-				ImGui::PopID();
-			}
-		}
-		if (unit.status == MigrationStatus::Failed || unit.status == MigrationStatus::Degraded) {
-			ImGui::PushID(wstring_to_utf8(unit.unitId).c_str());
-			if (ImGui::Button("Retry")) RetryMigration(unit.unitId);
-			ImGui::PopID();
-		}
-	}
+void Install() {
+	MigrationCoordinator::AdapterCallbacks callbacks;
+	callbacks.generateLegacyConfigId = GenerateLegacyConfigId;
+	callbacks.runStartupMigration = RunStartupMigration;
+	callbacks.ensureWorldMigratedByIndex =
+		[](int configIndex, const wstring& folderName, const wstring& fallbackPath) {
+			return EnsureWorldMigrated(configIndex, folderName, fallbackPath);
+		};
+	callbacks.ensureWorldMigrated =
+		[](const Config& config, int configIndex, const wstring& folderName, const wstring& fallbackPath) {
+			return EnsureWorldMigrated(config, configIndex, folderName, fallbackPath);
+		};
+	callbacks.ensureCloudMigrated = EnsureCloudMigrated;
+	callbacks.recordCloudMigrationResult = RecordCloudMigrationResult;
+	callbacks.retryMigration = RetryMigration;
+	MigrationCoordinator::InstallAdapter(std::move(callbacks));
 }
 
-} // namespace MigrationService
+} // namespace V15MigrationAdapter

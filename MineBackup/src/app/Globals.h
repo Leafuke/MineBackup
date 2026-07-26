@@ -6,6 +6,7 @@
 // 定义在 MineBackup.cpp 中，其他文件通过 #include "Globals.h" 访问
 
 #include "AppState.h"
+#include "MineBackupVersion.h"
 #include "imgui.h"
 #include <atomic>
 #include <string>
@@ -73,18 +74,23 @@ struct CoreValidationRuntimeState {
 struct SpecialTaskRuntimeState {
 	std::atomic<bool> tasksRunning{ false };
 	std::atomic<bool> tasksComplete{ false };
-	std::thread exitWatcherThread;
-	std::atomic<bool> stopExitWatcher{ false };
+};
+
+struct ExternalToolRuntimeState {
+	bool rcloneInstallRunning = false;
+	bool rcloneInstallSucceeded = false;
+	std::wstring rcloneInstallMessage;
 };
 
 struct AppGlobalState {
-	std::string currentVersion = "1.15.0";
+	std::string currentVersion = MINEBACKUP_VERSION_STRING;
 	AppWindowState window;
 	AppUpdateState update;
 	AppUiState ui;
 	AppSettingsState settings;
 	SpecialTaskRuntimeState specialTasks;
 	CoreValidationRuntimeState coreValidation;
+	ExternalToolRuntimeState externalTools;
 };
 
 extern AppGlobalState g_globals;
@@ -135,9 +141,10 @@ inline std::vector<std::wstring>& restoreWhitelist = g_globals.settings.restoreW
 
 inline std::atomic<bool>& specialTasksRunning = g_globals.specialTasks.tasksRunning;
 inline std::atomic<bool>& specialTasksComplete = g_globals.specialTasks.tasksComplete;
-inline std::thread& g_exitWatcherThread = g_globals.specialTasks.exitWatcherThread;
-inline std::atomic<bool>& g_stopExitWatcher = g_globals.specialTasks.stopExitWatcher;
 inline std::atomic<bool>& g_CoreValidationRunning = g_globals.coreValidation.running;
+inline bool& g_RcloneInstallRunning = g_globals.externalTools.rcloneInstallRunning;
+inline bool& g_RcloneInstallSucceeded = g_globals.externalTools.rcloneInstallSucceeded;
+inline std::wstring& g_RcloneInstallMessage = g_globals.externalTools.rcloneInstallMessage;
 
 // i18n
 extern const char* lang_codes[2];

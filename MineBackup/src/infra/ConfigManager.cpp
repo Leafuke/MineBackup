@@ -1,7 +1,10 @@
 ﻿#include "ConfigManager.h"
 #include "AppState.h"
+#include "AppPaths.h"
+#include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
+#include "SpecialConfigPolicy.h"
 #include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -11,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <set>
 using namespace std;
 
 static wstring GetDefaultFontPath() {
@@ -136,6 +140,7 @@ int CreateNewSpecialConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	SpecialConfig sp;
 	sp.name = name_hint;
+	sp.specialConfigId = FolderRewindFormat::GenerateGuidString();
 	EnsureDefaultBackupBlacklist(sp.blacklist);
 	EnsureDefaultRestoreWhitelist();
 	g_appState.specialConfigs[newId] = sp;
@@ -169,12 +174,17 @@ void EnsureConfigIds() {
 	}
 }
 
-void LoadConfigs(const string& filename) {
+void LoadConfigs() {
+	LoadConfigs(GetAppPaths().ConfigFile());
+}
+
+void LoadConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
+	g_appState.specialConfigMode = false;
 	restoreWhitelist.clear();
-	ifstream in(filename.c_str(), ios::binary);
+	ifstream in(filename, ios::binary);
 	if (!in.is_open()) return;
 	string line1;
 	wstring line, section;
@@ -209,6 +219,7 @@ void LoadConfigs(const string& filename) {
 			if (cur) { // Inside a [ConfigN] section
 				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
 				else if (key == L"ConfigId") cur->configId = FolderRewindFormat::EnsureConfigId(val);
+				else if (key == L"PendingLocalBinding") cur->pendingLocalBinding = (val != L"0");
 				else if (key == L"SavePath") {
 					cur->saveRoot = val;
 				}
@@ -274,7 +285,7 @@ void LoadConfigs(const string& filename) {
 						applyDefaultFont();
 					}
 					else if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
-						MessageBoxWin("Warning", "Invalid font path!\nPlease check and reload.", 1);
+						MessageBoxWin(L("WARNING_TITLE"), L("INVALID_FONT_PATH"), 1);
 						GetUserDefaultUILanguageWin();
 						applyDefaultFont();
 					}
@@ -282,10 +293,9 @@ void LoadConfigs(const string& filename) {
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
 				if (key == L"Name") spCur->name = wstring_to_utf8(val);
+				else if (key == L"SpecialConfigId") spCur->specialConfigId = FolderRewindFormat::EnsureConfigId(val);
 				else if (key == L"AutoExecute") {
 					spCur->autoExecute = (val != L"0");
-					if (spCur->autoExecute)
-						g_appState.specialConfigMode = true;
 				}
 				else if (key == L"ExitAfter") spCur->exitAfterExecution = (val != L"0");
 				else if (key == L"Theme") spCur->theme = stoi(val);
@@ -425,6 +435,7 @@ void LoadConfigs(const string& filename) {
 			}
 		}
 	}
+	set<wstring> usedConfigIds;
 	for (auto& kv : g_appState.configs) {
 		Config& cfg = kv.second;
 		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
@@ -435,30 +446,76 @@ void LoadConfigs(const string& filename) {
 		if (cfg.cloudTimeoutSeconds <= 0) cfg.cloudTimeoutSeconds = 600;
 		if (cfg.cloudRetryCount < 0) cfg.cloudRetryCount = 0;
 		if (cfg.configId.empty()) {
-			cfg.configId = MigrationService::GenerateLegacyConfigId(cfg, kv.first);
+			cfg.configId = MigrationCoordinator::GenerateLegacyConfigId(cfg, kv.first);
 			cfg.legacyConfigIdGenerated = true;
 		}
 		else {
 			cfg.configId = FolderRewindFormat::EnsureConfigId(cfg.configId);
 		}
+
+		wstring identity = cfg.configId;
+		transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
+		if (!usedConfigIds.insert(identity).second) {
+			do {
+				cfg.configId = FolderRewindFormat::GenerateGuidString();
+				identity = cfg.configId;
+				transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
+			} while (!usedConfigIds.insert(identity).second);
+			cfg.legacyConfigIdGenerated = true;
+			MigrationUnitResult collision;
+			collision.unitId = L"startup:config-id-collision:" + to_wstring(kv.first);
+			collision.status = MigrationStatus::Succeeded;
+			collision.message = L"A duplicate ConfigId was replaced; the first configuration retained its identity.";
+			collision.migratedItems = 1;
+			MigrationCoordinator::RecordUnit(collision);
+		}
 	}
 
+	set<wstring> usedSpecialConfigIds;
 	for (auto& kv : g_appState.specialConfigs) {
 		SpecialConfig& spCfg = kv.second;
+		if (spCfg.specialConfigId.empty()) {
+			spCfg.specialConfigId = FolderRewindFormat::GenerateGuidString();
+			spCfg.legacySpecialConfigIdGenerated = true;
+		}
+		wstring identity = spCfg.specialConfigId;
+		transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
+		if (!usedSpecialConfigIds.insert(identity).second) {
+			do {
+				spCfg.specialConfigId = FolderRewindFormat::GenerateGuidString();
+				identity = spCfg.specialConfigId;
+				transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
+			} while (!usedSpecialConfigIds.insert(identity).second);
+			spCfg.legacySpecialConfigIdGenerated = true;
+		}
 		if (spCfg.zipLevel < 1) spCfg.zipLevel = 1;
 		if (spCfg.zipLevel > 22) spCfg.zipLevel = 22;
 	}
+
+	const auto executionPolicy = NormalizeSpecialConfigExecutionPolicy(g_appState.specialConfigs);
+	if (executionPolicy.autoExecuteIndex) {
+		g_appState.specialConfigMode = true;
+		g_appState.currentConfigIndex = *executionPolicy.autoExecuteIndex;
+	}
+	if (executionPolicy.disabledDuplicateAutoExecute > 0
+		|| executionPolicy.disabledDuplicateRunOnStartup > 0) {
+		MigrationUnitResult normalized;
+		normalized.unitId = L"startup:special-config-exclusivity";
+		normalized.status = MigrationStatus::Succeeded;
+		normalized.message = L"Duplicate special startup selections were disabled deterministically; the lowest configuration index was retained.";
+		normalized.migratedItems = executionPolicy.disabledDuplicateAutoExecute
+			+ executionPolicy.disabledDuplicateRunOnStartup;
+		MigrationCoordinator::RecordUnit(normalized);
+	}
 }
 
-void SaveConfigs(const wstring& filename) {
+bool SaveConfigs() {
+	return SaveConfigs(GetAppPaths().ConfigFile());
+}
+
+bool SaveConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	const filesystem::path target(filename);
-	const filesystem::path temp = target.wstring() + L".tmp";
-	ofstream out{temp, ios::binary | ios::trunc};
-	if (!out.is_open()) {
-		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		return;
-	}
 
 	std::wostringstream buffer;
 	buffer << L"[General]\n";
@@ -497,6 +554,7 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"ConfigName=" << utf8_to_wstring(c.name) << L"\n";
 		c.configId = FolderRewindFormat::EnsureConfigId(c.configId);
 		buffer << L"ConfigId=" << c.configId << L"\n";
+		buffer << L"PendingLocalBinding=" << (c.pendingLocalBinding ? 1 : 0) << L"\n";
 		buffer << L"SavePath=" << c.saveRoot << L"\n";
 		buffer << L"# One line for name, one line for description, terminated by '*'\n";
 		buffer << L"WorldData=\n";
@@ -546,6 +604,8 @@ void SaveConfigs(const wstring& filename) {
 		SpecialConfig& sc = kv.second;
 		buffer << L"[SpCfg" << idx << L"]\n";
 		buffer << L"Name=" << utf8_to_wstring(sc.name) << L"\n";
+		sc.specialConfigId = FolderRewindFormat::EnsureConfigId(sc.specialConfigId);
+		buffer << L"SpecialConfigId=" << sc.specialConfigId << L"\n";
 		buffer << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
 		for (const auto& cmd : sc.commands) buffer << L"Command=" << cmd << L"\n";
 		for (const auto& task : sc.tasks) {
@@ -580,7 +640,9 @@ void SaveConfigs(const wstring& filename) {
 		buffer << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
 		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
 		buffer << L"Theme=" << sc.theme << L"\n";
-		// 服务模式配置
+		// 1.16 preserves these local, read-only values solely so a custom-named
+		// legacy service remains discoverable until the user removes it. They are
+		// excluded from portable configuration and are removed from the model in 1.17.
 		buffer << L"UseServiceMode=" << (sc.useServiceMode ? 1 : 0) << L"\n";
 		buffer << L"ServiceName=" << sc.serviceConfig.serviceName << L"\n";
 		buffer << L"ServiceDisplayName=" << sc.serviceConfig.serviceDisplayName << L"\n";
@@ -593,27 +655,11 @@ void SaveConfigs(const wstring& filename) {
 	}
 
 	const string utf8 = wstring_to_utf8(buffer.str());
-	out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
-	out.close();
-	if (!out.good()) {
-		error_code ec; filesystem::remove(temp, ec);
+	if (!AtomicFileWriter::WriteText(target, utf8).success) {
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		return;
+		return false;
 	}
-#ifdef _WIN32
-	SetFileAttributesW(target.c_str(), FILE_ATTRIBUTE_NORMAL);
-	if (!MoveFileExW(temp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-		error_code ec; filesystem::remove(temp, ec);
-		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-	}
-#else
-	error_code ec;
-	filesystem::rename(temp, target, ec);
-	if (ec) {
-		filesystem::remove(temp, ec);
-		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-	}
-#endif
+	return true;
 }
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口

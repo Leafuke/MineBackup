@@ -13,6 +13,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <memory>
 #include <ctime>
 
 // 结构体们
@@ -33,6 +34,8 @@ struct Config {
 	std::wstring configId;
 	// Runtime-only: the loaded 1.15 configuration did not persist ConfigId.
 	bool legacyConfigIdGenerated = false;
+	// Imported portable profiles cannot run destructive or automated work until local paths are bound.
+	bool pendingLocalBinding = false;
 	int cpuThreads = 0;
 	bool useLowPriority = false;
 	bool skipIfUnchanged = true;
@@ -123,7 +126,8 @@ struct UnifiedTaskV2 {
 	bool notifyOnError = true;
 };
 
-// 服务模式配置
+// 1.16 read-only compatibility model. Preserved in the local profile so the UI
+// can locate and safely remove a legacy Windows service; never edited or synced.
 struct ServiceConfig {
 	bool installAsService = false;
 	std::wstring serviceName = L"MineBackupService";
@@ -134,6 +138,9 @@ struct ServiceConfig {
 };
 
 struct SpecialConfig {
+	std::wstring specialConfigId;
+	// Runtime-only: an older profile did not persist SpecialConfigId.
+	bool legacySpecialConfigIdGenerated = false;
 	bool autoExecute = false;
 	std::vector<std::wstring> commands;              // 旧版兼容：命令列表
 	std::vector<AutomatedTask> tasks;                // 旧版兼容：任务列表
@@ -150,9 +157,9 @@ struct SpecialConfig {
 	bool hideWindow = false;
 	bool backupOnGameStart = false;
 	
-	// Windows服务模式
+	// Legacy Windows Service Mode compatibility (removed in 1.17).
 	ServiceConfig serviceConfig;
-	bool useServiceMode = false;                     // 是否使用服务模式
+	bool useServiceMode = false;
 };
 
 struct HistoryEntry {
@@ -233,8 +240,7 @@ struct CloudActiveHistoryManifest {
 };
 
 struct AutoBackupTask {
-	std::thread worker;
-	std::atomic<bool> stop_flag{ false }; // 原子布尔值，用于安全地通知线程停止
+	std::wstring taskName;
 };
 
 struct DisplayWorld { // 一个新的结构体，让 UI 不再直接读取 configs[currentConfigIndex].worlds，而使用 DisplayWorld

@@ -4,9 +4,10 @@
 #include <sstream>
 #include "HistoryManager.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
 #include "json.hpp"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
@@ -84,8 +85,8 @@ static bool LoadLegacyHistoryFile(const filesystem::path& filename) {
 }
 
 void SaveHistory() {
-	if (MigrationService::IsHistoryPersistenceBlocked()) return;
-	const filesystem::path filename = L"history.json";
+	if (MigrationCoordinator::IsHistoryPersistenceBlocked()) return;
+	const filesystem::path filename = GetAppPaths().HistoryFile();
 #ifdef _WIN32
 	SetFileAttributesWin(filename.wstring(), 0);
 #endif
@@ -96,8 +97,8 @@ void SaveHistory() {
 }
 
 void LoadHistory() {
-	const filesystem::path jsonFilename = L"history.json";
-	const filesystem::path legacyFilename = L"history.dat";
+	const filesystem::path jsonFilename = GetAppPaths().HistoryFile();
+	const filesystem::path legacyFilename = GetAppPaths().dataRoot / L"history.dat";
 	g_appState.g_history.clear();
 	if (filesystem::exists(jsonFilename)) {
 		map<int, vector<HistoryEntry>> loadedHistory;

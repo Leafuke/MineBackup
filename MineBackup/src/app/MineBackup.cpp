@@ -2,14 +2,24 @@
 #include "Broadcast.h"
 #include "Globals.h"
 #include "SettingsUI.h"
+#include "MigrationReportUI.h"
 #include "UIHelpers.h"
 #include "MainUI.h"
 #include "imgui-all.h"
 #include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
+#include "AppPaths.h"
+#include "LaunchOptions.h"
 #include "TaskSystem.h"
+#include "TaskCoordinator.h"
+#include "InterruptedTaskRecovery.h"
+#include "NetworkBackendFactory.h"
+#include "NetworkService.h"
+#include "RemoteContentService.h"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
+#include "NativeDesktopServices.h"
 #include "Console.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
@@ -17,7 +27,16 @@
 #include "BackupManager.h"
 #include "CloudSyncService.h"
 #include "CoreValidation.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
+#include "RotatingFileLog.h"
+#include "SingleInstanceService.h"
+#include "LegacyLocationDiscovery.h"
+#include "LegacyLocationMigration.h"
+#include "Sha256.h"
+#include "SpecialConfigPolicy.h"
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+#include "V15MigrationAdapter.h"
+#endif
 
 #ifdef _WIN32
 #include <conio.h>
@@ -29,10 +48,14 @@ inline int _getch() { return std::getchar(); }
 #include <fstream>
 #include <system_error>
 #ifdef __APPLE__
+#include "MacDesktopBridge.h"
 #include <mach-o/dyld.h>
 #include <limits.h>
 #include <CoreText/CoreText.h>
 #include <CoreFoundation/CoreFoundation.h>
+#endif
+#ifdef __linux__
+#include <ProcessRunner.h>
 #endif
 
 using namespace std;
@@ -137,17 +160,13 @@ wstring GetDefaultUIFontPath() {
 #else
 	// Linux: 使用 fontconfig (fc-match) 动态查找字体
 	auto findFontByFc = [](const char* pattern) -> wstring {
-		string cmd = "fc-match -f '%{file}' '";
-		cmd += pattern;
-		cmd += "' 2>/dev/null";
-		FILE* pipe = popen(cmd.c_str(), "r");
-		if (!pipe) return L"";
-		char buf[4096] = {};
-		string output;
-		if (fgets(buf, sizeof(buf), pipe)) {
-			output = buf;
-		}
-		pclose(pipe);
+		ProcessSpec spec;
+		spec.executable = L"/usr/bin/fc-match";
+		spec.arguments = {L"-f", L"%{file}", utf8_to_wstring(pattern)};
+		spec.maximumCapturedBytes = 4096;
+		const auto result = ProcessRunner::Run(spec);
+		if (result.status != ProcessStatus::Succeeded) return L"";
+		string output = result.standardOutput;
 		if (!output.empty() && output.back() == '\n') output.pop_back();
 		if (!output.empty() && filesystem::exists(output))
 			return utf8_to_wstring(output);
@@ -194,17 +213,6 @@ wstring GetDefaultUIFontPath() {
 #endif
 }
 
-#ifdef __APPLE__
-static void SetWorkingDirectoryToExecutable() {
-	char path[PATH_MAX];
-	uint32_t size = sizeof(path);
-	if (_NSGetExecutablePath(path, &size) == 0) {
-		std::error_code ec;
-		filesystem::current_path(filesystem::path(path).parent_path(), ec);
-	}
-}
-#endif
-
 static void glfw_error_callback(int error, const char* description)
 {
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -216,7 +224,7 @@ wstring SanitizeFileName(const wstring& input);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 
-void GameSessionWatcherThread();
+void GameSessionWatcherThread(std::stop_token stopToken);
 
 string ProcessCommand(const string& commandStr, Console* console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
@@ -225,108 +233,229 @@ void ConsoleLog(Console* console, const char* format, ...);
 #ifdef _WIN32
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
-	bool launchSilentStartup = false;
-	if (lpCmdLine) {
-		string cmdLine(lpCmdLine);
-		launchSilentStartup = (cmdLine.find("--silent-startup") != string::npos) || (cmdLine.find("-silentstartup") != string::npos);
-	}
+	(void)lpCmdLine;
 
-	// 设置当前工作目录为可执行文件所在目录，避免开机自启寻找config错误
-	wchar_t exePath[MAX_PATH];
-	GetModuleFileNameW(NULL, exePath, MAX_PATH);
-	SetCurrentDirectoryW(filesystem::path(exePath).parent_path().c_str());
+	int argc = 0;
+	wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	vector<wstring> launchArguments(argv, argv + argc);
+	LocalFree(argv);
 
 #else
 int main(int argc, char** argv)
 {
-	bool launchSilentStartup = false;
+	vector<wstring> launchArguments;
+	launchArguments.reserve(static_cast<size_t>(argc));
 	for (int i = 1; i < argc; ++i) {
-		if (!argv[i]) continue;
-		string arg = argv[i];
-		if (arg == "--silent-startup" || arg == "-silentstartup") {
-			launchSilentStartup = true;
+		if (argv[i]) launchArguments.push_back(utf8_to_wstring(argv[i]));
+	}
+	launchArguments.insert(launchArguments.begin(), L"MineBackup");
+#endif
+	#ifdef __APPLE__
+	// Install before migration prompts or GLFW can pump the Cocoa launch event.
+	MacBeginLaunchObservation();
+	#endif
+	// Use the host language for any pre-configuration native prompts. Loading an
+	// existing profile below will still restore the user's explicit app language.
+	GetUserDefaultUILanguageWin();
+	const filesystem::path originalWorkingDirectory = filesystem::current_path();
+	(void)originalWorkingDirectory;
+	LaunchOptions launchOptions;
+	wstring launchError;
+	if (!ParseLaunchOptions(launchArguments, launchOptions, launchError)) {
+		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+		return 2;
+	}
+	if (!launchOptions.legacyServiceCleanup.empty()) {
+		wstring cleanupError;
+		if (!TaskSystem::RemoveLegacyServiceAfterValidation(
+				launchOptions.legacyServiceCleanup, cleanupError)) {
+			MessageBoxWin(L("LEGACY_SERVICE_CLEANUP_TITLE"),
+				wstring_to_utf8(cleanupError), 2);
+			return 7;
+		}
+		MessageBoxWin(L("LEGACY_SERVICE_CLEANUP_TITLE"), L("LEGACY_SERVICE_REMOVED"), 0);
+		return 0;
+	}
+	if (launchOptions.legacyServiceMode) {
+		#ifdef _WIN32
+		OutputDebugStringW(L"MineBackup: --service is deprecated and disabled in 1.16.\n");
+		#else
+		fputs("MineBackup: --service is deprecated and disabled in 1.16.\n", stderr);
+		#endif
+		return 6;
+	}
+	AppPaths appPaths;
+	if (!ResolveAppPaths(launchOptions, GetExecutablePath(), appPaths, launchError)) {
+		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+		return 2;
+	}
+	SetCurrentAppPaths(std::move(appPaths));
+	bool launchSilentStartup = launchOptions.silentStartup || launchOptions.autostart;
+	#ifdef __APPLE__
+	const bool hasExplicitLaunchTarget = launchOptions.autostart
+		|| !launchOptions.runSpecialId.empty()
+		|| !launchOptions.selectConfigId.empty()
+		|| launchOptions.legacySpecialConfigIndex.has_value();
+	#endif
+	const auto& paths = GetAppPaths();
+	SingleInstanceService singleInstance;
+	const auto instanceResult = singleInstance.Acquire(paths.profileIdentity, paths.runtimeRoot, launchError);
+	if (instanceResult == InstanceAcquireResult::AlreadyRunning) {
+		InstanceRequest request;
+		if (!launchOptions.runSpecialId.empty()) {
+			request = { InstanceRequestType::RunSpecial, launchOptions.runSpecialId };
+		}
+		else if (!launchOptions.selectConfigId.empty()) {
+			request = { InstanceRequestType::SelectConfig, launchOptions.selectConfigId };
+		}
+		if (!singleInstance.Send(request, launchError)) {
+			MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+			return 3;
+		}
+		return 0;
+	}
+	if (instanceResult == InstanceAcquireResult::Failed) {
+		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
+		return 3;
+	}
+	const auto interruptedRecovery = RecoverInterruptedTaskArtifacts(
+		paths.runtimeRoot, paths.stateRoot / L"task-recovery" / L"last-interrupted.json");
+	if (!interruptedRecovery.removedPaths.empty() || !interruptedRecovery.errors.empty()) {
+		console.AddLog("[Recovery] Removed %zu interrupted task artifact(s), %llu byte(s).",
+			interruptedRecovery.removedPaths.size(),
+			static_cast<unsigned long long>(interruptedRecovery.removedBytes));
+		if (!interruptedRecovery.reportPath.empty()) {
+			console.AddLog("[Recovery] Report: %s", wstring_to_utf8(interruptedRecovery.reportPath.wstring()).c_str());
+		}
+		for (const auto& error : interruptedRecovery.errors) {
+			console.AddLog("[Recovery] %s", wstring_to_utf8(error).c_str());
+		}
+	}
+	vector<LegacyLocationProbe> locationProbes = {
+		{GetExecutablePath().parent_path(), LegacyLocationOrigin::ExecutableDirectory},
+		{originalWorkingDirectory, LegacyLocationOrigin::OriginalWorkingDirectory}
+	};
+#ifdef _WIN32
+	wchar_t localAppData[MAX_PATH] = {};
+	if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+		locationProbes.push_back({filesystem::path(localAppData) / L"MineBackup", LegacyLocationOrigin::KnownPlatformLocation});
+	}
+#else
+	if (const char* home = getenv("HOME")) {
+		locationProbes.push_back({filesystem::path(home) / ".minebackup", LegacyLocationOrigin::KnownPlatformLocation});
+#ifdef __APPLE__
+		locationProbes.push_back({filesystem::path(home) / "Library" / "Application Support" / "MineBackup",
+			LegacyLocationOrigin::KnownPlatformLocation});
+#else
+		locationProbes.push_back({filesystem::path(home) / ".config" / "MineBackup", LegacyLocationOrigin::KnownPlatformLocation});
+		locationProbes.push_back({filesystem::path(home) / ".local" / "share" / "MineBackup", LegacyLocationOrigin::KnownPlatformLocation});
+#endif
+	}
+#endif
+	const auto locationDiscovery = DiscoverLegacyLocations(paths.ConfigFile(), paths.HistoryFile(), locationProbes);
+	optional<LegacyLocationCandidate> importedLegacyLocation;
+	if (!locationDiscovery.targetInitialized) {
+		for (const auto& candidate : locationDiscovery.candidates) {
+			if (candidate.configFile.empty()) continue;
+			const string source = wstring_to_utf8(candidate.root.wstring());
+			const string configRoot = wstring_to_utf8(paths.configRoot.wstring());
+			const string dataRoot = wstring_to_utf8(paths.dataRoot.wstring());
+			const string prompt = wstring_to_utf8(MineFormatMessage(
+				"LEGACY_LOCATION_PROMPT", source.c_str(), configRoot.c_str(), dataRoot.c_str()));
+			if (!ConfirmMessageBox(L("LEGACY_LOCATION_TITLE"), prompt)) continue;
+			const auto migration = ImportLegacyLocation(candidate, paths.ConfigFile(), paths.HistoryFile());
+			if (!migration.success) {
+				MessageBoxWin("MineBackup", wstring_to_utf8(migration.error), 2);
+				return 5;
+			}
+			importedLegacyLocation = candidate;
 			break;
 		}
 	}
-
-	#ifdef __APPLE__
-	SetWorkingDirectoryToExecutable();
-	#endif
-#endif
-	LoadConfigs("config.ini");
-
-#ifdef _WIN32
-	if (g_autoLogEnabled)
-	{
-		time_t now = time(0);
-		char time_buf[100];
-		ctime_s(time_buf, sizeof(time_buf), &now);
-		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
+	MigrationCoordinator::ConfigurePaths({
+		paths.ConfigFile(),
+		paths.HistoryFile(),
+		paths.stateRoot / L"migration" / L"1.15-to-1.16.json",
+		paths.dataRoot / L"migration-snapshots" / L"1.15"
+	});
+	if (importedLegacyLocation) {
+		MigrationUnitResult locationUnit;
+		locationUnit.unitId = L"startup:legacy-location";
+		locationUnit.status = MigrationStatus::Succeeded;
+		locationUnit.message = L"Imported legacy data from " + importedLegacyLocation->root.wstring()
+			+ L". The source files were retained.";
+		locationUnit.migratedItems = importedLegacyLocation->historyFile.empty() ? 1 : 2;
+		MigrationCoordinator::RecordUnit(locationUnit);
 	}
-
-	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
-	CreateTrayIcon(hwnd_hidden, hInstance);
-	RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-	RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+	V15MigrationAdapter::Install();
 #endif
-
-
-	
-	wstring g_7zTempPath, g_FontTempPath;
-	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
-	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
-
-	if (!sevenZipExtracted || !fontExtracted) {
-		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
-	}
-
-	MigrationService::RunStartupMigration();
+	LoadConfigs();
+	MigrationCoordinator::RunStartupMigration();
 	CheckForConfigConflicts();
 	LoadHistory();
-	if (g_CheckForUpdates) {
-		thread update_thread(CheckForUpdatesThread);
-		update_thread.detach();
-	}
-	if (g_ReceiveNotices) {
-		g_NoticeCheckDone = false;
-		g_NewNoticeAvailable = false;
-		thread notice_thread(CheckForNoticesThread);
-		notice_thread.detach();
-	}
-	g_stopExitWatcher = false;
-	g_exitWatcherThread = thread(GameSessionWatcherThread);
-	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
-
-	if (g_enableKnotLink) {
-		// 初始化 KnotLink （异步进行避免卡顿）
-		thread linkLoaderThread([]() {
-#ifndef _WIN32
-			InitKnotLink();
+	auto equalStableId = [](const wstring& left, const wstring& right) {
+#ifdef _WIN32
+		return _wcsicmp(left.c_str(), right.c_str()) == 0;
+#else
+		if (left.size() != right.size()) return false;
+		for (size_t index = 0; index < left.size(); ++index) {
+			if (towlower(left[index]) != towlower(right[index])) return false;
+		}
+		return true;
 #endif
-			g_signalSender = new SignalSender("0x00000020", "0x00000020");
-			// 初始化命令响应器，并将 ProcessCommand 设为回调
-			try {
-				g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
-				g_commandResponser->setQuestionHandler(
-					[](const string& q) {
-						// 灏嗘敹鍒扮殑闂浜ょ粰鍛戒护澶勭悊鍣?
-						console.AddLog("[KnotLink] Received: %s", q.c_str());
-						string response = ProcessCommand(q, &console);
-						console.AddLog("[KnotLink] Responded: %s", response.c_str());
-						return response;
-					}
-				);
-			}
-			catch (const exception& e) {
-				console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
-			}
-		});
-		linkLoaderThread.detach();
+	};
+	auto findNormalConfig = [&](const wstring& stableId) {
+		for (const auto& [index, config] : g_appState.configs) {
+			if (equalStableId(config.configId, stableId)) return index;
+		}
+		return -1;
+	};
+	auto findSpecialConfig = [&](const wstring& stableId) {
+		for (const auto& [index, config] : g_appState.specialConfigs) {
+			if (equalStableId(config.specialConfigId, stableId)) return index;
+		}
+		return -1;
+	};
+	auto selectAutostartSpecial = [&]() {
+		const auto autostartIndex = FindSpecialRunOnStartup(g_appState.specialConfigs);
+		if (!autostartIndex) return false;
+		// Resolve through the persisted stable identity instead of treating the map
+		// index as an external launch contract.
+		const auto& stableId = g_appState.specialConfigs.at(*autostartIndex).specialConfigId;
+		const int index = findSpecialConfig(stableId);
+		if (index < 0) return false;
+		g_appState.currentConfigIndex = index;
+		g_appState.specialConfigMode = true;
+		return true;
+	};
+	if (!launchOptions.runSpecialId.empty()) {
+		const int index = findSpecialConfig(launchOptions.runSpecialId);
+		if (index < 0) {
+			MessageBoxWin("MineBackup", L("REQUESTED_SPECIAL_CONFIG_MISSING"), 2);
+			return 4;
+		}
+		g_appState.currentConfigIndex = index;
+		g_appState.specialConfigMode = true;
 	}
-
-
-	if (g_appState.specialConfigMode)
-	{
+	else if (!launchOptions.selectConfigId.empty()) {
+		const int index = findNormalConfig(launchOptions.selectConfigId);
+		if (index < 0) {
+			MessageBoxWin("MineBackup", L("REQUESTED_CONFIG_MISSING"), 2);
+			return 4;
+		}
+		g_appState.currentConfigIndex = index;
+		g_appState.specialConfigMode = false;
+	}
+	else if (launchOptions.legacySpecialConfigIndex
+		&& g_appState.specialConfigs.count(*launchOptions.legacySpecialConfigIndex)) {
+		g_appState.currentConfigIndex = *launchOptions.legacySpecialConfigIndex;
+		g_appState.specialConfigMode = true;
+	}
+	else if (launchOptions.autostart) {
+		(void)selectAutostartSpecial();
+	}
+	auto runSelectedSpecialMode = [&]() {
 		bool hide = false;
 		if (g_appState.specialConfigs.count(g_appState.currentConfigIndex)) {
 			hide = g_appState.specialConfigs[g_appState.currentConfigIndex].hideWindow;
@@ -348,15 +477,10 @@ int main(int argc, char** argv)
 		RunSpecialMode(g_appState.currentConfigIndex);
 
 		// 将捕获到的所有日志写入文件
-		ofstream log_file("special_mode_log.txt", ios::app | ios::binary);
-		if (log_file.is_open()) {
-			for (const char* item : console.Items) {
-				log_file << (item) << endl;
-			}
-			log_file << L("SPECIAL_MODE_LOG_END") << endl << endl;
-			log_file.close();
-		}
-		else {
+		ostringstream specialModeLog;
+		for (const char* item : console.Items) specialModeLog << item << '\n';
+		specialModeLog << L("SPECIAL_MODE_LOG_END") << "\n\n";
+		if (!RotatingFileLog::Append(paths.logsRoot / "special_mode_log.txt", specialModeLog.str())) {
 			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
 		}
 
@@ -367,12 +491,163 @@ int main(int argc, char** argv)
 		#endif
 		Sleep(3000);
 		return 0;
+	};
+
+#ifdef _WIN32
+	if (g_autoLogEnabled)
+	{
+		time_t now = time(0);
+		char time_buf[100];
+		ctime_s(time_buf, sizeof(time_buf), &now);
+		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
 	}
 
-	glfwSetErrorCallback(glfw_error_callback);
-	if (!glfwInit()) {
-		MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
-		return 1;
+	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
+	auto desktopServices = CreateNativeDesktopServices({
+		reinterpret_cast<void*>(hInstance), reinterpret_cast<void*>(hwnd_hidden),
+		nullptr, GetExecutablePath(), paths.mode != AppPathMode::Explicit});
+#else
+	auto desktopServices = CreateNativeDesktopServices({
+		nullptr, nullptr, nullptr, GetExecutablePath(), paths.mode != AppPathMode::Explicit});
+#endif
+	InstallDesktopServices(desktopServices);
+	if (desktopServices->Capabilities().autostart.IsAvailable()) {
+		const bool autostartEnabled = g_RunOnStartup
+			|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
+		const auto autostartStatus = desktopServices->SetAutostart(autostartEnabled);
+		if (!autostartStatus.IsAvailable() && !autostartStatus.diagnostic.empty()) {
+			console.AddLog("[Desktop] Autostart reconciliation failed: %s",
+				wstring_to_utf8(autostartStatus.diagnostic).c_str());
+		}
+		else if (!autostartStatus.diagnostic.empty()) {
+			console.AddLog("[Desktop] Autostart reconciliation: %s",
+				wstring_to_utf8(autostartStatus.diagnostic).c_str());
+			if (!launchSilentStartup) {
+				MessageBoxWin(L("AUTOSTART_ENTRY_TITLE"),
+					wstring_to_utf8(autostartStatus.diagnostic), 0);
+			}
+		}
+	}
+
+	bool glfwInitialized = false;
+	#ifdef __APPLE__
+	// The login-item marker is delivered while GLFW pumps Cocoa's launch event.
+	// Probe only when a previously selected explicit/special launch does not need
+	// the window system, preserving the headless special-mode path.
+	if (!g_appState.specialConfigMode) {
+		glfwSetErrorCallback(glfw_error_callback);
+		if (!glfwInit()) {
+			MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
+			return 1;
+		}
+		glfwInitialized = true;
+		if (!hasExplicitLaunchTarget && MacWasLaunchedAsLoginItem()) {
+			launchOptions.autostart = true;
+			launchSilentStartup = true;
+			(void)selectAutostartSpecial();
+		}
+	}
+	#endif
+
+
+	
+	wstring g_7zTempPath, g_FontTempPath;
+	const void* bundledIconFontData = nullptr;
+	size_t bundledIconFontSize = 0;
+	bool sevenZipExtracted = Extract7zToTempFile(g_7zTempPath);
+#ifdef _WIN32
+	bool fontExtracted = GetBundledIconFontResource(bundledIconFontData, bundledIconFontSize);
+#else
+	bool fontExtracted = ExtractFontToTempFile(g_FontTempPath);
+#endif
+
+	if (!sevenZipExtracted || !fontExtracted) {
+		MessageBoxWin("Error", L("LOG_ERROR_7Z_NOT_FOUND"), 2);
+	}
+
+	const auto networkBackend = CreatePlatformNetworkBackend();
+	if (g_CheckForUpdates) {
+		g_UpdateCheckDone = false;
+		g_NewVersionAvailable = false;
+		const string currentVersion = CURRENT_VERSION;
+		const string language = g_CurrentLang;
+		TaskCoordinator::Instance().Submit(L"update-check", {L"network:update"},
+			[networkBackend, currentVersion, language](stop_token token) {
+				NetworkService network(networkBackend);
+				const auto result = CheckMineBackupUpdate(network, currentVersion, language, token);
+				TaskEvent event{L"update-check-complete", result.error};
+				event.values[L"success"] = result.success ? L"1" : L"0";
+				event.values[L"available"] = result.updateAvailable ? L"1" : L"0";
+				event.values[L"tag"] = utf8_to_wstring(result.latestTag);
+				event.values[L"notes"] = utf8_to_wstring(result.releaseNotes);
+				TaskCoordinator::Instance().PostEvent(std::move(event));
+			});
+	}
+	if (g_ReceiveNotices) {
+		g_NoticeCheckDone = false;
+		g_NewNoticeAvailable = false;
+		const string language = g_CurrentLang;
+		const string lastSeen = g_NoticeLastSeenVersion;
+		TaskCoordinator::Instance().Submit(L"notice-check", {L"network:notice"},
+			[networkBackend, language, lastSeen](stop_token token) {
+				NetworkService network(networkBackend);
+				const auto result = CheckMineBackupNotice(network, language, lastSeen, token);
+				TaskEvent event{L"notice-check-complete", result.error};
+				event.values[L"success"] = result.success ? L"1" : L"0";
+				event.values[L"available"] = result.noticeAvailable ? L"1" : L"0";
+				event.values[L"content"] = utf8_to_wstring(result.content);
+				event.values[L"content-id"] = utf8_to_wstring(result.contentId);
+				TaskCoordinator::Instance().PostEvent(std::move(event));
+			});
+	}
+	TaskCoordinator::Instance().Submit(L"game-session-watcher", {},
+		[](stop_token token) { GameSessionWatcherThread(token); });
+	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
+
+	if (g_enableKnotLink) {
+		// 初始化 KnotLink （异步进行避免卡顿）
+		TaskCoordinator::Instance().Submit(L"knotlink-loader", {L"service:knotlink"}, [](stop_token) {
+#ifndef _WIN32
+			InitKnotLink();
+#endif
+			g_signalSender = new SignalSender("0x00000020", "0x00000020");
+			// 初始化命令响应器，并将 ProcessCommand 设为回调
+			try {
+				g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
+				g_commandResponser->setQuestionHandler(
+					[](const string& q) {
+						// 灏嗘敹鍒扮殑闂浜ょ粰鍛戒护澶勭悊鍣?
+						console.AddLog("[KnotLink] Received: %s", q.c_str());
+						string response = ProcessCommand(q, &console);
+						console.AddLog("[KnotLink] Responded: %s", response.c_str());
+						return response;
+					}
+				);
+			}
+			catch (const exception& e) {
+				console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
+			}
+		});
+	}
+
+	if (g_appState.specialConfigMode) {
+		const int result = runSelectedSpecialMode();
+		if (glfwInitialized) glfwTerminate();
+		return result;
+	}
+
+	if (!glfwInitialized) {
+		glfwSetErrorCallback(glfw_error_callback);
+		#ifdef __linux__
+		// GLFW 3.4 chooses Wayland or X11 from the current desktop environment.
+		// Keep this automatic; capability fallbacks must use the selected backend below.
+		glfwInitHint(GLFW_PLATFORM, GLFW_ANY_PLATFORM);
+		#endif
+		if (!glfwInit()) {
+			MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
+			return 1;
+		}
+		glfwInitialized = true;
 	}
 
 	// Decide GL+GLSL versions
@@ -402,12 +677,36 @@ int main(int argc, char** argv)
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
 
+	auto applyLinuxWindowIdentity = []() {
+#ifdef __linux__
+		glfwWindowHintString(GLFW_WAYLAND_APP_ID, "io.github.leafuke.MineBackup");
+		glfwWindowHintString(GLFW_X11_CLASS_NAME, "MineBackup");
+		glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "minebackup");
+#endif
+	};
+	applyLinuxWindowIdentity();
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
 	bool errorShow = false;
-	bool isFirstRun = !filesystem::exists("config.ini");
+	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
-	const bool shouldStartHiddenToTray = launchSilentStartup && !isFirstRun;
+	const bool requestedHiddenToTray = launchSilentStartup && !isFirstRun;
+#ifdef __linux__
+	// Probe the actual AppIndicator/GTK session before deciding to create an
+	// invisible window. A compiled-in tray backend may still fail at runtime.
+	const auto startupTrayStatus = desktopServices->SetTrayVisible(true);
+#else
+	const auto startupTrayStatus = desktopServices->Capabilities().tray;
+#endif
+	const bool shouldStartHiddenToTray = requestedHiddenToTray && startupTrayStatus.IsAvailable();
+	if (requestedHiddenToTray && !shouldStartHiddenToTray) {
+		const wstring detail = startupTrayStatus.diagnostic.empty()
+			? L"The system tray is unavailable in this desktop session."
+			: startupTrayStatus.diagnostic;
+		console.AddLog("[Desktop] Startup-to-tray was disabled for this run: %s",
+			wstring_to_utf8(detail).c_str());
+		MessageBoxWin("MineBackup", L("TRAY_FALLBACK_MESSAGE"), 1);
+	}
 	g_appState.showMainApp = !isFirstRun && !shouldStartHiddenToTray;
 	if (isFirstRun) {
 		g_windowWidth *= main_scale, g_windowHeight *= main_scale;
@@ -432,6 +731,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "OpenGL 3.0 context creation failed, trying OpenGL 2.1 fallback...\n");
 		glfwDefaultWindowHints();
 		glfwSetErrorCallback(glfw_error_callback);
+		applyLinuxWindowIdentity();
 		glsl_version = "#version 120";
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
@@ -441,6 +741,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "OpenGL 2.1 context creation failed, trying OpenGL 2.0 fallback...\n");
 		glfwDefaultWindowHints();
 		glfwSetErrorCallback(glfw_error_callback);
+		applyLinuxWindowIdentity();
 		glsl_version = "#version 110";
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
@@ -450,6 +751,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "OpenGL 2.0 context creation failed, trying default version...\n");
 		glfwDefaultWindowHints();
 		glfwSetErrorCallback(glfw_error_callback);
+		applyLinuxWindowIdentity();
 		glsl_version = "#version 110";
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
@@ -458,39 +760,54 @@ int main(int argc, char** argv)
 #endif
 
 	if (wc == nullptr) {
-		MessageBoxWin("Fatal Error",
-			"Failed to create window. Your graphics driver may not support OpenGL.\n"
-			"Please update your graphics drivers or install a remote desktop solution that supports OpenGL.",
-			2);
+		MessageBoxWin(L("FATAL_ERROR_TITLE"), L("WINDOW_CREATE_ERROR"), 2);
 		glfwTerminate();
 		return 1;
 	}
 	glfwMakeContextCurrent(wc);
 	glfwSwapInterval(1); // Enable vsync
 
-	#ifdef __APPLE__
-	CreateTrayIcon();
-	#endif
-	#ifndef _WIN32
-	RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-	RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
-	#endif
+	desktopServices->SetNativeWindow(wc);
+#ifdef __linux__
+	const int selectedGlfwPlatform = glfwGetPlatform();
+	const char* selectedGlfwPlatformName = selectedGlfwPlatform == GLFW_PLATFORM_WAYLAND ? "Wayland"
+		: selectedGlfwPlatform == GLFW_PLATFORM_X11 ? "X11" : "Other";
+	fprintf(stderr, "[Desktop] GLFW selected platform: %s\n", selectedGlfwPlatformName);
+	console.AddLog("[Desktop] GLFW selected platform: %s", selectedGlfwPlatformName);
+#endif
+	const auto traySetup = desktopServices->SetTrayVisible(true);
+	if (!traySetup.IsAvailable() && !traySetup.diagnostic.empty()) {
+		console.AddLog("[Desktop] Tray unavailable: %s", wstring_to_utf8(traySetup.diagnostic).c_str());
+	}
+	auto currentGlobalHotkeys = []() {
+		return vector<GlobalHotkeyBinding>{
+			{MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId,
+				utf8_to_wstring(L("HOTKEY_BACKUP_DESCRIPTION"))},
+			{MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId,
+				utf8_to_wstring(L("HOTKEY_RESTORE_DESCRIPTION"))}
+		};
+	};
+	const auto hotkeySetup = desktopServices->ConfigureGlobalHotkeys(currentGlobalHotkeys());
+	if (!hotkeySetup.IsAvailable() && !hotkeySetup.diagnostic.empty()) {
+		console.AddLog("[Desktop] Global hotkeys unavailable: %s",
+			wstring_to_utf8(hotkeySetup.diagnostic).c_str());
+	}
 
 	// 设置窗口关闭回调，用于拦截关闭按钮
 	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
 		if (g_closeAction == 1) {
 			glfwSetWindowShouldClose(window, GLFW_FALSE);
-#if defined(__APPLE__)
-			CreateTrayIcon();
-			g_appState.showMainApp = false;
-			glfwHideWindow(window);
-#elif defined(__linux__)
-			// Linux仅最小化窗口，不使用系统托盘
-			glfwIconifyWindow(window);
-#else
-			g_appState.showMainApp = false;
-			glfwHideWindow(window);
-#endif
+			auto services = GetDesktopServices();
+			if (CanHideToTray(services->Capabilities())) {
+				(void)services->SetTrayVisible(true);
+				g_appState.showMainApp = false;
+				glfwHideWindow(window);
+			}
+			else {
+				// Preserve the user's preference, but do not make the window unreachable
+				// in a session without a tray host.
+				glfwIconifyWindow(window);
+			}
 		} else if (g_closeAction == 2) {
 			SaveConfigs();
 			g_appState.done = true;
@@ -539,11 +856,25 @@ int main(int argc, char** argv)
 	ImGui::CreateContext();
 
 	ImGuiIO& io = ImGui::GetIO();
+	const string imguiIniPath = wstring_to_utf8((paths.stateRoot / L"imgui.ini").wstring());
+	const string imguiLogPath = wstring_to_utf8((paths.logsRoot / L"imgui_log.txt").wstring());
+	io.IniFilename = imguiIniPath.c_str();
+	io.LogFilename = imguiLogPath.c_str();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewports
-	io.ConfigViewportsNoAutoMerge = true;                     // 不自动合并视口
+	bool enableMultiViewport = true;
+#ifdef __linux__
+	// GLFW intentionally does not expose ImGui platform-window handlers on
+	// Wayland. Keeping ViewportsEnable set would make the application call
+	// UpdatePlatformWindows with an unavailable backend and can crash on the
+	// first frame (notably with a headless Weston compositor).
+	enableMultiViewport = selectedGlfwPlatform != GLFW_PLATFORM_WAYLAND;
+#endif
+	if (enableMultiViewport) {
+		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Enable Multi-Viewports
+		io.ConfigViewportsNoAutoMerge = true;                 // 不自动合并视口
+	}
 
 	// Error Recovery
 	io.ConfigErrorRecoveryEnableAssert = true;
@@ -618,7 +949,7 @@ int main(int argc, char** argv)
 	}
 
 	// 准备合并图标字体
-	if (!g_FontTempPath.empty() && filesystem::exists(g_FontTempPath)) {
+	if (fontExtracted) {
 		ImFontConfig config2;
 		config2.MergeMode = true;
 		config2.PixelSnapH = true;
@@ -627,7 +958,13 @@ int main(int argc, char** argv)
 		static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
 		// 加载并合并
+#ifdef _WIN32
+		config2.FontDataOwnedByAtlas = false;
+		io.Fonts->AddFontFromMemoryTTF(
+			const_cast<void*>(bundledIconFontData), static_cast<int>(bundledIconFontSize), 20.0f, &config2, icon_ranges);
+#else
 		io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
+#endif
 	}
 
 	// 构建字体图谱
@@ -706,6 +1043,140 @@ int main(int argc, char** argv)
 	// Main loop
 	while (!g_appState.done && !glfwWindowShouldClose(wc))
 	{
+#ifdef __linux__
+		PumpLinuxDesktopEvents();
+#endif
+		wstring instanceError;
+		for (const auto& request : singleInstance.PollRequests(instanceError)) {
+			g_appState.showMainApp = true;
+			const auto activation = desktopServices->ActivateWindow();
+			if (!activation.IsAvailable() && !activation.diagnostic.empty()) {
+				console.AddLog("[Desktop] Window activation failed: %s",
+					wstring_to_utf8(activation.diagnostic).c_str());
+			}
+			if (request.type == InstanceRequestType::SelectConfig) {
+				const int index = findNormalConfig(request.stableId);
+				if (index >= 0) {
+					g_appState.currentConfigIndex = index;
+					g_appState.specialConfigMode = false;
+				}
+			}
+			else if (request.type == InstanceRequestType::RunSpecial) {
+				const int index = findSpecialConfig(request.stableId);
+				if (index >= 0) {
+					g_appState.currentConfigIndex = index;
+					RunSpecialMode(index);
+				}
+			}
+		}
+		if (!instanceError.empty()) {
+			ConsoleLog(&console, "[SingleInstance] %s", wstring_to_utf8(instanceError).c_str());
+		}
+		for (const auto& event : TaskCoordinator::Instance().PollEvents()) {
+			if (event.type == L"task-failed") {
+				console.AddLog("[Task] Background task failed: %s", wstring_to_utf8(event.message).c_str());
+			}
+			else if (event.type == L"auto-backup-finished") {
+				lock_guard<mutex> lock(g_appState.task_mutex);
+				for (auto it = g_appState.g_active_auto_backups.begin(); it != g_appState.g_active_auto_backups.end();) {
+					if (it->second.taskName == event.message) it = g_appState.g_active_auto_backups.erase(it);
+					else ++it;
+				}
+			}
+			else if (event.type == L"update-check-complete") {
+				g_NewVersionAvailable = event.values.at(L"available") == L"1";
+				g_LatestVersionStr = wstring_to_utf8(event.values.at(L"tag"));
+				g_ReleaseNotes = wstring_to_utf8(event.values.at(L"notes"));
+				g_UpdateCheckDone = true;
+				if (event.values.at(L"success") != L"1" && !event.message.empty()) {
+					console.AddLog("[Network] Update check failed: %s", wstring_to_utf8(event.message).c_str());
+				}
+			}
+			else if (event.type == L"notice-check-complete") {
+				g_NewNoticeAvailable = event.values.at(L"available") == L"1";
+				g_NoticeContent = wstring_to_utf8(event.values.at(L"content"));
+				g_NoticeUpdatedAt = wstring_to_utf8(event.values.at(L"content-id"));
+				g_NoticeCheckDone = true;
+				if (event.values.at(L"success") != L"1" && !event.message.empty()) {
+					console.AddLog("[Network] Notice check failed: %s", wstring_to_utf8(event.message).c_str());
+				}
+			}
+			else if (event.type == L"rclone-install-complete") {
+				g_RcloneInstallRunning = false;
+				g_RcloneInstallSucceeded = event.values.at(L"success") == L"1";
+				g_RcloneInstallMessage = g_RcloneInstallSucceeded
+					? MineFormatMessage("RCLONE_INSTALL_SUCCESS_FORMAT",
+						wstring_to_utf8(event.values.at(L"path")).c_str())
+					: (event.message.empty() ? utf8_to_wstring(L("RCLONE_INSTALL_FAILED")) : event.message);
+				if (!g_RcloneInstallSucceeded) {
+					console.AddLog("[Tools] rclone installation failed: %s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
+				}
+			}
+			else if (event.type == L"portable-config-preview") {
+				if (event.values.at(L"success") != L"1") {
+					const wstring detail = event.message.empty() ? L"Unable to prepare the portable configuration preview." : event.message;
+					console.AddLog("[Cloud] %s", wstring_to_utf8(detail).c_str());
+					MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_PREPARE_FAILED"), 2);
+					continue;
+				}
+				map<int, Config> currentConfigs;
+				{
+					lock_guard<mutex> lock(g_appState.configsMutex);
+					currentConfigs = g_appState.configs;
+				}
+				const string currentPortable = PortableConfigDocument::FromLocalConfigs(currentConfigs).Serialize();
+				Sha256 currentHash;
+				currentHash.Update(currentPortable.data(), currentPortable.size());
+				if (utf8_to_wstring(currentHash.FinalHex()) != event.values.at(L"local-fingerprint")) {
+					MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_CHANGED"), 2);
+					continue;
+				}
+				if (!ConfirmMessageBox(L("PORTABLE_CONFIG_PREVIEW_TITLE"), wstring_to_utf8(event.values.at(L"preview")))) {
+					console.AddLog("[Cloud] Portable configuration transfer cancelled after preview.");
+					continue;
+				}
+				const int configIndex = stoi(event.values.at(L"config-index"));
+				if (event.values.at(L"action") == L"upload") {
+					Config cloudConfig;
+					{
+						lock_guard<mutex> lock(g_appState.configsMutex);
+						auto it = g_appState.configs.find(configIndex);
+						if (it == g_appState.configs.end()) continue;
+						cloudConfig = it->second;
+					}
+					const string payload = wstring_to_utf8(event.values.at(L"payload"));
+					TaskCoordinator::Instance().Submit(L"Commit portable configuration upload",
+						{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+						[cloudConfig, payload](stop_token) {
+							CommitPortableConfigUpload(cloudConfig, payload, console);
+						});
+				}
+				else {
+					PortableConfigDocument remote;
+					wstring parseError;
+					PortableConfigMergePreview appliedPreview;
+					if (!PortableConfigDocument::Parse(wstring_to_utf8(event.values.at(L"payload")), remote, parseError)) {
+						console.AddLog("[Cloud] Portable configuration parse failed: %s", wstring_to_utf8(parseError).c_str());
+						MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_INVALID"), 2);
+						continue;
+					}
+					bool applied = false;
+					{
+						lock_guard<mutex> lock(g_appState.configsMutex);
+						applied = PortableConfigDocument::ApplyImport(
+							g_appState.configs, remote, appliedPreview, parseError);
+					}
+					if (applied) {
+						SaveConfigs();
+						console.AddLog("[Cloud] Portable configuration import applied after confirmation.");
+					}
+					else {
+						console.AddLog("[Cloud] Portable configuration apply failed: %s", wstring_to_utf8(parseError).c_str());
+						MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_INVALID"), 2);
+					}
+				}
+			}
+		}
 		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(1.0);
 			continue;
@@ -738,20 +1209,21 @@ int main(int argc, char** argv)
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		if (MigrationService::ShouldShowStartupSummary()) {
-			ImGui::OpenPopup("MineBackup 1.15 migration summary");
+		const string migrationPopupTitle = string(L("MIGRATION_STARTUP_TITLE")) + "###MigrationSummary";
+		if (MigrationCoordinator::ShouldShowStartupSummary()) {
+			ImGui::OpenPopup(migrationPopupTitle.c_str());
 		}
-		if (ImGui::BeginPopupModal("MineBackup 1.15 migration summary", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-			ImGui::TextWrapped("MineBackup converted compatible 1.15 data without renaming archive files. Recovery snapshots were retained.");
-			const auto migrationReport = MigrationService::GetMigrationReport();
+		if (ImGui::BeginPopupModal(migrationPopupTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
+			ImGui::TextWrapped("%s", L("MIGRATION_SUMMARY"));
+			const auto migrationReport = MigrationCoordinator::GetMigrationReport();
 			for (const auto& unit : migrationReport.units) {
-				const char* state = unit.status == MigrationStatus::Succeeded ? "Succeeded" : unit.status == MigrationStatus::Degraded ? "Degraded"
-					: unit.status == MigrationStatus::Failed ? "Failed" : unit.status == MigrationStatus::Pending ? "Pending" : "Not needed";
-				ImGui::BulletText("%s: %s", wstring_to_utf8(unit.unitId).c_str(), state);
-				if (!unit.message.empty()) ImGui::TextWrapped("%s", wstring_to_utf8(unit.message).c_str());
+				ImGui::BulletText("%s: %s", MigrationReportUI::UnitLabel(unit.unitId).c_str(),
+					MigrationReportUI::StatusLabel(unit.status));
 			}
-			if (ImGui::Button("OK")) {
-				MigrationService::DismissStartupSummary();
+			ImGui::PopTextWrapPos();
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(CalcButtonWidth(L("BUTTON_OK")), 0))) {
+				MigrationCoordinator::DismissStartupSummary();
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -792,7 +1264,8 @@ int main(int argc, char** argv)
 				if (ImGui::BeginMenu(L("MENU_FILE"))) {
 					// 导出配置
 					if (ImGui::MenuItem(L("MENU_EXPORT_CONFIG"))) {
-						wstring exportPath = SelectSaveFileDialog(L"config_export.ini", L"INI Files (*.ini)\0*.ini\0All Files (*.*)\0*.*\0");
+						wstring exportPath = desktopServices->SelectSaveFile(
+							L"config_export.ini", L"INI Files (*.ini)\0*.ini\0All Files (*.*)\0*.*\0").path.wstring();
 						if (!exportPath.empty()) {
 							SaveConfigs(exportPath);
 							console.AddLog(L("LOG_CONFIG_EXPORTED"), wstring_to_utf8(exportPath).c_str());
@@ -800,7 +1273,7 @@ int main(int argc, char** argv)
 					}
 					// 导入配置
 					if (ImGui::MenuItem(L("MENU_IMPORT_CONFIG"))) {
-						wstring importPath = SelectFileDialog();
+						wstring importPath = desktopServices->SelectFile().path.wstring();
 						if (!importPath.empty() && filesystem::exists(importPath)) {
 							pendingImportPath = importPath;
 							showImportConfigConfirm = true;
@@ -809,7 +1282,8 @@ int main(int argc, char** argv)
 					ImGui::Separator();
 					// 导出历史记录
 					if (ImGui::MenuItem(L("MENU_EXPORT_HISTORY"))) {
-						wstring exportPath = SelectSaveFileDialog(L"history_export.json", L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0");
+						wstring exportPath = desktopServices->SelectSaveFile(
+							L"history_export.json", L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0").path.wstring();
 						if (!exportPath.empty()) {
 							try {
 								if (ExportHistoryToFile(exportPath)) {
@@ -825,7 +1299,7 @@ int main(int argc, char** argv)
 					}
 					// 导入历史记录
 					if (ImGui::MenuItem(L("MENU_IMPORT_HISTORY"))) {
-						wstring importPath = SelectFileDialog();
+						wstring importPath = desktopServices->SelectFile().path.wstring();
 						if (!importPath.empty() && filesystem::exists(importPath)) {
 							pendingImportPath = importPath;
 							showImportHistoryConfirm = true;
@@ -845,11 +1319,11 @@ int main(int argc, char** argv)
 				}
 				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_CONFIG_TITLE"), &showImportConfigConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
-					ImGui::TextWrapped(L("CONFIRM_IMPORT_CONFIG_MSG"));
+					ImGui::TextWrapped("%s", L("CONFIRM_IMPORT_CONFIG_MSG"));
 					ImGui::Separator();
 					float importBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(importBtnW, 0))) {
-						LoadConfigs(wstring_to_utf8(pendingImportPath));
+						LoadConfigs(filesystem::path(pendingImportPath));
 						SaveConfigs(); // 保存到默认位置
 						console.AddLog(L("LOG_CONFIG_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
 						showImportConfigConfirm = false;
@@ -869,7 +1343,7 @@ int main(int argc, char** argv)
 				}
 				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("CONFIRM_IMPORT_HISTORY_TITLE"), &showImportHistoryConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
-					ImGui::TextWrapped(L("CONFIRM_IMPORT_HISTORY_MSG"));
+					ImGui::TextWrapped("%s", L("CONFIRM_IMPORT_HISTORY_MSG"));
 					ImGui::Separator();
 					float histBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(histBtnW, 0))) {
@@ -897,34 +1371,43 @@ int main(int argc, char** argv)
 
 				if (ImGui::BeginMenu(L("SETTINGS"))) {
 
+					const auto desktopCapabilities = desktopServices->Capabilities();
+					ImGui::BeginDisabled(!desktopCapabilities.autostart.IsAvailable());
 					if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup)) {
-						wchar_t selfPath[MAX_PATH];
-						GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-						if (!g_RunOnStartup) {
+						const bool previous = !g_RunOnStartup;
+						const bool anySpecialStartup = FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
+						const auto status = desktopServices->SetAutostart(g_RunOnStartup || anySpecialStartup);
+						if (!status.IsAvailable()) {
+							g_RunOnStartup = previous;
+							console.AddLog("[Desktop] Autostart update failed: %s",
+								wstring_to_utf8(status.diagnostic).c_str());
+							MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
+						}
+						else if (!g_RunOnStartup && !anySpecialStartup) {
 							g_SilentStartupToTray = false;
 						}
-						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup, g_SilentStartupToTray);
 					}
+					ImGui::EndDisabled();
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
-					ImGui::BeginDisabled(!g_RunOnStartup);
-					if (ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray)) {
-						wchar_t selfPath[MAX_PATH];
-						GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-						SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, false, g_appState.currentConfigIndex, g_RunOnStartup, g_SilentStartupToTray);
+					if (!desktopCapabilities.autostart.IsAvailable() && !desktopCapabilities.autostart.diagnostic.empty()) {
+						ImGui::TextDisabled("%s", wstring_to_utf8(desktopCapabilities.autostart.diagnostic).c_str());
 					}
+					ImGui::BeginDisabled(!g_RunOnStartup);
+					ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray);
 					ImGui::EndDisabled();
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
 					ImGui::Checkbox(L("BUTTON_AUTO_LOG"), &g_autoLogEnabled);
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Checkbox(L("RECEIVE_NOTICES"), &g_ReceiveNotices);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_RECEIVE_NOTICES"));
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RECEIVE_NOTICES"));
 					ImGui::Checkbox(L("STOP_AUTOBACKUP_ON_EXIT"), &g_StopAutoBackupOnExit);
-					if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
 					ImGui::Separator();
 					// 热键设置右拉栏（鼠标放上去会向右展开两个）
 					static bool waitingForHotkey = false;
 					static int whichFunc = 0;
+					ImGui::BeginDisabled(!desktopCapabilities.globalHotkeys.IsAvailable());
 					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
 						if (ImGui::MenuItem(L("BUTTON_BACKUP_SELECTED"))) {
 							console.AddLog(L("HOTKEY_INSTRUCTION"));
@@ -937,31 +1420,33 @@ int main(int argc, char** argv)
 							whichFunc = 2;
 						}
 						if (waitingForHotkey) {
-							ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Waiting...");
+							ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "%s", L("WAITING"));
 							for (int key = ImGuiKey_0; key <= ImGuiKey_Z; ++key) {
 								if (ImGui::IsKeyPressed((ImGuiKey)key)) {
-									waitingForHotkey = false;
-									if (whichFunc == 1) {
-										g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
-#ifdef _WIN32
-										UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
-										RegisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-#else
-										UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
-										RegisterHotkeys(MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId);
-#endif
-										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
+								waitingForHotkey = false;
+								if (whichFunc == 1) {
+									const int previousKey = g_hotKeyBackupId;
+									g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
+									const auto status = desktopServices->ConfigureGlobalHotkeys(
+										currentGlobalHotkeys());
+									if (!status.IsAvailable()) {
+										g_hotKeyBackupId = previousKey;
+										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
+										MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
+									}
+									console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
 										break;
 									}
-									else if (whichFunc == 2) {
-										g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
-#ifdef _WIN32
-										UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
-										RegisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
-#else
-										UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
-										RegisterHotkeys(MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId);
-#endif
+								else if (whichFunc == 2) {
+									const int previousKey = g_hotKeyRestoreId;
+									g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
+									const auto status = desktopServices->ConfigureGlobalHotkeys(
+										currentGlobalHotkeys());
+									if (!status.IsAvailable()) {
+										g_hotKeyRestoreId = previousKey;
+										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
+										MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
+									}
 										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
 										break;
 									}
@@ -970,6 +1455,11 @@ int main(int argc, char** argv)
 							}
 						}
 						ImGui::EndMenu();
+					}
+					ImGui::EndDisabled();
+					if (!desktopCapabilities.globalHotkeys.IsAvailable()
+						&& ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+						ImGui::SetTooltip("%s", wstring_to_utf8(desktopCapabilities.globalHotkeys.diagnostic).c_str());
 					}
 					ImGui::Separator();
 					ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
@@ -996,16 +1486,16 @@ int main(int argc, char** argv)
 				}
 				if (ImGui::BeginMenu(L("MENU_HELP"))) {
 					if (ImGui::MenuItem(L("MENU_GITHUB"))) {
-						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup");
+						(void)desktopServices->OpenUri(L"https://github.com/Leafuke/MineBackup");
 					}
 					if (ImGui::MenuItem(L("MENU_ISSUE"))) {
-						OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/issues");
+						(void)desktopServices->OpenUri(L"https://github.com/Leafuke/MineBackup/issues");
 					}
 					if (ImGui::MenuItem(L("HELP_DOCUMENT"))) {
-						OpenLinkInBrowser(L"https://folderrewind.top/docs/guides/minebackup-v1/overview");
+						(void)desktopServices->OpenUri(L"https://folderrewind.top/docs/guides/minebackup-v1/overview");
 					}
 					if (ImGui::MenuItem(L("SPONSOR_ME"))) {
-						OpenLinkInBrowser(L"https://afdian.com/a/MineBackup");
+						(void)desktopServices->OpenUri(L"https://afdian.com/a/MineBackup");
 					}
 					if (ImGui::MenuItem(L("MENU_ABOUT"))) {
 						showAboutWindow = true;
@@ -1031,38 +1521,15 @@ int main(int argc, char** argv)
 					if (ImGui::BeginPopupModal(L("UPDATE_POPUP_TITLE"), &open_update_popup, ImGuiWindowFlags_AlwaysAutoResize)) {
 						ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
 						ImGui::Separator();
-						ImGui::TextWrapped(L("UPDATE_POPUP_NOTES"));
+						ImGui::TextWrapped("%s", L("UPDATE_POPUP_NOTES"));
 
 						ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 450), true);
 						ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
 						ImGui::EndChild();
 						ImGui::Separator();
 						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(180, 0))) {
-#ifdef _WIN32
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
-#elif defined(__APPLE__)
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
-#else
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
-#endif
-							open_update_popup = false;
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_2"), ImVec2(180, 0))) {
-#ifdef _WIN32
-							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup.exe");
-#elif defined(__APPLE__)
-							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-macos.zip");
-#else
-							OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/Leafuke/MineBackup/releases/download/" + utf8_to_wstring(g_LatestVersionStr) + L"/MineBackup-linux.7z");
-#endif
-							open_update_popup = false;
-							ImGui::CloseCurrentPopup();
-						}
-						ImGui::SameLine();
-						if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON_3"), ImVec2(180, 0))) {
-							OpenLinkInBrowser(L"https://www.123865.com/s/Zsyijv-UTuGd?pwd=mine#");
+							const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
+							if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1072,7 +1539,8 @@ int main(int argc, char** argv)
 						}
 						ImGui::SameLine();
 						if (ImGui::Button(L("CHECK_FOR_UPDATES"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-							OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup/releases");
+							const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
+							if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
 							open_update_popup = false;
 							ImGui::CloseCurrentPopup();
 						}
@@ -1089,7 +1557,7 @@ int main(int argc, char** argv)
 
 				ImGui::SetNextWindowViewport(viewport->ID);
 				if (ImGui::BeginPopupModal(L("NOTICE_POPUP_TITLE"), &notice_popup_opened, ImGuiWindowFlags_AlwaysAutoResize)) {
-					ImGui::TextWrapped(L("NOTICE_POPUP_DESC"));
+					ImGui::TextWrapped("%s", L("NOTICE_POPUP_DESC"));
 					ImGui::Separator();
 					ImGui::BeginChild("NoticeContent", ImVec2(ImGui::GetContentRegionAvail().x, 320), true);
 					ImGui::TextWrapped("%s", g_NoticeContent.c_str());
@@ -1145,7 +1613,7 @@ int main(int argc, char** argv)
 			
 			ImGui::SetNextWindowViewport(viewport->ID);
 			if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-				ImGui::TextWrapped(L("CLOSE_CONFIRM_MSG"));
+				ImGui::TextWrapped("%s", L("CLOSE_CONFIRM_MSG"));
 				ImGui::Separator();
 				
 				static bool tempRememberChoice = false;
@@ -1153,29 +1621,24 @@ int main(int argc, char** argv)
 				
 				ImGui::Dummy(ImVec2(0, 10));
 
-#ifdef __linux__
-				if (ImGui::Button(L("CLOSE_MINIMIZE_WINDOW"), ImVec2(200, 0))) {
+				const bool canHideToTray = CanHideToTray(desktopServices->Capabilities());
+				const char* minimizeLabel = canHideToTray
+					? L("CLOSE_MINIMIZE_TO_TRAY") : L("CLOSE_MINIMIZE_WINDOW");
+				if (ImGui::Button(minimizeLabel, ImVec2(200, 0))) {
 					if (tempRememberChoice) {
 						g_closeAction = 1;
 						g_rememberCloseAction = true;
 					}
-					glfwIconifyWindow(wc);
-					ImGui::CloseCurrentPopup();
-				}
-#else
-				if (ImGui::Button(L("CLOSE_MINIMIZE_TO_TRAY"), ImVec2(200, 0))) {
-					if (tempRememberChoice) {
-						g_closeAction = 1;
-						g_rememberCloseAction = true;
+					if (canHideToTray) {
+						(void)desktopServices->SetTrayVisible(true);
+						g_appState.showMainApp = false;
+						glfwHideWindow(wc);
 					}
-#ifdef __APPLE__
-					CreateTrayIcon();
-#endif
-					g_appState.showMainApp = false;
-					glfwHideWindow(wc);
+					else {
+						glfwIconifyWindow(wc);
+					}
 					ImGui::CloseCurrentPopup();
 				}
-#endif
 				ImGui::SameLine();
 				if (ImGui::Button(L("CLOSE_EXIT_APP"), ImVec2(200, 0))) {
 					if (tempRememberChoice) {
@@ -1202,38 +1665,38 @@ int main(int argc, char** argv)
 			{
 				ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
 				ImGui::Separator();
-				ImGui::TextWrapped("%s", wstring_to_u8string(MineFormatMessage("ABOUT_DESCRIPTION", (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId)).c_str());
+				ImGui::TextWrapped("%s", wstring_to_utf8(MineFormatMessage("ABOUT_DESCRIPTION", (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId)).c_str());
 				ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
 				if (ImGui::Button(L("ABOUT_VISIT_GITHUB")))
 				{
-					OpenLinkInBrowser(L"https://github.com/Leafuke/MineBackup");
+					(void)desktopServices->OpenUri(L"https://github.com/Leafuke/MineBackup");
 				}
 				ImGui::SameLine();
 				if (ImGui::Button(L("ABOUT_VISIT_BILIBILI")))
 				{
-					OpenLinkInBrowser(L"https://space.bilibili.com/545429962");
+					(void)desktopServices->OpenUri(L"https://space.bilibili.com/545429962");
 				}
 				if (ImGui::Button(L("ABOUT_VISIT_KNOTLINK")))
 				{
-					OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
+					(void)desktopServices->OpenUri(L"https://github.com/hxh230802/KnotLink");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_KNOTLINK_TIP"));
 				if (ImGui::Button(L("ABOUT_VISIT_FOLDERREWIND")))
 				{
-					OpenLinkInBrowser(L"https://github.com/Leafuke/FolderRewind");
+					(void)desktopServices->OpenUri(L"https://github.com/Leafuke/FolderRewind");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_FOLDERREWIND_TIP"));
 				if (ImGui::Button(L("ABOUT_VISIT_MINEBACKUP-MOD")))
 				{
-					OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+					(void)desktopServices->OpenUri(L"https://modrinth.com/mod/minebackup");
 				}
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("ABOUT_VISIT_MINEBACKUP-MOD_TIP"));	
 				
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
-				ImGui::Text(L("ABOUT_QQ_GROUP"));
+				ImGui::TextUnformatted(L("ABOUT_QQ_GROUP"));
 				ImGui::Dummy(ImVec2(0.0f, 10.0f));
 				ImGui::SeparatorText(L("ABOUT_LICENSE_HEADER"));
 				ImGui::Text("%s", L("ABOUT_LICENSE_TYPE"));
@@ -1252,7 +1715,7 @@ int main(int argc, char** argv)
 
 
 			ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_None);
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar);
 
 			static bool first_time_layout = true;
 			if (first_time_layout) {
@@ -1411,7 +1874,7 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 					showDeleteConfigPopup = false;
 					if (specialSetting) {
-						ImGui::Text("[Sp.]");
+						ImGui::TextUnformatted(L("SPECIAL_CONFIG_BADGE"));
 						ImGui::SameLine();
 						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 					}
@@ -1449,15 +1912,15 @@ int main(int argc, char** argv)
 					static int config_type = 0; // 0 for Normal, 1 for Special
 					static char new_config_name[128] = "New Config";
 
-					ImGui::Text(L("CONFIG_TYPE_LABEL"));
+					ImGui::TextUnformatted(L("CONFIG_TYPE_LABEL"));
 					ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
 					ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
 
 					if (config_type == 0) {
-						ImGui::TextWrapped(L("CONFIG_TYPE_NORMAL_DESC"));
+						ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));
 					}
 					else {
-						ImGui::TextWrapped(L("CONFIG_TYPE_SPECIAL_DESC"));
+						ImGui::TextWrapped("%s", L("CONFIG_TYPE_SPECIAL_DESC"));
 					}
 
 					ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
@@ -1581,7 +2044,7 @@ int main(int argc, char** argv)
 					ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
 					// 点击更换图标
 					if (ImGui::IsItemClicked()) {
-						wstring sel = SelectFileDialog();
+						wstring sel = desktopServices->SelectFile().path.wstring();
 						if (!sel.empty()) {
 							// 覆盖原 icon.png - 使用跨平台路径拼接
 							wstring destPath = JoinPath(worldFolder, L"icon.png").wstring();
@@ -1648,7 +2111,7 @@ int main(int argc, char** argv)
 					//// 将次要信息颜色变灰，更具层次感
 					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 					if (desc_utf8.empty()) {
-						ImGui::TextWrapped(L("CARD_WORLD_NO_DESC"));
+						ImGui::TextWrapped("%s", L("CARD_WORLD_NO_DESC"));
 					}
 					else {
 						ImGui::TextWrapped("%s", desc_utf8.c_str());
@@ -1764,8 +2227,9 @@ int main(int argc, char** argv)
 						float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
 						if (ImGui::Button(L("BUTTON_BACKUP_SELECTED"), ImVec2(button_width, 0))) {
 							MyFolder world = { JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring(), displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc, displayWorlds[selectedWorldIndex].effectiveConfig, displayWorlds[selectedWorldIndex].baseConfigIndex, selectedWorldIndex };
-							thread backup_thread(DoBackup, world, ref(console), utf8_to_wstring(backupComment));
-							backup_thread.detach();
+							TaskCoordinator::Instance().Submit(L"manual-backup",
+								{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
+								[world, comment = utf8_to_wstring(backupComment)](stop_token) { DoBackup(world, console, comment); });
 							strcpy_s(backupComment, "");
 						}
 						ImGui::SameLine();
@@ -1830,15 +2294,15 @@ int main(int argc, char** argv)
 						if (ImGui::Button(L("OPEN_BACKUP_FOLDER"), ImVec2(-1, 0))) {
 							wstring path = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath, displayWorlds[selectedWorldIndex].name).wstring();
 							if (filesystem::exists(path)) {
-								OpenFolder(path);
+								(void)desktopServices->OpenFolder(path);
 							}
 							else {
-								OpenFolder(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath);
+								(void)desktopServices->OpenFolder(displayWorlds[selectedWorldIndex].effectiveConfig.backupPath);
 							}
 						}
 						if (ImGui::Button(L("OPEN_SAVEROOT_FOLDER"), ImVec2(-1, 0))) {
 							wstring path = JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring();
-							OpenFolder(path);
+							(void)desktopServices->OpenFolder(path);
 						}
 
 						// 模组备份
@@ -1863,8 +2327,12 @@ int main(int argc, char** argv)
 									if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
 										modsPath = tempPath / "mods";
 									}
-									thread backup_thread(DoOthersBackup, g_appState.configs[g_appState.currentConfigIndex], modsPath, utf8_to_wstring(mods_comment), ref(console));
-									backup_thread.detach();
+									const Config configCopy = g_appState.configs[g_appState.currentConfigIndex];
+									TaskCoordinator::Instance().Submit(L"mods-backup",
+										{TaskCoordinator::WorldResourceKey(configCopy.configId, modsPath)},
+										[configCopy, modsPath, comment = utf8_to_wstring(mods_comment)](stop_token) {
+											DoOthersBackup(configCopy, modsPath, comment, console);
+										});
 									strcpy_s(mods_comment, "");
 								}
 								ImGui::CloseCurrentPopup();
@@ -1880,9 +2348,10 @@ int main(int argc, char** argv)
 						// 其他备份
 						float availWidth = ImGui::GetContentRegionAvail().x;
 						float btnWidth = ImGui::CalcTextSize(L("BUTTON_BACKUP_OTHERS")).x + ImGui::GetStyle().FramePadding.x * 2;
+						const string otherBackupPopupTitle = string(L("BACKUP_OTHER_POPUP_TITLE")) + "###OtherBackup";
 						if (ImGui::Button(L("BUTTON_BACKUP_OTHERS"), ImVec2(btnWidth, 0))) {
 							if (selectedWorldIndex != -1) {
-								ImGui::OpenPopup("Others");
+								ImGui::OpenPopup(otherBackupPopupTitle.c_str());
 							}
 						}
 						ImGui::SameLine();
@@ -1896,7 +2365,7 @@ int main(int argc, char** argv)
 						}
 
 						ImGui::SetNextWindowViewport(viewport->ID);
-						if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+						if (ImGui::BeginPopupModal(otherBackupPopupTitle.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							static char others_comment[CONSTANT1] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));
@@ -1904,8 +2373,13 @@ int main(int argc, char** argv)
 
 							float othersConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 							if (ImGui::Button(L("BUTTON_OK"), ImVec2(othersConfirmBtnWidth, 0))) {
-								thread backup_thread(DoOthersBackup, displayWorlds[selectedWorldIndex].effectiveConfig, utf8_to_wstring(buf), utf8_to_wstring(others_comment), ref(console));
-								backup_thread.detach();
+								const Config configCopy = displayWorlds[selectedWorldIndex].effectiveConfig;
+								const wstring othersPath = utf8_to_wstring(buf);
+								TaskCoordinator::Instance().Submit(L"other-path-backup",
+									{TaskCoordinator::WorldResourceKey(configCopy.configId, othersPath)},
+									[configCopy, othersPath, comment = utf8_to_wstring(others_comment)](stop_token) {
+										DoOthersBackup(configCopy, othersPath, comment, console);
+									});
 								strcpy_s(others_comment, "");
 								SaveConfigs(); // 保存一下路径
 								ImGui::CloseCurrentPopup();
@@ -1924,9 +2398,11 @@ int main(int argc, char** argv)
 							const Config configCopy = g_appState.configs[baseConfigIndex];
 							const wstring worldName = displayWorlds[selectedWorldIndex].name;
 							if (CanUseCloudActions(configCopy)) {
-								thread([configCopy, baseConfigIndex, worldName]() {
+								TaskCoordinator::Instance().Submit(L"manual-cloud-upload",
+									{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+									[configCopy, baseConfigIndex, worldName](stop_token) {
 									UploadWorldBackupFolderToCloud(configCopy, baseConfigIndex, worldName, console);
-								}).detach();
+								});
 							}
 							else {
 								console.AddLog(L("CLOUD_SYNC_INVALID"));
@@ -1954,11 +2430,12 @@ int main(int argc, char** argv)
 								const auto& dw = displayWorlds[selectedWorldIndex];
 								tempExportConfig = dw.effectiveConfig; // 复制当前配置作为基础
 
-								// 智能设置默认输出路径为MineBackup当前位置
-								wchar_t currentPath[MAX_PATH];
-								GetCurrentDirectoryW(MAX_PATH, currentPath);
+								// 默认导出到配置档数据目录，不依赖启动工作目录。
+								const auto exportRoot = paths.dataRoot / L"exports";
+								error_code exportDirectoryError;
+								filesystem::create_directories(exportRoot, exportDirectoryError);
 								wstring cleanWorldName = SanitizeFileName(dw.name);
-								wstring finalPath = wstring(currentPath) + L"\\" + cleanWorldName + L"_shared." + tempExportConfig.zipFormat;
+								wstring finalPath = (exportRoot / (cleanWorldName + L"_shared." + tempExportConfig.zipFormat)).wstring();
 								strncpy_s(outputPathBuf, wstring_to_utf8(finalPath).c_str(), sizeof(outputPathBuf));
 
 								// 预设默认黑名单
@@ -1990,7 +2467,13 @@ int main(int argc, char** argv)
 							ImGui::InputText(L("LABEL_EXPORT_PATH"), outputPathBuf, sizeof(outputPathBuf));
 							ImGui::SameLine();
 							if (ImGui::Button(L("BUTTON_BROWSE"))) {
-								strcpy_s(outputPathBuf, MAX_PATH, wstring_to_utf8(SelectFolderDialog() + L"\\" + displayWorlds[selectedWorldIndex].name + L"_shared." + tempExportConfig.zipFormat).c_str());
+								const auto selectedFolder = desktopServices->SelectFolder();
+								if (!selectedFolder.path.empty()) {
+									const auto destination = selectedFolder.path
+										/ (displayWorlds[selectedWorldIndex].name + L"_shared." + tempExportConfig.zipFormat);
+									strcpy_s(outputPathBuf, MAX_PATH,
+										wstring_to_utf8(destination.wstring()).c_str());
+								}
 							}
 
 							if (ImGui::RadioButton("7z", &selectedFormat, 0)) { tempExportConfig.zipFormat = L"7z"; } ImGui::SameLine();
@@ -2026,9 +2509,14 @@ int main(int argc, char** argv)
 								const auto& dw = displayWorlds[selectedWorldIndex];
 
 								wstring worldFullPath = JoinPath(dw.effectiveConfig.saveRoot, dw.name).wstring();
+								const Config exportConfig = tempExportConfig;
 
-								thread export_thread(DoExportForSharing, tempExportConfig, dw.name, worldFullPath, utf8_to_wstring(outputPathBuf), utf8_to_wstring(descBuf), ref(console));
-								export_thread.detach();
+								TaskCoordinator::Instance().Submit(L"export-for-sharing",
+									{TaskCoordinator::WorldResourceKey(exportConfig.configId, worldFullPath)},
+									[exportConfig, worldName = dw.name, worldFullPath,
+									 outputPath = utf8_to_wstring(outputPathBuf), description = utf8_to_wstring(descBuf)](stop_token) {
+										DoExportForSharing(exportConfig, worldName, worldFullPath, outputPath, description, console);
+									});
 
 								ImGui::CloseCurrentPopup();
 							}
@@ -2063,19 +2551,16 @@ int main(int argc, char** argv)
 							ImGui::Text(L("AUTOBACKUP_RUNNING"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 							ImGui::Separator();
 							if (ImGui::Button(L("BUTTON_STOP_AUTOBACKUP"), ImVec2(CalcButtonWidth(L("BUTTON_STOP_AUTOBACKUP")), 0))) {
-								std::thread workerToJoin;
+								wstring taskName;
 								{
 									lock_guard<mutex> lock(g_appState.task_mutex);
 									auto it = g_appState.g_active_auto_backups.find(taskKey);
 									if (it != g_appState.g_active_auto_backups.end()) {
-										it->second.stop_flag = true;
-										workerToJoin = std::move(it->second.worker);
+										taskName = it->second.taskName;
 										g_appState.g_active_auto_backups.erase(it);
 									}
 								}
-								if (workerToJoin.joinable()) {
-									workerToJoin.join();
-								}
+								TaskCoordinator::Instance().RequestStop(taskName);
 								ImGui::CloseCurrentPopup();
 							}
 							ImGui::SameLine();
@@ -2101,9 +2586,13 @@ int main(int argc, char** argv)
 									lock_guard<mutex> lock(g_appState.task_mutex);
 									if (taskKey.first >= 0) {
 										AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
-										task.stop_flag = false;
-
-										task.worker = thread(AutoBackupThreadFunction, taskKey.first, taskKey.second, last_interval, &console, ref(task.stop_flag));
+										task.taskName = TaskCoordinator::AutoBackupTaskName(taskKey.first, taskKey.second);
+										const bool started = TaskCoordinator::Instance().Submit(task.taskName, {},
+											[taskName = task.taskName, configIndex = taskKey.first, worldIndex = taskKey.second, interval = last_interval](stop_token token) {
+												AutoBackupThreadFunction(configIndex, worldIndex, interval, &console, token);
+												TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
+											});
+										if (!started) g_appState.g_active_auto_backups.erase(taskKey);
 
 										ImGui::CloseCurrentPopup();
 									}
@@ -2178,22 +2667,10 @@ int main(int argc, char** argv)
 
 	// 清理
 	BroadcastEvent("event=app_shutdown");
-	std::vector<std::thread> workersToJoin;
+	TaskCoordinator::Instance().StopAndJoin();
 	{
 		lock_guard<mutex> lock(g_appState.task_mutex);
-		workersToJoin.reserve(g_appState.g_active_auto_backups.size());
-		for (auto& pair : g_appState.g_active_auto_backups) {
-			pair.second.stop_flag = true;
-			if (pair.second.worker.joinable()) {
-				workersToJoin.emplace_back(std::move(pair.second.worker));
-			}
-		}
 		g_appState.g_active_auto_backups.clear();
-	}
-	for (auto& worker : workersToJoin) {
-		if (worker.joinable()) {
-			worker.join();
-		}
 	}
 	for (auto const& [key, val] : g_worldIconTextures) {
 		if (val > 0) {
@@ -2203,28 +2680,20 @@ int main(int argc, char** argv)
 
 	glfwGetWindowSize(wc, &g_windowWidth, &g_windowHeight);
 
-	if (filesystem::exists("config.ini"))
+	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
 
 	// 将捕获到的所有日志写入文件
-	ofstream log_file("auto_log.txt", ios::app | ios::binary);
-	if (log_file.is_open()) {
-		for (const char* item : console.Items) {
-			log_file << (item) << endl;
-		}
-		log_file << "=== End ===" << endl << endl;
-		log_file.close();
-	}
+	ostringstream automaticLog;
+	for (const char* item : console.Items) automaticLog << item << '\n';
+	automaticLog << "=== End ===\n\n";
+	RotatingFileLog::Append(paths.logsRoot / "auto_log.txt", automaticLog.str());
 
+	(void)desktopServices->ConfigureGlobalHotkeys({});
+	(void)desktopServices->SetTrayVisible(false);
+	ResetDesktopServices();
 #ifdef _WIN32
-	RemoveTrayIcon();
-	UnregisterHotkeys(hwnd_hidden, MINEBACKUP_HOTKEY_ID);
-	UnregisterHotkeys(hwnd_hidden, MINERESTORE_HOTKEY_ID);
 	DestroyWindow(hwnd_hidden);
-#else
-	RemoveTrayIcon();
-	UnregisterHotkeys(MINEBACKUP_HOTKEY_ID);
-	UnregisterHotkeys(MINERESTORE_HOTKEY_ID);
 #endif
 	g_worldIconTextures.clear();
 	worldIconWidths.clear();
@@ -2235,11 +2704,6 @@ int main(int argc, char** argv)
 
 	glfwDestroyWindow(wc);
 	glfwTerminate();
-
-	g_stopExitWatcher = true;
-	if (g_exitWatcherThread.joinable()) {
-		g_exitWatcherThread.join();
-	}
 
 	// 清理 KnotLink
 	CleanupKnotLink();
@@ -2292,6 +2756,6 @@ void ApplyTheme(const int& theme)
 	case 4: ImGuiTheme::ApplyWindows11(true); break;
 	case 5: ImGuiTheme::ApplyNord(false); break;
 	case 6: ImGuiTheme::ApplyNord(true); break;
-	case 7: ImGuiTheme::ApplyCustom(); break;
+	case 7: ImGuiTheme::ApplyCustom(GetAppPaths().configRoot / L"custom_theme.json"); break;
 	}
 }

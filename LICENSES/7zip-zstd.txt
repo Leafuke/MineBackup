@@ -1,0 +1,18 @@
+7-Zip ZS third-party notice
+===========================
+
+MineBackup embeds the x64 standalone command-line executable from 7-Zip ZS
+26.01 v1.5.7 Release 1. The exact embedded binary is pinned in
+MineBackup/Assets/tool-manifest.json, tracked as a build resource and verified
+before it is embedded or extracted at runtime. The manifest also records the
+SHA-256 of the upstream installer from which the standalone binary originated.
+
+Upstream project: https://github.com/mcmilk/7-Zip-zstd
+Upstream licensing information: https://github.com/mcmilk/7-Zip-zstd#license
+
+7-Zip is Copyright (C) 1999-2026 Igor Pavlov. 7-Zip ZS includes work by its
+listed upstream contributors and additional codecs with their respective
+licenses. 7-Zip uses the GNU LGPL, with the unRAR restriction for portions of
+the RAR code and a BSD-style license for some components. This notice does not
+replace the upstream license texts distributed with the upstream source and
+binary packages.
