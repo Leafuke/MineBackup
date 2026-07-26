@@ -36,7 +36,7 @@ out:
 ```bash
 git init build/7zip-zstd
 git -C build/7zip-zstd remote add origin https://github.com/mcmilk/7-Zip-zstd.git
-git -C build/7zip-zstd fetch --depth 1 origin d8d651b72a6a85353a23d3f19e0fd2d96c0f36b4
+git -C build/7zip-zstd fetch --depth 1 origin 2dcb6815c0e6877988171c47e1824b86172ff3b2
 git -C build/7zip-zstd checkout --detach FETCH_HEAD
 bash packaging/macos/build-sevenzip.sh build/7zip-zstd build/package-inputs/7zz
 MINEBACKUP_CODESIGN_IDENTITY=- bash packaging/macos/build-dmg.sh \

@@ -58,7 +58,7 @@ build/release/MineBackup-1.16.0-x86_64.AppImage \
 Inspect `dpkg-deb --contents` and `dpkg-deb --field ... Depends`, then run
 `ldd /usr/bin/MineBackup` and reject every `not found`. Extract the AppImage and
 confirm it contains the binary, desktop entry, icon, licenses, font and pinned
-`Resources/tools/7zip/26.01-zs-v1.5.7-r1/7zz` equivalent under
+`Resources/tools/7zip/26.02-zs-v1.5.7-r2/7zz` equivalent under
 `usr/share/MineBackup`. Move the AppImage and verify a previously enabled
 autostart path is repaired on the next normal launch. Place `portable.flag`
 beside it and confirm only that case uses adjacent `MineBackupData`.

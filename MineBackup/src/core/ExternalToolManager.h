@@ -37,8 +37,8 @@ struct ManagedToolInstallResult {
 
 namespace ExternalToolManager {
 
-inline constexpr wchar_t SevenZipVersion[] = L"26.01-zs-v1.5.7-r1";
-inline constexpr char SevenZipWindowsSha256[] = "051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867";
+inline constexpr wchar_t SevenZipVersion[] = L"26.02-zs-v1.5.7-r2";
+inline constexpr char SevenZipWindowsSha256[] = "d8d92a77b6b34b07deafdac6e0845076eac5bf76bf026b554d101e81363cd052";
 inline constexpr wchar_t RcloneVersion[] = L"1.74.4";
 
 ExternalToolProbe ProbeSevenZip(const std::filesystem::path& executable, std::stop_token stopToken = {});

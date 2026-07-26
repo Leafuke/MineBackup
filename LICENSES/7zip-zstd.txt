@@ -2,7 +2,8 @@
 ===========================
 
 MineBackup embeds the x64 standalone command-line executable from 7-Zip ZS
-26.01 v1.5.7 Release 1. The exact embedded binary is pinned in
+26.02 v1.5.7 Release 2. The executable identifies itself as Release 1; the
+upstream release containing it is Release 2. The exact embedded binary is pinned in
 MineBackup/Assets/tool-manifest.json, tracked as a build resource and verified
 before it is embedded or extracted at runtime. The manifest also records the
 SHA-256 of the upstream installer from which the standalone binary originated.

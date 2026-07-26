@@ -2,25 +2,27 @@
   "schemaVersion": 1,
   "sevenZip": {
     "name": "7-Zip ZS",
-    "version": "26.01 ZS v1.5.7 R1",
+    "version": "26.02 ZS v1.5.7 R2",
+    "reportedVersion": "26.02 ZS v1.5.7 R1",
+    "release": "https://github.com/mcmilk/7-Zip-zstd/releases/tag/v26.02-v1.5.7-R2",
     "upstream": "https://github.com/mcmilk/7-Zip-zstd/releases",
     "windows": {
       "architecture": "x64",
-      "sourceInstaller": "7z26.01-zstd-x64.exe",
-      "sourceInstallerSha256": "337eb2af535d1ae752a9b78bfa2c51261c395e5827bd57e8dc0eb93685c588ed",
+      "sourceInstaller": "7z26.02-zstd-x64.exe",
+      "sourceInstallerSha256": "22dc4608d911d7c831437b969db66a42d0477cd3f5d93987cae9f59774857fc1",
       "resource": "7za.exe",
-      "sha256": "051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867",
+      "sha256": "d8d92a77b6b34b07deafdac6e0845076eac5bf76bf026b554d101e81363cd052",
       "build": "standalone command-line executable with LZMA2, Deflate, BZip2 and zstd codecs"
     },
     "linux": {
       "architecture": "x86_64",
       "sourceArchive": "linux-gcc-x64.zip",
-      "sourceSha256": "3cfca42ab44519822d5299cb92f823633209dd762d903ade3fde19585c56915a",
+      "sourceSha256": "be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3",
       "resource": "7zz"
     },
     "macos": {
       "architecture": "arm64",
-      "sourceCommit": "d8d651b72a6a85353a23d3f19e0fd2d96c0f36b4",
+      "sourceCommit": "2dcb6815c0e6877988171c47e1824b86172ff3b2",
       "resource": "7zz"
     }
   },

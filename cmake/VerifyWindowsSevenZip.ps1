@@ -24,7 +24,7 @@ function Get-Sha256Hex {
     }
 }
 
-$expectedSha256 = '051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867'
+$expectedSha256 = 'd8d92a77b6b34b07deafdac6e0845076eac5bf76bf026b554d101e81363cd052'
 $target = [System.IO.Path]::GetFullPath($TargetPath)
 if (-not [System.IO.File]::Exists($target)) {
     throw "The tracked Windows 7-Zip resource is missing: $target"

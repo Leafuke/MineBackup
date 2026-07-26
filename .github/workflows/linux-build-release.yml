@@ -46,12 +46,12 @@ jobs:
         run: |
           mkdir -p build/package-inputs build/release
           curl --fail --location --retry 3 \
-            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.01-v1.5.7-R1/linux-gcc-x64.zip \
+            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.02-v1.5.7-R2/linux-gcc-x64.zip \
             --output build/package-inputs/linux-gcc-x64.zip
           curl --fail --location --retry 3 \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
             --output build/package-inputs/linuxdeploy-x86_64.AppImage
-          echo '3cfca42ab44519822d5299cb92f823633209dd762d903ade3fde19585c56915a  build/package-inputs/linux-gcc-x64.zip' \
+          echo 'be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3  build/package-inputs/linux-gcc-x64.zip' \
             | sha256sum --check --status
           echo 'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  build/package-inputs/linuxdeploy-x86_64.AppImage' \
             | sha256sum --check --status

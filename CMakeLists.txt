@@ -47,7 +47,7 @@ set(MINEBACKUP_STB_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/stb)
 if(WIN32)
     set(MINEBACKUP_WINDOWS_7ZIP "${MINEBACKUP_SOURCE_DIR}/Assets/7za.exe")
     set(MINEBACKUP_WINDOWS_7ZIP_SHA256
-        "051afc5dce51d2c8802d81a44ed5433a8d31fb158d9e9eb0a37e75b3b81fd867")
+        "d8d92a77b6b34b07deafdac6e0845076eac5bf76bf026b554d101e81363cd052")
     if(NOT EXISTS "${MINEBACKUP_WINDOWS_7ZIP}")
         message(FATAL_ERROR "The tracked MineBackup/Assets/7za.exe resource is missing.")
     endif()
