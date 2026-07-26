@@ -285,7 +285,7 @@ void LoadConfigs(const filesystem::path& filename) {
 						applyDefaultFont();
 					}
 					else if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
-						MessageBoxWin("Warning", "Invalid font path!\nPlease check and reload.", 1);
+						MessageBoxWin(L("WARNING_TITLE"), L("INVALID_FONT_PATH"), 1);
 						GetUserDefaultUILanguageWin();
 						applyDefaultFont();
 					}

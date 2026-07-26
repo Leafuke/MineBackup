@@ -163,7 +163,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 #endif
 			}
 			else {
-				MessageBoxWin("Info", "Could not auto-detect Java edition saves. Please select manually.", 1);
+				MessageBoxWin(L("INFO_TITLE"), L("WIZARD_AUTO_JAVA_NOT_FOUND"), 1);
 			}
 		}
 		ImGui::SameLine();
@@ -209,7 +209,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 #endif
 			}
 			else {
-				MessageBoxWin("Info", "Could not auto-detect Bedrock edition saves. Please select manually.", 1);
+				MessageBoxWin(L("INFO_TITLE"), L("WIZARD_AUTO_BEDROCK_NOT_FOUND"), 1);
 			}
 		}
 		if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {

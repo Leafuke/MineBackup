@@ -10,7 +10,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 	if (ImGui::Button(L("TASK_ADD_BACKUP"))) {
 		UnifiedTaskV2 newTask;
 		newTask.id = spCfg.unifiedTasks.empty() ? 1 : (spCfg.unifiedTasks.back().id + 1);
-		newTask.name = "Backup Task " + to_string(newTask.id);
+		newTask.name = wstring_to_utf8(MineFormatMessage("TASK_DEFAULT_BACKUP_NAME", newTask.id));
 		newTask.type = TaskTypeV2::Backup;
 		spCfg.unifiedTasks.push_back(newTask);
 	}
@@ -18,7 +18,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 	if (ImGui::Button(L("TASK_ADD_COMMAND"))) {
 		UnifiedTaskV2 newTask;
 		newTask.id = spCfg.unifiedTasks.empty() ? 1 : (spCfg.unifiedTasks.back().id + 1);
-		newTask.name = "Command Task " + to_string(newTask.id);
+		newTask.name = wstring_to_utf8(MineFormatMessage("TASK_DEFAULT_COMMAND_NAME", newTask.id));
 		newTask.type = TaskTypeV2::Command;
 		spCfg.unifiedTasks.push_back(newTask);
 	}
@@ -114,7 +114,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 		if (task.type == TaskTypeV2::Backup) {
 			string current_config_label = g_appState.configs.count(task.configIndex)
 				? (string(L("CONFIG_N")) + to_string(task.configIndex))
-				: "None";
+				: L("TASK_NONE");
 			ImGui::SetNextItemWidth(200);
 			if (ImGui::BeginCombo(L("CONFIG_COMBO"), current_config_label.c_str())) {
 				for (auto const& [idx, val] : g_appState.configs) {
@@ -128,7 +128,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 
 			if (g_appState.configs.count(task.configIndex)) {
 				Config& selected_cfg = g_appState.configs[task.configIndex];
-				string current_world_label = "None";
+				string current_world_label = L("TASK_NONE");
 				if (!selected_cfg.worlds.empty() && task.worldIndex >= 0 && task.worldIndex < static_cast<int>(selected_cfg.worlds.size())) {
 					current_world_label = wstring_to_utf8(selected_cfg.worlds[task.worldIndex].first);
 				}
@@ -144,7 +144,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			}
 		}
 		else if (task.type == TaskTypeV2::Command) {
-			ImGui::TextWrapped("Shell commands run through the platform shell (cmd.exe or /bin/sh). They may modify files and are not portable between operating systems.");
+			ImGui::TextWrapped("%s", L("TASK_COMMAND_WARNING"));
 			char cmdBuf[512];
 			strncpy_s(cmdBuf, wstring_to_utf8(task.command).c_str(), sizeof(cmdBuf));
 			ImGui::Text("%s", L("TASK_COMMAND_LABEL"));
@@ -182,15 +182,28 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			if (task.intervalMinutes < 1) task.intervalMinutes = 1;
 		}
 		else if (task.triggerMode == TaskTrigger::Scheduled) {
-			ImGui::Text("At:"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_HOUR"), &task.schedHour);
-			ImGui::SameLine(); ImGui::Text(":"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_MINUTE"), &task.schedMinute);
-			ImGui::Text("On (Month/Day):"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_MONTH"), &task.schedMonth);
-			ImGui::SameLine(); ImGui::Text("/"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_DAY"), &task.schedDay);
-			ImGui::SameLine(); ImGui::TextDisabled("%s", L("SCHED_EVERY_HINT"));
+			if (ImGui::BeginTable("TaskSchedule", 2, ImGuiTableFlags_SizingFixedFit)) {
+				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed);
+				ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(L("SCHEDULE_AT"));
+				ImGui::TableNextColumn();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_hour", &task.schedHour);
+				ImGui::SameLine(); ImGui::TextUnformatted(":"); ImGui::SameLine();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_minute", &task.schedMinute);
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(L("SCHEDULE_ON"));
+				ImGui::TableNextColumn();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_month", &task.schedMonth);
+				ImGui::SameLine(); ImGui::TextUnformatted("/"); ImGui::SameLine();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_day", &task.schedDay);
+				ImGui::SameLine(); ImGui::TextDisabled("%s", L("SCHED_EVERY_HINT"));
+				ImGui::EndTable();
+			}
 
 			task.schedHour = max(0, min(23, task.schedHour));
 			task.schedMinute = max(0, min(59, task.schedMinute));
@@ -289,7 +302,7 @@ void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
 					for (const auto& [index, selected] : previousStartupSelections) {
 						g_appState.specialConfigs[index].runOnStartup = selected;
 					}
-					MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 2);
+					MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
 				}
 			}
 			ImGui::EndDisabled();

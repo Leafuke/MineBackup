@@ -84,7 +84,7 @@ void DrawConfigManagementPanel() {
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		showDeleteConfigPopup = false;
 		if (specialSetting) {
-			ImGui::Text("[Sp.]");
+			ImGui::TextUnformatted(L("SPECIAL_CONFIG_BADGE"));
 			ImGui::SameLine();
 			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 		}
@@ -179,7 +179,7 @@ void DrawConfigManagementPanel() {
 void DrawPathSettings(Config& cfg) {
 	if (cfg.pendingLocalBinding) {
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
-		ImGui::TextWrapped("This profile was imported from portable-config.json. Bind local save, backup and compression-tool paths before backup, restore, cloud writes or automatic tasks can run.");
+		ImGui::TextWrapped("%s", L("PORTABLE_BINDING_NOTICE"));
 		ImGui::PopStyleColor();
 	}
 	char rootBufA[256];
@@ -241,13 +241,14 @@ void DrawPathSettings(Config& cfg) {
 	}
 	static wstring toolStatus;
 	static bool toolStatusOk = false;
-	if (ImGui::Button("Verify compression tool")) {
+	if (ImGui::Button(L("BUTTON_VERIFY_COMPRESSION_TOOL"),
+		ImVec2(CalcButtonWidth(L("BUTTON_VERIFY_COMPRESSION_TOOL")), 0))) {
 		const auto verified = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
 		toolStatusOk = verified.available;
 		if (verified.available) {
 			toolStatus = verified.fellBackFromUserPath
-				? verified.diagnostic + L" Active tool: " + verified.executable.wstring()
-				: L"Required archive formats and codecs verified: " + verified.executable.wstring();
+				? MineFormatMessage("TOOL_FALLBACK_FORMAT", wstring_to_utf8(verified.executable.wstring()).c_str())
+				: MineFormatMessage("TOOL_FORMATS_VERIFIED", wstring_to_utf8(verified.executable.wstring()).c_str());
 		}
 		else {
 			toolStatus = verified.diagnostic;
@@ -273,14 +274,15 @@ void DrawPathSettings(Config& cfg) {
 		}
 		const bool canCompleteBinding = saveRootValid && backupRootValid && !cfg.zipPath.empty();
 		ImGui::BeginDisabled(!canCompleteBinding);
-		if (ImGui::Button("Confirm local path binding")) {
+		if (ImGui::Button(L("BUTTON_CONFIRM_LOCAL_BINDING"),
+			ImVec2(CalcButtonWidth(L("BUTTON_CONFIRM_LOCAL_BINDING")), 0))) {
 			const auto verifiedTool = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
 			if (verifiedTool.available) {
 				cfg.zipPath = verifiedTool.executable.wstring();
 				cfg.pendingLocalBinding = false;
 				cfg.cloudSyncEnabled = false;
 				toolStatusOk = true;
-				toolStatus = L"Local binding completed. Review the cloud remote and enable cloud sync explicitly if desired.";
+				toolStatus = utf8_to_wstring(L("LOCAL_BINDING_COMPLETED"));
 			}
 			else {
 				toolStatusOk = false;

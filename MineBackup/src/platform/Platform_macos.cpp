@@ -140,7 +140,7 @@ void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus
 }
 
 void ReStartApplication() {
-    MessageBoxWin("MineBackup", "Please close and reopen MineBackup to complete this operation.", 0);
+    MessageBoxWin("MineBackup", L("RESTART_REQUIRED_MESSAGE"), 0);
 }
 
 void SetFileAttributesWin(const std::wstring& path, bool isHidden) {

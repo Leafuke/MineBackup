@@ -8,48 +8,58 @@ namespace {
 
 const char* CapabilityStateLabel(CapabilityState state) {
     switch (state) {
-    case CapabilityState::Available: return "Available";
-    case CapabilityState::Unavailable: return "Unavailable";
-    case CapabilityState::PermissionRequired: return "Permission required";
-    case CapabilityState::Failed: return "Failed";
+    case CapabilityState::Available: return L("CAP_STATE_AVAILABLE");
+    case CapabilityState::Unavailable: return L("CAP_STATE_UNAVAILABLE");
+    case CapabilityState::PermissionRequired: return L("CAP_STATE_PERMISSION_REQUIRED");
+    case CapabilityState::Failed: return L("CAP_STATE_FAILED");
     }
-    return "Unknown";
+    return L("CAP_STATE_UNKNOWN");
 }
 
-void DrawCapability(const char* name, const CapabilityStatus& status) {
+const char* CapabilityDetail(CapabilityState state) {
+    switch (state) {
+    case CapabilityState::Unavailable: return L("CAP_DETAIL_UNAVAILABLE");
+    case CapabilityState::PermissionRequired: return L("CAP_DETAIL_PERMISSION_REQUIRED");
+    case CapabilityState::Failed: return L("CAP_DETAIL_FAILED");
+    case CapabilityState::Available: return nullptr;
+    }
+    return nullptr;
+}
+
+void DrawCapability(const char* nameKey, const CapabilityStatus& status) {
     const ImVec4 color = status.state == CapabilityState::Available
         ? ImVec4(0.35f, 0.8f, 0.45f, 1.0f)
         : status.state == CapabilityState::Failed
             ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
             : ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
-    ImGui::BulletText("%s", name);
+    ImGui::BulletText("%s", L(nameKey));
     ImGui::SameLine();
     ImGui::TextColored(color, "%s", CapabilityStateLabel(status.state));
-    if (!status.diagnostic.empty()) {
+    if (const char* detail = CapabilityDetail(status.state)) {
         ImGui::Indent();
-        ImGui::TextWrapped("%s", wstring_to_utf8(status.diagnostic).c_str());
+        ImGui::TextWrapped("%s", detail);
         ImGui::Unindent();
     }
 }
 
 void DrawDesktopCapabilitySummary() {
-    if (!ImGui::CollapsingHeader("Desktop capabilities")) return;
+    if (!ImGui::CollapsingHeader(L("CAPABILITIES_HEADER"))) return;
     const auto capabilities = GetDesktopServices()->Capabilities();
-    DrawCapability("File dialogs", capabilities.fileDialogs);
-    DrawCapability("Open links and folders", capabilities.openUri);
-    DrawCapability("Notifications", capabilities.notifications);
-    DrawCapability("System tray", capabilities.tray);
-    DrawCapability("Global hotkeys", capabilities.globalHotkeys);
-    DrawCapability("Autostart", capabilities.autostart);
+    DrawCapability("CAP_FILE_DIALOGS", capabilities.fileDialogs);
+    DrawCapability("CAP_OPEN_URI", capabilities.openUri);
+    DrawCapability("CAP_NOTIFICATIONS", capabilities.notifications);
+    DrawCapability("CAP_TRAY", capabilities.tray);
+    DrawCapability("CAP_HOTKEYS", capabilities.globalHotkeys);
+    DrawCapability("CAP_AUTOSTART", capabilities.autostart);
     if (capabilities.autostart.state == CapabilityState::PermissionRequired) {
         if (ImGui::Button(L("OPEN_AUTOSTART_SETTINGS"))) {
             const auto result = GetDesktopServices()->OpenAutostartSettings();
             if (!result.IsAvailable() && !result.diagnostic.empty()) {
-                MessageBoxWin("MineBackup", wstring_to_utf8(result.diagnostic), 1);
+                MessageBoxWin("MineBackup", L("AUTOSTART_SETTINGS_OPEN_FAILED"), 1);
             }
         }
     }
-    DrawCapability("Window activation", capabilities.windowActivation);
+    DrawCapability("CAP_WINDOW_ACTIVATION", capabilities.windowActivation);
 }
 
 } // namespace

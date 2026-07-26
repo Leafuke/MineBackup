@@ -2,6 +2,7 @@
 #include "Broadcast.h"
 #include "Globals.h"
 #include "SettingsUI.h"
+#include "MigrationReportUI.h"
 #include "UIHelpers.h"
 #include "MainUI.h"
 #include "imgui-all.h"
@@ -253,6 +254,9 @@ int main(int argc, char** argv)
 	// Install before migration prompts or GLFW can pump the Cocoa launch event.
 	MacBeginLaunchObservation();
 	#endif
+	// Use the host language for any pre-configuration native prompts. Loading an
+	// existing profile below will still restore the user's explicit app language.
+	GetUserDefaultUILanguageWin();
 	const filesystem::path originalWorkingDirectory = filesystem::current_path();
 	(void)originalWorkingDirectory;
 	LaunchOptions launchOptions;
@@ -265,12 +269,11 @@ int main(int argc, char** argv)
 		wstring cleanupError;
 		if (!TaskSystem::RemoveLegacyServiceAfterValidation(
 				launchOptions.legacyServiceCleanup, cleanupError)) {
-			MessageBoxWin("MineBackup legacy service cleanup",
+			MessageBoxWin(L("LEGACY_SERVICE_CLEANUP_TITLE"),
 				wstring_to_utf8(cleanupError), 2);
 			return 7;
 		}
-		MessageBoxWin("MineBackup legacy service cleanup",
-			"The validated legacy MineBackup service was removed.", 0);
+		MessageBoxWin(L("LEGACY_SERVICE_CLEANUP_TITLE"), L("LEGACY_SERVICE_REMOVED"), 0);
 		return 0;
 	}
 	if (launchOptions.legacyServiceMode) {
@@ -354,11 +357,12 @@ int main(int argc, char** argv)
 	if (!locationDiscovery.targetInitialized) {
 		for (const auto& candidate : locationDiscovery.candidates) {
 			if (candidate.configFile.empty()) continue;
-			const string prompt = "MineBackup found data from an older location:\n\nSource: "
-				+ wstring_to_utf8(candidate.root.wstring()) + "\nTarget config: " + wstring_to_utf8(paths.configRoot.wstring())
-				+ "\nTarget data: " + wstring_to_utf8(paths.dataRoot.wstring())
-				+ "\n\nThe old files will not be deleted or renamed. Import this location?";
-			if (!ConfirmMessageBox("MineBackup data migration", prompt)) continue;
+			const string source = wstring_to_utf8(candidate.root.wstring());
+			const string configRoot = wstring_to_utf8(paths.configRoot.wstring());
+			const string dataRoot = wstring_to_utf8(paths.dataRoot.wstring());
+			const string prompt = wstring_to_utf8(MineFormatMessage(
+				"LEGACY_LOCATION_PROMPT", source.c_str(), configRoot.c_str(), dataRoot.c_str()));
+			if (!ConfirmMessageBox(L("LEGACY_LOCATION_TITLE"), prompt)) continue;
 			const auto migration = ImportLegacyLocation(candidate, paths.ConfigFile(), paths.HistoryFile());
 			if (!migration.success) {
 				MessageBoxWin("MineBackup", wstring_to_utf8(migration.error), 2);
@@ -428,7 +432,7 @@ int main(int argc, char** argv)
 	if (!launchOptions.runSpecialId.empty()) {
 		const int index = findSpecialConfig(launchOptions.runSpecialId);
 		if (index < 0) {
-			MessageBoxWin("MineBackup", "The requested special configuration no longer exists.", 2);
+			MessageBoxWin("MineBackup", L("REQUESTED_SPECIAL_CONFIG_MISSING"), 2);
 			return 4;
 		}
 		g_appState.currentConfigIndex = index;
@@ -437,7 +441,7 @@ int main(int argc, char** argv)
 	else if (!launchOptions.selectConfigId.empty()) {
 		const int index = findNormalConfig(launchOptions.selectConfigId);
 		if (index < 0) {
-			MessageBoxWin("MineBackup", "The requested configuration no longer exists.", 2);
+			MessageBoxWin("MineBackup", L("REQUESTED_CONFIG_MISSING"), 2);
 			return 4;
 		}
 		g_appState.currentConfigIndex = index;
@@ -519,7 +523,7 @@ int main(int argc, char** argv)
 			console.AddLog("[Desktop] Autostart reconciliation: %s",
 				wstring_to_utf8(autostartStatus.diagnostic).c_str());
 			if (!launchSilentStartup) {
-				MessageBoxWin("MineBackup startup entry",
+				MessageBoxWin(L("AUTOSTART_ENTRY_TITLE"),
 					wstring_to_utf8(autostartStatus.diagnostic), 0);
 			}
 		}
@@ -533,7 +537,7 @@ int main(int argc, char** argv)
 	if (!g_appState.specialConfigMode) {
 		glfwSetErrorCallback(glfw_error_callback);
 		if (!glfwInit()) {
-			MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
+			MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
 			return 1;
 		}
 		glfwInitialized = true;
@@ -640,7 +644,7 @@ int main(int argc, char** argv)
 		glfwInitHint(GLFW_PLATFORM, GLFW_ANY_PLATFORM);
 		#endif
 		if (!glfwInit()) {
-			MessageBoxWin("Fatal Error", "Failed to initialize GLFW. The graphics driver may not support the required features.", 2);
+			MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
 			return 1;
 		}
 		glfwInitialized = true;
@@ -701,9 +705,7 @@ int main(int argc, char** argv)
 			: startupTrayStatus.diagnostic;
 		console.AddLog("[Desktop] Startup-to-tray was disabled for this run: %s",
 			wstring_to_utf8(detail).c_str());
-		MessageBoxWin("MineBackup",
-			wstring_to_utf8(L"MineBackup cannot hide to the tray in this desktop session, so the main window will be shown.\n\n" + detail),
-			1);
+		MessageBoxWin("MineBackup", L("TRAY_FALLBACK_MESSAGE"), 1);
 	}
 	g_appState.showMainApp = !isFirstRun && !shouldStartHiddenToTray;
 	if (isFirstRun) {
@@ -758,10 +760,7 @@ int main(int argc, char** argv)
 #endif
 
 	if (wc == nullptr) {
-		MessageBoxWin("Fatal Error",
-			"Failed to create window. Your graphics driver may not support OpenGL.\n"
-			"Please update your graphics drivers or install a remote desktop solution that supports OpenGL.",
-			2);
+		MessageBoxWin(L("FATAL_ERROR_TITLE"), L("WINDOW_CREATE_ERROR"), 2);
 		glfwTerminate();
 		return 1;
 	}
@@ -1106,8 +1105,9 @@ int main(int argc, char** argv)
 				g_RcloneInstallRunning = false;
 				g_RcloneInstallSucceeded = event.values.at(L"success") == L"1";
 				g_RcloneInstallMessage = g_RcloneInstallSucceeded
-					? L"Managed rclone 1.74.4 is installed and verified: " + event.values.at(L"path")
-					: (event.message.empty() ? L"Managed rclone installation failed." : event.message);
+					? MineFormatMessage("RCLONE_INSTALL_SUCCESS_FORMAT",
+						wstring_to_utf8(event.values.at(L"path")).c_str())
+					: (event.message.empty() ? utf8_to_wstring(L("RCLONE_INSTALL_FAILED")) : event.message);
 				if (!g_RcloneInstallSucceeded) {
 					console.AddLog("[Tools] rclone installation failed: %s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
 				}
@@ -1116,7 +1116,7 @@ int main(int argc, char** argv)
 				if (event.values.at(L"success") != L"1") {
 					const wstring detail = event.message.empty() ? L"Unable to prepare the portable configuration preview." : event.message;
 					console.AddLog("[Cloud] %s", wstring_to_utf8(detail).c_str());
-					MessageBoxWin("Portable configuration", wstring_to_utf8(detail), 2);
+					MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_PREPARE_FAILED"), 2);
 					continue;
 				}
 				map<int, Config> currentConfigs;
@@ -1128,10 +1128,10 @@ int main(int argc, char** argv)
 				Sha256 currentHash;
 				currentHash.Update(currentPortable.data(), currentPortable.size());
 				if (utf8_to_wstring(currentHash.FinalHex()) != event.values.at(L"local-fingerprint")) {
-					MessageBoxWin("Portable configuration", "Local configurations changed while the preview was prepared. Please prepare the preview again.", 2);
+					MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_CHANGED"), 2);
 					continue;
 				}
-				if (!ConfirmMessageBox("Portable configuration preview", wstring_to_utf8(event.values.at(L"preview")))) {
+				if (!ConfirmMessageBox(L("PORTABLE_CONFIG_PREVIEW_TITLE"), wstring_to_utf8(event.values.at(L"preview")))) {
 					console.AddLog("[Cloud] Portable configuration transfer cancelled after preview.");
 					continue;
 				}
@@ -1156,7 +1156,8 @@ int main(int argc, char** argv)
 					wstring parseError;
 					PortableConfigMergePreview appliedPreview;
 					if (!PortableConfigDocument::Parse(wstring_to_utf8(event.values.at(L"payload")), remote, parseError)) {
-						MessageBoxWin("Portable configuration", wstring_to_utf8(parseError), 2);
+						console.AddLog("[Cloud] Portable configuration parse failed: %s", wstring_to_utf8(parseError).c_str());
+						MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_INVALID"), 2);
 						continue;
 					}
 					bool applied = false;
@@ -1170,7 +1171,8 @@ int main(int argc, char** argv)
 						console.AddLog("[Cloud] Portable configuration import applied after confirmation.");
 					}
 					else {
-						MessageBoxWin("Portable configuration", wstring_to_utf8(parseError), 2);
+						console.AddLog("[Cloud] Portable configuration apply failed: %s", wstring_to_utf8(parseError).c_str());
+						MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_INVALID"), 2);
 					}
 				}
 			}
@@ -1207,19 +1209,20 @@ int main(int argc, char** argv)
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
+		const string migrationPopupTitle = string(L("MIGRATION_STARTUP_TITLE")) + "###MigrationSummary";
 		if (MigrationCoordinator::ShouldShowStartupSummary()) {
-			ImGui::OpenPopup("MineBackup 1.15 migration summary");
+			ImGui::OpenPopup(migrationPopupTitle.c_str());
 		}
-		if (ImGui::BeginPopupModal("MineBackup 1.15 migration summary", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-			ImGui::TextWrapped("MineBackup converted compatible 1.15 data without renaming archive files. Recovery snapshots were retained.");
+		if (ImGui::BeginPopupModal(migrationPopupTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
+			ImGui::TextWrapped("%s", L("MIGRATION_SUMMARY"));
 			const auto migrationReport = MigrationCoordinator::GetMigrationReport();
 			for (const auto& unit : migrationReport.units) {
-				const char* state = unit.status == MigrationStatus::Succeeded ? "Succeeded" : unit.status == MigrationStatus::Degraded ? "Degraded"
-					: unit.status == MigrationStatus::Failed ? "Failed" : unit.status == MigrationStatus::Pending ? "Pending" : "Not needed";
-				ImGui::BulletText("%s: %s", wstring_to_utf8(unit.unitId).c_str(), state);
-				if (!unit.message.empty()) ImGui::TextWrapped("%s", wstring_to_utf8(unit.message).c_str());
+				ImGui::BulletText("%s: %s", MigrationReportUI::UnitLabel(unit.unitId).c_str(),
+					MigrationReportUI::StatusLabel(unit.status));
 			}
-			if (ImGui::Button("OK")) {
+			ImGui::PopTextWrapPos();
+			if (ImGui::Button(L("BUTTON_OK"), ImVec2(CalcButtonWidth(L("BUTTON_OK")), 0))) {
 				MigrationCoordinator::DismissStartupSummary();
 				ImGui::CloseCurrentPopup();
 			}
@@ -1376,7 +1379,9 @@ int main(int argc, char** argv)
 						const auto status = desktopServices->SetAutostart(g_RunOnStartup || anySpecialStartup);
 						if (!status.IsAvailable()) {
 							g_RunOnStartup = previous;
-							MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 2);
+							console.AddLog("[Desktop] Autostart update failed: %s",
+								wstring_to_utf8(status.diagnostic).c_str());
+							MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
 						}
 						else if (!g_RunOnStartup && !anySpecialStartup) {
 							g_SilentStartupToTray = false;
@@ -1415,7 +1420,7 @@ int main(int argc, char** argv)
 							whichFunc = 2;
 						}
 						if (waitingForHotkey) {
-							ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Waiting...");
+							ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "%s", L("WAITING"));
 							for (int key = ImGuiKey_0; key <= ImGuiKey_Z; ++key) {
 								if (ImGui::IsKeyPressed((ImGuiKey)key)) {
 								waitingForHotkey = false;
@@ -1427,7 +1432,7 @@ int main(int argc, char** argv)
 									if (!status.IsAvailable()) {
 										g_hotKeyBackupId = previousKey;
 										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
-										MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 1);
+										MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
 									}
 									console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
 										break;
@@ -1440,7 +1445,7 @@ int main(int argc, char** argv)
 									if (!status.IsAvailable()) {
 										g_hotKeyRestoreId = previousKey;
 										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
-										MessageBoxWin("MineBackup", wstring_to_utf8(status.diagnostic), 1);
+										MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
 									}
 										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
 										break;
@@ -1869,7 +1874,7 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 					showDeleteConfigPopup = false;
 					if (specialSetting) {
-						ImGui::Text("[Sp.]");
+						ImGui::TextUnformatted(L("SPECIAL_CONFIG_BADGE"));
 						ImGui::SameLine();
 						ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 					}
@@ -2343,9 +2348,10 @@ int main(int argc, char** argv)
 						// 其他备份
 						float availWidth = ImGui::GetContentRegionAvail().x;
 						float btnWidth = ImGui::CalcTextSize(L("BUTTON_BACKUP_OTHERS")).x + ImGui::GetStyle().FramePadding.x * 2;
+						const string otherBackupPopupTitle = string(L("BACKUP_OTHER_POPUP_TITLE")) + "###OtherBackup";
 						if (ImGui::Button(L("BUTTON_BACKUP_OTHERS"), ImVec2(btnWidth, 0))) {
 							if (selectedWorldIndex != -1) {
-								ImGui::OpenPopup("Others");
+								ImGui::OpenPopup(otherBackupPopupTitle.c_str());
 							}
 						}
 						ImGui::SameLine();
@@ -2359,7 +2365,7 @@ int main(int argc, char** argv)
 						}
 
 						ImGui::SetNextWindowViewport(viewport->ID);
-						if (ImGui::BeginPopupModal("Others", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+						if (ImGui::BeginPopupModal(otherBackupPopupTitle.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 							static char others_comment[CONSTANT1] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));

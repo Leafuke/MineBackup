@@ -3,6 +3,7 @@
 #include "MigrationCoordinator.h"
 #include "PlatformCompat.h"
 #include "DesktopServices.h"
+#include "i18n.h"
 #include "imgui-all.h"
 #include "text_to_text.h"
 
@@ -10,34 +11,63 @@
 
 namespace MigrationReportUI {
 
+const char* StatusLabel(MigrationStatus status) {
+    switch (status) {
+    case MigrationStatus::Succeeded: return L("MIGRATION_STATE_SUCCEEDED");
+    case MigrationStatus::Degraded: return L("MIGRATION_STATE_DEGRADED");
+    case MigrationStatus::Failed: return L("MIGRATION_STATE_FAILED");
+    case MigrationStatus::Pending: return L("MIGRATION_STATE_PENDING");
+    case MigrationStatus::NotNeeded: return L("MIGRATION_STATE_NOT_NEEDED");
+    }
+    return L("CAP_STATE_UNKNOWN");
+}
+
+std::string UnitLabel(const std::wstring& unitId) {
+    if (unitId == L"startup:config") return L("MIGRATION_UNIT_CONFIG");
+    if (unitId == L"startup:history") return L("MIGRATION_UNIT_HISTORY");
+    if (unitId == L"startup:legacy-location") return L("LEGACY_LOCATION_TITLE");
+    if (unitId == L"cloud:legacy-config-ini") return L("MIGRATION_UNIT_LEGACY_CLOUD");
+    if (unitId.rfind(L"world:", 0) == 0) {
+        const size_t nameStart = unitId.find(L':', 6);
+        const std::string name = wstring_to_utf8(nameStart == std::wstring::npos
+            ? unitId.substr(6) : unitId.substr(nameStart + 1));
+        return wstring_to_utf8(MineFormatMessage("MIGRATION_UNIT_WORLD", name.c_str()));
+    }
+    if (unitId.rfind(L"cloud:", 0) == 0) {
+        const std::string name = wstring_to_utf8(unitId.substr(6));
+        return wstring_to_utf8(MineFormatMessage("MIGRATION_UNIT_CLOUD", name.c_str()));
+    }
+    return wstring_to_utf8(unitId);
+}
+
 void DrawSettings() {
     const auto report = MigrationCoordinator::GetMigrationReport();
-    ImGui::SeparatorText("MineBackup 1.15 -> 1.16 migration");
-    ImGui::TextWrapped("Migration is one-way. Recovery snapshots are retained and archive files are never renamed.");
+    if (report.units.empty()) return;
+    ImGui::SeparatorText(L("MIGRATION_SECTION_TITLE"));
+    ImGui::TextWrapped("%s", L("MIGRATION_NOTICE"));
     for (const auto& unit : report.units) {
-        const char* state = unit.status == MigrationStatus::Succeeded ? "Succeeded"
-            : unit.status == MigrationStatus::Degraded ? "Degraded"
-            : unit.status == MigrationStatus::Failed ? "Failed"
-            : unit.status == MigrationStatus::Pending ? "Pending" : "Not needed";
-        ImGui::BulletText("%s: %s", wstring_to_utf8(unit.unitId).c_str(), state);
-        if (!unit.message.empty()) ImGui::TextWrapped("%s", wstring_to_utf8(unit.message).c_str());
+        ImGui::PushID(wstring_to_utf8(unit.unitId).c_str());
+        ImGui::BulletText("%s: %s", UnitLabel(unit.unitId).c_str(), StatusLabel(unit.status));
+        ImGui::Indent();
+        if (!unit.message.empty()
+            && (unit.status == MigrationStatus::Failed || unit.status == MigrationStatus::Degraded)) {
+            ImGui::TextDisabled("%s:", L("MIGRATION_TECHNICAL_DETAIL"));
+            ImGui::TextWrapped("%s", wstring_to_utf8(unit.message).c_str());
+        }
         if (!unit.snapshotPath.empty()) {
-            ImGui::TextWrapped("Recovery snapshot: %s", wstring_to_utf8(unit.snapshotPath).c_str());
+            ImGui::TextWrapped(L("MIGRATION_RECOVERY_SNAPSHOT"), wstring_to_utf8(unit.snapshotPath).c_str());
             const std::filesystem::path snapshot(unit.snapshotPath);
             if (std::filesystem::exists(snapshot)) {
-                ImGui::SameLine();
-                ImGui::PushID((wstring_to_utf8(unit.unitId) + "_snapshot").c_str());
-                if (ImGui::SmallButton("Open")) {
+                if (ImGui::SmallButton(L("BUTTON_OPEN"))) {
                     (void)GetDesktopServices()->OpenFolder(snapshot.parent_path());
                 }
-                ImGui::PopID();
             }
         }
         if (unit.status == MigrationStatus::Failed || unit.status == MigrationStatus::Degraded) {
-            ImGui::PushID(wstring_to_utf8(unit.unitId).c_str());
-            if (ImGui::Button("Retry")) MigrationCoordinator::RetryMigration(unit.unitId);
-            ImGui::PopID();
+            if (ImGui::Button(L("BUTTON_RETRY"))) MigrationCoordinator::RetryMigration(unit.unitId);
         }
+        ImGui::Unindent();
+        ImGui::PopID();
     }
 }
 

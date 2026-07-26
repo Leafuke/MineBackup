@@ -216,18 +216,20 @@ void DrawCloudSyncSettings(Config& cfg) {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_PATH"));
 
 	ImGui::BeginDisabled(g_RcloneInstallRunning);
-	if (ImGui::Button(g_RcloneInstallRunning ? "Installing rclone..." : "Install managed rclone 1.74.4")) {
+	const char* rcloneInstallLabel = g_RcloneInstallRunning
+		? L("RCLONE_INSTALLING") : L("RCLONE_INSTALL_BUTTON");
+	if (ImGui::Button(rcloneInstallLabel, ImVec2(CalcButtonWidth(rcloneInstallLabel), 0))) {
 		const auto sevenZip = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
 		if (!sevenZip.available) {
 			g_RcloneInstallSucceeded = false;
 			g_RcloneInstallMessage = sevenZip.diagnostic;
 		}
 		else if (ConfirmMessageBox(
-			"Install rclone",
-			"MineBackup will download the pinned rclone 1.74.4 archive from downloads.rclone.org, verify its SHA-256, probe its version, and install it under this profile's tools directory. Continue?")) {
+			L("RCLONE_INSTALL_CONFIRM_TITLE"),
+			L("RCLONE_INSTALL_CONFIRM_MESSAGE"))) {
 			g_RcloneInstallRunning = true;
 			g_RcloneInstallSucceeded = false;
-			g_RcloneInstallMessage = L"Downloading and verifying rclone 1.74.4...";
+			g_RcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_PROGRESS"));
 			const auto backend = CreatePlatformNetworkBackend();
 			const auto paths = GetAppPaths();
 			const auto sevenZipPath = sevenZip.executable;
@@ -241,7 +243,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 					TaskCoordinator::Instance().PostEvent(std::move(event));
 				})) {
 				g_RcloneInstallRunning = false;
-				g_RcloneInstallMessage = L"Another rclone installation is already running.";
+				g_RcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_BUSY"));
 			}
 		}
 	}
@@ -403,10 +405,11 @@ void DrawCloudSyncSettings(Config& cfg) {
 	}
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 	ImGui::SameLine();
-	if (ImGui::Button("Import legacy remote config.ini")) {
+	if (ImGui::Button(L("LEGACY_REMOTE_IMPORT_BUTTON"),
+		ImVec2(CalcButtonWidth(L("LEGACY_REMOTE_IMPORT_BUTTON")), 0))) {
 		if (ConfirmMessageBox(
-			"Legacy remote configuration",
-			"This manual compatibility action will read the remote config.ini without modifying it, retain a recovery snapshot, filter out paths, tools, credentials and automation, then show a second import preview. Continue?")) {
+			L("LEGACY_REMOTE_IMPORT_TITLE"),
+			L("LEGACY_REMOTE_IMPORT_MESSAGE"))) {
 			const Config configCopy = cfg;
 			map<int, Config> configsCopy;
 			{
