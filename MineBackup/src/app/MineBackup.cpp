@@ -901,23 +901,8 @@ int main(int argc, char** argv)
 #endif
 	ImGui_ImplOpenGL3_Init(glsl_version);
 
-	// Load Fonts
-	// - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
-	// - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-	// - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-	// - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-	// - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
-	// - Read 'docs/FONTS.md' for more instructions and details.
-	// - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-	//io.Fonts->AddFontDefault();
-	//io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
-	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-	//io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-	//IM_ASSERT(font != nullptr);
-
-
-	//float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
+	// Load font sources. The 1.92 renderer texture protocol rasterizes glyphs
+	// incrementally, so glyph ranges and an eager atlas Build() are unnecessary.
 
 	if (g_appState.configs.count(g_appState.currentConfigIndex))
 		ApplyTheme(g_appState.configs[g_appState.currentConfigIndex].theme); // 把主题加载放在这里了
@@ -929,17 +914,18 @@ int main(int argc, char** argv)
 		Fontss = GetDefaultUIFontPath();
 	}
 
+	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+
 	if (!Fontss.empty() && filesystem::exists(Fontss)) {
 		ImFontConfig fontCfg;
 		fontCfg.PixelSnapH = true;
-		ImFont* mainFont = nullptr;
-		if (g_CurrentLang == "zh_CN") {
-			fontCfg.OversampleH = 1;
-			fontCfg.OversampleV = 1;
-			mainFont = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesChineseFull());
-		} else {
-			mainFont = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg, io.Fonts->GetGlyphRangesDefault());
+		if (fontExtracted) {
+			// The 1.92 dynamic font system queries merged sources in order.
+			// Reserve Font Awesome's private-use range for the icon source.
+			fontCfg.GlyphExcludeRanges = icon_ranges;
 		}
+		ImFont* mainFont = nullptr;
+		mainFont = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg);
 		
 		if (!mainFont) {
 			io.Fonts->AddFontDefaultVector();
@@ -954,21 +940,16 @@ int main(int argc, char** argv)
 		config2.MergeMode = true;
 		config2.PixelSnapH = true;
 		config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
-		// 定义要从图标字体中加载的图标范围
-		static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
 
 		// 加载并合并
 #ifdef _WIN32
 		config2.FontDataOwnedByAtlas = false;
 		io.Fonts->AddFontFromMemoryTTF(
-			const_cast<void*>(bundledIconFontData), static_cast<int>(bundledIconFontSize), 20.0f, &config2, icon_ranges);
+			const_cast<void*>(bundledIconFontData), static_cast<int>(bundledIconFontSize), 20.0f, &config2);
 #else
-		io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2, icon_ranges);
+		io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2);
 #endif
 	}
-
-	// 构建字体图谱
-	io.Fonts->Build();
 
 	console.AddLog(L("CONSOLE_WELCOME"));
 
