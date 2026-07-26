@@ -11,6 +11,7 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_INFRA_DIR}/LegacyLocationMigration.cpp
     ${MINEBACKUP_INFRA_DIR}/ProcessRunner.cpp
     ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.cpp
+    ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.cpp
     ${MINEBACKUP_INFRA_DIR}/NetworkService.cpp
     ${MINEBACKUP_INFRA_DIR}/Sha256.cpp
     ${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
@@ -97,7 +98,7 @@ set(MINEBACKUP_PUBLIC_HEADERS
     ${MINEBACKUP_CORE_DIR}/CoreValidation.h ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.h ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.h
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.h ${MINEBACKUP_CORE_DIR}/HistoryManager.h ${MINEBACKUP_CORE_DIR}/LegacyMineBackup15Reader.h
     ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.h ${MINEBACKUP_CORE_DIR}/V15MigrationAdapter.h ${MINEBACKUP_CORE_DIR}/TaskSystem.h ${MINEBACKUP_CORE_DIR}/TaskCoordinator.h ${MINEBACKUP_CORE_DIR}/RemoteContentService.h ${MINEBACKUP_CORE_DIR}/ExternalToolManager.h ${MINEBACKUP_CORE_DIR}/PortableConfigDocument.h ${MINEBACKUP_CORE_DIR}/SpecialConfigPolicy.h ${MINEBACKUP_CORE_DIR}/LegacyServicePolicy.h
-    ${MINEBACKUP_INFRA_DIR}/AppPaths.h ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.h ${MINEBACKUP_INFRA_DIR}/RotatingFileLog.h ${MINEBACKUP_INFRA_DIR}/SingleInstanceService.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationDiscovery.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationMigration.h ${MINEBACKUP_INFRA_DIR}/ProcessRunner.h ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.h ${MINEBACKUP_INFRA_DIR}/NetworkService.h ${MINEBACKUP_INFRA_DIR}/Sha256.h ${MINEBACKUP_INFRA_DIR}/Broadcast.h ${MINEBACKUP_INFRA_DIR}/ConfigManager.h ${MINEBACKUP_INFRA_DIR}/Console.h ${MINEBACKUP_INFRA_DIR}/i18n.h
+    ${MINEBACKUP_INFRA_DIR}/AppPaths.h ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.h ${MINEBACKUP_INFRA_DIR}/RotatingFileLog.h ${MINEBACKUP_INFRA_DIR}/SingleInstanceService.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationDiscovery.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationMigration.h ${MINEBACKUP_INFRA_DIR}/ProcessRunner.h ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.h ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.h ${MINEBACKUP_INFRA_DIR}/NetworkService.h ${MINEBACKUP_INFRA_DIR}/Sha256.h ${MINEBACKUP_INFRA_DIR}/Broadcast.h ${MINEBACKUP_INFRA_DIR}/ConfigManager.h ${MINEBACKUP_INFRA_DIR}/Console.h ${MINEBACKUP_INFRA_DIR}/i18n.h
     ${MINEBACKUP_PLATFORM_DIR}/DesktopServices.h ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.h ${MINEBACKUP_PLATFORM_DIR}/MacDesktopBridge.h ${MINEBACKUP_PLATFORM_DIR}/PlatformCompat.h ${MINEBACKUP_PLATFORM_DIR}/Platform_linux.h ${MINEBACKUP_PLATFORM_DIR}/Platform_macos.h ${MINEBACKUP_PLATFORM_DIR}/Platform_win.h ${MINEBACKUP_PLATFORM_DIR}/NetworkBackendFactory.h
     ${MINEBACKUP_UI_DIR}/IconsFontAwesome6.h ${MINEBACKUP_UI_DIR}/MigrationReportUI.h ${MINEBACKUP_UI_DIR}/SettingsUI.h ${MINEBACKUP_UI_DIR}/SettingsUIPrivate.h
     ${MINEBACKUP_UI_DIR}/UIHelpers.h ${MINEBACKUP_UI_DIR}/imgui-all.h ${MINEBACKUP_UTILS_DIR}/text_to_text.h

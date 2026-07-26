@@ -130,6 +130,7 @@
     <ClCompile Include="src\infra\NetworkService.cpp" />
     <ClCompile Include="src\infra\Sha256.cpp" />
     <ClCompile Include="src\infra\DesktopServices.cpp" />
+    <ClCompile Include="src\infra\KnotLinkProtocol.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
     <ClCompile Include="src\infra\Console.cpp" />
@@ -189,6 +190,7 @@
     <ClInclude Include="src\infra\InterruptedTaskRecovery.h" />
     <ClInclude Include="src\infra\NetworkService.h" />
     <ClInclude Include="src\infra\Sha256.h" />
+    <ClInclude Include="src\infra\KnotLinkProtocol.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
     <ClInclude Include="src\infra\ConfigManager.h" />
     <ClInclude Include="src\infra\Console.h" />
