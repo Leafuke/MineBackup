@@ -8,11 +8,11 @@ fi
 
 source_root="$(cd "$1" && pwd)"
 output="$2"
-pinned_commit=d8d651b72a6a85353a23d3f19e0fd2d96c0f36b4
+pinned_commit=2dcb6815c0e6877988171c47e1824b86172ff3b2
 
 [[ "$(uname -m)" == arm64 ]] || { echo "7zz must be built on Apple Silicon" >&2; exit 3; }
 [[ "$(git -C "$source_root" rev-parse HEAD)" == "$pinned_commit" ]] || {
-  echo "7-Zip-zstd source is not the pinned v26.01-v1.5.7-R1 commit" >&2
+  echo "7-Zip-zstd source is not the pinned v26.02-v1.5.7-R2 commit" >&2
   exit 3
 }
 

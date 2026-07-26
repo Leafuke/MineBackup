@@ -58,7 +58,7 @@ jobs:
 
       - name: Stage developer-smoke resources
         run: |
-          tool_dir=build/linux-x64/bin/Resources/tools/7zip/26.01-zs-v1.5.7-r1
+          tool_dir=build/linux-x64/bin/Resources/tools/7zip/26.02-zs-v1.5.7-r2
           mkdir -p build/linux-x64/bin/Resources/Assets "$tool_dir"
           cp MineBackup/Assets/fontawesome-sp.otf build/linux-x64/bin/Resources/Assets/
           cp MineBackup/Assets/tool-manifest.json build/linux-x64/bin/Resources/

@@ -12,7 +12,7 @@ output_dir="$(mkdir -p "$2" && realpath "$2")"
 seven_zip_archive="$(realpath "$3")"
 linuxdeploy="$(realpath "$4")"
 version=1.16.0
-seven_zip_version=26.01-zs-v1.5.7-r1
+seven_zip_version=26.02-zs-v1.5.7-r2
 work="${output_dir}/.linux-package-work"
 generated_desktop="$(realpath "$(dirname "$binary")/../generated/io.github.leafuke.MineBackup.desktop")"
 
@@ -20,7 +20,7 @@ generated_desktop="$(realpath "$(dirname "$binary")/../generated/io.github.leafu
 [[ "$(uname -m)" == x86_64 ]] || { echo "Linux packages must be built on x86_64" >&2; exit 3; }
 [[ "$output_dir" != / && "$work" == "$output_dir"/* ]] || { echo "unsafe output directory" >&2; exit 3; }
 
-expected_seven_zip=3cfca42ab44519822d5299cb92f823633209dd762d903ade3fde19585c56915a
+expected_seven_zip=be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3
 expected_linuxdeploy=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
 echo "$expected_seven_zip  $seven_zip_archive" | sha256sum --check --status
 echo "$expected_linuxdeploy  $linuxdeploy" | sha256sum --check --status
