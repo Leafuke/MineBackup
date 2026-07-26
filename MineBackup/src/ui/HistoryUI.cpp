@@ -195,7 +195,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 						draw_list->AddRectFilled(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgHovered), 4.0f);
 					}
 					if (selected_entry == entry) {
-						draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgHovered), 4.0f, 0, 2.0f);
+						draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_FrameBgHovered), 4.0f, 2.0f);
 					}
 
 					// 图标

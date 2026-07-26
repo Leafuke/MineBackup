@@ -99,6 +99,7 @@ set(MINEBACKUP_GLFW_TARGET glfw)
 add_library(minebackup_third_party_imgui STATIC ${MINEBACKUP_IMGUI_SOURCES})
 target_include_directories(minebackup_third_party_imgui PUBLIC ${MINEBACKUP_IMGUI_DIR})
 target_link_libraries(minebackup_third_party_imgui PUBLIC ${MINEBACKUP_GLFW_TARGET})
+target_compile_definitions(minebackup_third_party_imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 
 set(MINEBACKUP_DESKTOP_SOURCES ${MINEBACKUP_APPLICATION_SOURCES} ${MINEBACKUP_UI_SOURCES})
 if(WIN32)

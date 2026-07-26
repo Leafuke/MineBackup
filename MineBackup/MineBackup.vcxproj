@@ -54,7 +54,7 @@
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);IMGUI_DISABLE_OBSOLETE_FUNCTIONS;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -78,7 +78,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);IMGUI_DISABLE_OBSOLETE_FUNCTIONS;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>

@@ -142,12 +142,16 @@ void DrawAppearanceSettings(Config& cfg) {
 
 	ImGui::Spacing();
 
+	static float pendingUiScale = g_uiScale;
+	if (ImGui::IsWindowAppearing()) {
+		pendingUiScale = g_uiScale;
+	}
 	ImGui::SetNextItemWidth(300);
-	ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
+	ImGui::SliderFloat(L("UI_SCALE"), &pendingUiScale, 0.75f, 2.5f, "%.2f");
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_OK"))) {
-		ImGuiIO& io = ImGui::GetIO();
-		io.FontGlobalScale = g_uiScale;
+		g_uiScale = pendingUiScale;
+		ApplyTheme(cfg.theme);
 	}
 
 	ImGui::Spacing();

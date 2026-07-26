@@ -881,18 +881,9 @@ int main(int argc, char** argv)
 	io.ConfigErrorRecoveryEnableDebugLog = true;
 	io.ConfigErrorRecoveryEnableTooltip = true;
 
-	// DPI 缩放
-	io.FontGlobalScale = g_uiScale;
+	// Let the platform backend update per-monitor font density. The user scale
+	// is applied together with the selected theme by ApplyTheme().
 	io.ConfigDpiScaleFonts = true;
-
-	ImGuiStyle& style = ImGui::GetStyle();
-	style.ScaleAllSizes(g_uiScale);
-
-	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-	{
-		style.WindowRounding = 0.0f;
-		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-	}
 
 	// Setup Platform/Renderer backends
 	ImGui_ImplGlfw_InitForOpenGL(wc, true);
@@ -2008,7 +1999,7 @@ int main(int argc, char** argv)
 					// 渲染逻辑
 					GLuint current_texture = g_worldIconTextures[iconKey];
 					if (current_texture > 0) {
-						ImGui::Image((void*)(intptr_t)current_texture, ImVec2(iconSz, iconSz));
+						ImGui::Image(ImTextureRef(static_cast<ImTextureID>(current_texture)), ImVec2(iconSz, iconSz));
 					}
 					else {
 						const char* placeholder_icon = ICON_FA_FOLDER;
@@ -2073,7 +2064,7 @@ int main(int argc, char** argv)
 					}
 
 					if (is_selected) {
-						draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f, 0, 2.0f);
+						draw_list->AddRect(p_min, p_max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f, 2.0f);
 					}
 
 					// 我们在可选项的相同位置开始绘制我们的自定义内容
@@ -2729,6 +2720,13 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 
 void ApplyTheme(const int& theme)
 {
+	// ScaleAllSizes() is lossy. Always rebuild from a fresh, unscaled style so
+	// repeated theme and scale changes cannot compound rounded dimensions.
+	ImGuiStyle& style = ImGui::GetStyle();
+	const float dpiScale = style.FontScaleDpi;
+	style = ImGuiStyle();
+	style.FontScaleDpi = dpiScale;
+
 	switch (theme) {
 	case 0: ImGuiTheme::ApplyImGuiDark(); break;
 	case 1: ImGuiTheme::ApplyImGuiLight(); break;
@@ -2738,5 +2736,13 @@ void ApplyTheme(const int& theme)
 	case 5: ImGuiTheme::ApplyNord(false); break;
 	case 6: ImGuiTheme::ApplyNord(true); break;
 	case 7: ImGuiTheme::ApplyCustom(GetAppPaths().configRoot / L"custom_theme.json"); break;
+	}
+
+	style.FontScaleMain = g_uiScale;
+	style.ScaleAllSizes(g_uiScale);
+
+	if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+		style.WindowRounding = 0.0f;
+		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
 	}
 }

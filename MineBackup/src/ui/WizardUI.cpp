@@ -108,11 +108,15 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 			}
 		}
 
-		ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
+		static float pendingUiScale = g_uiScale;
+		if (ImGui::IsWindowAppearing()) {
+			pendingUiScale = g_uiScale;
+		}
+		ImGui::SliderFloat(L("UI_SCALE"), &pendingUiScale, 0.75f, 2.5f, "%.2f");
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_OK"))) {
-			ImGuiIO& io = ImGui::GetIO(); (void)io;
-			io.FontGlobalScale = g_uiScale;
+			g_uiScale = pendingUiScale;
+			ApplyTheme(themeId);
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
