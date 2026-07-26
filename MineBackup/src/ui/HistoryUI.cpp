@@ -170,12 +170,22 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					return a->timestamp_str > b->timestamp_str;
 					});
 
+				vector<HistoryEntry*> filteredEntries;
+				filteredEntries.reserve(pair.second.size());
 				for (HistoryEntry* entry : pair.second) {
 					string entry_label_utf8 = wstring_to_utf8(entry->backupFile);
-					if (!filter.PassFilter(entry_label_utf8.c_str()) && !filter.PassFilter(wstring_to_utf8(entry->comment).c_str())) {
-						continue;
+					if (filter.PassFilter(entry_label_utf8.c_str()) ||
+						filter.PassFilter(wstring_to_utf8(entry->comment).c_str())) {
+						filteredEntries.push_back(entry);
 					}
+				}
 
+				ImGuiListClipper historyClipper;
+				historyClipper.Begin(static_cast<int>(filteredEntries.size()));
+				while (historyClipper.Step()) {
+				for (int entryIndex = historyClipper.DisplayStart; entryIndex < historyClipper.DisplayEnd; ++entryIndex) {
+					HistoryEntry* entry = filteredEntries[entryIndex];
+					string entry_label_utf8 = wstring_to_utf8(entry->backupFile);
 					filesystem::path backup_path = filesystem::path(g_appState.configs[tempCurrentConfigIndex].backupPath) / entry->worldName / entry->backupFile;
 					bool file_exists = filesystem::exists(backup_path);
 					bool is_small = file_exists && filesystem::file_size(backup_path) < 10240;
@@ -223,6 +233,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 
 					ImGui::PopStyleColor();
 					ImGui::PopID();
+				}
 				}
 				ImGui::TreePop();
 			}

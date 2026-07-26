@@ -224,6 +224,44 @@ wstring SanitizeFileName(const wstring& input);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 
+static void EnsureWorldIconLoaded(const filesystem::path& worldFolder)
+{
+	const wstring iconKey = worldFolder.wstring();
+	if (g_worldIconTextures.contains(iconKey)) {
+		return;
+	}
+
+	// Cache failures as texture 0 to preserve the existing one-shot preload
+	// behavior and avoid probing missing icon files every frame.
+	g_worldIconTextures[iconKey] = 0;
+	const filesystem::path iconPath = worldFolder / L"icon.png";
+	const filesystem::path bedrockIconPath = worldFolder / L"world_icon.jpeg";
+	const filesystem::path* sourcePath = nullptr;
+	if (filesystem::exists(iconPath)) {
+		sourcePath = &iconPath;
+	}
+	else if (filesystem::exists(bedrockIconPath)) {
+		sourcePath = &bedrockIconPath;
+	}
+	if (sourcePath == nullptr) {
+		return;
+	}
+
+#ifdef _WIN32
+	const string loadPath = utf8_to_gbk(wstring_to_utf8(sourcePath->wstring()));
+#else
+	const string loadPath = wstring_to_utf8(sourcePath->wstring());
+#endif
+	GLuint textureId = 0;
+	int textureWidth = 0;
+	int textureHeight = 0;
+	if (LoadTextureFromFileGL(loadPath.c_str(), &textureId, &textureWidth, &textureHeight) && textureId > 0) {
+		g_worldIconTextures[iconKey] = textureId;
+		g_worldIconDimensions[iconKey] = ImVec2(
+			static_cast<float>(textureWidth), static_cast<float>(textureHeight));
+	}
+}
+
 void GameSessionWatcherThread(std::stop_token stopToken);
 
 string ProcessCommand(const string& commandStr, Console* console);
@@ -1937,11 +1975,22 @@ int main(int argc, char** argv)
 
 				ImGui::SeparatorText(L("WORLD_LIST"));
 
+				// Preserve eager icon loading while allowing Dear ImGui to skip
+				// constructing rows outside the visible child-window range.
+				for (const auto& world : displayWorlds) {
+					EnsureWorldIconLoaded(JoinPath(world.effectiveConfig.saveRoot, world.name));
+				}
+
 				//ImGui::BeginChild("WorldListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3), true); // 预留底部按钮空间
 				ImGui::BeginChild("WorldListChild", ImVec2(0, 0), true);
 
-
-				for (int i = 0; i < worldCount; ++i) {
+				ImGuiListClipper worldClipper;
+				worldClipper.Begin(worldCount);
+				if (selectedWorldIndex >= 0 && selectedWorldIndex < worldCount) {
+					worldClipper.IncludeItemByIndex(selectedWorldIndex);
+				}
+				while (worldClipper.Step()) {
+				for (int i = worldClipper.DisplayStart; i < worldClipper.DisplayEnd; ++i) {
 					const auto& dw = displayWorlds[i];
 					ImGui::PushID(i);
 					bool is_selected = (selectedWorldIndex == i);
@@ -1962,39 +2011,7 @@ int main(int argc, char** argv)
 					draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
 
 
-					string iconKey_utf8 = wstring_to_utf8(worldFolder);
 					wstring iconKey = worldFolder;
-
-					// 迟加载逻辑
-					if (g_worldIconTextures.find(iconKey) == g_worldIconTextures.end()) {
-						// 标记为正在加载或失败，避免重复尝试
-						g_worldIconTextures[iconKey] = 0; // 0 表示无效纹理
-
-						filesystem::path iconPathFs = JoinPath(worldFolder, L"icon.png");
-						filesystem::path bedrockIconPathFs = JoinPath(worldFolder, L"world_icon.jpeg");
-#ifdef _WIN32
-						string iconPath = utf8_to_gbk(wstring_to_utf8(iconPathFs.wstring()));
-						string bedrockIconPath = utf8_to_gbk(wstring_to_utf8(bedrockIconPathFs.wstring()));
-#else
-						string iconPath = wstring_to_utf8(iconPathFs.wstring());
-						string bedrockIconPath = wstring_to_utf8(bedrockIconPathFs.wstring());
-#endif
-
-						GLuint texture_id = 0;
-						int tex_w = 0, tex_h = 0;
-
-						if (filesystem::exists(iconPath)) {
-							LoadTextureFromFileGL(iconPath.c_str(), &texture_id, &tex_w, &tex_h);
-						}
-						else if (filesystem::exists(bedrockIconPath)) {
-							LoadTextureFromFileGL(bedrockIconPath.c_str(), &texture_id, &tex_w, &tex_h);
-						}
-
-						if (texture_id > 0) {
-							g_worldIconTextures[iconKey] = texture_id;
-							g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
-						}
-					}
 
 					// 渲染逻辑
 					GLuint current_texture = g_worldIconTextures[iconKey];
@@ -2120,6 +2137,7 @@ int main(int argc, char** argv)
 
 					ImGui::PopID();
 					ImGui::Separator();
+				}
 				}
 
 				ImGui::EndChild(); // 结束 WorldListChild
