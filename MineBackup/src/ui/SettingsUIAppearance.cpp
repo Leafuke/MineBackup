@@ -132,7 +132,7 @@ void DrawAppearanceSettings(Config& cfg) {
 	if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 		if (cfg.theme == 7 && !filesystem::exists(customThemePath)) {
-			ImGuiTheme::WriteDefaultCustomTheme(customThemePath);
+			ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
 			(void)GetDesktopServices()->OpenFolder(customThemePath);
 		}
 		else {

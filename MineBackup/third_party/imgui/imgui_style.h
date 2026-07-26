@@ -20,6 +20,27 @@ namespace ImGuiTheme {
         return ImVec4(r, g, b, alpha);
     }
 
+    inline ImVec4 Blend(const ImVec4& from, const ImVec4& to, float amount) {
+        return ImVec4(
+            from.x + (to.x - from.x) * amount,
+            from.y + (to.y - from.y) * amount,
+            from.z + (to.z - from.z) * amount,
+            from.w + (to.w - from.w) * amount
+        );
+    }
+
+    inline void ApplyNewWidgetDefaults(ImGuiStyle& style) {
+        style.MenuItemRounding = style.FrameRounding;
+        style.SelectableRounding = 0.0f;
+        style.DragDropTargetRounding = style.FrameRounding;
+        style.InputTextCursorSize = 1.0f;
+    }
+
+    inline void ApplyCheckboxSelectedFallback(ImVec4* colors) {
+        colors[ImGuiCol_CheckboxSelectedBg] = Blend(
+            colors[ImGuiCol_FrameBg], colors[ImGuiCol_FrameBgHovered], 0.65f);
+    }
+
     inline std::string ImVec4ToHex(const ImVec4& color) {
         std::stringstream ss;
         int r = static_cast<int>(std::round(color.x * 255.0f));
@@ -62,6 +83,7 @@ namespace ImGuiTheme {
         style.AntiAliasedFill = true;
 
         ImGui::StyleColorsLight();
+        ApplyNewWidgetDefaults(style);
 	}
     inline void ApplyImGuiDark() {
         EnableDarkModeWin(true);
@@ -90,6 +112,7 @@ namespace ImGuiTheme {
         style.AntiAliasedFill = true;
 
         ImGui::StyleColorsDark();
+        ApplyNewWidgetDefaults(style);
     }
     inline void ApplyImGuiClassic() {
         EnableDarkModeWin(true);
@@ -118,6 +141,7 @@ namespace ImGuiTheme {
         style.AntiAliasedFill = true;
 
         ImGui::StyleColorsClassic();
+        ApplyNewWidgetDefaults(style);
     }
 
     inline void ApplyWindows11(bool dark_mode) {
@@ -320,6 +344,8 @@ namespace ImGuiTheme {
             colors[ImGuiCol_ScrollbarGrabHovered] = Hex(0xCFCFCF);
             colors[ImGuiCol_ScrollbarGrabActive] = Hex(0xC5C5C5);
         }
+        ApplyNewWidgetDefaults(style);
+        ApplyCheckboxSelectedFallback(colors);
     }
 
     inline void ApplyVSCodeDark() {
@@ -425,6 +451,8 @@ namespace ImGuiTheme {
         colors[ImGuiCol_PlotLinesHovered] = Hex(0xFF6040);
         colors[ImGuiCol_PlotHistogram] = Hex(0xCE9178);
         colors[ImGuiCol_PlotHistogramHovered] = Hex(0xFF9A1A);
+        ApplyNewWidgetDefaults(style);
+        ApplyCheckboxSelectedFallback(colors);
     }
 
     inline void ApplyNord(bool dark_mode) {
@@ -612,6 +640,8 @@ namespace ImGuiTheme {
             colors[ImGuiCol_PlotHistogram] = Hex(0xEBCB8B);
             colors[ImGuiCol_PlotHistogramHovered] = Hex(0xD08770);
         }
+        ApplyNewWidgetDefaults(style);
+        ApplyCheckboxSelectedFallback(colors);
     }
 
     inline void ApplySolarized(bool dark_mode) {
@@ -804,6 +834,8 @@ namespace ImGuiTheme {
             colors[ImGuiCol_PlotHistogram] = Hex(0xB58900);
             colors[ImGuiCol_PlotHistogramHovered] = Hex(0xCB4B16);
         }
+        ApplyNewWidgetDefaults(style);
+        ApplyCheckboxSelectedFallback(colors);
     }
 
     inline void ApplyCustom(const std::filesystem::path& themePath) {
@@ -821,6 +853,10 @@ namespace ImGuiTheme {
                 style.PopupRounding = j.value("popup_rounding", 0.0f);
                 style.ScrollbarRounding = j.value("scrollbar_rounding", 0.0f);
                 style.TabRounding = j.value("tab_rounding", 0.0f);
+                style.MenuItemRounding = j.value("menu_item_rounding", style.FrameRounding);
+                style.SelectableRounding = 0.0f;
+                style.DragDropTargetRounding = j.value("drag_drop_target_rounding", style.FrameRounding);
+                style.InputTextCursorSize = j.value("input_text_cursor_size", 1.0f);
 
                 style.WindowBorderSize = j.value("window_border_size", 0.0f);
                 style.ChildBorderSize = j.value("child_border_size", 0.0f);
@@ -842,6 +878,9 @@ namespace ImGuiTheme {
                 );
                 style.ScrollbarSize = j.value("scrollbar_size", 14.0f);
 
+                const char* checkboxColorName = ImGui::GetStyleColorName(ImGuiCol_CheckboxSelectedBg);
+                const bool hasCheckboxSelectedColor =
+                    j.contains("colors") && j["colors"].contains(checkboxColorName);
                 for (auto& [key, value] : j["colors"].items()) {
                     // hex: "0xRRGGBB"
                     std::string hexstr = value["hex"].get<std::string>();
@@ -858,6 +897,9 @@ namespace ImGuiTheme {
                     if (col_index != ImGuiCol_COUNT)
                         colors[col_index] = col;
                 }
+                if (!hasCheckboxSelectedColor) {
+                    ApplyCheckboxSelectedFallback(colors);
+                }
             }
         }
         catch (...) {
@@ -865,30 +907,35 @@ namespace ImGuiTheme {
         }
     }
 
-    inline void WriteDefaultCustomTheme(const std::filesystem::path& themePath) {
+    inline void WriteDefaultCustomTheme(const std::filesystem::path& themePath, float appliedScale = 1.0f) {
         nlohmann::json j;
         ImGuiStyle& style = ImGui::GetStyle();
-        j["window_rounding"] = style.WindowRounding;
-        j["child_rounding"] = style.ChildRounding;
-        j["frame_rounding"] = style.FrameRounding;
-        j["grab_rounding"] = style.GrabRounding;
-        j["popup_rounding"] = style.PopupRounding;
-        j["scrollbar_rounding"] = style.ScrollbarRounding;
-        j["tab_rounding"] = style.TabRounding;
+        const float safeScale = appliedScale > 0.0f ? appliedScale : 1.0f;
+        const auto logical = [safeScale](float value) { return value / safeScale; };
+        j["window_rounding"] = logical(style.WindowRounding);
+        j["child_rounding"] = logical(style.ChildRounding);
+        j["frame_rounding"] = logical(style.FrameRounding);
+        j["grab_rounding"] = logical(style.GrabRounding);
+        j["popup_rounding"] = logical(style.PopupRounding);
+        j["scrollbar_rounding"] = logical(style.ScrollbarRounding);
+        j["tab_rounding"] = logical(style.TabRounding);
+        j["menu_item_rounding"] = logical(style.MenuItemRounding);
+        j["drag_drop_target_rounding"] = logical(style.DragDropTargetRounding);
+        j["input_text_cursor_size"] = logical(style.InputTextCursorSize);
 
-        j["window_border_size"] = style.WindowBorderSize;
-        j["child_border_size"] = style.ChildBorderSize;
-        j["popup_border_size"] = style.PopupBorderSize;
-        j["frame_border_size"] = style.FrameBorderSize;
-        j["tab_border_size"] = style.TabBorderSize;
+        j["window_border_size"] = logical(style.WindowBorderSize);
+        j["child_border_size"] = logical(style.ChildBorderSize);
+        j["popup_border_size"] = logical(style.PopupBorderSize);
+        j["frame_border_size"] = logical(style.FrameBorderSize);
+        j["tab_border_size"] = logical(style.TabBorderSize);
 
-        j["window_padding_x"] = style.WindowPadding.x;
-        j["window_padding_y"] = style.WindowPadding.y;
-        j["frame_padding_x"] = style.FramePadding.x;
-        j["frame_padding_y"] = style.FramePadding.y;
-        j["item_spacing_x"] = style.ItemSpacing.x;
-        j["item_spacing_y"] = style.ItemSpacing.y;
-        j["scrollbar_size"] = style.ScrollbarSize;
+        j["window_padding_x"] = logical(style.WindowPadding.x);
+        j["window_padding_y"] = logical(style.WindowPadding.y);
+        j["frame_padding_x"] = logical(style.FramePadding.x);
+        j["frame_padding_y"] = logical(style.FramePadding.y);
+        j["item_spacing_x"] = logical(style.ItemSpacing.x);
+        j["item_spacing_y"] = logical(style.ItemSpacing.y);
+        j["scrollbar_size"] = logical(style.ScrollbarSize);
 
         for (int i = 0; i < ImGuiCol_COUNT; i++) {
             ImVec4 col = style.Colors[i];

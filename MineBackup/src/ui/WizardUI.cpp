@@ -99,7 +99,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 			const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 			if (themeId == 7 && !filesystem::exists(customThemePath)) {
 				// 打开自定义主题编辑器
-				ImGuiTheme::WriteDefaultCustomTheme(customThemePath);
+				ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
 				// 打开 custom_theme.json 文件供用户编辑
 				(void)GetDesktopServices()->OpenFolder(customThemePath);
 			}
