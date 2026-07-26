@@ -14,8 +14,12 @@ ctest --preset macos-arm64 --output-on-failure
 app=build/macos-arm64/bin/MineBackup.app
 plutil -lint "$app/Contents/Info.plist"
 test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = io.github.leafuke.MineBackup
+test "$(plutil -extract CFBundleIconFile raw "$app/Contents/Info.plist")" = MineBackup.icns
 test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = 1.16.0
 test "$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")" = 15.0
+test -s "$app/Contents/Resources/MineBackup.icns"
+test -s "$app/Contents/Resources/en.lproj/InfoPlist.strings"
+test -s "$app/Contents/Resources/zh-Hans.lproj/InfoPlist.strings"
 lipo -info "$app/Contents/MacOS/MineBackup"
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --strict --verbose=2 "$app"
@@ -62,8 +66,11 @@ may be created or modified.
 
 ## Native desktop acceptance
 
-1. Exercise open-file, open-folder and save-file panels. Verify aliases resolve
-   and cancellation is reported without changing the selected path.
+1. Confirm Finder and the Dock show the MineBackup icon rather than the generic
+   application icon. Exercise open-file, open-folder and save-file panels in
+   both English and Simplified Chinese. Verify the title, prompt, buttons and
+   standard sidebar locations follow the selected/system language, aliases
+   resolve, and cancellation does not change the selected path.
 2. Open an HTTPS URL, open a folder and reveal a backup in Finder through
    NSWorkspace.
 3. Trigger a notification. Test the first authorization prompt, allowed state,

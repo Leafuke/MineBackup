@@ -198,6 +198,22 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(APPLE)
+    set(MINEBACKUP_MACOS_ICON_SOURCE
+        ${MINEBACKUP_SOURCE_DIR}/Assets/icons/minebackup.png)
+    set(MINEBACKUP_MACOS_ICON
+        ${MINEBACKUP_GENERATED_DIR}/MineBackup.icns)
+    add_custom_command(
+        OUTPUT ${MINEBACKUP_MACOS_ICON}
+        COMMAND /bin/bash
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/generate-icon.sh
+            ${MINEBACKUP_MACOS_ICON_SOURCE}
+            ${MINEBACKUP_MACOS_ICON}
+        DEPENDS
+            ${MINEBACKUP_MACOS_ICON_SOURCE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/generate-icon.sh
+        COMMENT "Generating MineBackup.icns"
+        VERBATIM)
+
     set_source_files_properties(
         ${MINEBACKUP_PLATFORM_DIR}/Platform_macos_tray.mm
         ${MINEBACKUP_PLATFORM_DIR}/MacDesktopBridge.mm
@@ -206,10 +222,25 @@ if(APPLE)
     set_target_properties(MineBackup PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST ${MINEBACKUP_GENERATED_DIR}/Info.plist)
-    set(MINEBACKUP_MACOS_RESOURCES
+    set(MINEBACKUP_MACOS_ASSET_RESOURCES
         ${MINEBACKUP_SOURCE_DIR}/Assets/fontawesome-sp.otf)
-    set_source_files_properties(${MINEBACKUP_MACOS_RESOURCES}
+    set_source_files_properties(${MINEBACKUP_MACOS_ASSET_RESOURCES}
         PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/Assets")
+    set(MINEBACKUP_MACOS_EN_LOCALIZATION
+        ${MINEBACKUP_SOURCE_DIR}/Assets/macos/en.lproj/InfoPlist.strings)
+    set(MINEBACKUP_MACOS_ZH_LOCALIZATION
+        ${MINEBACKUP_SOURCE_DIR}/Assets/macos/zh-Hans.lproj/InfoPlist.strings)
+    set_source_files_properties(${MINEBACKUP_MACOS_EN_LOCALIZATION}
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/en.lproj")
+    set_source_files_properties(${MINEBACKUP_MACOS_ZH_LOCALIZATION}
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/zh-Hans.lproj")
+    set_source_files_properties(${MINEBACKUP_MACOS_ICON}
+        PROPERTIES GENERATED TRUE MACOSX_PACKAGE_LOCATION "Resources")
+    set(MINEBACKUP_MACOS_RESOURCES
+        ${MINEBACKUP_MACOS_ASSET_RESOURCES}
+        ${MINEBACKUP_MACOS_EN_LOCALIZATION}
+        ${MINEBACKUP_MACOS_ZH_LOCALIZATION}
+        ${MINEBACKUP_MACOS_ICON})
     target_sources(MineBackup PRIVATE ${MINEBACKUP_MACOS_RESOURCES})
     target_link_libraries(minebackup_desktop PUBLIC
         "-framework Cocoa" "-framework Carbon" "-framework IOKit" "-framework CoreVideo"
@@ -229,6 +260,22 @@ if(BUILD_TESTING)
         target_link_libraries(minebackup_data_tests PRIVATE shell32)
     endif()
     add_test(NAME minebackup.data_core COMMAND minebackup_data_tests)
+
+    add_executable(minebackup_i18n_tests
+        tests/I18nTest.cpp
+        ${MINEBACKUP_INFRA_DIR}/i18n.cpp
+        ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp)
+    target_include_directories(minebackup_i18n_tests PRIVATE
+        ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+    if(MSVC)
+        target_compile_options(minebackup_i18n_tests PRIVATE /utf-8 /FS)
+    else()
+        target_compile_options(minebackup_i18n_tests PRIVATE -fno-strict-aliasing)
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(minebackup_i18n_tests PRIVATE Iconv::Iconv)
+    endif()
+    add_test(NAME minebackup.i18n COMMAND minebackup_i18n_tests)
 endif()
 
 add_custom_target(check_msbuild_source_parity

@@ -1,5 +1,6 @@
 #include "MacDesktopBridge.h"
 
+#include "i18n.h"
 #include "text_to_text.h"
 
 #import <AppKit/AppKit.h>
@@ -103,6 +104,11 @@ DesktopPathResult OpenPanel(bool folders) {
             panel.allowsMultipleSelection = NO;
             panel.resolvesAliases = YES;
             panel.canCreateDirectories = folders ? YES : NO;
+            panel.title = NativeString(folders
+                ? L("DIALOG_SELECT_FOLDER_TITLE") : L("DIALOG_SELECT_FILE_TITLE"));
+            panel.message = NativeString(folders
+                ? L("DIALOG_SELECT_FOLDER_MESSAGE") : L("DIALOG_SELECT_FILE_MESSAGE"));
+            panel.prompt = NativeString(L("BUTTON_SELECT"));
             [NSApp activateIgnoringOtherApps:YES];
             if ([panel runModal] != NSModalResponseOK || panel.URL == nil) {
                 return DesktopPathResult{CapabilityStatus::Ready(), {}, true};
@@ -259,6 +265,9 @@ DesktopPathResult MacSelectSaveFile(const wstring& defaultFileName, const wstrin
             [NSApplication sharedApplication];
             NSSavePanel* panel = [NSSavePanel savePanel];
             panel.canCreateDirectories = YES;
+            panel.title = NativeString(L("DIALOG_SAVE_FILE_TITLE"));
+            panel.message = NativeString(L("DIALOG_SAVE_FILE_MESSAGE"));
+            panel.prompt = NativeString(L("BUTTON_SAVE"));
             if (!defaultFileName.empty()) panel.nameFieldStringValue = NativeString(defaultFileName);
             [NSApp activateIgnoringOtherApps:YES];
             if ([panel runModal] != NSModalResponseOK || panel.URL == nil) {
@@ -481,22 +490,28 @@ void ShowPrelaunchAlert(const string& title, const string& message, int iconType
         : iconType == 1 ? kCFUserNotificationCautionAlertLevel
                         : kCFUserNotificationNoteAlertLevel;
     CFOptionFlags response = 0;
+    CFStringRef okText = CreateNativeString(L("BUTTON_OK"));
     CFUserNotificationDisplayAlert(0, level, nullptr, nullptr, nullptr,
-        titleText, messageText, CFSTR("OK"), nullptr, nullptr, &response);
+        titleText, messageText, okText, nullptr, nullptr, &response);
     if (titleText) CFRelease(titleText);
     if (messageText) CFRelease(messageText);
+    if (okText) CFRelease(okText);
 }
 
 bool ConfirmPrelaunchAlert(const string& title, const string& message) {
     CFStringRef titleText = CreateNativeString(title);
     CFStringRef messageText = CreateNativeString(message);
+    CFStringRef confirmText = CreateNativeString(L("BUTTON_CONFIRM"));
+    CFStringRef cancelText = CreateNativeString(L("BUTTON_CANCEL"));
     CFOptionFlags response = 1;
     const SInt32 status = CFUserNotificationDisplayAlert(0,
         kCFUserNotificationCautionAlertLevel, nullptr, nullptr, nullptr,
-        titleText, messageText, CFSTR("Import"), CFSTR("Not now"), nullptr,
+        titleText, messageText, confirmText, cancelText, nullptr,
         &response);
     if (titleText) CFRelease(titleText);
     if (messageText) CFRelease(messageText);
+    if (confirmText) CFRelease(confirmText);
+    if (cancelText) CFRelease(cancelText);
     return status == 0 && response == kCFUserNotificationDefaultResponse;
 }
 
@@ -514,7 +529,7 @@ void MacShowAlert(const string& title, const string& message, int iconType) {
         alert.informativeText = NativeString(message);
         alert.alertStyle = iconType == 2 ? NSAlertStyleCritical
             : iconType == 1 ? NSAlertStyleWarning : NSAlertStyleInformational;
-        [alert addButtonWithTitle:@"OK"];
+        [alert addButtonWithTitle:NativeString(L("BUTTON_OK"))];
         [NSApp activateIgnoringOtherApps:YES];
         [alert runModal];
         return true;
@@ -531,8 +546,8 @@ bool MacConfirmAlert(const string& title, const string& message) {
         alert.messageText = NativeString(title);
         alert.informativeText = NativeString(message);
         alert.alertStyle = NSAlertStyleWarning;
-        [alert addButtonWithTitle:@"Import"];
-        [alert addButtonWithTitle:@"Not now"];
+        [alert addButtonWithTitle:NativeString(L("BUTTON_CONFIRM"))];
+        [alert addButtonWithTitle:NativeString(L("BUTTON_CANCEL"))];
         [NSApp activateIgnoringOtherApps:YES];
         return [alert runModal] == NSAlertFirstButtonReturn;
     });
