@@ -147,6 +147,9 @@
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\KnotLinkServerManager.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\KnotLinkService.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -318,6 +321,9 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\KnotLinkProtocol.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\KnotLinkServerManager.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\KnotLinkService.h">

@@ -1,7 +1,12 @@
 ﻿#include "SettingsUIPrivate.h"
 
 #include "AppPaths.h"
+#include "Broadcast.h"
+#include "Console.h"
 #include "ExternalToolManager.h"
+#include "KnotLinkServerManager.h"
+#include "KnotLinkService.h"
+#include "TaskCoordinator.h"
 
 using namespace std;
 
@@ -316,17 +321,60 @@ void DrawModIntegrationSettings(Config& cfg) {
 	ImGui::TextWrapped("%s", L("TIP_MINEBACKUP_MOD_INTEGRATION_SUMMARY"));
 	ImGui::Spacing();
 
-	ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
+	if (ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink)) {
+		if (!g_enableKnotLink) {
+			CleanupKnotLink();
+			minebackup::knotlink::GetKnotLinkServerManager().Refresh(false);
+		}
+		else {
+			TaskCoordinator::Instance().Submit(
+				L"knotlink-settings-enable", {L"service:knotlink"}, [](stop_token) {
+					if (InitKnotLink(console)) {
+						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+					}
+				});
+		}
+	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
+
+	ImGui::Checkbox(L("KNOTLINK_AUTO_START_SERVER"), &g_autoStartKnotLinkServer);
+	const auto serverStatus = minebackup::knotlink::GetKnotLinkServerManager().GetStatus();
+	ImGui::Text("%s: %s", L("KNOTLINK_CLIENT_STATUS"),
+		minebackup::knotlink::GetKnotLinkService().IsRunning()
+			? L("KNOTLINK_STATUS_READY")
+			: L("KNOTLINK_STATUS_STOPPED"));
+	ImGui::Text("%s: %s", L("KNOTLINK_SERVER_STATUS"),
+		minebackup::knotlink::KnotLinkServerManager::StateName(serverStatus.state));
+	ImGui::Text("%s: %s", L("KNOTLINK_SERVER_VERSION"),
+		serverStatus.version.empty() ? L("KNOTLINK_VERSION_UNKNOWN") : serverStatus.version.c_str());
+	ImGui::Text("%s: 6370=%s, 6378=%s", L("KNOTLINK_PORT_STATUS"),
+		serverStatus.signalPortReady ? L("KNOTLINK_PORT_READY") : L("KNOTLINK_PORT_CLOSED"),
+		serverStatus.responderPortReady ? L("KNOTLINK_PORT_READY") : L("KNOTLINK_PORT_CLOSED"));
+	if (!serverStatus.message.empty()) {
+		ImGui::TextWrapped("%s", serverStatus.message.c_str());
+	}
+
+	if (ImGui::Button(L("KNOTLINK_START_RETRY"), ImVec2(-1, 0))) {
+		TaskCoordinator::Instance().Submit(
+			L"knotlink-settings-start", {L"service:knotlink"}, [](stop_token) {
+				const auto status =
+					minebackup::knotlink::GetKnotLinkServerManager().StartCompatibleServer();
+				if (status.state == minebackup::knotlink::KnotLinkServerState::Ready) {
+					if (InitKnotLink(console)) {
+						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+					}
+				}
+			});
+	}
 
 	if (ImGui::Button(L("MOD_LINK_MINEBACKUP_MODRINTH"), ImVec2(-1, 0))) {
 		(void)GetDesktopServices()->OpenUri(L"https://modrinth.com/mod/minebackup");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_HOME"), ImVec2(-1, 0))) {
-		(void)GetDesktopServices()->OpenUri(L"https://github.com/hxh230802/KnotLink");
+		(void)GetDesktopServices()->OpenUri(L"https://github.com/KnotLink-Protocol/KnotLink");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_DOWNLOAD"), ImVec2(-1, 0))) {
-		(void)GetDesktopServices()->OpenUri(L"https://gh-proxy.org/https://github.com/hxh230802/KnotLink/releases/download/v1.0.0/KnotLinkService-1.0.0.0-Installer.exe");
+		(void)GetDesktopServices()->OpenUri(L"https://github.com/KnotLink-Protocol/KnotLink/releases");
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_KNOTLINK_DOWNLOAD_LINK"));
 

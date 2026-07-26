@@ -159,7 +159,7 @@ if(WIN32)
     target_sources(MineBackup PRIVATE ${MINEBACKUP_GENERATED_DIR}/MineBackup.rc)
     target_include_directories(MineBackup PRIVATE ${MINEBACKUP_GENERATED_DIR})
     target_link_libraries(minebackup_data_core PUBLIC ole32 advapi32)
-    target_link_libraries(minebackup_desktop PUBLIC ws2_32 winhttp dwmapi)
+    target_link_libraries(minebackup_desktop PUBLIC ws2_32 winhttp dwmapi version)
 endif()
 
 if(UNIX AND NOT APPLE)
@@ -255,6 +255,28 @@ set_target_properties(MineBackup PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CUR
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(minebackup_knotlink_live_smoke_tests
+        tests/KnotLinkLiveSmokeTest.cpp)
+    target_link_libraries(minebackup_knotlink_live_smoke_tests PRIVATE
+        minebackup_desktop)
+    if(MSVC)
+        target_compile_options(minebackup_knotlink_live_smoke_tests PRIVATE
+            /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.knotlink_live_smoke
+        COMMAND minebackup_knotlink_live_smoke_tests)
+
+    add_executable(minebackup_knotlink_server_manager_tests
+        tests/KnotLinkServerManagerTest.cpp)
+    target_link_libraries(minebackup_knotlink_server_manager_tests PRIVATE
+        minebackup_desktop)
+    if(MSVC)
+        target_compile_options(minebackup_knotlink_server_manager_tests PRIVATE
+            /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.knotlink_server_manager
+        COMMAND minebackup_knotlink_server_manager_tests)
+
     add_executable(minebackup_knotlink_command_tests tests/KnotLinkCommandTest.cpp)
     target_link_libraries(minebackup_knotlink_command_tests PRIVATE minebackup_desktop)
     if(MSVC)

@@ -65,7 +65,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-build\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)$(IntDir)generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -89,7 +89,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-build\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)$(IntDir)generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -131,6 +131,7 @@
     <ClCompile Include="src\infra\Sha256.cpp" />
     <ClCompile Include="src\infra\DesktopServices.cpp" />
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp" />
+    <ClCompile Include="src\infra\KnotLinkServerManager.cpp" />
     <ClCompile Include="src\infra\KnotLinkService.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
@@ -190,6 +191,7 @@
     <ClInclude Include="src\infra\NetworkService.h" />
     <ClInclude Include="src\infra\Sha256.h" />
     <ClInclude Include="src\infra\KnotLinkProtocol.h" />
+    <ClInclude Include="src\infra\KnotLinkServerManager.h" />
     <ClInclude Include="src\infra\KnotLinkService.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
     <ClInclude Include="src\infra\ConfigManager.h" />

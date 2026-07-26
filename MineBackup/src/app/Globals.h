@@ -59,6 +59,7 @@ struct AppSettingsState {
 	bool autoScanForWorlds = false;
 	bool autoLogEnabled = true;
 	bool enableKnotLink = true;
+	bool autoStartKnotLinkServer = true;
 	std::atomic<bool> coreValidationPending{ false };
 	std::atomic<bool> coreValidationPassed{ false };
 	int hotKeyBackupId = 'S';
@@ -133,6 +134,7 @@ inline bool& g_SilentStartupToTray = g_globals.settings.silentStartupToTray;
 inline bool& g_AutoScanForWorlds = g_globals.settings.autoScanForWorlds;
 inline bool& g_autoLogEnabled = g_globals.settings.autoLogEnabled;
 inline bool& g_enableKnotLink = g_globals.settings.enableKnotLink;
+inline bool& g_autoStartKnotLinkServer = g_globals.settings.autoStartKnotLinkServer;
 inline std::atomic<bool>& g_CoreValidationPending = g_globals.settings.coreValidationPending;
 inline std::atomic<bool>& g_CoreValidationPassed = g_globals.settings.coreValidationPassed;
 inline int& g_hotKeyBackupId = g_globals.settings.hotKeyBackupId;

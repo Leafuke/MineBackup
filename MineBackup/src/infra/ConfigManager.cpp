@@ -377,6 +377,9 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"EnableKnotLink") {
 					g_enableKnotLink = (val != L"0");
 				}
+				else if (key == L"AutoStartKnotLinkServer") {
+					g_autoStartKnotLinkServer = (val != L"0");
+				}
 				else if (key == L"RunOnStartup") {
 					g_RunOnStartup = (val != L"0");
 				}
@@ -526,6 +529,7 @@ bool SaveConfigs(const filesystem::path& filename) {
 	buffer << L"ReceiveNotices=" << (g_ReceiveNotices ? 1 : 0) << L"\n";
 	buffer << L"NoticeLastSeen=" << utf8_to_wstring(g_NoticeLastSeenVersion) << L"\n";
 	buffer << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
+	buffer << L"AutoStartKnotLinkServer=" << (g_autoStartKnotLinkServer ? 1 : 0) << L"\n";
 	buffer << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
 	buffer << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
 	buffer << L"AutoBackupInterval=" << last_interval << L"\n";
