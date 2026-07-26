@@ -10,6 +10,13 @@
       "distribution": "statically linked"
     },
     {
+      "name": "Dear ImGui",
+      "version": "1.92.9-docking",
+      "source": "https://github.com/ocornut/imgui/releases/tag/v1.92.9-docking",
+      "sourceCommit": "9b4eb24cee2071e61dc1f9ef3e5228097cdde720",
+      "distribution": "selected sources vendored and statically linked"
+    },
+    {
       "name": "7-Zip ZS",
       "version": "26.01-v1.5.7-R1",
       "source": "https://github.com/mcmilk/7-Zip-zstd/releases/tag/v26.01-v1.5.7-R1",
