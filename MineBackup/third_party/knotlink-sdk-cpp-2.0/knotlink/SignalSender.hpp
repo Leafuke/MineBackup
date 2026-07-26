@@ -7,7 +7,10 @@
 #ifndef SIGNALSENDER_HPP
 #define SIGNALSENDER_HPP
 
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include "TcpClient.hpp"
 
 namespace knotlink {
@@ -18,41 +21,36 @@ public:
         init();
     }
 
-    SignalSender(std::string APPID, std::string SignalID)
-        : appID(std::move(APPID)), signalID(std::move(SignalID)) {
+    SignalSender(std::string appID, std::string signalID)
+        : appID_(std::move(appID)), signalID_(std::move(signalID)) {
         init();
     }
 
-    ~SignalSender() {
-        if (KLsender) {
-            KLsender->stopHeartbeat();
-            delete KLsender;
-            KLsender = nullptr;
-        }
+    ~SignalSender() = default;
+
+    void setConfig(std::string appID, std::string signalID) {
+        appID_ = std::move(appID);
+        signalID_ = std::move(signalID);
     }
 
-    void setConfig(std::string APPID, std::string SignalID) {
-        appID = std::move(APPID);
-        signalID = std::move(SignalID);
+    bool emitt(std::string data) {
+        return emitt(appID_, signalID_, std::move(data));
     }
 
-    void emitt(std::string data) {
-        emitt(appID, signalID, std::move(data));
-    }
-
-    void emitt(std::string APPID, std::string SignalID, std::string data) {
-        std::string s_data = APPID + "-" + SignalID + "&*&" + data;
-        KLsender->sendData(s_data);
+    bool emitt(const std::string& appID, const std::string& signalID, std::string data) {
+        return client_->sendData(appID + "-" + signalID + "&*&" + data);
     }
 
 private:
-    TcpClient* KLsender = nullptr;
-    std::string appID;
-    std::string signalID;
+    std::unique_ptr<TcpClient> client_;
+    std::string appID_;
+    std::string signalID_;
 
     void init() {
-        KLsender = new TcpClient();
-        KLsender->connectToServer("127.0.0.1", 6370);
+        client_ = std::make_unique<TcpClient>();
+        if (!client_->connectToServer("127.0.0.1", 6370)) {
+            throw std::runtime_error("Unable to connect to KnotLink signal service");
+        }
     }
 };
 

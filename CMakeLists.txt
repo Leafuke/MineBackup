@@ -255,6 +255,18 @@ set_target_properties(MineBackup PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CUR
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(minebackup_knotlink_sdk_tests tests/KnotLinkSdkTest.cpp)
+    target_include_directories(minebackup_knotlink_sdk_tests PRIVATE
+        ${MINEBACKUP_THIRD_PARTY_DIR}/knotlink-sdk-cpp-2.0)
+    target_link_libraries(minebackup_knotlink_sdk_tests PRIVATE Threads::Threads)
+    if(WIN32)
+        target_link_libraries(minebackup_knotlink_sdk_tests PRIVATE ws2_32)
+    endif()
+    if(MSVC)
+        target_compile_options(minebackup_knotlink_sdk_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.knotlink_sdk COMMAND minebackup_knotlink_sdk_tests)
+
     add_executable(minebackup_data_tests tests/TestMain.cpp)
     target_link_libraries(minebackup_data_tests PRIVATE minebackup_data_core)
     if(WIN32)

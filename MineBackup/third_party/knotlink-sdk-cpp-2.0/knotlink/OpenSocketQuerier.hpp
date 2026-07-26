@@ -7,72 +7,76 @@
 #ifndef OPEN_SOCKET_QUERIER_HPP
 #define OPEN_SOCKET_QUERIER_HPP
 
-#include <string>
-#include <unordered_map>
-#include <mutex>
-#include <condition_variable>
-#include <thread>
 #include <chrono>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
 #include "TcpClient.hpp"
 
 namespace knotlink {
 
 class OpenSocketQuerier {
 public:
-    OpenSocketQuerier() {
-        KLquerier = new TcpClient();
-        KLquerier->connectToServer("127.0.0.1", 6376);
-        KLquerier->setOnDataReceivedCallback(
-            std::bind(&OpenSocketQuerier::handleReceivedData, this, std::placeholders::_1));
-        while (!KLquerier->running) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    OpenSocketQuerier() : client_(std::make_unique<TcpClient>()) {
+        client_->setOnDataReceivedCallback(
+            [this](const std::string& data) { handleReceivedData(data); });
+        if (!client_->connectToServer("127.0.0.1", 6376)) {
+            throw std::runtime_error("Unable to connect to KnotLink OpenSocket querier");
         }
     }
 
     ~OpenSocketQuerier() {
-        KLquerier->stopHeartbeat();
-        delete KLquerier;
+        client_->stop();
     }
 
-    void setConfig(const std::string& APPID, const std::string& OpenSocketID) {
-        appID        = APPID;
-        openSocketID = OpenSocketID;
+    void setConfig(const std::string& appID, const std::string& openSocketID) {
+        appID_ = appID;
+        openSocketID_ = openSocketID;
     }
 
     std::string query_l(const std::string& question, int timeoutMs = -1) {
-        std::unique_lock<std::mutex> lock(mtx_);
-        std::string qid = std::to_string(++questionCounter_);
-        std::string packet = appID + "-" + openSocketID + "&*&" + question;
-        KLquerier->sendData(packet);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            answerReady_ = false;
+            answer_.clear();
+        }
+        if (!client_->sendData(appID_ + "-" + openSocketID_ + "&*&" + question)) {
+            throw std::runtime_error("Unable to send KnotLink OpenSocket query");
+        }
 
-        auto deadline = [&] {
-            if (timeoutMs < 0) { cv_.wait(lock, [this, &qid] { return answers_.count(qid); }); return true; }
-            return cv_.wait_for(lock, std::chrono::milliseconds(timeoutMs),
-                                [this, &qid] { return answers_.count(qid); });
-        };
-        if (!deadline())
-            throw std::runtime_error("query_l timed out after " + std::to_string(timeoutMs) + "ms");
-
-        std::string ans = answers_[qid];
-        answers_.erase(qid);
-        return ans;
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (timeoutMs < 0) {
+            condition_.wait(lock, [this] { return answerReady_ || !client_->isRunning(); });
+        } else if (!condition_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] {
+                       return answerReady_ || !client_->isRunning();
+                   })) {
+            throw std::runtime_error(
+                "query_l timed out after " + std::to_string(timeoutMs) + "ms");
+        }
+        if (!answerReady_) {
+            throw std::runtime_error("KnotLink OpenSocket connection closed");
+        }
+        return answer_;
     }
 
 private:
-    TcpClient* KLquerier;
-    std::string appID;
-    std::string openSocketID;
-
-    std::mutex mtx_;
-    std::condition_variable cv_;
-    std::unordered_map<std::string, std::string> answers_;
-    uint64_t questionCounter_ = 0;
+    std::unique_ptr<TcpClient> client_;
+    std::string appID_;
+    std::string openSocketID_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::string answer_;
+    bool answerReady_ = false;
 
     void handleReceivedData(const std::string& data) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        std::string qid = std::to_string(questionCounter_);
-        answers_[qid] = data;
-        cv_.notify_all();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            answer_ = data;
+            answerReady_ = true;
+        }
+        condition_.notify_all();
     }
 };
 

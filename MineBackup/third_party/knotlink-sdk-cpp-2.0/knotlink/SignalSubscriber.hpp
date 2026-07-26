@@ -7,60 +7,59 @@
 #ifndef SIGNAL_SUBSCRIBER_HPP
 #define SIGNAL_SUBSCRIBER_HPP
 
+#include <functional>
+#include <memory>
+#include <stdexcept>
 #include <string>
-#include <thread>
-#include <chrono>
+#include <utility>
 #include "TcpClient.hpp"
 
 namespace knotlink {
 
 class SignalSubscriber {
 public:
-    SignalSubscriber(const std::string& APPID, const std::string& SignalID)
-        : appID(APPID), signalID(SignalID) {
-        KLsubscriber = new TcpClient();
-        KLsubscriber->connectToServer("127.0.0.1", 6372);
-        KLsubscriber->setOnDataReceivedCallback(
-            std::bind(&SignalSubscriber::handleReceivedData, this, std::placeholders::_1));
-        while (!KLsubscriber->running) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    SignalSubscriber(std::string appID, std::string signalID)
+        : client_(std::make_unique<TcpClient>()),
+          appID_(std::move(appID)),
+          signalID_(std::move(signalID)) {
+        client_->setOnDataReceivedCallback(
+            [this](const std::string& data) { handleReceivedData(data); });
+        if (!client_->connectToServer("127.0.0.1", 6372)) {
+            throw std::runtime_error("Unable to connect to KnotLink signal subscriber");
         }
-        subscribe(appID, signalID);
+        subscribe(appID_, signalID_);
     }
 
     ~SignalSubscriber() {
-        // stop() 不 delete，析构统一 delete
-        KLsubscriber->stopHeartbeat();
-        delete KLsubscriber;
+        client_->stop();
     }
 
-    void subscribe(const std::string& APPID, const std::string& SignalID) {
-        appID = APPID;
-        signalID = SignalID;
-        std::string s_key = appID + "-" + signalID;
-        KLsubscriber->sendData(s_key);
+    bool subscribe(const std::string& appID, const std::string& signalID) {
+        appID_ = appID;
+        signalID_ = signalID;
+        return client_->sendData(appID_ + "-" + signalID_);
     }
 
     void start() {}
 
     void stop() {
-        KLsubscriber->stopHeartbeat();
+        client_->stop();
     }
 
-    void setOnDataReceivedCallback(const std::function<void(const std::string&)>& callback) {
-        onDataReceivedCallback = callback;
+    void setOnDataReceivedCallback(
+        std::function<void(const std::string&)> callback) {
+        onDataReceivedCallback_ = std::move(callback);
     }
 
 private:
-    TcpClient* KLsubscriber;
-    std::string appID;
-    std::string signalID;
-    std::function<void(const std::string&)> onDataReceivedCallback;
+    std::unique_ptr<TcpClient> client_;
+    std::string appID_;
+    std::string signalID_;
+    std::function<void(const std::string&)> onDataReceivedCallback_;
 
     void handleReceivedData(const std::string& data) {
-        if (data == "heartbeat_response") return;
-        if (onDataReceivedCallback) {
-            onDataReceivedCallback(data);
+        if (onDataReceivedCallback_) {
+            onDataReceivedCallback_(data);
         }
     }
 };
