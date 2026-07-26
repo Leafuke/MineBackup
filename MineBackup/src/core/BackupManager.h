@@ -35,10 +35,30 @@ struct BackupChangeSet {
 	}
 };
 
-void DoBackup(const MyFolder& folder, Console& console, const std::wstring& comment = L"");
+enum class BackupOutcome {
+	Created,
+	NoChanges,
+	Failed,
+	Rejected
+};
+
+BackupOutcome DoBackup(const MyFolder& folder, Console& console, const std::wstring& comment = L"");
 bool DoRestore2(const Config& config, const std::wstring& worldName, const std::filesystem::path& fullBackupPath, Console& console, int restoreMethod);
-bool DoRestore(const Config& config, const std::wstring& worldName, const std::wstring& backupFile, Console& console, int restoreMethod, const std::string& customRestoreList = "");
-void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, const std::wstring& backupFile = L"");
+bool DoRestore(
+	const Config& config,
+	const std::wstring& worldName,
+	const std::wstring& backupFile,
+	Console& console,
+	int restoreMethod,
+	const std::string& customRestoreList = "",
+	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr);
+bool DoHotRestore(
+	const MyFolder& world,
+	Console& console,
+	bool deleteBackup,
+	const std::wstring& backupFile = L"",
+	int restoreMethod = 0,
+	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr);
 void DoOthersBackup(const Config& config, std::filesystem::path backupWhat, const std::wstring& comment, Console& console);
 void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, std::stop_token stopToken);
 

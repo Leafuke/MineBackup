@@ -59,7 +59,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
-      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;.\third_party\knotlink-sdk-cpp-2.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -81,7 +81,7 @@
       <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);IMGUI_DISABLE_OBSOLETE_FUNCTIONS;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;.\third_party\knotlink-sdk-cpp-2.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
@@ -131,6 +131,7 @@
     <ClCompile Include="src\infra\Sha256.cpp" />
     <ClCompile Include="src\infra\DesktopServices.cpp" />
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp" />
+    <ClCompile Include="src\infra\KnotLinkService.cpp" />
     <ClCompile Include="src\infra\Broadcast.cpp" />
     <ClCompile Include="src\infra\ConfigManager.cpp" />
     <ClCompile Include="src\infra\Console.cpp" />
@@ -153,8 +154,6 @@
     <ClCompile Include="third_party\imgui\imgui_impl_opengl3.cpp" />
     <ClCompile Include="third_party\imgui\imgui_tables.cpp" />
     <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
-    <ClCompile Include="third_party\KnotLink\OpenSocketResponser.cpp" />
-    <ClCompile Include="third_party\KnotLink\SignalSender.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\AppState.h" />
@@ -191,6 +190,7 @@
     <ClInclude Include="src\infra\NetworkService.h" />
     <ClInclude Include="src\infra\Sha256.h" />
     <ClInclude Include="src\infra\KnotLinkProtocol.h" />
+    <ClInclude Include="src\infra\KnotLinkService.h" />
     <ClInclude Include="src\infra\Broadcast.h" />
     <ClInclude Include="src\infra\ConfigManager.h" />
     <ClInclude Include="src\infra\Console.h" />
@@ -220,13 +220,6 @@
     <ClInclude Include="third_party\imgui\imstb_textedit.h" />
     <ClInclude Include="third_party\imgui\imstb_truetype.h" />
     <ClInclude Include="third_party\json\json.hpp" />
-    <ClInclude Include="third_party\KnotLink\KnotLinkServer.hpp" />
-    <ClInclude Include="third_party\KnotLink\OpenSocketResponser.hpp" />
-    <ClInclude Include="third_party\KnotLink\OpenSocketResponser_posix.hpp" />
-    <ClInclude Include="third_party\KnotLink\SignalSender.hpp" />
-    <ClInclude Include="third_party\KnotLink\SignalSender_posix.hpp" />
-    <ClInclude Include="third_party\KnotLink\TcpClient.hpp" />
-    <ClInclude Include="third_party\KnotLink\TcpClient_posix.hpp" />
     <ClInclude Include="third_party\stb\stb_image.h" />
   </ItemGroup>
   <ItemGroup>

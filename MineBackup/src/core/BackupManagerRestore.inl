@@ -272,7 +272,7 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	}
 
 	auto failRestore = [&](const string& reason) {
-		BroadcastEvent("event=restore_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
+		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
 		return false;
 	};
 
@@ -334,11 +334,18 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	}
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
-	BroadcastEvent("event=restore_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(fullBackupPath.filename().wstring()));
+	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(fullBackupPath.filename().wstring()));
 	return true;
 }
 
-bool DoRestore(const Config& config, const wstring& worldName, const wstring& backupFile, Console& console, int restoreMethod, const string& customRestoreList) {
+bool DoRestore(
+	const Config& config,
+	const wstring& worldName,
+	const wstring& backupFile,
+	Console& console,
+	int restoreMethod,
+	const string& customRestoreList,
+	const vector<wstring>* restoreWhitelistOverride) {
 	if (config.pendingLocalBinding) {
 		console.AddLog("[Blocked] Restore is disabled until local paths are bound.");
 		return false;
@@ -359,7 +366,7 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 		if (!message.empty()) {
 			console.AddLog("[Error] %s", message.c_str());
 		}
-		BroadcastEvent("event=restore_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
+		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
 		return false;
 	};
 	auto failRestore = [&](const string& reason) {
@@ -509,7 +516,8 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		if (safeWorkspacePrepared) {
-			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
+			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(
+				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist);
 			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
 				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
@@ -527,6 +535,6 @@ bool DoRestore(const Config& config, const wstring& worldName, const wstring& ba
 	}
 
 	console.AddLog(L("LOG_RESTORE_END_HEADER"));
-	BroadcastEvent("event=restore_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile));
+	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile));
 	return true;
 }

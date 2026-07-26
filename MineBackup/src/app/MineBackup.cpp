@@ -640,30 +640,11 @@ int main(int argc, char** argv)
 	}
 	TaskCoordinator::Instance().Submit(L"game-session-watcher", {},
 		[](stop_token token) { GameSessionWatcherThread(token); });
-	BroadcastEvent("event=app_startup;version=" + CURRENT_VERSION);
-
 	if (g_enableKnotLink) {
 		// 初始化 KnotLink （异步进行避免卡顿）
 		TaskCoordinator::Instance().Submit(L"knotlink-loader", {L"service:knotlink"}, [](stop_token) {
-#ifndef _WIN32
-			InitKnotLink();
-#endif
-			g_signalSender = new SignalSender("0x00000020", "0x00000020");
-			// 初始化命令响应器，并将 ProcessCommand 设为回调
-			try {
-				g_commandResponser = new OpenSocketResponser("0x00000020", "0x00000010");
-				g_commandResponser->setQuestionHandler(
-					[](const string& q) {
-						// 灏嗘敹鍒扮殑闂浜ょ粰鍛戒护澶勭悊鍣?
-						console.AddLog("[KnotLink] Received: %s", q.c_str());
-						string response = ProcessCommand(q, &console);
-						console.AddLog("[KnotLink] Responded: %s", response.c_str());
-						return response;
-					}
-				);
-			}
-			catch (const exception& e) {
-				console.AddLog("[ERROR] Failed to start KnotLink Responser: %s", e.what());
+			if (InitKnotLink(console)) {
+				BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
 			}
 		});
 	}
@@ -2656,7 +2637,7 @@ int main(int argc, char** argv)
 	}
 
 	// 清理
-	BroadcastEvent("event=app_shutdown");
+	BroadcastEvent("app_shutdown", {});
 	TaskCoordinator::Instance().StopAndJoin();
 	{
 		lock_guard<mutex> lock(g_appState.task_mutex);

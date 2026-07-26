@@ -40,7 +40,7 @@ set(MINEBACKUP_UI_DIR ${MINEBACKUP_SRC_DIR}/ui)
 set(MINEBACKUP_UTILS_DIR ${MINEBACKUP_SRC_DIR}/utils)
 set(MINEBACKUP_THIRD_PARTY_DIR ${MINEBACKUP_SOURCE_DIR}/third_party)
 set(MINEBACKUP_IMGUI_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/imgui)
-set(MINEBACKUP_KNOTLINK_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/KnotLink)
+set(MINEBACKUP_KNOTLINK_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/knotlink-sdk-cpp-2.0)
 set(MINEBACKUP_JSON_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/json)
 set(MINEBACKUP_STB_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/stb)
 
@@ -255,6 +255,13 @@ set_target_properties(MineBackup PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CUR
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(minebackup_knotlink_command_tests tests/KnotLinkCommandTest.cpp)
+    target_link_libraries(minebackup_knotlink_command_tests PRIVATE minebackup_desktop)
+    if(MSVC)
+        target_compile_options(minebackup_knotlink_command_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.knotlink_commands COMMAND minebackup_knotlink_command_tests)
+
     add_executable(minebackup_knotlink_protocol_tests tests/KnotLinkProtocolTest.cpp)
     target_link_libraries(minebackup_knotlink_protocol_tests PRIVATE minebackup_data_core)
     if(MSVC)

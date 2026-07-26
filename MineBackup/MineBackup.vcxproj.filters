@@ -28,9 +28,6 @@
     <Filter Include="third_party\imgui">
       <UniqueIdentifier>{FA97F0E0-DC4C-4D56-A64F-E67CE44C9AB1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="third_party\KnotLink">
-      <UniqueIdentifier>{B146B260-A6A7-4F34-B98F-66D370C7597A}</UniqueIdentifier>
-    </Filter>
     <Filter Include="third_party\json">
       <UniqueIdentifier>{78E4FF42-94D0-4C4D-AF01-0297258832EE}</UniqueIdentifier>
     </Filter>
@@ -150,6 +147,9 @@
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\KnotLinkService.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\ConfigManager.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -212,12 +212,6 @@
     </ClCompile>
     <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
       <Filter>third_party\imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\KnotLink\OpenSocketResponser.cpp">
-      <Filter>third_party\KnotLink</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\KnotLink\SignalSender.cpp">
-      <Filter>third_party\KnotLink</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -326,6 +320,9 @@
     <ClInclude Include="src\infra\KnotLinkProtocol.h">
       <Filter>src\infra</Filter>
     </ClInclude>
+    <ClInclude Include="src\infra\KnotLinkService.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\ConfigManager.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -409,27 +406,6 @@
     </ClInclude>
     <ClInclude Include="third_party\json\json.hpp">
       <Filter>third_party\json</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\KnotLink\KnotLinkServer.hpp">
-      <Filter>third_party\KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\KnotLink\OpenSocketResponser.hpp">
-      <Filter>third_party\KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\KnotLink\OpenSocketResponser_posix.hpp">
-      <Filter>third_party\KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\KnotLink\SignalSender.hpp">
-      <Filter>third_party\KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\KnotLink\SignalSender_posix.hpp">
-      <Filter>third_party\KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\KnotLink\TcpClient.hpp">
-      <Filter>third_party\KnotLink</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\KnotLink\TcpClient_posix.hpp">
-      <Filter>third_party\KnotLink</Filter>
     </ClInclude>
     <ClInclude Include="third_party\stb\stb_image.h">
       <Filter>third_party\stb</Filter>

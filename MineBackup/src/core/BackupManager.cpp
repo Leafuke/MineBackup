@@ -1195,11 +1195,11 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 
 // 执行单个世界的备份操作。
 // 参数: folder: 世界信息结构体, console: 日志输出对象, comment: 用户注释
-void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
+BackupOutcome DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
     const Config& config = folder.config;
 	if (config.pendingLocalBinding) {
 		console.AddLog("[Blocked] This imported configuration is waiting for local path binding.");
-		return;
+		return BackupOutcome::Rejected;
 	}
 
 	WorldOperationGuard opGuard(filesystem::path(folder.path), FolderState::BACKUP);
@@ -1210,7 +1210,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 			L(FolderStateToI18nKey(opGuard.Existing())),
 			L(FolderStateToI18nKey(opGuard.Requested()))
 		);
-		return;
+		return BackupOutcome::Rejected;
 	}
 	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, folder.configIndex, folder.name, folder.path);
 	const bool forceFullForMigration = migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded;
@@ -1227,7 +1227,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     if (!filesystem::exists(config.zipPath)) {
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
-        return;
+        return BackupOutcome::Failed;
     }
 
 	wstring originalSourcePath = folder.path;
@@ -1236,7 +1236,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	FolderRewindFormat::StoragePaths storagePaths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, folder.name, folder.path, storagePaths)) {
 		console.AddLog("[Error] Invalid FolderRewind storage folder name for world: %s", wstring_to_utf8(folder.name).c_str());
-		return;
+		return BackupOutcome::Failed;
 	}
 	filesystem::path destinationFolder = storagePaths.backupSubDir;
 	filesystem::path metadataFolder = storagePaths.metadataDir;
@@ -1253,7 +1253,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder.wstring()).c_str());
     } catch (const filesystem::filesystem_error& e) {
         console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
-        return;
+        return BackupOutcome::Failed;
     }
 
 	// 检测到 level.dat 被锁定，启用热备份握手并依赖 7z -ssw 直接从原世界路径压缩
@@ -1291,7 +1291,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             } else {
                 // 超时：模组未在规定时间内完成保存，停止
                 console.AddLog(L("KNOTLINK_WORLD_SAVE_TIMEOUT"));
-				return;
+				return BackupOutcome::Rejected;
             }
         }
 		console.AddLog("[Info] Snapshot copy is disabled. Using 7-Zip -ssw to back up from live world files.");
@@ -1355,14 +1355,14 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState, changeSet);
     if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-        return;
+        return BackupOutcome::NoChanges;
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
         console.AddLog(L("LOG_METADATA_INVALID"));
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING && config.backupMode == 2) {
         console.AddLog(L("LOG_BASE_BACKUP_NOT_FOUND"));
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED) {
         console.AddLog("[Error] Failed to scan source directory for backup state.");
-        return;
+        return BackupOutcome::Failed;
     }
 
     forceFullBackup = (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID ||
@@ -1379,7 +1379,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         } catch (const filesystem::filesystem_error& e) {
             console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-            return;
+            return BackupOutcome::Failed;
         }
     }
 
@@ -1415,13 +1415,13 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 	if (!forceFullBackup && !changeSet.HasChanges() && (config.skipIfUnchanged || config.backupMode == 2)) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-        return;
+        return BackupOutcome::NoChanges;
     }
 
 	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
 	if (files_to_backup.empty() && !(config.backupMode == 2 && deletionOnlyChange && !forceFullBackup)) {
 		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		return;
+		return BackupOutcome::NoChanges;
 	}
 
     filesystem::path tempDir = GetAppPaths().runtimeRoot /
@@ -1451,7 +1451,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 #endif
 		} else {
 			console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
-			return;
+			return BackupOutcome::Failed;
 		}
 	}
 
@@ -1600,8 +1600,8 @@ execute_backup:
 
 		if (!UpdateMetadataFile(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet)) {
 			console.AddLog("[Error] Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
-			BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(storageFolderName) + ";error=metadata_write_failed");
-			return;
+			BroadcastEvent("event=backup_failed;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(storageFolderName) + ";error=metadata_write_failed");
+			return BackupOutcome::Failed;
 		}
 		AddHistoryEntry(folder.configIndex, storageFolderName, completedBackupFile, backupTypeStr, comment, folder.path);
 
@@ -1611,7 +1611,7 @@ execute_backup:
 			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 
 		// 广播一个成功事件
-		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(storageFolderName) + ";file=" + wstring_to_utf8(completedBackupFile);
+		string payload = "event=backup_success;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(storageFolderName) + ";file=" + wstring_to_utf8(completedBackupFile);
 		BroadcastEvent(payload);
 
 
@@ -1619,9 +1619,11 @@ execute_backup:
 		MyFolder cloudFolder = folder;
 		cloudFolder.name = storageFolderName;
 		QueueUploadAfterBackup(config, folder.configIndex, cloudFolder, completedBackupFile, comment, console);
+		return BackupOutcome::Created;
         }
         else {
-            BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+            BroadcastEvent("event=backup_failed;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+			return BackupOutcome::Failed;
         }
     }
 }
@@ -2154,7 +2156,13 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 MyFolder GetOccupiedWorld();
 
-void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, const std::wstring& backupFile) {
+bool DoHotRestore(
+	const MyFolder& world,
+	Console& console,
+	bool deleteBackup,
+	const std::wstring& backupFile,
+	int restoreMethod,
+	const std::vector<std::wstring>* restoreWhitelistOverride) {
 	
 	Config cfg = world.config;
 	auto& mod = g_appState.knotLinkMod;
@@ -2179,7 +2187,7 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 		BroadcastEvent("event=restore_cancelled;reason=timeout;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
-		return;
+		return false;
 	}
 
 	console.AddLog(L("KNOTLINK_MOD_EXIT_CONFIRMED"));
@@ -2204,7 +2212,7 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 			BroadcastEvent("event=restore_cancelled;reason=world_occupied;world=" + wstring_to_utf8(world.name));
 			g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 			g_appState.isRespond = false;
-			return;
+			return false;
 		}
 	}
 
@@ -2261,17 +2269,24 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
-		return;
+		return false;
 	}
 
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(targetBackup.filename().wstring()).c_str());
 
-	const bool restoreSucceeded = DoRestore(cfg, world.name, targetBackup.filename().wstring(), ref(console), 0, "");
+	const bool restoreSucceeded = DoRestore(
+		cfg,
+		world.name,
+		targetBackup.filename().wstring(),
+		ref(console),
+		restoreMethod,
+		"",
+		restoreWhitelistOverride);
 	if (!restoreSucceeded) {
 		BroadcastEvent("event=restore_finished;status=failure;reason=restore_failed;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
-		return;
+		return false;
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2315,4 +2330,5 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 	// 重置状态
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 	g_appState.isRespond = false;
+	return true;
 }

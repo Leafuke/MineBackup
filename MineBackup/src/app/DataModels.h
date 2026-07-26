@@ -274,7 +274,7 @@ struct KnotLinkModInfo {
 	std::atomic<bool> versionCompatible{false}; // 模组版本是否兼容
 
 	// 最低要求的模组版本号
-	static constexpr const char* MIN_MOD_VERSION = "1.0.0";
+	static constexpr const char* MIN_MOD_VERSION = "3.1.0";
 
 	// 异步响应同步机制
 	std::mutex mtx;
@@ -307,12 +307,23 @@ struct KnotLinkModInfo {
 
 	// 版本比较
 	static bool IsVersionCompatible(const std::string& current, const std::string& required) {
-		auto parseVersion = [](const std::string& v) -> std::tuple<int, int, int> {
-			int major = 0, minor = 0, patch = 0;
-			std::sscanf(v.c_str(), "%d.%d.%d", &major, &minor, &patch);
-			return { major, minor, patch };
+		auto parseVersion = [](const std::string& value, std::tuple<int, int, int>& parsed) {
+			int major = 0;
+			int minor = 0;
+			int patch = 0;
+			char trailing = '\0';
+			if (std::sscanf(value.c_str(), "%d.%d.%d%c", &major, &minor, &patch, &trailing) != 3 ||
+				major < 0 || minor < 0 || patch < 0) {
+				return false;
+			}
+			parsed = { major, minor, patch };
+			return true;
 		};
-		return parseVersion(current) >= parseVersion(required);
+		std::tuple<int, int, int> currentVersion;
+		std::tuple<int, int, int> requiredVersion;
+		return parseVersion(current, currentVersion) &&
+			parseVersion(required, requiredVersion) &&
+			currentVersion >= requiredVersion;
 	}
 
 	// 通知指定标志并唤醒等待线程

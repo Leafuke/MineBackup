@@ -35,17 +35,19 @@ struct Console
 		Commands.push_back("HELP");
 		Commands.push_back("HISTORY");
 		Commands.push_back("CLEAR");
-		Commands.push_back("BACKUP");
-		Commands.push_back("BACKUP_MODS");
-		Commands.push_back("RESTORE");
-		Commands.push_back("RESTORE_CURRENT");
-		Commands.push_back("RESTORE_CURRENT_LATEST");
-		Commands.push_back("SET_CONFIG");
-		Commands.push_back("GET_CONFIG");
-		Commands.push_back("LIST_BACKUPS");
-		Commands.push_back("LIST_BACKUPS_CURRENT");
-		Commands.push_back("LIST_WORLDS");
-		Commands.push_back("LIST_CONFIGS");
+		Commands.push_back("cmd=PING");
+		Commands.push_back("cmd=GET_CAPABILITIES");
+		Commands.push_back("cmd=GET_STATUS");
+		Commands.push_back("cmd=LIST_CONFIGS");
+		Commands.push_back("cmd=LIST_FOLDERS");
+		Commands.push_back("cmd=LIST_BACKUPS");
+		Commands.push_back("cmd=GET_CONFIG");
+		Commands.push_back("cmd=BACKUP");
+		Commands.push_back("cmd=RESTORE");
+		Commands.push_back("cmd=BACKUP_ALL");
+		Commands.push_back("cmd=AUTO_BACKUP");
+		Commands.push_back("cmd=STOP_AUTO_BACKUP");
+		Commands.push_back("cmd=MARK_IMPORTANT");
 		AutoScroll = true;                  //自动滚动好呀
 		ScrollToBottom = false;             //不用滚动条，但可以鼠标滚
 	}
