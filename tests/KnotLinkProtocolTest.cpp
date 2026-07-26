@@ -1,4 +1,5 @@
 #include "KnotLinkProtocol.h"
+#include "json.hpp"
 
 #include <functional>
 #include <iostream>
@@ -100,17 +101,40 @@ void TestMetadataAndFormatting() {
 
 void TestCapabilities() {
     const std::string manifest(KnotLinkCapabilities::ManifestJson());
-    Check(manifest.find("\"specVersion\":\"1.0\"") != std::string::npos,
+    const auto document = nlohmann::json::parse(manifest);
+    Check(document.at("specVersion") == "1.0",
           "funcList spec version should be embedded");
-    Check(manifest.find("\"manifestVersion\":\"2.0.0\"") != std::string::npos,
+    Check(document.at("manifestVersion") == "2.0.0",
           "funcList manifest version should be embedded");
-    for (const std::string command : {
-             "PING", "GET_CAPABILITIES", "GET_STATUS", "LIST_CONFIGS",
-             "LIST_FOLDERS", "LIST_BACKUPS", "GET_CONFIG", "BACKUP", "RESTORE",
-             "BACKUP_ALL", "AUTO_BACKUP", "STOP_AUTO_BACKUP", "MARK_IMPORTANT"}) {
-        Check(manifest.find("\"command\":\"" + command + "\"") != std::string::npos,
-              "funcList should advertise " + command);
+    Check(document.at("openSocket").is_object() &&
+              document.at("signal").is_object(),
+          "funcList openSocket and signal sections should be objects");
+    for (const auto& [functionName, command] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"ping", "PING"},
+             {"get_capabilities", "GET_CAPABILITIES"},
+             {"get_status", "GET_STATUS"},
+             {"list_configs", "LIST_CONFIGS"},
+             {"list_folders", "LIST_FOLDERS"},
+             {"list_backups", "LIST_BACKUPS"},
+             {"get_config", "GET_CONFIG"},
+             {"backup", "BACKUP"},
+             {"restore", "RESTORE"},
+             {"backup_all", "BACKUP_ALL"},
+             {"auto_backup", "AUTO_BACKUP"},
+             {"stop_auto_backup", "STOP_AUTO_BACKUP"},
+             {"mark_important", "MARK_IMPORTANT"}}) {
+        const auto& function = document.at("openSocket").at(functionName);
+        Check(function.at("args").is_object() &&
+                  function.at("args").at("cmd").at("type") == "static" &&
+                  function.at("args").at("cmd").at("value") == command,
+              "funcList should advertise " + command +
+                  " through a static cmd argument");
+        Check(function.at("returns").is_array(),
+              "funcList returns should use FolderRewind tuple arrays");
     }
+    Check(!document.at("openSocket").at("list_configs").contains("command"),
+          "funcList functions should not use the non-standard command property");
     for (const std::string unsupported : {
              "backup_whitelist", "backup_scope", "preserve_player_data",
              "RESTORE_CURRENT", "LIST_WORLDS", "SEND"}) {

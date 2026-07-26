@@ -3,7 +3,9 @@
 #include "KnotLinkProtocol.h"
 #include "KnotLinkService.h"
 
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -38,21 +40,34 @@ void CheckError(const std::string& response, const std::string& message) {
 
 Config MakeConfig() {
     Config config;
-    config.name = "Primary";
+    config.name = "Primary 示例";
     config.configId = L"stable-config-id";
     config.saveRoot = L"C:\\Minecraft\\saves";
     config.backupPath = L"C:\\MineBackup\\backups";
     config.zipMethod = L"LZMA2";
     config.zipLevel = 5;
     config.worlds.push_back({L"World One", L"Test world"});
+    config.worlds.push_back({L"Nether 世界", L"Second test world"});
     return config;
 }
 
 void TestQueriesAndTargetResolution(KnotLinkService& service, Console& output) {
     g_appState.configs.clear();
     g_appState.configs.emplace(7, MakeConfig());
+    Config secondConfig = MakeConfig();
+    secondConfig.configId = L"second-config-id";
+    secondConfig.name = "Second";
+    g_appState.configs.emplace(8, std::move(secondConfig));
 
-    for (const std::string identifier : {"stable-config-id", "Primary", "7"}) {
+    const std::string listConfigs = service.HandlePayload(
+        "cmd=LIST_CONFIGS", output);
+    Check(listConfigs ==
+              "status=ok;data=stable-config-id%2CPrimary%20"
+              "%E7%A4%BA%E4%BE%8B%3Bsecond-config-id%2CSecond",
+          "config query should use the FolderRewind id,name wire format");
+
+    for (const std::string identifier : {
+             "stable-config-id", "Primary 示例", "7"}) {
         const auto response = ParseResponse(service.HandlePayload(
             "cmd=LIST_FOLDERS;config_id=" +
                 KnotLinkKeyValueCodec::EncodeValue(identifier),
@@ -60,9 +75,63 @@ void TestQueriesAndTargetResolution(KnotLinkService& service, Console& output) {
         Check(response.values.find("status") != response.values.end() &&
                   response.values.at("status") == "ok",
               "config_id should resolve by stable ID, name, and numeric key");
-        Check(response.values.at("data").find("World One") != std::string::npos,
-              "folder query should return the configured world");
+        Check(response.values.at("data") == "World One;Nether 世界",
+              "folder query should use the FolderRewind semicolon list format");
     }
+
+    Check(service.HandlePayload(
+              "cmd=LIST_FOLDERS;config_id=stable-config-id", output) ==
+              "status=ok;data=World%20One%3BNether%20"
+              "%E4%B8%96%E7%95%8C",
+          "folder names should be encoded once as the outer data scalar");
+
+    Check(service.HandlePayload(
+              "cmd=GET_CONFIG;config_id=stable-config-id", output) ==
+              "status=ok;data=name%3DPrimary%20%E7%A4%BA%E4%BE%8B"
+              "%3Bbackup_mode%3DFull%3Bformat%3D7z%3Bkeep_count%3D0",
+          "config details should use the FolderRewind nested key-value format");
+
+    const auto backupRoot =
+        std::filesystem::temp_directory_path() /
+        ("minebackup-knotlink-command-test-" +
+         std::to_string(std::chrono::steady_clock::now()
+                            .time_since_epoch()
+                            .count()));
+    std::error_code cleanupError;
+    std::filesystem::remove_all(backupRoot, cleanupError);
+    const auto backupDirectory = backupRoot / "World One";
+    std::filesystem::create_directories(backupDirectory);
+    std::ofstream(backupDirectory / "[Full] World One.7z").put('x');
+    std::ofstream(backupDirectory / "[Smart] World One.zip").put('x');
+    std::ofstream(backupDirectory / "ignore.txt").put('x');
+    g_appState.configs.at(7).backupPath = backupRoot.wstring();
+    const auto backups = ParseResponse(service.HandlePayload(
+        "cmd=LIST_BACKUPS;config_id=stable-config-id;folder=0", output));
+    Check(backups.values.at("data") ==
+              "[Full] World One.7z;[Smart] World One.zip" ||
+              backups.values.at("data") ==
+                  "[Smart] World One.zip;[Full] World One.7z",
+          "backup query should return separate archive completion candidates");
+    Check(backups.values.at("data").find("ignore.txt") == std::string::npos,
+          "backup query should exclude non-archive files");
+    std::filesystem::remove_all(backupRoot, cleanupError);
+
+    const auto capabilities = ParseResponse(
+        service.HandlePayload("cmd=GET_CAPABILITIES", output));
+    Check(capabilities.values.at("encoding") == "percent",
+          "capability metadata should describe percent-encoded values");
+
+    const auto status = ParseResponse(
+        service.HandlePayload("cmd=GET_STATUS", output));
+    Check(status.values.at("data").starts_with("enabled=") &&
+              status.values.at("data").find(";initialized=") !=
+                  std::string::npos &&
+              status.values.at("data").find(";active_auto_backups=") !=
+                  std::string::npos &&
+              status.values.at("data").find(";active_tasks=") !=
+                  std::string::npos &&
+              !status.values.at("data").starts_with("{"),
+          "status query should use the FolderRewind nested key-value format");
 
     const auto ping = ParseResponse(
         service.HandlePayload("cmd=ping;future_extension=value", output));

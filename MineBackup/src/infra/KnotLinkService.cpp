@@ -8,9 +8,9 @@
 #include "Broadcast.h"
 #include "Console.h"
 #include "FolderRewindFormat.h"
+#include "Globals.h"
 #include "HistoryManager.h"
 #include "TaskCoordinator.h"
-#include "json.hpp"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -24,8 +24,6 @@
 #include <sstream>
 #include <stop_token>
 #include <utility>
-
-using nlohmann::json;
 
 MyFolder GetOccupiedWorld();
 
@@ -56,6 +54,35 @@ std::string LowerAscii(std::string value) {
         return static_cast<char>(std::tolower(character));
     });
     return value;
+}
+
+std::string JoinDelimited(
+    const std::vector<std::string>& values, char delimiter = ';') {
+    std::string result;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0) {
+            result.push_back(delimiter);
+        }
+        result.append(values[index]);
+    }
+    return result;
+}
+
+std::string BackupModeName(int mode) {
+    switch (mode) {
+    case 2:
+        return "Incremental";
+    case 3:
+        return "Overwrite";
+    default:
+        return "Full";
+    }
+}
+
+bool IsSupportedBackupArchive(const std::filesystem::path& path) {
+    const std::string extension =
+        LowerAscii(wstring_to_utf8(path.extension().wstring()));
+    return extension == ".7z" || extension == ".zip";
 }
 
 bool TryParseInteger(std::string_view value, int& result) {
@@ -263,7 +290,8 @@ std::optional<std::wstring> LatestBackup(const ResolvedFolder& folder) {
         if (error) {
             return std::nullopt;
         }
-        if (!entry.is_regular_file()) {
+        if (!entry.is_regular_file() ||
+            !IsSupportedBackupArchive(entry.path())) {
             continue;
         }
         if (!latest.has_value() ||
@@ -278,8 +306,7 @@ std::optional<std::wstring> LatestBackup(const ResolvedFolder& folder) {
 
 KnotLinkProtocolFormatter::Fields EventTargetFields(const ResolvedFolder& folder) {
     return {
-        {"config_id", wstring_to_utf8(folder.config.configId)},
-        {"config", std::to_string(folder.configIndex)},
+        {"config", wstring_to_utf8(folder.config.configId)},
         {"folder", wstring_to_utf8(folder.folderName)}};
 }
 
@@ -477,30 +504,47 @@ std::string KnotLinkService::HandleRequest(
     if (request.command == "GET_CAPABILITIES") {
         return ok({
             {"content_type", "application/json"},
-            {"encoding", "utf-8"},
+            {"encoding", "percent"},
             {"manifest_version", std::string(KnotLinkCapabilities::ManifestVersion)},
             {"func_list", std::string(KnotLinkCapabilities::ManifestJson())}});
     }
     if (request.command == "GET_STATUS") {
-        json data = {
-            {"knotlink_running", IsRunning()},
-            {"mod_detected", g_appState.knotLinkMod.modDetected.load()},
-            {"mod_compatible", g_appState.knotLinkMod.versionCompatible.load()},
-            {"mod_version", g_appState.knotLinkMod.modVersion},
-            {"minimum_mod_version", KnotLinkModInfo::MIN_MOD_VERSION}};
-        return ok({{"data", data.dump()}});
+        std::size_t activeAutoBackups = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_appState.task_mutex);
+            activeAutoBackups = g_appState.g_active_auto_backups.size();
+        }
+        const std::string enabled = g_enableKnotLink ? "True" : "False";
+        const std::string initialized = IsRunning() ? "True" : "False";
+        const std::string autoBackupCount = std::to_string(activeAutoBackups);
+        const std::string activeTaskCount =
+            std::to_string(TaskCoordinator::Instance().ActiveTaskCount());
+        const std::string data =
+            "enabled=" + enabled +
+            ";initialized=" + initialized +
+            ";active_auto_backups=" + autoBackupCount +
+            ";active_tasks=" + activeTaskCount;
+        Broadcast("status",
+                  {{"enabled", enabled},
+                   {"initialized", initialized},
+                   {"active_auto_backups", autoBackupCount},
+                   {"active_tasks", activeTaskCount}},
+                  context);
+        return ok({{"data", data}});
     }
     if (request.command == "LIST_CONFIGS") {
-        json data = json::array();
-        std::lock_guard<std::mutex> lock(g_appState.configsMutex);
-        for (const auto& [index, config] : g_appState.configs) {
-            data.push_back({
-                {"index", index},
-                {"config_id", wstring_to_utf8(config.configId)},
-                {"name", config.name}});
+        std::vector<std::string> records;
+        {
+            std::lock_guard<std::mutex> lock(g_appState.configsMutex);
+            for (const auto& [index, config] : g_appState.configs) {
+                (void)index;
+                records.push_back(
+                    wstring_to_utf8(config.configId) + "," + config.name);
+            }
         }
-        Broadcast("list_configs", {{"data", data.dump()}}, context);
-        return ok({{"data", data.dump()}});
+        const std::string data = JoinDelimited(records);
+        Broadcast("list_configs", {{"data", data}}, context);
+        return ok({{"data", data}});
     }
     if (request.command == "LIST_FOLDERS") {
         const auto resolved = ResolveConfig(request.Get("config_id"));
@@ -508,18 +552,16 @@ std::string KnotLinkService::HandleRequest(
             return error("Unknown or missing config_id.");
         }
         const auto& [configIndex, config] = *resolved;
-        json data = json::array();
-        for (std::size_t index = 0; index < config.worlds.size(); ++index) {
-            data.push_back({
-                {"index", index},
-                {"name", wstring_to_utf8(config.worlds[index].first)},
-                {"path", wstring_to_utf8(
-                             JoinPath(config.saveRoot, config.worlds[index].first).wstring())}});
+        (void)configIndex;
+        std::vector<std::string> folders;
+        for (const auto& folder : config.worlds) {
+            folders.push_back(wstring_to_utf8(folder.first));
         }
+        const std::string data = JoinDelimited(folders);
         Broadcast("list_folders",
-                  {{"config", std::to_string(configIndex)}, {"data", data.dump()}},
+                  {{"config", wstring_to_utf8(config.configId)}, {"data", data}},
                   context);
-        return ok({{"data", data.dump()}});
+        return ok({{"data", data}});
     }
     if (request.command == "LIST_BACKUPS") {
         std::string targetError;
@@ -527,22 +569,24 @@ std::string KnotLinkService::HandleRequest(
         if (!folder.has_value()) {
             return error(targetError);
         }
-        json data = json::array();
+        std::vector<std::string> archiveNames;
         const auto directory = BackupDirectory(*folder);
         std::error_code iteratorError;
         if (std::filesystem::exists(directory)) {
             for (const auto& entry :
                  std::filesystem::directory_iterator(directory, iteratorError)) {
-                if (!iteratorError && entry.is_regular_file()) {
-                    data.push_back(
+                if (!iteratorError && entry.is_regular_file() &&
+                    IsSupportedBackupArchive(entry.path())) {
+                    archiveNames.push_back(
                         wstring_to_utf8(entry.path().filename().wstring()));
                 }
             }
         }
+        const std::string data = JoinDelimited(archiveNames);
         auto fields = EventTargetFields(*folder);
-        fields.emplace_back("data", data.dump());
+        fields.emplace_back("data", data);
         Broadcast("list_backups", fields, context);
-        return ok({{"data", data.dump()}});
+        return ok({{"data", data}});
     }
     if (request.command == "GET_CONFIG") {
         const auto resolved = ResolveConfig(request.Get("config_id"));
@@ -550,17 +594,23 @@ std::string KnotLinkService::HandleRequest(
             return error("Unknown or missing config_id.");
         }
         const auto& [configIndex, config] = *resolved;
-        json data = {
-            {"index", configIndex},
-            {"config_id", wstring_to_utf8(config.configId)},
-            {"name", config.name},
-            {"backup_mode", config.backupMode == 2 ? "incremental" : "full"},
-            {"compression_method", wstring_to_utf8(config.zipMethod)},
-            {"compression_level", config.zipLevel},
-            {"keep_count", config.keepCount}};
+        (void)configIndex;
+        const std::string mode = BackupModeName(config.backupMode);
+        const std::string format = wstring_to_utf8(config.zipFormat);
+        const std::string keepCount = std::to_string(config.keepCount);
+        const std::string data =
+            "name=" + config.name +
+            ";backup_mode=" + mode +
+            ";format=" + format +
+            ";keep_count=" + keepCount;
         Broadcast("get_config",
-                  {{"config", std::to_string(configIndex)}}, context);
-        return ok({{"data", data.dump()}});
+                  {{"config", wstring_to_utf8(config.configId)},
+                   {"name", config.name},
+                   {"backup_mode", mode},
+                   {"format", format},
+                   {"keep_count", keepCount}},
+                  context);
+        return ok({{"data", data}});
     }
 
     if (request.command == "HANDSHAKE_RESPONSE") {

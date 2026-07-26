@@ -31,6 +31,18 @@ parsed, its response and events inherit `from` and `request_id`. The mutating
 commands `BACKUP`, `RESTORE`, `BACKUP_ALL`, `AUTO_BACKUP`,
 `STOP_AUTO_BACKUP`, and `MARK_IMPORTANT` require both fields.
 
+Query `data` is a single outer percent-encoded scalar and deliberately uses
+the same command-specific payloads as FolderRewind:
+
+- `LIST_CONFIGS`: `config-id,name;config-id,name`
+- `LIST_FOLDERS`: `folder-name;folder-name`
+- `LIST_BACKUPS`: `archive.7z;archive.zip`
+- `GET_CONFIG`: `name=...;backup_mode=...;format=...;keep_count=...`
+- `GET_STATUS`: `enabled=...;initialized=...;active_auto_backups=...;active_tasks=...`
+
+The separators above are part of the decoded `data` value. They are encoded
+as `%2C`, `%3B`, and `%3D` on the wire; `data` is not a JSON array or object.
+
 ```text
 cmd=BACKUP;from=example.mod;request_id=req-42;config_id=primary;folder=0;comment=Before%20update
 status=ok;from=example.mod;request_id=req-42;message=Command%20accepted.
@@ -112,6 +124,7 @@ command. Local console business commands also use v2 payloads; `HELP`,
 
 - `specVersion=1.0`
 - `manifestVersion=2.0.0`
+- response `encoding=percent`
 - `appID=0x00000020`
 - `openSocketID=0x00000010`
 - `signalID=0x00000020`
@@ -154,6 +167,13 @@ MineBackup 仅实现与 FolderRewind 完全一致的 v2 参数化协议，不协
 响应统一为 `status=ok|error`。可变更状态的命令必须携带 `from` 与
 `request_id`；响应、`command_accepted`、`command_started`、
 `command_completed`/`command_failed` 以及业务事件都会继承这两个关联字段。
+
+查询响应的 `data` 是一个整体进行外层 percent-encoding 的标量，并严格沿用
+FolderRewind 的命令专属内部格式：`LIST_CONFIGS` 为
+`配置ID,名称;配置ID,名称`，`LIST_FOLDERS` 为 `文件夹名;文件夹名`，
+`LIST_BACKUPS` 为 `备份包;备份包`，`GET_CONFIG` 和 `GET_STATUS` 为内嵌的
+分号分隔键值串。线上的逗号、分号和等号分别编码为 `%2C`、`%3B`、`%3D`；
+这些 `data` 不是 JSON 数组或对象。
 
 查询命令为 `PING`、`GET_CAPABILITIES`、`GET_STATUS`、`LIST_CONFIGS`、
 `LIST_FOLDERS`、`LIST_BACKUPS`、`GET_CONFIG`。操作命令为 `BACKUP`、

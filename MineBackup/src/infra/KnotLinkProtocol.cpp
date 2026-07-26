@@ -1,9 +1,11 @@
 #include "KnotLinkProtocol.h"
+#include "json.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdio>
+#include <initializer_list>
 #include <set>
 
 namespace minebackup::knotlink {
@@ -55,47 +57,271 @@ bool IsReservedField(
             normalized == "request_id");
 }
 
-constexpr std::string_view kManifest = R"json({
-  "specVersion":"1.0",
-  "manifestVersion":"2.0.0",
-  "appName":"MineBackup",
-  "openSocket":{
-    "get_capabilities":{"appID":"0x00000020","openSocketID":"0x00000010","command":"GET_CAPABILITIES","args":["cmd"],"returns":["status","content_type","encoding","manifest_version","func_list"]},
-    "ping":{"appID":"0x00000020","openSocketID":"0x00000010","command":"PING","args":["cmd"],"returns":["status","message"]},
-    "get_status":{"appID":"0x00000020","openSocketID":"0x00000010","command":"GET_STATUS","args":["cmd"],"returns":["status","data"]},
-    "list_configs":{"appID":"0x00000020","openSocketID":"0x00000010","command":"LIST_CONFIGS","args":["cmd"],"returns":["status","data"]},
-    "list_folders":{"appID":"0x00000020","openSocketID":"0x00000010","command":"LIST_FOLDERS","args":["cmd","config_id"],"returns":["status","data"]},
-    "list_backups":{"appID":"0x00000020","openSocketID":"0x00000010","command":"LIST_BACKUPS","args":["cmd","config_id","folder","current_save"],"returns":["status","data"]},
-    "get_config":{"appID":"0x00000020","openSocketID":"0x00000010","command":"GET_CONFIG","args":["cmd","config_id"],"returns":["status","data"]},
-    "backup":{"appID":"0x00000020","openSocketID":"0x00000010","command":"BACKUP","args":["cmd","from","request_id","config_id","folder","current_save","comment","backup_mode","compression_method","compression_level","backup_blacklist"],"returns":["status","message"]},
-    "restore":{"appID":"0x00000020","openSocketID":"0x00000010","command":"RESTORE","args":["cmd","from","request_id","config_id","folder","current_save","file","mode","confirm_partial_clean","restore_whitelist"],"returns":["status","message"]},
-    "backup_all":{"appID":"0x00000020","openSocketID":"0x00000010","command":"BACKUP_ALL","args":["cmd","from","request_id","config_id","comment","backup_mode","compression_method","compression_level","backup_blacklist"],"returns":["status","message"]},
-    "auto_backup":{"appID":"0x00000020","openSocketID":"0x00000010","command":"AUTO_BACKUP","args":["cmd","from","request_id","config_id","folder","interval_minutes"],"returns":["status","message"]},
-    "stop_auto_backup":{"appID":"0x00000020","openSocketID":"0x00000010","command":"STOP_AUTO_BACKUP","args":["cmd","from","request_id","config_id","folder"],"returns":["status","message"]},
-    "mark_important":{"appID":"0x00000020","openSocketID":"0x00000010","command":"MARK_IMPORTANT","args":["cmd","from","request_id","config_id","folder","file","important"],"returns":["status","message"]}
-  },
-  "signal":{
-    "app_startup":{"appID":"0x00000020","signalID":"0x00000020"},
-    "command_accepted":{"appID":"0x00000020","signalID":"0x00000020"},
-    "command_started":{"appID":"0x00000020","signalID":"0x00000020"},
-    "command_completed":{"appID":"0x00000020","signalID":"0x00000020"},
-    "command_failed":{"appID":"0x00000020","signalID":"0x00000020"},
-    "backup_started":{"appID":"0x00000020","signalID":"0x00000020"},
-    "backup_success":{"appID":"0x00000020","signalID":"0x00000020"},
-    "backup_failed":{"appID":"0x00000020","signalID":"0x00000020"},
-    "restore_started":{"appID":"0x00000020","signalID":"0x00000020"},
-    "restore_success":{"appID":"0x00000020","signalID":"0x00000020"},
-    "restore_failed":{"appID":"0x00000020","signalID":"0x00000020"},
-    "backup_all_started":{"appID":"0x00000020","signalID":"0x00000020"},
-    "backup_all_completed":{"appID":"0x00000020","signalID":"0x00000020"},
-    "backup_all_failed":{"appID":"0x00000020","signalID":"0x00000020"},
-    "auto_backup_started":{"appID":"0x00000020","signalID":"0x00000020"},
-    "auto_backup_executed":{"appID":"0x00000020","signalID":"0x00000020"},
-    "auto_backup_error":{"appID":"0x00000020","signalID":"0x00000020"},
-    "auto_backup_stopped":{"appID":"0x00000020","signalID":"0x00000020"},
-    "mark_important":{"appID":"0x00000020","signalID":"0x00000020"}
-  }
-})json";
+using nlohmann::json;
+
+json StaticArgument(std::string_view value) {
+    return {
+        {"type", "static"},
+        {"value", std::string(value)},
+        {"description", "Operation command."}};
+}
+
+json InputArgument(std::string_view description, std::string_view defaultValue) {
+    return {
+        {"type", "input"},
+        {"description", std::string(description)},
+        {"defaultVal", std::string(defaultValue)}};
+}
+
+json OptionalArgument(
+    std::string_view description,
+    std::initializer_list<std::pair<std::string_view, std::string_view>> options) {
+    json encodedOptions = json::array();
+    for (const auto& [label, value] : options) {
+        encodedOptions.push_back(
+            json::array({std::string(label), std::string(value)}));
+    }
+    return {
+        {"type", "optional"},
+        {"options", std::move(encodedOptions)},
+        {"description", std::string(description)}};
+}
+
+json BooleanArgument(std::string_view description) {
+    return OptionalArgument(description, {{"True", "true"}, {"False", "false"}});
+}
+
+json StatusReturns(std::initializer_list<std::string_view> extraFields) {
+    json result = json::array({
+        json::array({"Operation status.", "status"})});
+    for (const auto field : extraFields) {
+        result.push_back(json::array({
+            "Response " + std::string(field) + ".", std::string(field)}));
+    }
+    return result;
+}
+
+void AddFunction(
+    json& manifest,
+    std::string_view name,
+    std::string_view command,
+    std::string_view description,
+    json args,
+    std::initializer_list<std::string_view> returnFields) {
+    args["cmd"] = StaticArgument(command);
+    manifest["openSocket"][std::string(name)] = {
+        {"appID", std::string(KnotLinkCapabilities::AppId)},
+        {"openSocketID", std::string(KnotLinkCapabilities::OpenSocketId)},
+        {"description", std::string(description)},
+        {"args", std::move(args)},
+        {"returns", StatusReturns(returnFields)}};
+}
+
+void AddSignal(
+    json& manifest,
+    std::string_view name,
+    std::string_view description,
+    std::initializer_list<std::pair<std::string_view, std::string_view>> fields = {}) {
+    json returns = json::object({
+        {"event", {
+            {"description", "Signal event name."},
+            {"verification", std::string(name)}}}});
+    for (const auto& [field, fieldDescription] : fields) {
+        returns[std::string(field)] = {
+            {"description", std::string(fieldDescription)}};
+    }
+    manifest["signal"][std::string(name)] = {
+        {"appID", std::string(KnotLinkCapabilities::AppId)},
+        {"signalID", std::string(KnotLinkCapabilities::SignalId)},
+        {"description", std::string(description)},
+        {"returns", std::move(returns)}};
+}
+
+json ConversationArguments(json args) {
+    args["from"] =
+        InputArgument("Required caller identifier.", "example.client");
+    args["request_id"] =
+        InputArgument("Required unique request correlation ID.", "request-001");
+    return args;
+}
+
+std::string BuildManifest() {
+    json manifest = {
+        {"specVersion", std::string(KnotLinkCapabilities::SpecVersion)},
+        {"manifestVersion", std::string(KnotLinkCapabilities::ManifestVersion)},
+        {"appName", "MineBackup"},
+        {"openSocket", json::object()},
+        {"signal", json::object()}};
+
+    AddFunction(
+        manifest, "get_capabilities", "GET_CAPABILITIES",
+        "Get the runtime MineBackup funcList manifest.", json::object(),
+        {"content_type", "encoding", "manifest_version", "func_list"});
+    AddFunction(
+        manifest, "ping", "PING",
+        "Check whether the MineBackup KnotLink endpoint is available.",
+        json::object(), {"message"});
+    AddFunction(
+        manifest, "get_status", "GET_STATUS",
+        "Get MineBackup runtime status.", json::object(), {"data"});
+    AddFunction(
+        manifest, "list_configs", "LIST_CONFIGS",
+        "List backup configurations.", json::object(), {"data"});
+    AddFunction(
+        manifest, "list_folders", "LIST_FOLDERS",
+        "List managed folders in a backup configuration.",
+        json::object({
+            {"config_id", InputArgument(
+                "Backup configuration ID.", "config-id")}}),
+        {"data"});
+    AddFunction(
+        manifest, "list_backups", "LIST_BACKUPS",
+        "List backup archives for a managed folder.",
+        json::object({
+            {"config_id", InputArgument(
+                "Backup configuration ID.", "config-id")},
+            {"folder", InputArgument("Folder name or index.", "0")},
+            {"current_save", BooleanArgument(
+                "Use the currently active Minecraft world.")}}),
+        {"data"});
+    AddFunction(
+        manifest, "get_config", "GET_CONFIG",
+        "Get public settings for a backup configuration.",
+        json::object({
+            {"config_id", InputArgument(
+                "Backup configuration ID.", "config-id")}}),
+        {"data"});
+
+    const json backupOverrides = {
+        {"comment", InputArgument("Optional backup comment.", "")},
+        {"backup_mode", OptionalArgument(
+            "Optional one-shot backup mode.",
+            {{"Full", "full"}, {"Incremental", "incremental"}})},
+        {"compression_method", OptionalArgument(
+            "Optional one-shot compression method.",
+            {{"LZMA2", "LZMA2"}, {"Deflate", "Deflate"},
+             {"BZip2", "BZip2"}, {"zstd", "zstd"}})},
+        {"compression_level", InputArgument(
+            "Optional one-shot compression level.", "")},
+        {"backup_blacklist", InputArgument(
+            "Comma-separated one-shot blacklist rules.", "")}};
+
+    json backupArgs = backupOverrides;
+    backupArgs["config_id"] =
+        InputArgument("Backup configuration ID.", "config-id");
+    backupArgs["folder"] = InputArgument("Folder name or index.", "0");
+    backupArgs["current_save"] =
+        BooleanArgument("Use the currently active Minecraft world.");
+    AddFunction(
+        manifest, "backup", "BACKUP",
+        "Start a backup for one managed folder.",
+        ConversationArguments(std::move(backupArgs)), {"message"});
+
+    AddFunction(
+        manifest, "restore", "RESTORE",
+        "Start restoring a managed folder from an archive.",
+        ConversationArguments(json::object({
+            {"config_id", InputArgument(
+                "Backup configuration ID.", "config-id")},
+            {"folder", InputArgument("Folder name or index.", "0")},
+            {"current_save", BooleanArgument(
+                "Use the currently active Minecraft world.")},
+            {"file", InputArgument(
+                "Backup archive file name; empty selects the latest archive.", "")},
+            {"mode", OptionalArgument(
+                "Restore mode.",
+                {{"Overwrite", "overwrite"}, {"Clean", "clean"}})},
+            {"confirm_partial_clean", BooleanArgument(
+                "Confirm clean restore from a partial backup.")},
+            {"restore_whitelist", InputArgument(
+                "Comma-separated one-shot restore whitelist rules.", "")}})),
+        {"message"});
+
+    json backupAllArgs = backupOverrides;
+    backupAllArgs["config_id"] =
+        InputArgument("Backup configuration ID.", "config-id");
+    AddFunction(
+        manifest, "backup_all", "BACKUP_ALL",
+        "Start backing up every folder in a configuration.",
+        ConversationArguments(std::move(backupAllArgs)), {"message"});
+    AddFunction(
+        manifest, "auto_backup", "AUTO_BACKUP",
+        "Start periodic backup for one managed folder.",
+        ConversationArguments(json::object({
+            {"config_id", InputArgument(
+                "Backup configuration ID.", "config-id")},
+            {"folder", InputArgument("Folder name or index.", "0")},
+            {"interval_minutes", InputArgument(
+                "Backup interval in minutes.", "10")}})),
+        {"message"});
+    AddFunction(
+        manifest, "stop_auto_backup", "STOP_AUTO_BACKUP",
+        "Stop periodic backup for one managed folder.",
+        ConversationArguments(json::object({
+            {"config_id", InputArgument(
+                "Backup configuration ID.", "config-id")},
+            {"folder", InputArgument("Folder name or index.", "0")}})),
+        {"message"});
+    AddFunction(
+        manifest, "mark_important", "MARK_IMPORTANT",
+        "Mark or unmark a backup archive as important.",
+        ConversationArguments(json::object({
+            {"config_id", InputArgument(
+                "Backup configuration ID.", "config-id")},
+            {"folder", InputArgument("Folder name or index.", "0")},
+            {"file", InputArgument("Backup archive file name.", "backup.7z")},
+            {"important", BooleanArgument(
+                "Whether the archive is important.")}})),
+        {"message"});
+
+    AddSignal(
+        manifest, "app_startup", "MineBackup KnotLink endpoint started.",
+        {{"version", "Application version."}});
+    AddSignal(
+        manifest, "list_configs", "Backup configuration list was queried.",
+        {{"data", "Encoded result data."}});
+    AddSignal(
+        manifest, "list_folders", "Managed folder list was queried.",
+        {{"config", "Configuration ID."}, {"data", "Encoded result data."}});
+    AddSignal(
+        manifest, "list_backups", "Backup archive list was queried.",
+        {{"config", "Configuration ID."}, {"folder", "Folder name."},
+         {"data", "Encoded result data."}});
+    AddSignal(
+        manifest, "get_config", "Backup configuration details were queried.",
+        {{"config", "Configuration ID."}});
+    AddSignal(manifest, "status", "Runtime status was queried.");
+    for (const auto name : {
+             "command_accepted", "command_started", "command_completed",
+             "command_failed"}) {
+        AddSignal(
+            manifest, name, "Command lifecycle event.",
+            {{"command", "Command name."},
+             {"request_id", "Request correlation ID."}});
+    }
+    for (const auto name : {
+             "backup_started", "backup_success", "backup_failed",
+             "restore_started", "restore_success", "restore_failed",
+             "auto_backup_started", "auto_backup_executed",
+             "auto_backup_error", "auto_backup_stopped"}) {
+        AddSignal(
+            manifest, name, "Folder operation event.",
+            {{"config", "Configuration ID."}, {"folder", "Folder name."}});
+    }
+    for (const auto name : {
+             "backup_all_started", "backup_all_completed",
+             "backup_all_failed"}) {
+        AddSignal(
+            manifest, name, "Configuration backup event.",
+            {{"config", "Configuration ID."}});
+    }
+    AddSignal(
+        manifest, "mark_important", "A backup importance flag changed.",
+        {{"config", "Configuration ID."}, {"folder", "Folder name."},
+         {"file", "Backup archive file."},
+         {"important", "New importance value."}});
+    return manifest.dump();
+}
 
 } // namespace
 
@@ -392,7 +618,8 @@ std::string KnotLinkProtocolFormatter::Format(
 }
 
 std::string_view KnotLinkCapabilities::ManifestJson() {
-    return kManifest;
+    static const std::string manifest = BuildManifest();
+    return manifest;
 }
 
 } // namespace minebackup::knotlink

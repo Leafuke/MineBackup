@@ -153,6 +153,14 @@ bool TaskCoordinator::IsAcceptingTasks() const {
     return impl_->accepting;
 }
 
+size_t TaskCoordinator::ActiveTaskCount() const {
+    if (!impl_) return 0;
+    lock_guard lock(impl_->stateMutex);
+    return static_cast<size_t>(count_if(
+        impl_->tasks.begin(), impl_->tasks.end(),
+        [](const auto& task) { return !task->done->load(); }));
+}
+
 stop_token TaskCoordinator::CurrentStopToken() {
     return g_currentStopToken;
 }

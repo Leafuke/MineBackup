@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <cstddef>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -26,6 +27,7 @@ public:
     std::vector<TaskEvent> PollEvents();
     void StopAndJoin();
     bool IsAcceptingTasks() const;
+    std::size_t ActiveTaskCount() const;
 
     static std::stop_token CurrentStopToken();
     static std::wstring WorldResourceKey(
