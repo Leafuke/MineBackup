@@ -364,8 +364,11 @@ FodyWeavers.xsd
 *.7z
 *.ini
 *.txt
+!LICENSES/
+!LICENSES/*.txt
 *.otf
 *.exe
+!MineBackup/Assets/7za.exe
 history.dat
 history.json
 build/
@@ -375,4 +378,6 @@ References/
 !MineBackup/Assets/fontawesome-sp.otf
 superpowers/
 .superpowers/
-docs/adr
+# CMake out-of-source build directories
+/build/
+/build-*/

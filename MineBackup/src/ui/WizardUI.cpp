@@ -4,9 +4,11 @@
 #include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
 
 using namespace std;
 
@@ -46,16 +48,16 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 	ImGui::Begin(L("WIZARD_TITLE"), &isWizardOpen, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
 
 	if (page == 0) {
-		ImGui::Text(L("WIZARD_WELCOME"));
+		ImGui::TextUnformatted(L("WIZARD_WELCOME"));
 		ImGui::Separator();
-		ImGui::TextWrapped(L("WIZARD_INTRO1"));
-		ImGui::TextWrapped(L("WIZARD_INTRO2"));
-		ImGui::TextWrapped(L("WIZARD_INTRO3"));
+		ImGui::TextWrapped("%s", L("WIZARD_INTRO1"));
+		ImGui::TextWrapped("%s", L("WIZARD_INTRO2"));
+		ImGui::TextWrapped("%s", L("WIZARD_INTRO3"));
 
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
 		
 		// 语言选择
-		ImGui::Text(L("LANGUAGE"));
+		ImGui::TextUnformatted(L("LANGUAGE"));
 		if (ImGui::Combo("##WizardLang", &wizardLangIdx, langs, IM_ARRAYSIZE(langs))) {
 			SetLanguage(lang_codes[wizardLangIdx]);
 			// 切换到中文时，如果字体路径为空，自动设置中文字体
@@ -73,9 +75,9 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		ImGui::Dummy(ImVec2(0.0f, 5.0f));
 		
 		// 字体路径设置
-		ImGui::Text(L("WIZARD_FONT_PATH"));
+		ImGui::TextUnformatted(L("WIZARD_FONT_PATH"));
 		if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
-			wstring selected_file = SelectFileDialog();
+			wstring selected_file = GetDesktopServices()->SelectFile().path.wstring();
 			if (!selected_file.empty()) {
 				strncpy_s(wizardFontPath, wstring_to_utf8(selected_file).c_str(), sizeof(wizardFontPath));
 				Fontss = selected_file;
@@ -91,25 +93,30 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 
 		ImGui::Dummy(ImVec2(0.0f, 5.0f));
 
-		ImGui::Text(L("THEME_SETTINGS"));
+		ImGui::TextUnformatted(L("THEME_SETTINGS"));
 		const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 		if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
-			if (themeId == 7 && !filesystem::exists("custom_theme.json")) {
+			const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
+			if (themeId == 7 && !filesystem::exists(customThemePath)) {
 				// 打开自定义主题编辑器
-				ImGuiTheme::WriteDefaultCustomTheme();
+				ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
 				// 打开 custom_theme.json 文件供用户编辑
-				OpenFolder(L"custom_theme.json");
+				(void)GetDesktopServices()->OpenFolder(customThemePath);
 			}
 			else {
 				ApplyTheme(themeId);
 			}
 		}
 
-		ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
+		static float pendingUiScale = g_uiScale;
+		if (ImGui::IsWindowAppearing()) {
+			pendingUiScale = g_uiScale;
+		}
+		ImGui::SliderFloat(L("UI_SCALE"), &pendingUiScale, 0.75f, 2.5f, "%.2f");
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_OK"))) {
-			ImGuiIO& io = ImGui::GetIO(); (void)io;
-			io.FontGlobalScale = g_uiScale;
+			g_uiScale = pendingUiScale;
+			ApplyTheme(themeId);
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -118,9 +125,9 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		}
 	}
 	else if (page == 1) {
-		ImGui::Text(L("WIZARD_STEP1_TITLE"));
-		ImGui::TextWrapped(L("WIZARD_STEP1_DESC1"));
-		ImGui::TextWrapped(L("WIZARD_STEP1_DESC2"));
+		ImGui::TextUnformatted(L("WIZARD_STEP1_TITLE"));
+		ImGui::TextWrapped("%s", L("WIZARD_STEP1_DESC1"));
+		ImGui::TextWrapped("%s", L("WIZARD_STEP1_DESC2"));
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
 		// 找路径
@@ -160,7 +167,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 #endif
 			}
 			else {
-				MessageBoxWin("Info", "Could not auto-detect Java edition saves. Please select manually.", 1);
+				MessageBoxWin(L("INFO_TITLE"), L("WIZARD_AUTO_JAVA_NOT_FOUND"), 1);
 			}
 		}
 		ImGui::SameLine();
@@ -206,11 +213,11 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 #endif
 			}
 			else {
-				MessageBoxWin("Info", "Could not auto-detect Bedrock edition saves. Please select manually.", 1);
+				MessageBoxWin(L("INFO_TITLE"), L("WIZARD_AUTO_BEDROCK_NOT_FOUND"), 1);
 			}
 		}
 		if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-			wstring selected_folder = SelectFolderDialog();
+			wstring selected_folder = GetDesktopServices()->SelectFolder().path.wstring();
 			if (!selected_folder.empty()) {
 				strncpy_s(saveRootPath, wstring_to_utf8(selected_folder).c_str(), sizeof(saveRootPath));
 			}
@@ -235,12 +242,12 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 			ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("WIZARD_PATH_EMPTY_OR_INVALID"));
 	}
 	else if (page == 2) {
-		ImGui::Text(L("WIZARD_STEP2_TITLE"));
-		ImGui::TextWrapped(L("WIZARD_STEP2_DESC"));
+		ImGui::TextUnformatted(L("WIZARD_STEP2_TITLE"));
+		ImGui::TextWrapped("%s", L("WIZARD_STEP2_DESC"));
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
 		if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-			wstring selected_folder = SelectFolderDialog();
+			wstring selected_folder = GetDesktopServices()->SelectFolder().path.wstring();
 			if (!selected_folder.empty()) {
 				strncpy_s(backupPath, wstring_to_utf8(selected_folder).c_str(), sizeof(backupPath));
 			}
@@ -268,8 +275,8 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 			ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("WIZARD_PATH_EMPTY_OR_INVALID"));
 	}
 	else if (page == 3) {
-		ImGui::Text(L("WIZARD_STEP3_TITLE"));
-		ImGui::TextWrapped(L("WIZARD_STEP3_DESC"));
+		ImGui::TextUnformatted(L("WIZARD_STEP3_TITLE"));
+		ImGui::TextWrapped("%s", L("WIZARD_STEP3_DESC"));
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
 		// 检查内嵌的7z是否已释放成功
 		if (sevenZipExtracted) {
@@ -279,21 +286,22 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		}
 		else {
 			// 如果释放失败，执行原来的自动检测逻辑
-			if (filesystem::exists("7z.exe"))
+			const auto bundled7z = GetAppPaths().toolsRoot / L"7zip" / L"7z.exe";
+			if (filesystem::exists(bundled7z))
 			{
-				strncpy_s(zipPath, "7z.exe", sizeof(zipPath));
-				ImGui::Text(L("AUTODETECTED_7Z"));
+				strncpy_s(zipPath, wstring_to_utf8(bundled7z.wstring()).c_str(), sizeof(zipPath));
+				ImGui::TextUnformatted(L("AUTODETECTED_7Z"));
 			}
 			else
 			{
 				static string zipTemp = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
 				strncpy_s(zipPath, zipTemp.c_str(), sizeof(zipPath));
 				if (strlen(zipPath) != 0)
-					ImGui::Text(L("AUTODETECTED_7Z"));
+					ImGui::TextUnformatted(L("AUTODETECTED_7Z"));
 			}
 		}
 		if (ImGui::Button(L("BUTTON_SELECT_FILE"))) {
-			wstring selected_file = SelectFileDialog();
+			wstring selected_file = GetDesktopServices()->SelectFile().path.wstring();
 			if (!selected_file.empty()) {
 				strncpy_s(zipPath, wstring_to_utf8(selected_file).c_str(), sizeof(zipPath));
 			}
@@ -304,7 +312,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		ImGui::Dummy(ImVec2(0.0f, 20.0f));
 		
 		ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip(L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 
 		ImGui::Dummy(ImVec2(0.0f, 20.0f));
 		if (ImGui::Button(L("BUTTON_PREVIOUS"))) page--;
@@ -397,7 +405,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				g_appState.showMainApp = true;
 			}
 		}
-		ImGui::Text(L("WIZARD_WARNING_TIPS"));
+		ImGui::TextUnformatted(L("WIZARD_WARNING_TIPS"));
 	}
 
 	ImGui::End();

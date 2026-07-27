@@ -1,0 +1,47 @@
+name: Windows CMake MSVC Shadow
+
+on:
+  pull_request:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+jobs:
+  compare-builds:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Verify tracked Windows 7-Zip resource
+        shell: pwsh
+        run: .\cmake\VerifyWindowsSevenZip.ps1
+
+      - name: Configure CMake MSVC build
+        shell: pwsh
+        run: cmake -S . -B build/windows-shadow -A x64 -DBUILD_TESTING=ON
+
+      - name: Check transitional source parity
+        shell: pwsh
+        run: cmake --build build/windows-shadow --config Release --target check_msbuild_source_parity
+
+      - name: Build and test CMake candidate
+        shell: pwsh
+        run: |
+          cmake --build build/windows-shadow --config Release --parallel
+          ctest --test-dir build/windows-shadow -C Release --output-on-failure
+          ./cmake/VerifyWindowsArtifact.ps1 -Executable build/windows-shadow/bin/Release/MineBackup.exe
+          ./cmake/SmokeTestWindowsArtifact.ps1 -Executable build/windows-shadow/bin/Release/MineBackup.exe
+
+      - name: Build and verify formal MSBuild candidate
+        shell: pwsh
+        run: |
+          msbuild ./MineBackup.sln /p:Configuration=Release /p:Platform=x64 /m
+          ./cmake/VerifyWindowsArtifact.ps1 -Executable x64/Release/MineBackup.exe
+          ./cmake/SmokeTestWindowsArtifact.ps1 -Executable x64/Release/MineBackup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cmake-shadow
+          path: build/windows-shadow/bin/Release/MineBackup.exe

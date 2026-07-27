@@ -1,0 +1,9 @@
+#include <winres.h>
+#include "@MINEBACKUP_ARTIFACT_SOURCE_DIR@/resource.h"
+
+IDR_EXE1 EXE "@MINEBACKUP_ARTIFACT_SOURCE_DIR@/Assets/7za.exe"
+IDI_ICON1 ICON "@MINEBACKUP_ARTIFACT_SOURCE_DIR@/Assets/icons/mine10.ico"
+IDI_ICON3 ICON "@MINEBACKUP_ARTIFACT_SOURCE_DIR@/Assets/icons/mine30.ico"
+IDR_FONTS1 FONTS "@MINEBACKUP_ARTIFACT_SOURCE_DIR@/Assets/fontawesome-sp.otf"
+
+#include "MineBackupVersion.rc.inc"

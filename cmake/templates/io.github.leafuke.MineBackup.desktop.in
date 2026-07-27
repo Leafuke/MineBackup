@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=MineBackup
+Comment=Cross-platform Minecraft world backup manager
+Exec=MineBackup
+Icon=io.github.leafuke.MineBackup
+Terminal=false
+Categories=Utility;
+StartupWMClass=MineBackup
+X-MineBackup-Version=@MINEBACKUP_VERSION@

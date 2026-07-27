@@ -1,5 +1,13 @@
 ﻿#include "SettingsUIPrivate.h"
 
+#include "AppPaths.h"
+#include "Broadcast.h"
+#include "Console.h"
+#include "ExternalToolManager.h"
+#include "KnotLinkServerManager.h"
+#include "KnotLinkService.h"
+#include "TaskCoordinator.h"
+
 using namespace std;
 
 static bool IsAsciiOnlyPath(const wstring& value) {
@@ -81,7 +89,7 @@ void DrawConfigManagementPanel() {
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		showDeleteConfigPopup = false;
 		if (specialSetting) {
-			ImGui::Text("[Sp.]");
+			ImGui::TextUnformatted(L("SPECIAL_CONFIG_BADGE"));
 			ImGui::SameLine();
 			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
 		}
@@ -118,7 +126,7 @@ void DrawConfigManagementPanel() {
 		static int config_type = 0;
 		static char new_config_name[128] = "New Config";
 
-		ImGui::Text(L("CONFIG_TYPE_LABEL"));
+		ImGui::TextUnformatted(L("CONFIG_TYPE_LABEL"));
 		ImGui::BeginGroup();
 		ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0);
 		ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));
@@ -174,12 +182,17 @@ void DrawConfigManagementPanel() {
 }
 
 void DrawPathSettings(Config& cfg) {
+	if (cfg.pendingLocalBinding) {
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+		ImGui::TextWrapped("%s", L("PORTABLE_BINDING_NOTICE"));
+		ImGui::PopStyleColor();
+	}
 	char rootBufA[256];
 	strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
 
 	ImGui::Text("%s", L("SAVES_ROOT_PATH"));
 	if (ImGui::Button(L("BUTTON_SELECT_SAVES_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.saveRoot = sel;
 		}
@@ -196,7 +209,7 @@ void DrawPathSettings(Config& cfg) {
 	strncpy_s(buf, wstring_to_utf8(cfg.backupPath).c_str(), sizeof(buf));
 	ImGui::Text("%s", L("BACKUP_DEST_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_BACKUP_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.backupPath = sel;
 		}
@@ -211,20 +224,17 @@ void DrawPathSettings(Config& cfg) {
 
 	char zipBuf[256];
 	strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
-	if (filesystem::exists("7z.exe") && cfg.zipPath.empty()) {
-		cfg.zipPath = L"7z.exe";
-		ImGui::Text("%s", L("AUTODETECTED_7Z"));
-	}
-	else if (cfg.zipPath.empty()) {
-		string zipPathStr = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
-		if (filesystem::exists(zipPathStr)) {
-			cfg.zipPath = utf8_to_wstring(zipPathStr);
+	if (cfg.zipPath.empty()) {
+		const auto detected = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
+		if (detected.available) {
+			cfg.zipPath = detected.executable.wstring();
+			strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
 			ImGui::Text("%s", L("AUTODETECTED_7Z"));
 		}
 	}
 	ImGui::Text("%s", L("7Z_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_7Z"))) {
-		wstring sel = SelectFileDialog();
+		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
 			cfg.zipPath = sel;
 		}
@@ -234,6 +244,58 @@ void DrawPathSettings(Config& cfg) {
 	if (ImGui::InputText("##ZipPath", zipBuf, 256)) {
 		cfg.zipPath = utf8_to_wstring(zipBuf);
 	}
+	static wstring toolStatus;
+	static bool toolStatusOk = false;
+	if (ImGui::Button(L("BUTTON_VERIFY_COMPRESSION_TOOL"),
+		ImVec2(CalcButtonWidth(L("BUTTON_VERIFY_COMPRESSION_TOOL")), 0))) {
+		const auto verified = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
+		toolStatusOk = verified.available;
+		if (verified.available) {
+			toolStatus = verified.fellBackFromUserPath
+				? MineFormatMessage("TOOL_FALLBACK_FORMAT", wstring_to_utf8(verified.executable.wstring()).c_str())
+				: MineFormatMessage("TOOL_FORMATS_VERIFIED", wstring_to_utf8(verified.executable.wstring()).c_str());
+		}
+		else {
+			toolStatus = verified.diagnostic;
+		}
+	}
+	if (!toolStatus.empty()) {
+		ImGui::PushStyleColor(ImGuiCol_Text, toolStatusOk
+			? ImVec4(0.30f, 0.75f, 0.35f, 1.0f)
+			: ImVec4(0.85f, 0.45f, 0.30f, 1.0f));
+		ImGui::TextWrapped("%s", wstring_to_utf8(toolStatus).c_str());
+		ImGui::PopStyleColor();
+	}
+	if (cfg.pendingLocalBinding) {
+		error_code bindingError;
+		const filesystem::path saveRoot = cfg.saveRoot;
+		const filesystem::path backupRoot = cfg.backupPath;
+		const bool saveRootValid = saveRoot.is_absolute() && filesystem::is_directory(saveRoot, bindingError) && !bindingError;
+		bindingError.clear();
+		bool backupRootValid = backupRoot.is_absolute() && filesystem::is_directory(backupRoot, bindingError) && !bindingError;
+		if (!backupRootValid && backupRoot.is_absolute() && !backupRoot.parent_path().empty()) {
+			bindingError.clear();
+			backupRootValid = filesystem::is_directory(backupRoot.parent_path(), bindingError) && !bindingError;
+		}
+		const bool canCompleteBinding = saveRootValid && backupRootValid && !cfg.zipPath.empty();
+		ImGui::BeginDisabled(!canCompleteBinding);
+		if (ImGui::Button(L("BUTTON_CONFIRM_LOCAL_BINDING"),
+			ImVec2(CalcButtonWidth(L("BUTTON_CONFIRM_LOCAL_BINDING")), 0))) {
+			const auto verifiedTool = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
+			if (verifiedTool.available) {
+				cfg.zipPath = verifiedTool.executable.wstring();
+				cfg.pendingLocalBinding = false;
+				cfg.cloudSyncEnabled = false;
+				toolStatusOk = true;
+				toolStatus = utf8_to_wstring(L("LOCAL_BINDING_COMPLETED"));
+			}
+			else {
+				toolStatusOk = false;
+				toolStatus = verifiedTool.diagnostic;
+			}
+		}
+		ImGui::EndDisabled();
+	}
 
 	ImGui::Spacing();
 
@@ -241,7 +303,7 @@ void DrawPathSettings(Config& cfg) {
 	strncpy_s(snapshotPathBuf, wstring_to_utf8(cfg.snapshotPath).c_str(), sizeof(snapshotPathBuf));
 	ImGui::Text("%s", L("SNAPSHOT_PATH"));
 	if (ImGui::Button(L("BUTTON_SELECT_SNAPSHOT_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.snapshotPath = sel;
 		}
@@ -259,17 +321,60 @@ void DrawModIntegrationSettings(Config& cfg) {
 	ImGui::TextWrapped("%s", L("TIP_MINEBACKUP_MOD_INTEGRATION_SUMMARY"));
 	ImGui::Spacing();
 
-	ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink);
+	if (ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink)) {
+		if (!g_enableKnotLink) {
+			CleanupKnotLink();
+			minebackup::knotlink::GetKnotLinkServerManager().Refresh(false);
+		}
+		else {
+			TaskCoordinator::Instance().Submit(
+				L"knotlink-settings-enable", {L"service:knotlink"}, [](stop_token) {
+					if (InitKnotLink(console)) {
+						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+					}
+				});
+		}
+	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 
+	ImGui::Checkbox(L("KNOTLINK_AUTO_START_SERVER"), &g_autoStartKnotLinkServer);
+	const auto serverStatus = minebackup::knotlink::GetKnotLinkServerManager().GetStatus();
+	ImGui::Text("%s: %s", L("KNOTLINK_CLIENT_STATUS"),
+		minebackup::knotlink::GetKnotLinkService().IsRunning()
+			? L("KNOTLINK_STATUS_READY")
+			: L("KNOTLINK_STATUS_STOPPED"));
+	ImGui::Text("%s: %s", L("KNOTLINK_SERVER_STATUS"),
+		minebackup::knotlink::KnotLinkServerManager::StateName(serverStatus.state));
+	ImGui::Text("%s: %s", L("KNOTLINK_SERVER_VERSION"),
+		serverStatus.version.empty() ? L("KNOTLINK_VERSION_UNKNOWN") : serverStatus.version.c_str());
+	ImGui::Text("%s: 6370=%s, 6378=%s", L("KNOTLINK_PORT_STATUS"),
+		serverStatus.signalPortReady ? L("KNOTLINK_PORT_READY") : L("KNOTLINK_PORT_CLOSED"),
+		serverStatus.responderPortReady ? L("KNOTLINK_PORT_READY") : L("KNOTLINK_PORT_CLOSED"));
+	if (!serverStatus.message.empty()) {
+		ImGui::TextWrapped("%s", serverStatus.message.c_str());
+	}
+
+	if (ImGui::Button(L("KNOTLINK_START_RETRY"), ImVec2(-1, 0))) {
+		TaskCoordinator::Instance().Submit(
+			L"knotlink-settings-start", {L"service:knotlink"}, [](stop_token) {
+				const auto status =
+					minebackup::knotlink::GetKnotLinkServerManager().StartCompatibleServer();
+				if (status.state == minebackup::knotlink::KnotLinkServerState::Ready) {
+					if (InitKnotLink(console)) {
+						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+					}
+				}
+			});
+	}
+
 	if (ImGui::Button(L("MOD_LINK_MINEBACKUP_MODRINTH"), ImVec2(-1, 0))) {
-		OpenLinkInBrowser(L"https://modrinth.com/mod/minebackup");
+		(void)GetDesktopServices()->OpenUri(L"https://modrinth.com/mod/minebackup");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_HOME"), ImVec2(-1, 0))) {
-		OpenLinkInBrowser(L"https://github.com/hxh230802/KnotLink");
+		(void)GetDesktopServices()->OpenUri(L"https://github.com/KnotLink-Protocol/KnotLink");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_DOWNLOAD"), ImVec2(-1, 0))) {
-		OpenLinkInBrowser(L"https://gh-proxy.org/https://github.com/hxh230802/KnotLink/releases/download/v1.0.0/KnotLinkService-1.0.0.0-Installer.exe");
+		(void)GetDesktopServices()->OpenUri(L"https://github.com/KnotLink-Protocol/KnotLink/releases");
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_KNOTLINK_DOWNLOAD_LINK"));
 
@@ -284,7 +389,7 @@ void DrawModIntegrationSettings(Config& cfg) {
 	strncpy_s(weSnapshotPathBuf, wstring_to_utf8(cfg.weSnapshotPath).c_str(), sizeof(weSnapshotPathBuf));
 	ImGui::Text("%s", L("WE_SNAPSHOT_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_WE_SNAPSHOT_DIR"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) {
 			cfg.weSnapshotPath = sel;
 		}
@@ -457,12 +562,12 @@ static void DrawRuleListBox(const char* listId, vector<wstring>& rules, int& sel
 
 void DrawBlacklistSettings(Config& cfg) {
 	if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
-		wstring sel = SelectFileDialog();
+		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) cfg.blacklist.push_back(sel);
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
-		wstring sel = SelectFolderDialog();
+		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) cfg.blacklist.push_back(sel);
 	}
 	ImGui::SameLine();

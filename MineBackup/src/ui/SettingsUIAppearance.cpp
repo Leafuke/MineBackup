@@ -1,8 +1,42 @@
 #include "SettingsUIPrivate.h"
 #include "HistoryManager.h"
 #include "CloudSyncService.h"
+#include "AppPaths.h"
+#include "TaskCoordinator.h"
+#include "ExternalToolManager.h"
+#include "NetworkBackendFactory.h"
+#include "NetworkService.h"
+#include "Sha256.h"
+#include "imgui_style.h"
 
 using namespace std;
+
+static wstring FormatPortableConfigPreview(const PortableConfigMergePreview& preview, const wchar_t* direction) {
+	wstringstream text;
+	text << direction << L"\n\nAdded: " << preview.added.size()
+		<< L"\nUpdated: " << preview.updated.size()
+		<< L"\nPreserved: " << preview.preserved.size() << L"\n";
+	auto appendIds = [&](const wchar_t* label, const vector<wstring>& ids) {
+		if (ids.empty()) return;
+		text << L"\n" << label << L":\n";
+		const size_t shown = (min)(ids.size(), static_cast<size_t>(20));
+		for (size_t index = 0; index < shown; ++index) text << L"  " << ids[index] << L"\n";
+		if (shown < ids.size()) text << L"  ... and " << (ids.size() - shown) << L" more\n";
+	};
+	appendIds(L"Added ConfigId", preview.added);
+	appendIds(L"Updated ConfigId", preview.updated);
+	appendIds(L"Preserved ConfigId", preview.preserved);
+	text << L"\nExcluded on both sides: local paths, tools, credentials, runtime state, special configs, commands, scripts and automation."
+		<< L"\n\nNo local or remote data changes until you confirm this preview.";
+	return text.str();
+}
+
+static wstring PortableConfigFingerprint(const map<int, Config>& configs) {
+	const string serialized = PortableConfigDocument::FromLocalConfigs(configs).Serialize();
+	Sha256 hash;
+	hash.Update(serialized.data(), serialized.size());
+	return utf8_to_wstring(hash.FinalHex());
+}
 
 static bool IsFontSupportChinese(const wstring& fontPath) {
 	if (fontPath.empty()) return false;
@@ -84,7 +118,7 @@ void DrawAppearanceSettings(Config& cfg) {
 
 		if (oldLang != g_CurrentLang) {
 			SaveConfigs();
-			ReStartApplication();
+			(void)GetDesktopServices()->RestartApplication();
 		}
 
 		prev_lang_idx = lang_idx;
@@ -96,8 +130,10 @@ void DrawAppearanceSettings(Config& cfg) {
 	const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 	ImGui::SetNextItemWidth(300);
 	if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
-		if (cfg.theme == 7 && !filesystem::exists("custom_theme.json")) {
-			OpenFolder(L"custom_theme.json");
+		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
+		if (cfg.theme == 7 && !filesystem::exists(customThemePath)) {
+			ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
+			(void)GetDesktopServices()->OpenFolder(customThemePath);
 		}
 		else {
 			ApplyTheme(cfg.theme);
@@ -106,12 +142,16 @@ void DrawAppearanceSettings(Config& cfg) {
 
 	ImGui::Spacing();
 
+	static float pendingUiScale = g_uiScale;
+	if (ImGui::IsWindowAppearing()) {
+		pendingUiScale = g_uiScale;
+	}
 	ImGui::SetNextItemWidth(300);
-	ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f");
+	ImGui::SliderFloat(L("UI_SCALE"), &pendingUiScale, 0.75f, 2.5f, "%.2f");
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_OK"))) {
-		ImGuiIO& io = ImGui::GetIO();
-		io.FontGlobalScale = g_uiScale;
+		g_uiScale = pendingUiScale;
+		ApplyTheme(cfg.theme);
 	}
 
 	ImGui::Spacing();
@@ -120,7 +160,7 @@ void DrawAppearanceSettings(Config& cfg) {
 	char Fonts[256];
 	strncpy_s(Fonts, wstring_to_utf8(cfg.fontPath).c_str(), sizeof(Fonts));
 	if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
-		wstring sel = SelectFileDialog();
+		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
 			cfg.fontPath = sel;
 			Fontss = sel;
@@ -166,7 +206,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
 	ImGui::Text("%s", L("RCLONE_PATH_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_RCLONE"))) {
-		wstring selected = SelectFileDialog();
+		wstring selected = GetDesktopServices()->SelectFile().path.wstring();
 		if (!selected.empty()) {
 			cfg.rclonePath = selected;
 			strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
@@ -178,6 +218,48 @@ void DrawCloudSyncSettings(Config& cfg) {
 		cfg.rclonePath = utf8_to_wstring(rclonePathBuf);
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_PATH"));
+
+	ImGui::BeginDisabled(g_RcloneInstallRunning);
+	const char* rcloneInstallLabel = g_RcloneInstallRunning
+		? L("RCLONE_INSTALLING") : L("RCLONE_INSTALL_BUTTON");
+	if (ImGui::Button(rcloneInstallLabel, ImVec2(CalcButtonWidth(rcloneInstallLabel), 0))) {
+		const auto sevenZip = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
+		if (!sevenZip.available) {
+			g_RcloneInstallSucceeded = false;
+			g_RcloneInstallMessage = sevenZip.diagnostic;
+		}
+		else if (ConfirmMessageBox(
+			L("RCLONE_INSTALL_CONFIRM_TITLE"),
+			L("RCLONE_INSTALL_CONFIRM_MESSAGE"))) {
+			g_RcloneInstallRunning = true;
+			g_RcloneInstallSucceeded = false;
+			g_RcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_PROGRESS"));
+			const auto backend = CreatePlatformNetworkBackend();
+			const auto paths = GetAppPaths();
+			const auto sevenZipPath = sevenZip.executable;
+			if (!TaskCoordinator::Instance().Submit(L"install-rclone", {L"tool:rclone"},
+				[backend, paths, sevenZipPath](stop_token token) {
+					NetworkService network(backend);
+					const auto install = ExternalToolManager::InstallPinnedRclone(network, sevenZipPath, paths, token);
+					TaskEvent event{L"rclone-install-complete", install.error};
+					event.values[L"success"] = install.success ? L"1" : L"0";
+					event.values[L"path"] = install.executable.wstring();
+					TaskCoordinator::Instance().PostEvent(std::move(event));
+				})) {
+				g_RcloneInstallRunning = false;
+				g_RcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_BUSY"));
+			}
+		}
+	}
+	ImGui::EndDisabled();
+	if (!g_RcloneInstallMessage.empty()) {
+		const ImVec4 color = g_RcloneInstallSucceeded
+			? ImVec4(0.30f, 0.75f, 0.35f, 1.0f)
+			: ImVec4(0.85f, 0.65f, 0.25f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, color);
+		ImGui::TextWrapped("%s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
+		ImGui::PopStyleColor();
+	}
 
 	char remotePathBuf[260];
 	strncpy_s(remotePathBuf, wstring_to_utf8(cfg.rcloneRemotePath).c_str(), sizeof(remotePathBuf));
@@ -192,7 +274,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));
 	ImGui::Text("%s", L("CLOUD_WORKDIR_LABEL"));
 	if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-		wstring selected = SelectFolderDialog();
+		wstring selected = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!selected.empty()) {
 			cfg.cloudWorkingDirectory = selected;
 			strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));
@@ -254,58 +336,122 @@ void DrawCloudSyncSettings(Config& cfg) {
 	if (!canRunCloudActions) ImGui::BeginDisabled();
 	if (ImGui::Button(L("CLOUD_ANALYZE_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Analyze cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			AnalyzeCloudHistory(configCopy, configIndex, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_SYNC_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Sync cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_SYNC_ALL_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Sync cloud backups",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups, console);
-		}).detach();
+		});
 	}
 
 	if (ImGui::Button(L("CLOUD_UPLOAD_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Upload cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			UploadConfigurationHistorySnapshot(configCopy, configIndex, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_EXPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy]() {
-			ExportConfigToCloud(configCopy, console);
-		}).detach();
+		map<int, Config> configsCopy;
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			configsCopy = g_appState.configs;
+		}
+		TaskCoordinator::Instance().Submit(L"Export cloud configuration",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
+			const auto preparation = PreparePortableConfigUpload(configCopy, configsCopy, console);
+			TaskEvent event{L"portable-config-preview", preparation.result.detail};
+			event.values[L"success"] = preparation.result.success ? L"1" : L"0";
+			event.values[L"action"] = L"upload";
+			event.values[L"config-index"] = to_wstring(configIndex);
+			event.values[L"payload"] = utf8_to_wstring(preparation.payload);
+			event.values[L"local-fingerprint"] = PortableConfigFingerprint(configsCopy);
+			event.values[L"preview"] = FormatPortableConfigPreview(preparation.preview, L"Upload local portable fields to cloud");
+			TaskCoordinator::Instance().PostEvent(std::move(event));
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_IMPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy]() {
-			ImportConfigFromCloud(configCopy, console);
-		}).detach();
+		map<int, Config> configsCopy;
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			configsCopy = g_appState.configs;
+		}
+		TaskCoordinator::Instance().Submit(L"Import cloud configuration",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
+			const auto preparation = PreparePortableConfigImport(configCopy, configsCopy, console);
+			TaskEvent event{L"portable-config-preview", preparation.result.detail};
+			event.values[L"success"] = preparation.result.success ? L"1" : L"0";
+			event.values[L"action"] = L"import";
+			event.values[L"config-index"] = to_wstring(configIndex);
+			event.values[L"payload"] = utf8_to_wstring(preparation.payload);
+			event.values[L"local-fingerprint"] = PortableConfigFingerprint(configsCopy);
+			event.values[L"preview"] = FormatPortableConfigPreview(preparation.preview, L"Import cloud portable fields to this device");
+			TaskCoordinator::Instance().PostEvent(std::move(event));
+		});
 	}
+#if MINEBACKUP_ENABLE_V15_MIGRATION
+	ImGui::SameLine();
+	if (ImGui::Button(L("LEGACY_REMOTE_IMPORT_BUTTON"),
+		ImVec2(CalcButtonWidth(L("LEGACY_REMOTE_IMPORT_BUTTON")), 0))) {
+		if (ConfirmMessageBox(
+			L("LEGACY_REMOTE_IMPORT_TITLE"),
+			L("LEGACY_REMOTE_IMPORT_MESSAGE"))) {
+			const Config configCopy = cfg;
+			map<int, Config> configsCopy;
+			{
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				configsCopy = g_appState.configs;
+			}
+			TaskCoordinator::Instance().Submit(L"Prepare legacy remote configuration import",
+				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+				[configCopy, configsCopy, configIndex](stop_token) {
+					const auto preparation = PrepareLegacyPortableConfigImport(configCopy, configsCopy, console);
+					TaskEvent event{L"portable-config-preview", preparation.result.detail};
+					event.values[L"success"] = preparation.result.success ? L"1" : L"0";
+					event.values[L"action"] = L"import";
+					event.values[L"config-index"] = to_wstring(configIndex);
+					event.values[L"payload"] = utf8_to_wstring(preparation.payload);
+					event.values[L"local-fingerprint"] = PortableConfigFingerprint(configsCopy);
+					event.values[L"preview"] = FormatPortableConfigPreview(
+						preparation.preview, L"Import filtered legacy remote config.ini to this device");
+					TaskCoordinator::Instance().PostEvent(std::move(event));
+				});
+		}
+	}
+#endif
 
 	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Export cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			ExportHistoryToCloud(configCopy, configIndex, console);
-		}).detach();
+		});
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_IMPORT_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
-		thread([configCopy, configIndex]() {
+		TaskCoordinator::Instance().Submit(L"Import cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			ImportHistoryFromCloud(configCopy, configIndex, true, console);
-		}).detach();
+		});
 	}
 	if (!canRunCloudActions) ImGui::EndDisabled();
 }

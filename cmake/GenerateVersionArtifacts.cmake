@@ -1,0 +1,7 @@
+if(NOT DEFINED MINEBACKUP_OUTPUT_DIR)
+    message(FATAL_ERROR "MINEBACKUP_OUTPUT_DIR is required")
+endif()
+get_filename_component(MINEBACKUP_REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+include(${CMAKE_CURRENT_LIST_DIR}/MineBackupVersion.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/MineBackupGenerateArtifacts.cmake)
+minebackup_generate_artifacts("${MINEBACKUP_OUTPUT_DIR}" "${MINEBACKUP_REPOSITORY_ROOT}/MineBackup")

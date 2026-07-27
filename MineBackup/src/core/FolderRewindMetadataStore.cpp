@@ -1,14 +1,11 @@
 #include "FolderRewindMetadataStore.h"
 
+#include "AtomicFileWriter.h"
 #include "json.hpp"
 #include "text_to_text.h"
 
 #include <algorithm>
 #include <fstream>
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 using namespace std;
 
@@ -16,29 +13,7 @@ namespace FolderRewindMetadataStore {
 namespace {
 
 bool AtomicWriteJson(const filesystem::path& path, const nlohmann::json& value) {
-    const filesystem::path temp = path.wstring() + L".tmp";
-    {
-        ofstream out(temp, ios::binary | ios::trunc);
-        if (!out.is_open()) return false;
-        out << value.dump(2);
-        if (!out.good()) return false;
-    }
-    {
-        ifstream verifyIn(temp, ios::binary);
-        const auto verify = nlohmann::json::parse(verifyIn, nullptr, false);
-        if (verify.is_discarded()) { error_code ec; filesystem::remove(temp, ec); return false; }
-    }
-#ifdef _WIN32
-    SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
-    if (MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
-#else
-    error_code renameEc;
-    filesystem::rename(temp, path, renameEc);
-    if (!renameEc) return true;
-#endif
-    error_code cleanupEc;
-    filesystem::remove(temp, cleanupEc);
-    return false;
+    return AtomicFileWriter::WriteText(path, value.dump(2)).success;
 }
 
 wstring JsonString(const nlohmann::json& item, const char* key) {

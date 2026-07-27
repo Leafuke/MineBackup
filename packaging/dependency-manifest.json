@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "mineBackupVersion": "1.16.0",
+  "dependencies": [
+    {
+      "name": "GLFW",
+      "version": "3.4",
+      "source": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip",
+      "sha256": "b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9",
+      "distribution": "statically linked"
+    },
+    {
+      "name": "Dear ImGui",
+      "version": "1.92.9-docking",
+      "source": "https://github.com/ocornut/imgui/releases/tag/v1.92.9-docking",
+      "sourceCommit": "9b4eb24cee2071e61dc1f9ef3e5228097cdde720",
+      "distribution": "selected sources vendored and statically linked"
+    },
+    {
+      "name": "KnotLink C++ SDK",
+      "version": "2.0",
+      "source": "user-supplied upstream source drop",
+      "license": "MIT",
+      "vendoredPath": "MineBackup/third_party/knotlink-sdk-cpp-2.0",
+      "distribution": "header-only SDK vendored and compiled into MineBackup"
+    },
+    {
+      "name": "7-Zip ZS",
+      "version": "26.02-v1.5.7-R2",
+      "source": "https://github.com/mcmilk/7-Zip-zstd/releases/tag/v26.02-v1.5.7-R2",
+      "sourceCommit": "2dcb6815c0e6877988171c47e1824b86172ff3b2",
+      "artifacts": {
+        "windowsInstaller": "22dc4608d911d7c831437b969db66a42d0477cd3f5d93987cae9f59774857fc1",
+        "windowsEmbedded7za": "d8d92a77b6b34b07deafdac6e0845076eac5bf76bf026b554d101e81363cd052",
+        "linuxGccX64Zip": "be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3"
+      },
+      "distribution": "bundled command-line executable"
+    },
+    {
+      "name": "rclone",
+      "version": "1.74.4",
+      "source": "https://downloads.rclone.org/v1.74.4/",
+      "artifacts": {
+        "windows-x64": "ef097ef9de37a57feb7d9f9c7afb34148ad3c65be8025f1d8f7f521554a701ea",
+        "linux-x64": "fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d",
+        "macos-arm64": "c2100e2d4a4b3be04c55cd45380cafe7647e1ad772bb055f52f00876ed701167"
+      },
+      "distribution": "downloaded only after explicit user confirmation; not in application packages"
+    },
+    {
+      "name": "linuxdeploy",
+      "version": "1-alpha-20251107-1",
+      "source": "https://github.com/linuxdeploy/linuxdeploy/releases/tag/1-alpha-20251107-1",
+      "sha256": "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d",
+      "distribution": "build-time only"
+    }
+  ]
+}

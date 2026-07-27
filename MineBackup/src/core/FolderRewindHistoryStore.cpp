@@ -1,5 +1,6 @@
 #include "FolderRewindHistoryStore.h"
 
+#include "AtomicFileWriter.h"
 #include "PlatformCompat.h"
 #include "text_to_text.h"
 
@@ -207,23 +208,7 @@ bool SaveHistoryFile(const filesystem::path& path, const map<int, Config>& confi
         }
     }
 
-	const filesystem::path temp = path.wstring() + L".tmp";
-	ofstream out(temp, ios::binary | ios::trunc);
-	if (!out.is_open()) return false;
-
-	out << root.dump(2);
-	out.close();
-	if (!out.good()) { error_code ec; filesystem::remove(temp, ec); return false; }
-	ifstream verifyIn(temp, ios::binary);
-	const auto verify = nlohmann::json::parse(verifyIn, nullptr, false);
-	if (!verify.is_array()) { error_code ec; filesystem::remove(temp, ec); return false; }
-#ifdef _WIN32
-	SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
-	if (MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
-#else
-	error_code renameEc; filesystem::rename(temp, path, renameEc); if (!renameEc) return true;
-#endif
-	error_code ec; filesystem::remove(temp, ec); return false;
+	return AtomicFileWriter::WriteText(path, root.dump(2)).success;
 }
 
 nlohmann::json SerializeActiveHistoryManifest(const Config& config, const vector<HistoryEntry>& entries) {

@@ -18,7 +18,7 @@
 ---
 
 ## ✨ 为什么选择 MineBackup？
-- 🎯 **即点即用** — 单文件可执行，下载后双击运行，无需安装。
+- 🎯 **原生分发** — 提供签名 Windows 单 EXE、Linux deb/AppImage 和 arm64 macOS DMG。
 - 🖥 **简洁直观的 GUI** — 基于 ImGui，功能布局清晰、响应迅速。
 - 💾 **安全备份** — 一键备份 Minecraft 存档，避免数据丢失。
 - 🔄 **快速还原** — 支持从 `.7z` 文件或本地目录恢复任意版本。
@@ -26,7 +26,7 @@
 - 🧠 **智能模式** — 类 Git 增量备份，节省时间与空间。
 - 📁 **自定义路径** — 将备份保存到任意磁盘或外接设备。
 - 🌏 **多语言支持** — 已支持中/英双语，欢迎贡献更多翻译。
-- 💻 **多平台支持** — 目前支持 Windows、Linux 和 MacOS。
+- 💻 **多平台支持** — Windows x64、Linux x86_64 与 macOS 15+ arm64 共用同一备份数据契约。
 
 💡 **不仅仅是 Minecraft**：你可以用它来备份任何文件夹，完全不局限于游戏存档。
 
@@ -36,8 +36,13 @@
 
 ### 1️⃣ 下载 & 运行
 1. 前往 [最新发布页](https://github.com/Leafuke/MineBackup/releases)。
-2. 下载适用于 Windows 的单文件版本。
-3. 双击运行 — **就是这么简单**。
+2. 下载 `MineBackup-windows-x64.exe`、Ubuntu `.deb`、Linux AppImage 或
+   `MineBackup-1.16.0-macos-arm64.dmg`。
+3. 使用 `SHA256SUMS` 核对文件后再正常安装或运行。
+
+各系统版本与 Linux 桌面能力降级规则见[平台支持矩阵](docs/platform-support.md)。
+macOS 包尚未公证；若系统拦截，请使用“隐私与安全性 → 仍要打开”，不要关闭
+Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 
 ### 2️⃣ 基础操作
 | 功能       | 操作方式 |
@@ -63,23 +68,27 @@
 - **Alt + Ctrl + Z**：将你当前运行的世界还原到上一个备份版本！需要配合MineBackup-Mod联动模组。
 
 ### 📌 KnotLink 消息交互
-通过 KnotLink 协议，MineBackup 可以与其他应用或 Mod 进行简单的文本消息通信。详情请参见 [MineBackup](https://modrinth.com/mod/minebackup) Mod。
+MineBackup 现已与 FolderRewind 使用完全相同的严格 KnotLink v2 参数化
+契约：载荷固定为 `key=value;key2=value2`，值使用 RFC 3986
+percent-encoding；旧式位置参数和自由文本命令会被直接拒绝。联动模组最低
+版本为 **3.1.0**。
 
-- **支持的指令**：
+Windows 需要 **3.0.0 或更高版本**的 KnotLinkService。MineBackup 会检测
+安装版本、智能启动兼容的已停止服务，并阻止未知或过旧版本。Linux 与 macOS
+保留客户端接入能力，但在上游发布对应服务端前不会内置或托管服务端。
 
-待补充，可见 [MineBackup-Mod](https://github.com/Leafuke/MineBackup-Mod)
-
-> 🔍 **开发者请看**：[KnotLink 协议详情](https://folderrewind.top/docs/plugins/knotlink)
+命令、关联元数据、生命周期事件、当前世界参数和完整示例见
+[MineBackup KnotLink v2 协议说明](docs/knotlink-v2.md)。
 
 ---
 
 ## ⚙️ 安装与编译
 
 **运行环境**：
-- Windows 系统
-- C++20 编译器
-- 链接 ImGui 库
-- 附带 7-Zip 
+- Windows + MSVC、Ubuntu 24.04+ x86_64（或同等的 glibc 2.39+ 发行版），
+  或 Apple Silicon macOS 15+
+- CMake 3.22+ 与 C++20 编译器
+- 对应平台验证文档中列出的开发依赖
 
 **编译步骤**：
 ```bash
@@ -87,8 +96,14 @@
 git clone https://github.com/Leafuke/MineBackup.git
 cd MineBackup
 
-# 使用 Visual Studio 打开并编译
-````
+cmake --preset <windows-msvc-x64|linux-x64|macos-arm64>
+cmake --build --preset windows-msvc-x64-release  # Windows
+# Linux/macOS: cmake --build build/<preset> --parallel
+```
+
+配置不再要求与 EXE 同目录；默认数据目录、便携模式与 1.15 迁移说明见
+[数据与迁移文档](docs/data-and-migration.md)。Windows Service Mode 已弃用，
+不能再安装或启动。rclone 不随包分发，只会在用户确认后下载固定版本并验证哈希。
 
 ---
 
@@ -114,7 +129,7 @@ cd MineBackup
 ## 🤝 贡献与支持
 
 * **报告问题 / 提交建议**：[GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
-* **多语言支持**：翻译 [`i18n.h`](MineBackup/i18n.cpp)，让更多玩家用上自己的语言。
+* **多语言支持**：翻译 [`i18n.h`](MineBackup/src/infra/i18n.h)，让更多玩家用上自己的语言。
 * **文档改进**：访问 [官方文档](https://folderrewind.top) 提交改进建议。
 
 ---
@@ -125,7 +140,7 @@ cd MineBackup
 * [**7-Zip-zstd**](https://github.com/mcmilk/7-Zip-zstd) - Zstd 压缩支持
 * [**ImGui**](https://github.com/ocornut/imgui) — GUI 框架
 * [**stb**](https://github.com/nothings/stb) — 图片加载
-* [**KnotLink**](https://github.com/hxh230802/KnotLink) — 程序间消息通信框架，由 @hxh230802 开发
+* [**KnotLink**](https://github.com/KnotLink-Protocol/KnotLink) — 程序间消息通信框架
 * [**Font-Awesome**](https://github.com/FortAwesome/Font-Awesome) - Icons
 
 ---

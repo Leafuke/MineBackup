@@ -1,6 +1,7 @@
 ﻿#include "Broadcast.h"
 #include "BackupManager.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "Globals.h"
 #include "text_to_text.h"
 #include "i18n.h"
@@ -10,9 +11,13 @@
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
-#include "MigrationService.h"
+#include "MigrationCoordinator.h"
+#include "ProcessRunner.h"
+#include "TaskCoordinator.h"
+#include "ExternalToolManager.h"
 #include "json.hpp"
 #include "PlatformCompat.h"
+#include "DesktopServices.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -23,6 +28,61 @@
 #include <set>
 #include <regex>
 using namespace std;
+
+namespace {
+
+class ScopedRuntimeArtifact {
+public:
+	explicit ScopedRuntimeArtifact(filesystem::path path) : path_(std::move(path)) {}
+	~ScopedRuntimeArtifact() {
+		error_code ignored;
+		filesystem::remove_all(path_, ignored);
+	}
+	ScopedRuntimeArtifact(const ScopedRuntimeArtifact&) = delete;
+	ScopedRuntimeArtifact& operator=(const ScopedRuntimeArtifact&) = delete;
+
+private:
+	filesystem::path path_;
+};
+
+ProcessSpec MakeInternalProcess(
+	const filesystem::path& executable,
+	vector<wstring> arguments,
+	const filesystem::path& workingDirectory = {},
+	bool useLowPriority = false) {
+	ProcessSpec spec;
+	const auto resolved = ExternalToolManager::ResolveSevenZip(
+		executable, GetAppPaths(), TaskCoordinator::CurrentStopToken());
+	spec.executable = resolved.available ? resolved.executable : executable;
+	spec.arguments = std::move(arguments);
+	spec.workingDirectory = workingDirectory;
+	spec.useLowPriority = useLowPriority;
+	return spec;
+}
+
+bool RunInternalProcess(const ProcessSpec& spec, Console& console) {
+	string display = wstring_to_utf8(spec.executable.wstring());
+	for (const auto& argument : spec.arguments) display += " [" + wstring_to_utf8(argument) + "]";
+	console.AddLog(L("LOG_EXEC_CMD"), display.c_str());
+	const auto result = ProcessRunner::Run(spec);
+	if (!result.standardOutput.empty()) console.AddLog("%s", result.standardOutput.c_str());
+	if (!result.standardError.empty()) console.AddLog("%s", result.standardError.c_str());
+	if (result.status == ProcessStatus::Succeeded) {
+		console.AddLog(L("LOG_SUCCESS_CMD"));
+		return true;
+	}
+	if (!result.error.empty()) console.AddLog("[Error] %s", wstring_to_utf8(result.error).c_str());
+	console.AddLog(L("LOG_ERROR_CMD_FAILED"), result.exitCode);
+	if (result.exitCode == 2) console.AddLog(L("LOG_7Z_ERROR_SUGGESTION"));
+	return false;
+}
+
+vector<wstring> SevenZipCreateArguments(const Config& config, int level, const filesystem::path& archive) {
+	return {L"a", L"-t" + config.zipFormat, L"-m0=" + config.zipMethod, L"-mx=" + to_wstring(level),
+		config.cpuThreads == 0 ? L"-mmt" : L"-mmt" + to_wstring(config.cpuThreads), L"-ssw", archive.wstring()};
+}
+
+} // namespace
 
 enum class FolderState {
 	BACKUP,
@@ -828,7 +888,7 @@ namespace {
 	static bool CreateDeletionOnlyArchive(const Config& config, const filesystem::path& archivePath, Console& console) {
 		wstringstream nameBuilder;
 		nameBuilder << L"MineBackup_DeleteOnly_" << chrono::steady_clock::now().time_since_epoch().count();
-		filesystem::path tempDir = filesystem::temp_directory_path() / nameBuilder.str();
+		filesystem::path tempDir = GetAppPaths().runtimeRoot / nameBuilder.str();
 		bool success = false;
 		try {
 			filesystem::path internalDir = tempDir / kDeletedOnlyMarkerDir;
@@ -838,9 +898,9 @@ namespace {
 			marker.close();
 
 			const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
-			wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath.wstring() + L"\" \"*\"";
-			success = RunCommandInBackground(command, console, config.useLowPriority, tempDir.wstring());
+			auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
+			arguments.push_back(L"*");
+			success = RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), tempDir, config.useLowPriority), console);
 		}
 		catch (const exception& ex) {
 			console.AddLog("[Error] Failed to create deletion-only archive: %s", ex.what());
@@ -948,16 +1008,14 @@ void AddBackupToWESnapshots(const Config& config, const wstring& worldName, cons
 	}
 
 	// 依次解压核心文件/文件夹
-	wstring files_to_extract_str;
-	for (const auto& part : essential_parts) {
-		files_to_extract_str += L" \"" + part + L"\"";
-	}
-
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
 		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
-		wstring command = L"\"" + config.zipPath + L"\" x \"" + backup.wstring() + L"\" -o\"" + final_snapshot_path.wstring() + L"\"" + files_to_extract_str + L" -r -y";
-		if (!RunCommandInBackground(command, console, config.useLowPriority)) {
+		vector<wstring> arguments = {L"x", backup.wstring(), L"-o" + final_snapshot_path.wstring()};
+		arguments.insert(arguments.end(), essential_parts.begin(), essential_parts.end());
+		arguments.push_back(L"-r");
+		arguments.push_back(L"-y");
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority), console)) {
 			console.AddLog(L("LOG_WE_INTEGRATION_FAILED"));
 			return;
 		}
@@ -1137,8 +1195,12 @@ void LimitBackupFiles(const Config& config, const int& configIndex, const wstrin
 
 // 执行单个世界的备份操作。
 // 参数: folder: 世界信息结构体, console: 日志输出对象, comment: 用户注释
-void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
+BackupOutcome DoBackup(const MyFolder& folder, Console& console, const wstring& comment) {
     const Config& config = folder.config;
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] This imported configuration is waiting for local path binding.");
+		return BackupOutcome::Rejected;
+	}
 
 	WorldOperationGuard opGuard(filesystem::path(folder.path), FolderState::BACKUP);
 	if (!opGuard.Acquired()) {
@@ -1148,9 +1210,9 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 			L(FolderStateToI18nKey(opGuard.Existing())),
 			L(FolderStateToI18nKey(opGuard.Requested()))
 		);
-		return;
+		return BackupOutcome::Rejected;
 	}
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, folder.configIndex, folder.name, folder.path);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, folder.configIndex, folder.name, folder.path);
 	const bool forceFullForMigration = migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded;
 	if (migration.status == MigrationStatus::Failed) {
 		console.AddLog("[Warning] Legacy metadata migration failed; this backup will establish a new Full chain: %s", wstring_to_utf8(migration.message).c_str());
@@ -1165,7 +1227,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
     if (!filesystem::exists(config.zipPath)) {
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
         console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
-        return;
+        return BackupOutcome::Failed;
     }
 
 	wstring originalSourcePath = folder.path;
@@ -1174,12 +1236,12 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	FolderRewindFormat::StoragePaths storagePaths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, folder.name, folder.path, storagePaths)) {
 		console.AddLog("[Error] Invalid FolderRewind storage folder name for world: %s", wstring_to_utf8(folder.name).c_str());
-		return;
+		return BackupOutcome::Failed;
 	}
 	filesystem::path destinationFolder = storagePaths.backupSubDir;
 	filesystem::path metadataFolder = storagePaths.metadataDir;
 	const wstring storageFolderName = storagePaths.folderName;
-    wstring command;
+	ProcessSpec command;
 	wstring archivePath;
 	auto makeArchivePath = [&](const wstring& backupType) {
 		return (destinationFolder / FolderRewindFormat::GenerateArchiveFileName(backupType, storageFolderName, comment, config.zipFormat)).wstring();
@@ -1191,7 +1253,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		console.AddLog(L("LOG_BACKUP_DIR_IS"), wstring_to_utf8(destinationFolder.wstring()).c_str());
     } catch (const filesystem::filesystem_error& e) {
         console.AddLog(L("LOG_ERROR_CREATE_BACKUP_DIR"), e.what());
-        return;
+        return BackupOutcome::Failed;
     }
 
 	// 检测到 level.dat 被锁定，启用热备份握手并依赖 7z -ssw 直接从原世界路径压缩
@@ -1229,7 +1291,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             } else {
                 // 超时：模组未在规定时间内完成保存，停止
                 console.AddLog(L("KNOTLINK_WORLD_SAVE_TIMEOUT"));
-				return;
+				return BackupOutcome::Rejected;
             }
         }
 		console.AddLog("[Info] Snapshot copy is disabled. Using 7-Zip -ssw to back up from live world files.");
@@ -1293,14 +1355,14 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	candidate_files = GetChangedFiles(sourcePath, metadataFolder, destinationFolder, checkResult, currentState, changeSet);
     if (checkResult == BackupCheckResult::NO_CHANGE && config.skipIfUnchanged) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-        return;
+        return BackupOutcome::NoChanges;
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID) {
         console.AddLog(L("LOG_METADATA_INVALID"));
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_BASE_MISSING && config.backupMode == 2) {
         console.AddLog(L("LOG_BASE_BACKUP_NOT_FOUND"));
     } else if (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_SCAN_FAILED) {
         console.AddLog("[Error] Failed to scan source directory for backup state.");
-        return;
+        return BackupOutcome::Failed;
     }
 
     forceFullBackup = (checkResult == BackupCheckResult::FORCE_FULL_BACKUP_METADATA_INVALID ||
@@ -1317,7 +1379,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
             }
         } catch (const filesystem::filesystem_error& e) {
             console.AddLog("[Error] Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-            return;
+            return BackupOutcome::Failed;
         }
     }
 
@@ -1353,16 +1415,18 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 
 	if (!forceFullBackup && !changeSet.HasChanges() && (config.skipIfUnchanged || config.backupMode == 2)) {
         console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-        return;
+        return BackupOutcome::NoChanges;
     }
 
 	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
 	if (files_to_backup.empty() && !(config.backupMode == 2 && deletionOnlyChange && !forceFullBackup)) {
 		console.AddLog(L("LOG_NO_CHANGE_FOUND"));
-		return;
+		return BackupOutcome::NoChanges;
 	}
 
-    filesystem::path tempDir = filesystem::temp_directory_path() / L"MineBackup_Filelist";
+    filesystem::path tempDir = GetAppPaths().runtimeRoot /
+		(L"MineBackup_Filelist_" + FolderRewindFormat::GenerateGuidString());
+	ScopedRuntimeArtifact tempDirCleanup(tempDir);
 	wstring filelist_path;
 	if (!files_to_backup.empty()) {
 		filesystem::create_directories(tempDir);
@@ -1387,7 +1451,7 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 #endif
 		} else {
 			console.AddLog("[Error] Failed to create temporary file list for 7-Zip.");
-			return;
+			return BackupOutcome::Failed;
 		}
 	}
 
@@ -1400,8 +1464,9 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 	if ((config.backupMode == 1 || forceFullBackup) && config.backupMode != 3) {
 		backupTypeStr = L"Full";
 		archivePath = makeArchivePath(L"Full");
-		command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
+		auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
+		arguments.push_back(L"@" + filelist_path);
+		command = MakeInternalProcess(config.zipPath, std::move(arguments), sourcePath, config.useLowPriority);
 		basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
     } else if (config.backupMode == 2) {
         backupTypeStr = L"Smart";
@@ -1430,8 +1495,9 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 			// 回退到完整备份
 			backupTypeStr = L"Full";
 			archivePath = makeArchivePath(L"Full");
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
+			auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
+			arguments.push_back(L"@" + filelist_path);
+			command = MakeInternalProcess(config.zipPath, std::move(arguments), sourcePath, config.useLowPriority);
 			basedOnBackupFile = filesystem::path(archivePath).filename().wstring();
 			goto execute_backup;
 		}
@@ -1440,8 +1506,9 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
 		archivePath = makeArchivePath(L"Smart");
 
 		if (!deletionOnlyChange) {
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" @" + filelist_path;
+			auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
+			arguments.push_back(L"@" + filelist_path);
+			command = MakeInternalProcess(config.zipPath, std::move(arguments), sourcePath, config.useLowPriority);
 		}
     } else if (config.backupMode == 3) {
         backupTypeStr = L"Overwrite";
@@ -1460,14 +1527,18 @@ void DoBackup(const MyFolder& folder, Console& console, const wstring& comment) 
         }
         if (found) {
             console.AddLog(L("LOG_FOUND_LATEST"), wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = L"\"" + config.zipPath + L"\" u -ssw \"" + latestBackupPath.wstring() + L"\" \"" + NormalizeSeparators(sourcePath) + L"/*\" -mx=" + to_wstring(normalizedZipLevel);
+			command = MakeInternalProcess(config.zipPath,
+				{L"u", L"-ssw", latestBackupPath.wstring(), NormalizeSeparators(sourcePath) + L"/*",
+				 L"-mx=" + to_wstring(normalizedZipLevel)}, sourcePath, config.useLowPriority);
             archivePath = latestBackupPath.wstring(); // 记录被更新的文件
         }
         else {
             console.AddLog(L("LOG_NO_BACKUP_FOUND"));
 			archivePath = makeArchivePath(L"Overwrite");
-			command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) + L" -m0=" + config.zipMethod +
-				L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw -spf \"" + archivePath + L"\"" + L" \"" + NormalizeSeparators(sourcePath) + L"/*\"";
+			auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
+			arguments.push_back(L"-spf");
+			arguments.push_back(NormalizeSeparators(sourcePath) + L"/*");
+			command = MakeInternalProcess(config.zipPath, std::move(arguments), sourcePath, config.useLowPriority);
             // -spf 强制使用完整路径，-spf2 使用相对路径
         }
     }
@@ -1480,7 +1551,7 @@ execute_backup:
 			backupSucceeded = CreateDeletionOnlyArchive(config, archivePath, console);
 		}
 		else {
-			backupSucceeded = RunCommandInBackground(command, console, config.useLowPriority, sourcePath); // 工作目录不能丢！
+			backupSucceeded = RunInternalProcess(command, console);
 		}
 
         if (backupSucceeded)
@@ -1529,8 +1600,8 @@ execute_backup:
 
 		if (!UpdateMetadataFile(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet)) {
 			console.AddLog("[Error] Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
-			BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(storageFolderName) + ";error=metadata_write_failed");
-			return;
+			BroadcastEvent("event=backup_failed;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(storageFolderName) + ";error=metadata_write_failed");
+			return BackupOutcome::Failed;
 		}
 		AddHistoryEntry(folder.configIndex, storageFolderName, completedBackupFile, backupTypeStr, comment, folder.path);
 
@@ -1540,7 +1611,7 @@ execute_backup:
 			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount, &console);
 
 		// 广播一个成功事件
-		string payload = "event=backup_success;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(storageFolderName) + ";file=" + wstring_to_utf8(completedBackupFile);
+		string payload = "event=backup_success;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(storageFolderName) + ";file=" + wstring_to_utf8(completedBackupFile);
 		BroadcastEvent(payload);
 
 
@@ -1548,13 +1619,19 @@ execute_backup:
 		MyFolder cloudFolder = folder;
 		cloudFolder.name = storageFolderName;
 		QueueUploadAfterBackup(config, folder.configIndex, cloudFolder, completedBackupFile, comment, console);
+		return BackupOutcome::Created;
         }
         else {
-            BroadcastEvent("event=backup_failed;config=" + to_string(g_appState.currentConfigIndex) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+            BroadcastEvent("event=backup_failed;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+			return BackupOutcome::Failed;
         }
     }
 }
 void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wstring& comment, Console& console) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] This imported configuration is waiting for local path binding.");
+		return;
+	}
 	console.AddLog(L("LOG_BACKUP_OTHERS_START"));
 
 	filesystem::path othersPath = backupWhat;
@@ -1607,10 +1684,10 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 	changeSet.deletedFiles.clear();
 
 	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
-	wstring command = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-		L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) + L" -ssw \"" + archivePath + L"\"" + L" \"" + othersPath.wstring() + L"\\*\"";
+	auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
+	arguments.push_back(othersPath.wstring() + L"\\*");
 
-	if (RunCommandInBackground(command, console, config.useLowPriority)) {
+	if (RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority), console)) {
 		if (!UpdateMetadataFile(storagePaths.metadataDir, archiveFileName, archiveFileName, L"Full", currentState, changeSet)) {
 			console.AddLog("[Error] Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(archiveFileName).c_str());
 			console.AddLog(L("LOG_BACKUP_OTHERS_END"));
@@ -1643,6 +1720,10 @@ static bool DeleteLocalArchiveOnly(const Config& config, const HistoryEntry& ent
 }
 
 void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelete, int configIndex, BackupDeleteMode mode, bool useSafeDelete, Console& console) {
+	if (config.pendingLocalBinding) {
+		console.AddLog("[Blocked] This imported configuration is waiting for local path binding.");
+		return;
+	}
 	if (mode == BackupDeleteMode::HistoryOnly) {
 		// 仅删除历史：保留本地文件，常用于清理误导入或不再需要展示的云历史。
 		RemoveHistoryEntry(configIndex, entryToDelete.worldName, entryToDelete.backupFile);
@@ -1650,7 +1731,7 @@ void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelet
 		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "history deletion", console);
 		return;
 	}
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
 	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
 		console.AddLog("[Error] Local archive deletion is blocked until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
 		return;
@@ -1705,7 +1786,7 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console) {
 	console.AddLog(L("LOG_SAFE_DELETE_START"), wstring_to_utf8(entryToDelete.backupFile).c_str());
-	const MigrationUnitResult migration = MigrationService::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entryToDelete.worldName, entryToDelete.worldPath);
 	if (migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded) {
 		console.AddLog("[Error] Safe delete requires a complete metadata migration: %s", wstring_to_utf8(migration.message).c_str());
 		return;
@@ -1775,7 +1856,7 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		tempRootBase = filesystem::path(NormalizeSeparators(config.snapshotPath));
 	}
 	else {
-		tempRootBase = filesystem::temp_directory_path();
+		tempRootBase = GetAppPaths().runtimeRoot;
 	}
 
 	wstringstream suffixBuilder;
@@ -1795,14 +1876,14 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 		filesystem::copy_file(pathToMergeInto, originalTargetBackup, filesystem::copy_options::overwrite_existing);
 
 		console.AddLog(L("LOG_SAFE_DELETE_STEP_1"));
-		wstring cmdExtractDeleted = L"\"" + config.zipPath + L"\" x \"" + pathToDelete.wstring() + L"\" -o\"" + mergeWorkspace.wstring() + L"\" -y";
-		if (!RunCommandInBackground(cmdExtractDeleted, console, config.useLowPriority)) {
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
+			{L"x", pathToDelete.wstring(), L"-o" + mergeWorkspace.wstring(), L"-y"}, {}, config.useLowPriority), console)) {
 			throw runtime_error("Failed to extract deleted archive.");
 		}
 
 		console.AddLog(L("LOG_SAFE_DELETE_STEP_2"));
-		wstring cmdExtractNext = L"\"" + config.zipPath + L"\" x \"" + pathToMergeInto.wstring() + L"\" -o\"" + mergeWorkspace.wstring() + L"\" -y";
-		if (!RunCommandInBackground(cmdExtractNext, console, config.useLowPriority)) {
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
+			{L"x", pathToMergeInto.wstring(), L"-o" + mergeWorkspace.wstring(), L"-y"}, {}, config.useLowPriority), console)) {
 			throw runtime_error("Failed to extract target archive.");
 		}
 
@@ -1812,11 +1893,10 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 			filesystem::remove_all(markerDir, markerEc);
 		}
 
-		wstring cmdRebuild = L"\"" + config.zipPath + L"\" a -t" + config.zipFormat + L" -m0=" + config.zipMethod +
-			L" -mx=" + to_wstring(normalizedZipLevel) +
-			L" -mmt" + (config.cpuThreads == 0 ? L"" : to_wstring(config.cpuThreads)) +
-			L" -ssw \"" + rebuiltArchive.wstring() + L"\" \"*\"";
-		if (!RunCommandInBackground(cmdRebuild, console, config.useLowPriority, mergeWorkspace.wstring())) {
+		auto rebuildArguments = SevenZipCreateArguments(config, normalizedZipLevel, rebuiltArchive);
+		rebuildArguments.push_back(L"*");
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(rebuildArguments), mergeWorkspace,
+			config.useLowPriority), console)) {
 			throw runtime_error("Failed to rebuild merged archive.");
 		}
 
@@ -1932,32 +2012,35 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete,
 }
 
 // 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, atomic<bool>& stop_flag) {
-	auto key = make_pair(configIdx, worldIdx);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, stop_token stopToken) {
+	{
+		lock_guard<mutex> lock(g_appState.configsMutex);
+		auto it = g_appState.configs.find(configIdx);
+		if (it == g_appState.configs.end() || it->second.pendingLocalBinding) {
+			if (console) console->AddLog("[Blocked] Automatic backup is disabled until local paths are bound.");
+			return;
+		}
+	}
 	console->AddLog(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
 
-	while (true) {
-		// 等待指定的时间，但每秒检查一次是否需要停止
-		for (int i = 0; i < intervalMinutes * 60; ++i) {
-			if (stop_flag) { // 或者 stop_flag.load()
-				console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
-				return; // 线程安全地退出
-			}
-			this_thread::sleep_for(chrono::seconds(1));
+	while (!stopToken.stop_requested()) {
+		mutex waitMutex;
+		condition_variable_any waitCondition;
+		unique_lock waitLock(waitMutex);
+		if (waitCondition.wait_for(waitLock, stopToken, chrono::minutes(intervalMinutes), [] { return false; })) {
+			continue;
 		}
-
-		// 如果在长时间的等待后，发现需要停止，则不执行备份直接退出
-		if (stop_flag) {
+		if (stopToken.stop_requested()) {
 			console->AddLog(L("LOG_AUTOBACKUP_STOPPED"), worldIdx);
 			return;
 		}
 
-		// 时间到了，开始备份
 		console->AddLog(L("LOG_AUTOBACKUP_ROUTINE"), worldIdx);
+		MyFolder folder;
 		{
 			lock_guard<mutex> lock(g_appState.configsMutex);
 			if (g_appState.configs.count(configIdx) && worldIdx >= 0 && worldIdx < g_appState.configs[configIdx].worlds.size()) {
-				MyFolder folder = {
+				folder = {
 					JoinPath(g_appState.configs[configIdx].saveRoot, g_appState.configs[configIdx].worlds[worldIdx].first).wstring(),
 					g_appState.configs[configIdx].worlds[worldIdx].first,
 					g_appState.configs[configIdx].worlds[worldIdx].second,
@@ -1965,18 +2048,15 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 					configIdx,
 					worldIdx
 				};
-				DoBackup(folder, *console);
 			}
 			else {
 				console->AddLog(L("ERROR_INVALID_WORLD_IN_TASK"), configIdx, worldIdx);
-				// 任务无效，退出或移除
-				lock_guard<mutex> lock2(g_appState.task_mutex);
-				if (g_appState.g_active_auto_backups.count(key)) {
-					g_appState.g_active_auto_backups.erase(key);
-				}
 				return;
 			}
 		}
+		TaskCoordinator::Instance().Submit(L"automatic backup run",
+			{ TaskCoordinator::WorldResourceKey(folder.config.configId, folder.path) },
+			[folder, console](stop_token) { DoBackup(folder, *console); });
 	}
 }
 
@@ -1984,7 +2064,9 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 	console.AddLog(L("LOG_EXPORT_STARTED"), wstring_to_utf8(worldName).c_str());
 
 	// 准备临时文件和路径
-	filesystem::path temp_export_dir = filesystem::temp_directory_path() / L"MineBackup_Export" / worldName;
+	filesystem::path temp_export_dir = GetAppPaths().runtimeRoot /
+		(L"MineBackup_Export_" + FolderRewindFormat::GenerateGuidString());
+	ScopedRuntimeArtifact tempExportCleanup(temp_export_dir);
 	filesystem::path readme_path = temp_export_dir / L"readme.txt";
 
 	try {
@@ -2029,7 +2111,6 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 		if (files_to_export.empty()) {
 			console.AddLog("[Error] No files left to export after applying blacklist.");
-			filesystem::remove_all(temp_export_dir);
 			return;
 		}
 
@@ -2051,14 +2132,15 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 
 		// 构建并执行 7z 命令
 		const int normalizedZipLevel = NormalizeCompressionLevel(tempConfig.zipMethod, tempConfig.zipLevel);
-		wstring command = L"\"" + tempConfig.zipPath + L"\" a -t" + tempConfig.zipFormat + L" -m0=" + tempConfig.zipMethod + L" -mx=" + to_wstring(normalizedZipLevel) +
-			L" -ssw \"" + outputPath + L"\"" + L" @" + filelist_path;
+		auto arguments = SevenZipCreateArguments(tempConfig, normalizedZipLevel, outputPath);
+		arguments.push_back(L"@" + filelist_path);
 
 		// 工作目录应为原始世界路径，以确保压缩包内路径正确
-		if (RunCommandInBackground(command, console, tempConfig.useLowPriority, worldPath)) {
+		if (RunInternalProcess(MakeInternalProcess(tempConfig.zipPath, std::move(arguments), worldPath,
+			tempConfig.useLowPriority), console)) {
 			console.AddLog(L("LOG_EXPORT_SUCCESS"), wstring_to_utf8(outputPath).c_str());
-			wstring cmd = L"/select,\"" + outputPath + L"\"";
-			OpenFolderWithFocus(filesystem::path(outputPath).parent_path().wstring(), cmd);
+			(void)GetDesktopServices()->RevealInFolder(
+				filesystem::path(outputPath).parent_path(), filesystem::path(outputPath));
 		}
 		else {
 			console.AddLog(L("LOG_EXPORT_FAILED"));
@@ -2069,14 +2151,18 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		console.AddLog("[Error] An exception occurred during export: %s", e.what());
 	}
 
-	// 清理临时目录
-	filesystem::remove_all(temp_export_dir);
 }
 
 
 MyFolder GetOccupiedWorld();
 
-void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, const std::wstring& backupFile) {
+bool DoHotRestore(
+	const MyFolder& world,
+	Console& console,
+	bool deleteBackup,
+	const std::wstring& backupFile,
+	int restoreMethod,
+	const std::vector<std::wstring>* restoreWhitelistOverride) {
 	
 	Config cfg = world.config;
 	auto& mod = g_appState.knotLinkMod;
@@ -2101,7 +2187,7 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 		BroadcastEvent("event=restore_cancelled;reason=timeout;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
-		return;
+		return false;
 	}
 
 	console.AddLog(L("KNOTLINK_MOD_EXIT_CONFIRMED"));
@@ -2126,7 +2212,7 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 			BroadcastEvent("event=restore_cancelled;reason=world_occupied;world=" + wstring_to_utf8(world.name));
 			g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 			g_appState.isRespond = false;
-			return;
+			return false;
 		}
 	}
 
@@ -2183,17 +2269,24 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
-		return;
+		return false;
 	}
 
 	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(targetBackup.filename().wstring()).c_str());
 
-	const bool restoreSucceeded = DoRestore(cfg, world.name, targetBackup.filename().wstring(), ref(console), 0, "");
+	const bool restoreSucceeded = DoRestore(
+		cfg,
+		world.name,
+		targetBackup.filename().wstring(),
+		ref(console),
+		restoreMethod,
+		"",
+		restoreWhitelistOverride);
 	if (!restoreSucceeded) {
 		BroadcastEvent("event=restore_finished;status=failure;reason=restore_failed;world=" + wstring_to_utf8(world.name));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
-		return;
+		return false;
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2237,4 +2330,5 @@ void DoHotRestore(const MyFolder& world, Console& console, bool deleteBackup, co
 	// 重置状态
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 	g_appState.isRespond = false;
+	return true;
 }

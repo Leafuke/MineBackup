@@ -1,8 +1,68 @@
 ﻿#include "SettingsUI.h"
 #include "SettingsUIPrivate.h"
-#include "MigrationService.h"
+#include "MigrationReportUI.h"
 
 using namespace std;
+
+namespace {
+
+const char* CapabilityStateLabel(CapabilityState state) {
+    switch (state) {
+    case CapabilityState::Available: return L("CAP_STATE_AVAILABLE");
+    case CapabilityState::Unavailable: return L("CAP_STATE_UNAVAILABLE");
+    case CapabilityState::PermissionRequired: return L("CAP_STATE_PERMISSION_REQUIRED");
+    case CapabilityState::Failed: return L("CAP_STATE_FAILED");
+    }
+    return L("CAP_STATE_UNKNOWN");
+}
+
+const char* CapabilityDetail(CapabilityState state) {
+    switch (state) {
+    case CapabilityState::Unavailable: return L("CAP_DETAIL_UNAVAILABLE");
+    case CapabilityState::PermissionRequired: return L("CAP_DETAIL_PERMISSION_REQUIRED");
+    case CapabilityState::Failed: return L("CAP_DETAIL_FAILED");
+    case CapabilityState::Available: return nullptr;
+    }
+    return nullptr;
+}
+
+void DrawCapability(const char* nameKey, const CapabilityStatus& status) {
+    const ImVec4 color = status.state == CapabilityState::Available
+        ? ImVec4(0.35f, 0.8f, 0.45f, 1.0f)
+        : status.state == CapabilityState::Failed
+            ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+            : ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
+    ImGui::BulletText("%s", L(nameKey));
+    ImGui::SameLine();
+    ImGui::TextColored(color, "%s", CapabilityStateLabel(status.state));
+    if (const char* detail = CapabilityDetail(status.state)) {
+        ImGui::Indent();
+        ImGui::TextWrapped("%s", detail);
+        ImGui::Unindent();
+    }
+}
+
+void DrawDesktopCapabilitySummary() {
+    if (!ImGui::CollapsingHeader(L("CAPABILITIES_HEADER"))) return;
+    const auto capabilities = GetDesktopServices()->Capabilities();
+    DrawCapability("CAP_FILE_DIALOGS", capabilities.fileDialogs);
+    DrawCapability("CAP_OPEN_URI", capabilities.openUri);
+    DrawCapability("CAP_NOTIFICATIONS", capabilities.notifications);
+    DrawCapability("CAP_TRAY", capabilities.tray);
+    DrawCapability("CAP_HOTKEYS", capabilities.globalHotkeys);
+    DrawCapability("CAP_AUTOSTART", capabilities.autostart);
+    if (capabilities.autostart.state == CapabilityState::PermissionRequired) {
+        if (ImGui::Button(L("OPEN_AUTOSTART_SETTINGS"))) {
+            const auto result = GetDesktopServices()->OpenAutostartSettings();
+            if (!result.IsAvailable() && !result.diagnostic.empty()) {
+                MessageBoxWin("MineBackup", L("AUTOSTART_SETTINGS_OPEN_FAILED"), 1);
+            }
+        }
+    }
+    DrawCapability("CAP_WINDOW_ACTIVATION", capabilities.windowActivation);
+}
+
+} // namespace
 
 void ShowSettingsWindowV2() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
@@ -20,10 +80,15 @@ void ShowSettingsWindowV2() {
     ImGui::Separator();
     ImGui::Spacing();
 
-	MigrationService::DrawMigrationSettings();
+	MigrationReportUI::DrawSettings();
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
+
+    DrawDesktopCapabilitySummary();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
 
     // 根据配置类型显示不同的设置界面
     if (specialSetting) {

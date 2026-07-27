@@ -10,6 +10,8 @@
 #include <iomanip>
 #include <iterator>
 #include <sstream>
+#include <array>
+#include <random>
 
 #ifdef _WIN32
 #include <objbase.h>
@@ -210,9 +212,30 @@ wstring GenerateGuidString() {
         return value;
     }
 #endif
-    auto now = chrono::steady_clock::now().time_since_epoch().count();
+    array<unsigned char, 16> bytes{};
+    uint64_t seed = static_cast<uint64_t>(chrono::steady_clock::now().time_since_epoch().count());
+    try {
+        random_device entropy;
+        seed ^= (static_cast<uint64_t>(entropy()) << 32u) ^ static_cast<uint64_t>(entropy());
+    }
+    catch (...) {
+        // steady_clock still supplies a process-local uniqueness source when OS entropy is unavailable.
+    }
+    mt19937_64 generator(seed);
+    for (size_t index = 0; index < bytes.size(); index += sizeof(uint64_t)) {
+        const uint64_t value = generator();
+        for (size_t offset = 0; offset < sizeof(uint64_t); ++offset) {
+            bytes[index + offset] = static_cast<unsigned char>(value >> (offset * 8u));
+        }
+    }
+    bytes[6] = static_cast<unsigned char>((bytes[6] & 0x0fu) | 0x40u);
+    bytes[8] = static_cast<unsigned char>((bytes[8] & 0x3fu) | 0x80u);
     wstringstream fallback;
-    fallback << L"minebackup-" << now;
+    fallback << hex << setfill(L'0');
+    for (size_t index = 0; index < bytes.size(); ++index) {
+        if (index == 4 || index == 6 || index == 8 || index == 10) fallback << L'-';
+        fallback << setw(2) << static_cast<unsigned int>(bytes[index]);
+    }
     return fallback.str();
 }
 

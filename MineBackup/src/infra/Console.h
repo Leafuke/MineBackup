@@ -5,7 +5,8 @@
 #include "Globals.h"
 #include "imgui/imgui.h"
 #include "AppState.h"
-#include "PlatformCompat.h"
+#include "AppPaths.h"
+#include "DesktopServices.h"
 #include "i18n.h"
 #include "text_to_text.h"
 
@@ -34,17 +35,19 @@ struct Console
 		Commands.push_back("HELP");
 		Commands.push_back("HISTORY");
 		Commands.push_back("CLEAR");
-		Commands.push_back("BACKUP");
-		Commands.push_back("BACKUP_MODS");
-		Commands.push_back("RESTORE");
-		Commands.push_back("RESTORE_CURRENT");
-		Commands.push_back("RESTORE_CURRENT_LATEST");
-		Commands.push_back("SET_CONFIG");
-		Commands.push_back("GET_CONFIG");
-		Commands.push_back("LIST_BACKUPS");
-		Commands.push_back("LIST_BACKUPS_CURRENT");
-		Commands.push_back("LIST_WORLDS");
-		Commands.push_back("LIST_CONFIGS");
+		Commands.push_back("cmd=PING");
+		Commands.push_back("cmd=GET_CAPABILITIES");
+		Commands.push_back("cmd=GET_STATUS");
+		Commands.push_back("cmd=LIST_CONFIGS");
+		Commands.push_back("cmd=LIST_FOLDERS");
+		Commands.push_back("cmd=LIST_BACKUPS");
+		Commands.push_back("cmd=GET_CONFIG");
+		Commands.push_back("cmd=BACKUP");
+		Commands.push_back("cmd=RESTORE");
+		Commands.push_back("cmd=BACKUP_ALL");
+		Commands.push_back("cmd=AUTO_BACKUP");
+		Commands.push_back("cmd=STOP_AUTO_BACKUP");
+		Commands.push_back("cmd=MARK_IMPORTANT");
 		AutoScroll = true;                  //自动滚动好呀
 		ScrollToBottom = false;             //不用滚动条，但可以鼠标滚
 	}
@@ -205,7 +208,8 @@ struct Console
 		bool copy_to_clipboard = ImGui::Button(L("BUTTON_COPY"));
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_EXPORT_LOG"))) {
-			std::ofstream out("console_log.txt", std::ios::out | std::ios::trunc);
+			const auto logPath = GetAppPaths().logsRoot / L"console_log.txt";
+			std::ofstream out(logPath, std::ios::out | std::ios::trunc);
 			if (!out.is_open()) return;
 			for (int i = 0; i < Items.Size; ++i)
 			{
@@ -213,7 +217,7 @@ struct Console
 			}
 			out.close();
 			// 自动打开日志所在目录 并选中该文件
-			OpenFolderWithFocus(std::filesystem::current_path().wstring(), L"/select,\"console_log.txt\"");
+			(void)GetDesktopServices()->RevealInFolder(logPath.parent_path(), logPath);
 		}
 		ImGui::Separator();
 

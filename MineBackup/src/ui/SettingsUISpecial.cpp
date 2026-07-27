@@ -10,7 +10,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 	if (ImGui::Button(L("TASK_ADD_BACKUP"))) {
 		UnifiedTaskV2 newTask;
 		newTask.id = spCfg.unifiedTasks.empty() ? 1 : (spCfg.unifiedTasks.back().id + 1);
-		newTask.name = "Backup Task " + to_string(newTask.id);
+		newTask.name = wstring_to_utf8(MineFormatMessage("TASK_DEFAULT_BACKUP_NAME", newTask.id));
 		newTask.type = TaskTypeV2::Backup;
 		spCfg.unifiedTasks.push_back(newTask);
 	}
@@ -18,7 +18,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 	if (ImGui::Button(L("TASK_ADD_COMMAND"))) {
 		UnifiedTaskV2 newTask;
 		newTask.id = spCfg.unifiedTasks.empty() ? 1 : (spCfg.unifiedTasks.back().id + 1);
-		newTask.name = "Command Task " + to_string(newTask.id);
+		newTask.name = wstring_to_utf8(MineFormatMessage("TASK_DEFAULT_COMMAND_NAME", newTask.id));
 		newTask.type = TaskTypeV2::Command;
 		spCfg.unifiedTasks.push_back(newTask);
 	}
@@ -114,7 +114,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 		if (task.type == TaskTypeV2::Backup) {
 			string current_config_label = g_appState.configs.count(task.configIndex)
 				? (string(L("CONFIG_N")) + to_string(task.configIndex))
-				: "None";
+				: L("TASK_NONE");
 			ImGui::SetNextItemWidth(200);
 			if (ImGui::BeginCombo(L("CONFIG_COMBO"), current_config_label.c_str())) {
 				for (auto const& [idx, val] : g_appState.configs) {
@@ -128,7 +128,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 
 			if (g_appState.configs.count(task.configIndex)) {
 				Config& selected_cfg = g_appState.configs[task.configIndex];
-				string current_world_label = "None";
+				string current_world_label = L("TASK_NONE");
 				if (!selected_cfg.worlds.empty() && task.worldIndex >= 0 && task.worldIndex < static_cast<int>(selected_cfg.worlds.size())) {
 					current_world_label = wstring_to_utf8(selected_cfg.worlds[task.worldIndex].first);
 				}
@@ -144,6 +144,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			}
 		}
 		else if (task.type == TaskTypeV2::Command) {
+			ImGui::TextWrapped("%s", L("TASK_COMMAND_WARNING"));
 			char cmdBuf[512];
 			strncpy_s(cmdBuf, wstring_to_utf8(task.command).c_str(), sizeof(cmdBuf));
 			ImGui::Text("%s", L("TASK_COMMAND_LABEL"));
@@ -156,7 +157,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			strncpy_s(workDirBuf, wstring_to_utf8(task.workingDirectory).c_str(), sizeof(workDirBuf));
 			ImGui::Text("%s", L("TASK_WORKDIR_LABEL"));
 			if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-				wstring sel = SelectFolderDialog();
+				wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 				if (!sel.empty()) task.workingDirectory = sel;
 			}
 			ImGui::SameLine();
@@ -181,15 +182,28 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			if (task.intervalMinutes < 1) task.intervalMinutes = 1;
 		}
 		else if (task.triggerMode == TaskTrigger::Scheduled) {
-			ImGui::Text("At:"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_HOUR"), &task.schedHour);
-			ImGui::SameLine(); ImGui::Text(":"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_MINUTE"), &task.schedMinute);
-			ImGui::Text("On (Month/Day):"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_MONTH"), &task.schedMonth);
-			ImGui::SameLine(); ImGui::Text("/"); ImGui::SameLine();
-			ImGui::SetNextItemWidth(80); ImGui::InputInt(L("SCHED_DAY"), &task.schedDay);
-			ImGui::SameLine(); ImGui::TextDisabled("%s", L("SCHED_EVERY_HINT"));
+			if (ImGui::BeginTable("TaskSchedule", 2, ImGuiTableFlags_SizingFixedFit)) {
+				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed);
+				ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(L("SCHEDULE_AT"));
+				ImGui::TableNextColumn();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_hour", &task.schedHour);
+				ImGui::SameLine(); ImGui::TextUnformatted(":"); ImGui::SameLine();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_minute", &task.schedMinute);
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(L("SCHEDULE_ON"));
+				ImGui::TableNextColumn();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_month", &task.schedMonth);
+				ImGui::SameLine(); ImGui::TextUnformatted("/"); ImGui::SameLine();
+				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_day", &task.schedDay);
+				ImGui::SameLine(); ImGui::TextDisabled("%s", L("SCHED_EVERY_HINT"));
+				ImGui::EndTable();
+			}
 
 			task.schedHour = max(0, min(23, task.schedHour));
 			task.schedMinute = max(0, min(59, task.schedMinute));
@@ -201,79 +215,57 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 
 void DrawServiceSettings(SpecialConfig& spCfg) {
 	ImGui::SeparatorText(L("SERVICE_MODE_TITLE"));
-
 	ImGui::TextWrapped("%s", L("SERVICE_MODE_DESC"));
 	ImGui::Spacing();
 
-	ImGui::Checkbox(L("SERVICE_ENABLE"), &spCfg.useServiceMode);
-
-	ImGui::BeginDisabled(!spCfg.useServiceMode);
-
-	char serviceNameBuf[128];
-	strncpy_s(serviceNameBuf, wstring_to_utf8(spCfg.serviceConfig.serviceName).c_str(), sizeof(serviceNameBuf));
-	ImGui::SetNextItemWidth(300);
-	if (ImGui::InputText(L("SERVICE_NAME"), serviceNameBuf, sizeof(serviceNameBuf))) {
-		spCfg.serviceConfig.serviceName = utf8_to_wstring(serviceNameBuf);
-	}
-
-	char displayNameBuf[256];
-	strncpy_s(displayNameBuf, wstring_to_utf8(spCfg.serviceConfig.serviceDisplayName).c_str(), sizeof(displayNameBuf));
-	ImGui::SetNextItemWidth(300);
-	if (ImGui::InputText(L("SERVICE_DISPLAY_NAME"), displayNameBuf, sizeof(displayNameBuf))) {
-		spCfg.serviceConfig.serviceDisplayName = utf8_to_wstring(displayNameBuf);
-	}
-
-	ImGui::Checkbox(L("SERVICE_AUTO_START"), &spCfg.serviceConfig.startWithSystem);
-	ImGui::Checkbox(L("SERVICE_DELAYED_START"), &spCfg.serviceConfig.delayedStart);
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SERVICE_DELAYED_START"));
-
-	ImGui::Spacing();
-
 #ifdef _WIN32
-	bool isInstalled = TaskSystem::IsServiceInstalled(spCfg.serviceConfig.serviceName);
-	bool isRunning = isInstalled && TaskSystem::IsServiceRunning(spCfg.serviceConfig.serviceName);
-
-	if (isInstalled) {
-		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", L("SERVICE_STATUS_INSTALLED"));
-		if (isRunning) {
-			ImGui::SameLine();
-			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "(%s)", L("SERVICE_STATUS_RUNNING"));
+	ImGui::Text("%s: %s", L("SERVICE_CONFIGURED_NAME"),
+		wstring_to_utf8(spCfg.serviceConfig.serviceName).c_str());
+	static wstring cachedServiceName;
+	static TaskSystem::LegacyServiceInspection cachedInspection;
+	static auto inspectedAt = chrono::steady_clock::time_point{};
+	const auto now = chrono::steady_clock::now();
+	if (cachedServiceName != spCfg.serviceConfig.serviceName
+		|| now - inspectedAt >= chrono::seconds(2)) {
+		cachedServiceName = spCfg.serviceConfig.serviceName;
+		cachedInspection = TaskSystem::InspectLegacyService(cachedServiceName);
+		inspectedAt = now;
+	}
+	const auto& inspection = cachedInspection;
+	if (!inspection.imagePath.empty()) {
+		ImGui::TextWrapped("%s: %s", L("SERVICE_IMAGE_PATH"),
+			wstring_to_utf8(inspection.imagePath).c_str());
+	}
+	if (inspection.state == TaskSystem::LegacyServiceState::NotInstalled) {
+		ImGui::TextDisabled("%s", L("SERVICE_STATUS_NOT_INSTALLED"));
+	}
+	else if (inspection.CanRemove()) {
+		ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "%s%s",
+			L("SERVICE_SAFE_TO_REMOVE"), inspection.running ? L("SERVICE_STATUS_RUNNING_SUFFIX") : "");
+		if (ImGui::Button(L("SERVICE_REMOVE_VALIDATED"))) {
+			const string prompt = string(L("SERVICE_REMOVE_CONFIRM")) + "\n\n"
+				+ wstring_to_utf8(inspection.imagePath);
+			if (ConfirmMessageBox("MineBackup", prompt)) {
+				wstring error;
+				if (!TaskSystem::RequestElevatedLegacyServiceRemoval(
+						spCfg.serviceConfig.serviceName, error)) {
+					MessageBoxWin("MineBackup", wstring_to_utf8(error), 2);
+				}
+				else {
+					MessageBoxWin("MineBackup", L("SERVICE_REMOVAL_LAUNCHED"), 0);
+					inspectedAt = chrono::steady_clock::time_point{};
+				}
+			}
 		}
 	}
 	else {
-		ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "%s", L("SERVICE_STATUS_NOT_INSTALLED"));
-	}
-
-	ImGui::Spacing();
-
-	if (!isInstalled) {
-		if (ImGui::Button(L("SERVICE_INSTALL"))) {
-			if (TaskSystem::InstallService(spCfg.serviceConfig)) {
-			}
-		}
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SERVICE_INSTALL"));
-	}
-	else {
-		if (ImGui::Button(L("SERVICE_UNINSTALL"))) {
-			TaskSystem::UninstallService(spCfg.serviceConfig.serviceName);
-		}
-		ImGui::SameLine();
-		if (!isRunning) {
-			if (ImGui::Button(L("SERVICE_START"))) {
-				TaskSystem::MineStartService(spCfg.serviceConfig.serviceName);
-			}
-		}
-		else {
-			if (ImGui::Button(L("SERVICE_STOP"))) {
-				TaskSystem::StopService(spCfg.serviceConfig.serviceName);
-			}
-		}
+		ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.25f, 1.0f), "%s",
+			L("SERVICE_UNSAFE_MANUAL"));
+		ImGui::TextWrapped("%s", wstring_to_utf8(inspection.diagnostic).c_str());
 	}
 #else
 	ImGui::TextDisabled("%s", L("SERVICE_NOT_SUPPORTED"));
 #endif
-
-	ImGui::EndDisabled();
 }
 
 void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
@@ -286,25 +278,47 @@ void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
 	if (ImGui::BeginTabBar("SpecialConfigTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(L("TAB_STARTUP"))) {
 			ImGui::Spacing();
-			ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
+			if (ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute)) {
+				SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
+					g_appState.currentConfigIndex, spCfg.autoExecute);
+			}
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_EXECUTE_ON_STARTUP"));
 			ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
 
-#ifdef _WIN32
-			if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
-				wchar_t selfPath[MAX_PATH];
-				GetModuleFileNameW(NULL, selfPath, MAX_PATH);
-				SetAutoStart("MineBackup_AutoTask_" + to_string(g_appState.currentConfigIndex), selfPath, true, g_appState.currentConfigIndex, spCfg.runOnStartup, g_SilentStartupToTray);
+			const auto services = GetDesktopServices();
+			const auto autostartCapability = services->Capabilities().autostart;
+			map<int, bool> previousStartupSelections;
+			for (const auto& [index, config] : g_appState.specialConfigs) {
+				previousStartupSelections[index] = config.runOnStartup;
 			}
-#endif
+			ImGui::BeginDisabled(!autostartCapability.IsAvailable());
+			if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
+				SetExclusiveSpecialRunOnStartup(g_appState.specialConfigs,
+					g_appState.currentConfigIndex, spCfg.runOnStartup);
+				const bool enabled = g_RunOnStartup
+					|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
+				const auto status = services->SetAutostart(enabled);
+				if (!status.IsAvailable()) {
+					for (const auto& [index, selected] : previousStartupSelections) {
+						g_appState.specialConfigs[index].runOnStartup = selected;
+					}
+					MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
+				}
+			}
+			ImGui::EndDisabled();
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+				&& !autostartCapability.IsAvailable()) {
+				ImGui::SetTooltip("%s", wstring_to_utf8(autostartCapability.diagnostic).c_str());
+			}
 
 			ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
 
 			ImGui::Spacing();
 			if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
-				g_appState.specialConfigs[g_appState.currentConfigIndex].autoExecute = true;
+				SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
+					g_appState.currentConfigIndex, true);
 				SaveConfigs();
-				ReStartApplication();
+				(void)services->RestartApplication();
 				g_appState.done = true;
 			}
 			ImGui::EndTabItem();
