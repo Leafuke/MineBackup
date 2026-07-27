@@ -2,6 +2,7 @@
 
 #include "AppState.h"
 #include "AppPaths.h"
+#include "ConfigManager.h"
 #include "DiagnosticLogExporter.h"
 #include "DesktopServices.h"
 #include "Globals.h"
@@ -28,8 +29,10 @@ using minebackup::logging::LogCategory;
 using minebackup::logging::LogLevel;
 using minebackup::logging::LogRecord;
 
-constexpr std::size_t kLevelCount = 6;
-constexpr std::size_t kCategoryCount = 12;
+constexpr std::size_t kLevelCount =
+    static_cast<std::size_t>(LogLevel::Critical) + 1;
+constexpr std::size_t kCategoryCount =
+    static_cast<std::size_t>(LogCategory::Session) + 1;
 constexpr std::size_t kLocalRecordLimit = 20'000;
 
 const char* PlatformName() {
@@ -156,11 +159,6 @@ ImVec4 LevelColor(LogLevel level) {
 class LogPanel {
 public:
     LogPanel() {
-        levelEnabled_.fill(false);
-        levelEnabled_[static_cast<std::size_t>(LogLevel::Info)] = true;
-        levelEnabled_[static_cast<std::size_t>(LogLevel::Warning)] = true;
-        levelEnabled_[static_cast<std::size_t>(LogLevel::Error)] = true;
-        levelEnabled_[static_cast<std::size_t>(LogLevel::Critical)] = true;
         categoryEnabled_.fill(true);
     }
 
@@ -171,8 +169,9 @@ public:
         DrawExportDialog();
         DrawBackendStatus();
         RebuildFilterIfNeeded();
-        DrawTable(appended);
-        DrawDetails();
+        DrawStream(appended);
+        DrawDetailsPopup();
+        DrawFooter();
     }
 
 private:
@@ -209,66 +208,109 @@ private:
 
     bool DrawToolbar() {
         bool appendedOnResume = false;
-        if (ImGui::Button(paused_ ? L("LOG_RESUME") : L("LOG_PAUSE"))) {
-            paused_ = !paused_;
-            if (!paused_) appendedOnResume = Refresh();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(L("LOG_CLEAR_VIEW"))) {
-            const auto status = minebackup::logging::GetStatus();
-            viewStartSequence_ = status.latestSequence;
-            cursor_ = status.latestSequence;
-            records_.clear();
-            filteredIndices_.clear();
-            selectedSequence_ = 0;
-            filterDirty_ = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(L("BUTTON_COPY"))) CopyFiltered();
-        ImGui::SameLine();
-        if (ImGui::Button(L("LOG_OPEN_DIRECTORY"))) {
-            (void)GetDesktopServices()->OpenFolder(GetAppPaths().logsRoot);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(L("LOG_EXPORT_DIAGNOSTICS"))) {
-            ImGui::OpenPopup("##diagnostic-export-confirm");
-        }
-        ImGui::SameLine();
-        ImGui::Checkbox(L("LOG_AUTO_TAIL"), &autoTail_);
+        struct LevelOption {
+            LogLevel level;
+            const char* labelKey;
+        };
+        static constexpr std::array<LevelOption, kLevelCount> levelOptions{{
+            {LogLevel::Trace, "LOG_VIEW_LEVEL_ALL"},
+            {LogLevel::Debug, "LOG_VIEW_LEVEL_DEBUG"},
+            {LogLevel::Info, "LOG_VIEW_LEVEL_INFO"},
+            {LogLevel::Warning, "LOG_VIEW_LEVEL_WARNING"},
+            {LogLevel::Error, "LOG_VIEW_LEVEL_ERROR"},
+            {LogLevel::Critical, "LOG_VIEW_LEVEL_CRITICAL"},
+        }};
 
-        if (ImGui::Button(L("LOG_LEVEL_FILTER"))) ImGui::OpenPopup("##log-level-filter");
-        if (ImGui::BeginPopup("##log-level-filter")) {
-            const std::array<LogLevel, kLevelCount> levels = {
-                LogLevel::Trace, LogLevel::Debug, LogLevel::Info,
-                LogLevel::Warning, LogLevel::Error, LogLevel::Critical};
-            for (const auto level : levels) {
-                const auto index = static_cast<std::size_t>(level);
-                if (ImGui::Checkbox(minebackup::logging::ToString(level), &levelEnabled_[index])) {
-                    filterDirty_ = true;
-                }
+        const char* currentLevelLabel = L("LOG_VIEW_LEVEL_INFO");
+        for (const auto& option : levelOptions) {
+            if (option.level == g_logViewLevel) {
+                currentLevelLabel = L(option.labelKey);
+                break;
             }
-            ImGui::EndPopup();
+        }
+        const float availableWidth = ImGui::GetContentRegionAvail().x;
+        const float levelWidth = std::clamp(availableWidth * 0.34f, 118.0f, 160.0f);
+        ImGui::SetNextItemWidth(levelWidth);
+        if (ImGui::BeginCombo("##log-view-level", currentLevelLabel)) {
+            for (const auto& option : levelOptions) {
+                const bool selected = option.level == g_logViewLevel;
+                if (ImGui::Selectable(L(option.labelKey), selected)) {
+                    g_logViewLevel = option.level;
+                    filterDirty_ = true;
+                    SaveViewPreferences();
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L("LOG_CATEGORY_FILTER"))) ImGui::OpenPopup("##log-category-filter");
-        if (ImGui::BeginPopup("##log-category-filter")) {
-            for (std::size_t index = 0; index < categoryEnabled_.size(); ++index) {
-                const auto category = static_cast<LogCategory>(index);
-                if (ImGui::Checkbox(minebackup::logging::ToString(category),
-                        &categoryEnabled_[index])) {
-                    filterDirty_ = true;
-                }
-            }
-            ImGui::EndPopup();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(260.0f);
+        ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::InputTextWithHint("##log-search", L("LOG_SEARCH_HINT"),
                 search_, sizeof(search_))) {
             filterDirty_ = true;
         }
+
+        if (ImGui::Button(paused_ ? L("LOG_RESUME_SHORT") : L("LOG_PAUSE_SHORT"))) {
+            paused_ = !paused_;
+            if (!paused_) appendedOnResume = Refresh();
+        }
         ImGui::SameLine();
-        ImGui::TextDisabled("%zu / %zu", filteredIndices_.size(), records_.size());
+        if (ImGui::Checkbox(L("LOG_AUTO_TAIL"), &g_logViewAutoTail)) {
+            SaveViewPreferences();
+        }
+        const float moreWidth = ImGui::CalcTextSize(L("LOG_MORE")).x
+            + ImGui::GetStyle().FramePadding.x * 2.0f;
+        const float rightAlignedX = ImGui::GetCursorPosX()
+            + ImGui::GetContentRegionAvail().x - moreWidth;
+        if (rightAlignedX > ImGui::GetCursorPosX() + ImGui::GetStyle().ItemSpacing.x) {
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(rightAlignedX);
+        } else {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button(L("LOG_MORE"))) {
+            ImGui::OpenPopup("##log-more-menu");
+        }
+        if (ImGui::BeginPopup("##log-more-menu")) {
+            if (ImGui::BeginMenu(L("LOG_CATEGORY_FILTER"))) {
+                for (std::size_t index = 0; index < categoryEnabled_.size(); ++index) {
+                    const auto category = static_cast<LogCategory>(index);
+                    if (ImGui::Checkbox(minebackup::logging::ToString(category),
+                            &categoryEnabled_[index])) {
+                        filterDirty_ = true;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu(L("LOG_DISPLAY_OPTIONS"))) {
+                if (ImGui::Checkbox(L("LOG_SHOW_TIME"), &g_logViewShowTime)) {
+                    SaveViewPreferences();
+                }
+                if (ImGui::Checkbox(L("LOG_SHOW_CATEGORY"), &g_logViewShowCategory)) {
+                    SaveViewPreferences();
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            const auto selected = FindSelectedRecord();
+            if (ImGui::MenuItem(selected ? L("LOG_COPY_ROW") : L("LOG_COPY_FILTERED"))) {
+                if (selected) CopyRecord(*selected);
+                else CopyFiltered();
+            }
+            if (ImGui::MenuItem(L("LOG_CLEAR_VIEW"))) ClearView();
+            ImGui::Separator();
+            if (ImGui::MenuItem(L("LOG_OPEN_DIRECTORY"))) {
+                (void)GetDesktopServices()->OpenFolder(GetAppPaths().logsRoot);
+            }
+            if (ImGui::MenuItem(L("LOG_EXPORT_DIAGNOSTICS"))) {
+                openExportDialog_ = true;
+            }
+            ImGui::EndPopup();
+        }
+        if (openExportDialog_) {
+            ImGui::OpenPopup("##diagnostic-export-confirm");
+            openExportDialog_ = false;
+        }
         return appendedOnResume;
     }
 
@@ -332,9 +374,8 @@ private:
     }
 
     bool PassesFilter(const LogRecord& record) const {
-        const auto levelIndex = static_cast<std::size_t>(record.level);
         const auto categoryIndex = static_cast<std::size_t>(record.category);
-        if (levelIndex >= levelEnabled_.size() || !levelEnabled_[levelIndex]) return false;
+        if (record.level < g_logViewLevel) return false;
         if (categoryIndex >= categoryEnabled_.size() || !categoryEnabled_[categoryIndex]) return false;
         const std::string_view query(search_);
         if (query.empty()) return true;
@@ -363,83 +404,221 @@ private:
         filterDirty_ = false;
     }
 
-    void DrawTable(bool appended) {
-        const auto flags = ImGuiTableFlags_BordersV | ImGuiTableFlags_RowBg
-            | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY
-            | ImGuiTableFlags_SizingStretchProp;
-        const float detailsReserve = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
-        if (!ImGui::BeginTable("##structured-log-table", 4, flags,
-                ImVec2(0.0f, -detailsReserve))) {
-            return;
+    const char* LevelTag(LogLevel level) const {
+        switch (level) {
+        case LogLevel::Warning: return L("LOG_LEVEL_TAG_WARNING");
+        case LogLevel::Error: return L("LOG_LEVEL_TAG_ERROR");
+        case LogLevel::Critical: return L("LOG_LEVEL_TAG_CRITICAL");
+        default: return nullptr;
         }
-        ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn(L("LOG_COLUMN_TIME"), ImGuiTableColumnFlags_WidthFixed, 95.0f);
-        ImGui::TableSetupColumn(L("LOG_COLUMN_LEVEL"), ImGuiTableColumnFlags_WidthFixed, 72.0f);
-        ImGui::TableSetupColumn(L("LOG_COLUMN_CATEGORY"), ImGuiTableColumnFlags_WidthFixed, 92.0f);
-        ImGui::TableSetupColumn(L("LOG_COLUMN_MESSAGE"), ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableHeadersRow();
-
-        ImGuiListClipper clipper;
-        const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
-        clipper.Begin(static_cast<int>(filteredIndices_.size()), rowHeight);
-        while (clipper.Step()) {
-            for (int visibleIndex = clipper.DisplayStart;
-                 visibleIndex < clipper.DisplayEnd; ++visibleIndex) {
-                const auto recordIndex = filteredIndices_[static_cast<std::size_t>(visibleIndex)];
-                if (recordIndex >= records_.size()) continue;
-                const auto& record = *records_[recordIndex];
-                ImGui::TableNextRow(ImGuiTableRowFlags_None, rowHeight);
-                ImGui::TableSetColumnIndex(0);
-                const std::string id = "##log-row-" + std::to_string(record.sequence);
-                if (ImGui::Selectable(id.c_str(), selectedSequence_ == record.sequence,
-                        ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, rowHeight))) {
-                    selectedSequence_ = record.sequence;
-                }
-                ImGui::SameLine();
-                ImGui::TextUnformatted(FormatTime(record.timestamp, false).c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextColored(LevelColor(record.level), "%s",
-                    minebackup::logging::ToString(record.level));
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(minebackup::logging::ToString(record.category));
-                ImGui::TableSetColumnIndex(3);
-                ImGui::TextUnformatted(record.message.c_str());
-            }
-        }
-        if (appended && autoTail_) ImGui::SetScrollHereY(1.0f);
-        ImGui::EndTable();
     }
 
-    void DrawDetails() {
-        const auto selected = std::find_if(records_.begin(), records_.end(),
-            [this](const auto& record) { return record->sequence == selectedSequence_; });
-        if (selected == records_.end()) {
-            ImGui::TextDisabled("%s", L("LOG_SELECT_DETAILS"));
+    void DrawStream(bool appended) {
+        const float footerReserve = ImGui::GetTextLineHeightWithSpacing() * 1.35f;
+        bool openDetails = false;
+        if (ImGui::BeginChild(
+                "##log-stream", ImVec2(0.0f, -footerReserve), true)) {
+            ImGuiListClipper clipper;
+            const float rowHeight = ImGui::GetTextLineHeightWithSpacing()
+                + ImGui::GetStyle().FramePadding.y * 1.5f;
+            clipper.Begin(static_cast<int>(filteredIndices_.size()), rowHeight);
+            while (clipper.Step()) {
+                for (int visibleIndex = clipper.DisplayStart;
+                     visibleIndex < clipper.DisplayEnd; ++visibleIndex) {
+                    const auto recordIndex =
+                        filteredIndices_[static_cast<std::size_t>(visibleIndex)];
+                    if (recordIndex >= records_.size()) continue;
+                    const auto& record = *records_[recordIndex];
+                    ImGui::PushID(static_cast<int>(record.sequence));
+                    if (ImGui::Selectable("##row",
+                            selectedSequence_ == record.sequence,
+                            ImGuiSelectableFlags_AllowDoubleClick,
+                            ImVec2(0.0f, rowHeight))) {
+                        selectedSequence_ = record.sequence;
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                            openDetails = true;
+                        }
+                    }
+
+                    const ImVec2 rowMin = ImGui::GetItemRectMin();
+                    const ImVec2 rowMax = ImGui::GetItemRectMax();
+                    auto* drawList = ImGui::GetWindowDrawList();
+                    drawList->AddRectFilled(
+                        rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y),
+                        ImGui::ColorConvertFloat4ToU32(LevelColor(record.level)),
+                        1.5f);
+
+                    float textX = rowMin.x + ImGui::GetStyle().FramePadding.x + 7.0f;
+                    const float textY = rowMin.y
+                        + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f;
+                    const ImVec4 clip(
+                        textX, rowMin.y, rowMax.x - ImGui::GetStyle().FramePadding.x,
+                        rowMax.y);
+                    auto drawSegment = [&](std::string_view text, ImU32 color) {
+                        if (text.empty()) return;
+                        drawList->AddText(
+                            ImGui::GetFont(), ImGui::GetFontSize(),
+                            ImVec2(textX, textY), color, text.data(),
+                            text.data() + text.size(), 0.0f, &clip);
+                        textX += ImGui::CalcTextSize(
+                            text.data(), text.data() + text.size()).x;
+                    };
+                    if (g_logViewShowTime) {
+                        const std::string time =
+                            FormatTime(record.timestamp, false) + "  ";
+                        drawSegment(time, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                    }
+                    if (const char* tag = LevelTag(record.level)) {
+                        const std::string label = std::string(tag) + "  ";
+                        drawSegment(label,
+                            ImGui::ColorConvertFloat4ToU32(LevelColor(record.level)));
+                    }
+                    if (g_logViewShowCategory) {
+                        const std::string category = "["
+                            + std::string(minebackup::logging::ToString(record.category))
+                            + "]  ";
+                        drawSegment(category, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                    }
+                    drawSegment(record.message, ImGui::GetColorU32(ImGuiCol_Text));
+
+                    if (ImGui::BeginPopupContextItem("##row-context")) {
+                        selectedSequence_ = record.sequence;
+                        if (ImGui::MenuItem(L("LOG_VIEW_DETAILS"))) {
+                            openDetails = true;
+                        }
+                        if (ImGui::MenuItem(L("LOG_COPY_MESSAGE"))) {
+                            ImGui::SetClipboardText(record.message.c_str());
+                        }
+                        if (ImGui::MenuItem(L("LOG_COPY_ROW"))) CopyRecord(record);
+                        ImGui::EndPopup();
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextColored(LevelColor(record.level), "%s",
+                            minebackup::logging::ToString(record.level));
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("%s  %s",
+                            minebackup::logging::ToString(record.category),
+                            FormatTime(record.timestamp, true).c_str());
+                        ImGui::PushTextWrapPos(
+                            ImGui::GetCursorPosX() + 420.0f * g_uiScale);
+                        ImGui::TextUnformatted(record.message.c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                    }
+                    ImGui::PopID();
+                }
+            }
+            if (appended && g_logViewAutoTail) ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+        if (openDetails) ImGui::OpenPopup("##log-details");
+    }
+
+    void DrawDetailsPopup() {
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(390.0f * g_uiScale, 0.0f),
+            ImVec2(680.0f * g_uiScale, 620.0f * g_uiScale));
+        if (!ImGui::BeginPopup("##log-details",
+                ImGuiWindowFlags_AlwaysAutoResize)) {
             return;
         }
-        const auto& record = **selected;
-        if (ImGui::Button(L("LOG_COPY_ROW"))) CopyRecord(record);
+        const LogRecord* record = FindSelectedRecord();
+        if (!record) {
+            ImGui::TextDisabled("%s", L("LOG_DETAILS_UNAVAILABLE"));
+            ImGui::EndPopup();
+            return;
+        }
+
+        ImGui::TextUnformatted(L("LOG_DETAILS_TITLE"));
         ImGui::SameLine();
-        ImGui::Text("#%llu  %s  %s/%s",
-            static_cast<unsigned long long>(record.sequence),
-            FormatTime(record.timestamp, true).c_str(),
-            minebackup::logging::ToString(record.level),
-            minebackup::logging::ToString(record.category));
-        ImGui::TextWrapped("%s", record.message.c_str());
-        ImGui::TextDisabled("event=%s  session=%s  thread=%s",
-            record.eventId.c_str(), record.sessionId.c_str(), record.threadId.c_str());
-        if (!record.sourceFile.empty()) {
-            ImGui::TextDisabled("source=%s:%u", record.sourceFile.c_str(),
-                static_cast<unsigned int>(record.sourceLine));
-        }
-        if (!record.context.empty()) {
-            std::string context;
-            for (const auto& field : record.context) {
-                if (!context.empty()) context.append("; ");
-                context.append(field.key).append("=").append(field.value);
+        if (ImGui::SmallButton(L("LOG_COPY_ROW"))) CopyRecord(*record);
+        ImGui::Separator();
+        ImGui::TextDisabled("%s", L("LOG_DETAIL_MESSAGE"));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f * g_uiScale);
+        ImGui::TextUnformatted(record->message.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+
+        const auto detailRow = [](const char* label, const std::string& value) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("%s", label);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s", value.c_str());
+        };
+        if (ImGui::BeginTable("##log-details-fields", 2,
+                ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
+                96.0f * g_uiScale);
+            ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+            detailRow(L("LOG_COLUMN_TIME"), FormatTime(record->timestamp, true));
+            detailRow(L("LOG_COLUMN_LEVEL"),
+                minebackup::logging::ToString(record->level));
+            detailRow(L("LOG_COLUMN_CATEGORY"),
+                minebackup::logging::ToString(record->category));
+            detailRow(L("LOG_DETAIL_EVENT"), record->eventId);
+            if (!record->sourceFile.empty()) {
+                detailRow(L("LOG_DETAIL_SOURCE"), record->sourceFile + ":"
+                    + std::to_string(record->sourceLine));
             }
-            ImGui::TextWrapped("context: %s", context.c_str());
+            detailRow(L("LOG_DETAIL_THREAD"), record->threadId);
+            detailRow(L("LOG_DETAIL_SESSION"),
+                record->sessionId.substr(
+                    0, std::min<std::size_t>(8, record->sessionId.size())));
+            ImGui::EndTable();
         }
+
+        if (!record->context.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", L("LOG_DETAIL_CONTEXT"));
+            if (ImGui::BeginTable("##log-details-context", 2,
+                    ImGuiTableFlags_SizingStretchProp
+                        | ImGuiTableFlags_BordersInnerV)) {
+                ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed,
+                    120.0f * g_uiScale);
+                ImGui::TableSetupColumn("##context-value",
+                    ImGuiTableColumnFlags_WidthStretch);
+                for (const auto& field : record->context) {
+                    detailRow(field.key.c_str(), field.value);
+                }
+                ImGui::EndTable();
+            }
+        }
+        ImGui::EndPopup();
+    }
+
+    void DrawFooter() const {
+        ImGui::TextDisabled(L("LOG_VISIBLE_COUNT"),
+            static_cast<unsigned long long>(filteredIndices_.size()),
+            static_cast<unsigned long long>(records_.size()));
+        if (paused_) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.28f, 1.0f),
+                "%s", L("LOG_PAUSED_STATUS"));
+        }
+    }
+
+    const LogRecord* FindSelectedRecord() const {
+        const auto selected = std::find_if(records_.begin(), records_.end(),
+            [this](const auto& record) {
+                return record->sequence == selectedSequence_;
+            });
+        return selected == records_.end() ? nullptr : selected->get();
+    }
+
+    void ClearView() {
+        const auto status = minebackup::logging::GetStatus();
+        viewStartSequence_ = status.latestSequence;
+        cursor_ = status.latestSequence;
+        records_.clear();
+        filteredIndices_.clear();
+        selectedSequence_ = 0;
+        filterDirty_ = true;
+    }
+
+    static void SaveViewPreferences() {
+        (void)SaveConfigs();
     }
 
     static std::string RecordText(const LogRecord& record) {
@@ -447,7 +626,23 @@ private:
         output << '#' << record.sequence << ' ' << FormatTime(record.timestamp, true)
                << ' ' << minebackup::logging::ToString(record.level)
                << ' ' << minebackup::logging::ToString(record.category)
-               << ' ' << record.eventId << ' ' << record.message;
+               << ' ' << record.message
+               << " | event=" << record.eventId
+               << " session=" << record.sessionId
+               << " thread=" << record.threadId;
+        if (!record.sourceFile.empty()) {
+            output << " source=" << record.sourceFile << ':' << record.sourceLine;
+        }
+        if (!record.context.empty()) {
+            output << " context=[";
+            bool first = true;
+            for (const auto& field : record.context) {
+                if (!first) output << ';';
+                first = false;
+                output << field.key << '=' << field.value;
+            }
+            output << ']';
+        }
         return output.str();
     }
 
@@ -466,7 +661,6 @@ private:
 
     std::vector<std::shared_ptr<const LogRecord>> records_;
     std::vector<std::size_t> filteredIndices_;
-    std::array<bool, kLevelCount> levelEnabled_{};
     std::array<bool, kCategoryCount> categoryEnabled_{};
     char search_[256]{};
     std::uint64_t cursor_ = 0;
@@ -474,9 +668,9 @@ private:
     std::uint64_t selectedSequence_ = 0;
     std::uint64_t evictedCount_ = 0;
     bool paused_ = false;
-    bool autoTail_ = true;
     bool filterDirty_ = true;
     bool showBackendError_ = false;
+    bool openExportDialog_ = false;
     std::string lastBackendError_;
     std::string exportStatus_;
 };

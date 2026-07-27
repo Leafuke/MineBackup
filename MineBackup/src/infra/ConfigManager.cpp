@@ -187,7 +187,12 @@ void LoadConfigs(const filesystem::path& filename) {
 	g_appState.specialConfigMode = false;
 	restoreWhitelist.clear();
 	g_logFileLevel = minebackup::logging::LogFileLevel::Info;
+	g_logViewLevel = minebackup::logging::LogLevel::Info;
+	g_logViewAutoTail = true;
+	g_logViewShowTime = false;
+	g_logViewShowCategory = false;
 	optional<wstring> configuredLogFileLevel;
+	optional<wstring> configuredLogViewLevel;
 	optional<bool> legacyAutoLog;
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) {
@@ -431,6 +436,18 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"LogFileLevel") {
 					configuredLogFileLevel = val;
 				}
+				else if (key == L"LogViewLevel") {
+					configuredLogViewLevel = val;
+				}
+				else if (key == L"LogViewAutoTail") {
+					g_logViewAutoTail = (val != L"0");
+				}
+				else if (key == L"LogViewShowTime") {
+					g_logViewShowTime = (val != L"0");
+				}
+				else if (key == L"LogViewShowCategory") {
+					g_logViewShowCategory = (val != L"0");
+				}
 				else if (key == L"AutoLog") {
 					legacyAutoLog = (val != L"0");
 				}
@@ -466,6 +483,17 @@ void LoadConfigs(const filesystem::path& filename) {
 			"logging.config.legacy_auto_log",
 			"Migrated legacy AutoLog={} to LogFileLevel={}.",
 			*legacyAutoLog ? 1 : 0, minebackup::logging::ToString(g_logFileLevel));
+	}
+	if (configuredLogViewLevel) {
+		bool validLogViewLevel = false;
+		g_logViewLevel = minebackup::logging::ParseLogLevel(
+			wstring_to_utf8(*configuredLogViewLevel), &validLogViewLevel);
+		if (!validLogViewLevel) {
+			MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
+				"logging.config.invalid_view_level",
+				"Invalid LogViewLevel '{}'; using info.",
+				wstring_to_utf8(*configuredLogViewLevel));
+		}
 	}
 	minebackup::logging::SetFileLevel(g_logFileLevel);
 	set<wstring> usedConfigIds;
@@ -573,6 +601,11 @@ bool SaveConfigs(const filesystem::path& filename) {
 	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
 	buffer << L"LogFileLevel="
 		<< utf8_to_wstring(minebackup::logging::ToString(g_logFileLevel)) << L"\n";
+	buffer << L"LogViewLevel="
+		<< utf8_to_wstring(minebackup::logging::ToString(g_logViewLevel)) << L"\n";
+	buffer << L"LogViewAutoTail=" << (g_logViewAutoTail ? 1 : 0) << L"\n";
+	buffer << L"LogViewShowTime=" << (g_logViewShowTime ? 1 : 0) << L"\n";
+	buffer << L"LogViewShowCategory=" << (g_logViewShowCategory ? 1 : 0) << L"\n";
 	buffer << L"CoreValidationPending=" << (g_CoreValidationPending.load() ? 1 : 0) << L"\n";
 	buffer << L"CoreValidationPassed=" << (g_CoreValidationPassed.load() ? 1 : 0) << L"\n";
 	buffer << L"CloseAction=" << g_closeAction << L"\n";
