@@ -5,13 +5,11 @@
 #include <string>
 #include <string_view>
 
-struct Console;
-
 void BroadcastEvent(const std::string& eventPayload);
 void BroadcastEvent(
     std::string_view eventName,
     const minebackup::knotlink::KnotLinkProtocolFormatter::Fields& fields);
-bool InitKnotLink(Console& console);
+bool InitKnotLink();
 void CleanupKnotLink();
 
 bool PerformModHandshake(

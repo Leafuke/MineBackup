@@ -329,7 +329,7 @@ void DrawModIntegrationSettings(Config& cfg) {
 		else {
 			TaskCoordinator::Instance().Submit(
 				L"knotlink-settings-enable", {L"service:knotlink"}, [](stop_token) {
-					if (InitKnotLink(console)) {
+					if (InitKnotLink()) {
 						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
 					}
 				});
@@ -360,7 +360,7 @@ void DrawModIntegrationSettings(Config& cfg) {
 				const auto status =
 					minebackup::knotlink::GetKnotLinkServerManager().StartCompatibleServer();
 				if (status.state == minebackup::knotlink::KnotLinkServerState::Ready) {
-					if (InitKnotLink(console)) {
+					if (InitKnotLink()) {
 						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
 					}
 				}

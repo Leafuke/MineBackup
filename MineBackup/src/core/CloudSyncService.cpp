@@ -7,6 +7,7 @@
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
 #include "MigrationCoordinator.h"
+#include "Logging.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
 #include "ExternalToolManager.h"
@@ -50,7 +51,7 @@ namespace {
 		wstring metadataRecordRemotePath;
 	};
 
-	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult);
+	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, CloudCommandResult& outResult);
 	bool BelongsToConfiguration(const Config& config, const HistoryEntry& entry);
 	bool TryResolveKnownConfigId(const HistoryEntry& entry, wstring& outConfigId);
 
@@ -226,10 +227,14 @@ namespace {
 	CloudCommandResult ExecuteCommandWithRetry(
 		const Config& config,
 		int configIndex,
-		Console& console,
 		const ProcessSpec& command,
 		const char* busyStatusKey,
 		int progress) {
+		minebackup::logging::ScopedLogContext cloudContext({
+			{"config_id", wstring_to_utf8(config.configId)},
+			{"config_index", to_string(configIndex)},
+			{"tool", wstring_to_utf8(command.executable.filename().wstring())}
+		});
 		CloudCommandResult result;
 		const int retryCount = max(0, config.cloudRetryCount);
 		for (int attempt = 0; attempt <= retryCount; ++attempt) {
@@ -240,8 +245,18 @@ namespace {
 			invocation.timeout = chrono::seconds(config.cloudTimeoutSeconds);
 			invocation.workingDirectory = config.cloudWorkingDirectory;
 			const auto process = ProcessRunner::Run(invocation);
-			if (!process.standardOutput.empty()) console.AddLog("%s", process.standardOutput.c_str());
-			if (!process.standardError.empty()) console.AddLog("%s", process.standardError.c_str());
+			if (!process.standardOutput.empty()) {
+				minebackup::logging::LogRaw(
+					minebackup::logging::LogCategory::Process,
+					"process.stdout", process.standardOutput,
+					minebackup::logging::LogLevel::Debug, MB_LOG_SOURCE);
+			}
+			if (!process.standardError.empty()) {
+				minebackup::logging::LogRaw(
+					minebackup::logging::LogCategory::Process,
+					"process.stderr", process.standardError,
+					minebackup::logging::LogLevel::Debug, MB_LOG_SOURCE);
+			}
 			const bool success = process.status == ProcessStatus::Succeeded;
 			const int exitCode = process.exitCode;
 			const bool timedOut = process.status == ProcessStatus::TimedOut;
@@ -253,6 +268,9 @@ namespace {
 			result.exitCode = exitCode;
 			result.timedOut = timedOut;
 			if (success) {
+				MB_LOG_DEBUG(minebackup::logging::LogCategory::Cloud,
+					"cloud.command.completed",
+					"Cloud command completed (attempt={}, exit_code=0)", attempt + 1);
 				result.message = utf8_to_wstring(L("CLOUD_TASK_COMPLETED"));
 				return result;
 			}
@@ -261,9 +279,15 @@ namespace {
 				? MineFormatMessage("CLOUD_TIMEOUT", config.cloudTimeoutSeconds)
 				: MineFormatMessage("CLOUD_COMMAND_FAILED_WITH_CODE", exitCode);
 			result.detail = utf8_to_wstring(errorMessage);
+			MB_LOG_ERROR(minebackup::logging::LogCategory::Cloud,
+				timedOut ? "cloud.command.timeout" : "cloud.command.failed",
+				"Cloud command failed (attempt={}, exit_code={}, timed_out={})",
+				attempt + 1, exitCode, timedOut);
 
 			if (attempt < retryCount) {
-				console.AddLog(L("CLOUD_RETRYING"), attempt + 2, retryCount + 1);
+				MB_LOG_I18N_WARNING(minebackup::logging::LogCategory::Cloud,
+					"cloud.command.retrying", "CLOUD_RETRYING",
+					attempt + 2, retryCount + 1);
 			}
 		}
 
@@ -438,7 +462,7 @@ namespace {
 		return false;
 	}
 
-	CloudCommandResult UploadConfigurationHistorySnapshotNoLock(const Config& config, int configIndex, Console& console) {
+	CloudCommandResult UploadConfigurationHistorySnapshotNoLock(const Config& config, int configIndex) {
 		CloudCommandResult configError;
 		if (!EnsureCloudConfigured(config, configError)) {
 			return configError;
@@ -454,7 +478,7 @@ namespace {
 
 		CloudCommandResult result;
 		CloudCommandResult remoteLoadResult;
-		vector<HistoryEntry> mergedEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, remoteLoadResult);
+		vector<HistoryEntry> mergedEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, remoteLoadResult);
 		if (!remoteLoadResult.success) {
 			if (IsRemoteObjectMissing(remoteLoadResult)) {
 				// A genuinely absent remote history is the expected first-upload case.
@@ -494,7 +518,7 @@ namespace {
 		manifestOut.close();
 
 		const wstring historyRemotePath = FolderRewindFormat::BuildGlobalHistoryRemotePath(config);
-		result = ExecuteCommandWithRetry(config, configIndex, console,
+		result = ExecuteCommandWithRetry(config, configIndex,
 			BuildRcloneCopyToCommand(config, tempHistoryPath.wstring(), historyRemotePath),
 			"CLOUD_STATUS_UPLOADING_HISTORY",
 			85);
@@ -504,7 +528,7 @@ namespace {
 		}
 
 		const wstring manifestRemotePath = BuildActiveManifestRemotePath(config);
-		CloudCommandResult manifestResult = ExecuteCommandWithRetry(config, configIndex, console,
+		CloudCommandResult manifestResult = ExecuteCommandWithRetry(config, configIndex,
 			BuildRcloneCopyToCommand(config, tempManifestPath.wstring(), manifestRemotePath),
 			"CLOUD_STATUS_UPLOADING_HISTORY",
 			92);
@@ -523,7 +547,7 @@ namespace {
 		return result;
 	}
 
-	CloudCommandResult UploadHistoryEntryNoLock(const Config& config, int configIndex, const HistoryEntry& entry, Console& console) {
+	CloudCommandResult UploadHistoryEntryNoLock(const Config& config, int configIndex, const HistoryEntry& entry) {
 		CloudCommandResult configError;
 		if (!EnsureCloudConfigured(config, configError)) {
 			return configError;
@@ -537,7 +561,6 @@ namespace {
 		CloudCommandResult result = ExecuteCommandWithRetry(
 			config,
 			configIndex,
-			console,
 			BuildRcloneCopyToCommand(config, paths.archiveLocalPath.wstring(), paths.archiveRemotePath),
 			"CLOUD_STATUS_UPLOADING_ARCHIVE",
 			40);
@@ -555,14 +578,14 @@ namespace {
 			const wstring snapshotRoot = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
 				{ L"_minebackup", L"migration-backups", L"1.15", stamp, utf8_to_wstring(config.name), entry.worldName });
 			// Missing remote metadata is normal for archives that were never uploaded by 1.15.
-			CloudCommandResult stateSnapshot = ExecuteCommandWithRetry(config, configIndex, console,
+			CloudCommandResult stateSnapshot = ExecuteCommandWithRetry(config, configIndex,
 				BuildRcloneCopyToCommand(config, paths.metadataStateRemotePath,
 					FolderRewindFormat::AppendRemotePath(snapshotRoot, { L"state.json" })), "CLOUD_STATUS_UPLOADING_METADATA", 52);
 			if (!stateSnapshot.success && !IsRemoteObjectMissing(stateSnapshot)) {
 				stateSnapshot.message = L"Remote metadata snapshot failed; converted metadata was not uploaded.";
 				return stateSnapshot;
 			}
-			CloudCommandResult recordSnapshot = ExecuteCommandWithRetry(config, configIndex, console,
+			CloudCommandResult recordSnapshot = ExecuteCommandWithRetry(config, configIndex,
 				BuildRcloneCopyToCommand(config, paths.metadataRecordRemotePath,
 					FolderRewindFormat::AppendRemotePath(snapshotRoot, { L"records", entry.backupFile + L".json" })), "CLOUD_STATUS_UPLOADING_METADATA", 54);
 			if (!recordSnapshot.success && !IsRemoteObjectMissing(recordSnapshot)) {
@@ -575,7 +598,6 @@ namespace {
 			CloudCommandResult metadataStateResult = ExecuteCommandWithRetry(
 				config,
 				configIndex,
-				console,
 				BuildRcloneCopyToCommand(config, paths.metadataStateLocalPath.wstring(), paths.metadataStateRemotePath),
 				"CLOUD_STATUS_UPLOADING_METADATA",
 				60);
@@ -589,7 +611,6 @@ namespace {
 			CloudCommandResult metadataRecordResult = ExecuteCommandWithRetry(
 				config,
 				configIndex,
-				console,
 				BuildRcloneCopyToCommand(config, paths.metadataRecordLocalPath.wstring(), paths.metadataRecordRemotePath),
 				"CLOUD_STATUS_UPLOADING_METADATA",
 				75);
@@ -614,7 +635,7 @@ namespace {
 			paths.metadataStateRemotePath);
 
 		if (config.cloudSyncHistoryAfterUpload) {
-			CloudCommandResult historyResult = UploadConfigurationHistorySnapshotNoLock(config, configIndex, console);
+			CloudCommandResult historyResult = UploadConfigurationHistorySnapshotNoLock(config, configIndex);
 			if (!historyResult.success) {
 				warningMessage = historyResult.message;
 			}
@@ -628,7 +649,7 @@ namespace {
 		return result;
 	}
 
-	CloudCommandResult DownloadHistoryEntryNoLock(const Config& config, int configIndex, const HistoryEntry& entry, Console& console) {
+	CloudCommandResult DownloadHistoryEntryNoLock(const Config& config, int configIndex, const HistoryEntry& entry) {
 		CloudCommandResult configError;
 		if (!EnsureCloudConfigured(config, configError)) {
 			return configError;
@@ -646,7 +667,6 @@ namespace {
 		CloudCommandResult result = ExecuteCommandWithRetry(
 			config,
 			configIndex,
-			console,
 			BuildRcloneCopyToCommand(config, paths.archiveRemotePath, paths.archiveLocalPath.wstring()),
 			"CLOUD_STATUS_DOWNLOADING_ARCHIVE",
 			45);
@@ -659,7 +679,6 @@ namespace {
 		CloudCommandResult metadataStateResult = ExecuteCommandWithRetry(
 			config,
 			configIndex,
-			console,
 			BuildRcloneCopyToCommand(config, paths.metadataStateRemotePath, paths.metadataStateLocalPath.wstring()),
 			"CLOUD_STATUS_DOWNLOADING_METADATA",
 			65);
@@ -670,7 +689,6 @@ namespace {
 		CloudCommandResult metadataRecordResult = ExecuteCommandWithRetry(
 			config,
 			configIndex,
-			console,
 			BuildRcloneCopyToCommand(config, paths.metadataRecordRemotePath, paths.metadataRecordLocalPath.wstring()),
 			"CLOUD_STATUS_DOWNLOADING_METADATA",
 			80);
@@ -720,7 +738,7 @@ namespace {
 		return result;
 	}
 
-	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, Console& console, CloudCommandResult& outResult) {
+	vector<HistoryEntry> LoadRemoteHistoryEntriesNoLock(const Config& config, int configIndex, CloudCommandResult& outResult) {
 		vector<HistoryEntry> entries;
 		const MigrationUnitResult cloudGate = MigrationCoordinator::EnsureCloudMigrated(configIndex);
 		if (cloudGate.status == MigrationStatus::Failed) {
@@ -733,7 +751,6 @@ namespace {
 		outResult = ExecuteCommandWithRetry(
 			config,
 			configIndex,
-			console,
 			BuildRcloneCopyToCommand(config, remoteHistoryPath, tempPath.wstring()),
 			"CLOUD_STATUS_ANALYZING",
 			20);
@@ -761,7 +778,7 @@ namespace {
 					const wstring stamp = FolderRewindFormat::MakeLocalTimestampString();
 					const wstring backupRemote = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
 						{ L"_minebackup", L"migration-backups", L"1.15", stamp, L"history.json" });
-					CloudCommandResult snapshotResult = ExecuteCommandWithRetry(config, configIndex, console,
+					CloudCommandResult snapshotResult = ExecuteCommandWithRetry(config, configIndex,
 						BuildRcloneCopyToCommand(config, remoteHistoryPath, backupRemote), "CLOUD_STATUS_ANALYZING", 24);
 					if (!snapshotResult.success) {
 						outResult = snapshotResult;
@@ -781,7 +798,7 @@ namespace {
 							ofstream convertedOut(tempPath, ios::binary | ios::trunc);
 							convertedOut << converted.dump(2);
 							convertedOut.close();
-							outResult = ExecuteCommandWithRetry(config, configIndex, console,
+							outResult = ExecuteCommandWithRetry(config, configIndex,
 								BuildRcloneCopyToCommand(config, tempPath.wstring(), remoteHistoryPath), "CLOUD_STATUS_ANALYZING", 28);
 							if (outResult.success) MigrationCoordinator::RecordCloudMigrationResult(configIndex, MigrationStatus::Succeeded,
 								L"Legacy cloud history migrated; archive objects were left in place.", backupRemote);
@@ -802,13 +819,12 @@ namespace {
 		return entries;
 	}
 
-	ActiveManifestLoadStatus TryLoadActiveManifestNoLock(const Config& config, int configIndex, Console& console,
+	ActiveManifestLoadStatus TryLoadActiveManifestNoLock(const Config& config, int configIndex,
 		CloudActiveHistoryManifest& outManifest, CloudCommandResult& outResult) {
 		const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_cloud_active_history", L".json");
 		CloudCommandResult result = ExecuteCommandWithRetry(
 			config,
 			configIndex,
-			console,
 			BuildRcloneCopyToCommand(config, BuildActiveManifestRemotePath(config), tempPath.wstring()),
 			"CLOUD_STATUS_ANALYZING",
 			30);
@@ -821,7 +837,7 @@ namespace {
 			// 1.15 stored the manifest under _minebackup. Read and convert it lazily.
 			const wstring legacyRemote = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
 				{ utf8_to_wstring(config.name), L"_minebackup", L"active-history.json" });
-			result = ExecuteCommandWithRetry(config, configIndex, console,
+			result = ExecuteCommandWithRetry(config, configIndex,
 				BuildRcloneCopyToCommand(config, legacyRemote, tempPath.wstring()), "CLOUD_STATUS_ANALYZING", 30);
 			if (!result.success) {
 				outResult = result;
@@ -852,13 +868,13 @@ namespace {
 			const wstring stamp = FolderRewindFormat::MakeLocalTimestampString();
 			const wstring backupRemote = FolderRewindFormat::AppendRemotePath(config.rcloneRemotePath,
 				{ L"_minebackup", L"migration-backups", L"1.15", stamp, utf8_to_wstring(config.name), L"active-history.json" });
-			CloudCommandResult snapshot = ExecuteCommandWithRetry(config, configIndex, console,
+			CloudCommandResult snapshot = ExecuteCommandWithRetry(config, configIndex,
 				BuildRcloneCopyToCommand(config, legacyRemote, backupRemote), "CLOUD_STATUS_ANALYZING", 31);
 			if (!snapshot.success) { outResult = snapshot; error_code ec; filesystem::remove(tempPath, ec); return ActiveManifestLoadStatus::Failed; }
 			ofstream convertedOut(tempPath, ios::binary | ios::trunc);
 			convertedOut << SerializeManifest(converted).dump(2);
 			convertedOut.close();
-			CloudCommandResult upload = ExecuteCommandWithRetry(config, configIndex, console,
+			CloudCommandResult upload = ExecuteCommandWithRetry(config, configIndex,
 				BuildRcloneCopyToCommand(config, tempPath.wstring(), BuildActiveManifestRemotePath(config)), "CLOUD_STATUS_ANALYZING", 32);
 			if (!upload.success) { outResult = upload; error_code ec; filesystem::remove(tempPath, ec); return ActiveManifestLoadStatus::Failed; }
 			outManifest = std::move(converted);
@@ -977,7 +993,7 @@ bool QueueUploadAfterBackup(const Config& config, int configIndex, const MyFolde
 		[configCopy, configIndexCopy, entryCopy](stop_token) {
 		unique_lock<mutex> lock(g_cloudMutex);
 		SetCloudRuntimeState(configIndexCopy, true, 5, utf8_to_wstring(L("CLOUD_STATUS_PREPARING")));
-		CloudCommandResult result = UploadHistoryEntryNoLock(configCopy, configIndexCopy, entryCopy, console);
+		CloudCommandResult result = UploadHistoryEntryNoLock(configCopy, configIndexCopy, entryCopy);
 		UpdateConfigCloudLastResult(configIndexCopy, result);
 		SetCloudRuntimeState(configIndexCopy, false, 100, result.message, result.message);
 	});
@@ -995,22 +1011,24 @@ bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int con
 		[configCopy, configIndex, reasonCopy](stop_token) {
 		unique_lock<mutex> lock(g_cloudMutex);
 		SetCloudRuntimeState(configIndex, true, 5, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_HISTORY")));
-		CloudCommandResult result = UploadConfigurationHistorySnapshotNoLock(configCopy, configIndex, console);
+		CloudCommandResult result = UploadConfigurationHistorySnapshotNoLock(configCopy, configIndex);
 		UpdateConfigCloudLastResult(configIndex, result);
 		if (result.success && !reasonCopy.empty()) {
-			console.AddLog(L("CLOUD_BACKGROUND_HISTORY_SYNC_DONE"), reasonCopy.c_str());
+			MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Cloud,
+				"cloud.history.background_sync_completed",
+				"CLOUD_BACKGROUND_HISTORY_SYNC_DONE", reasonCopy.c_str());
 		}
 		SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
 	});
 }
 
-CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configIndex, Console& console) {
+CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configIndex) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_ANALYZING")));
 
 	CloudHistoryAnalysisResult analysis;
 	CloudCommandResult downloadResult;
-	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, downloadResult);
+	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, downloadResult);
 	if (!downloadResult.success) {
 		analysis.success = false;
 		analysis.message = downloadResult.message;
@@ -1031,7 +1049,7 @@ CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configI
 	analysis.totalRemoteEntries = static_cast<int>(remoteEntries.size());
 	CloudActiveHistoryManifest activeManifest;
 	CloudCommandResult manifestResult;
-	const ActiveManifestLoadStatus manifestStatus = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest, manifestResult);
+	const ActiveManifestLoadStatus manifestStatus = TryLoadActiveManifestNoLock(config, configIndex, activeManifest, manifestResult);
 	if (manifestStatus == ActiveManifestLoadStatus::Failed) {
 		analysis.success = false;
 		analysis.message = manifestResult.message;
@@ -1101,13 +1119,13 @@ CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configI
 	return analysis;
 }
 
-CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, CloudSyncMode mode, Console& console) {
+CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, CloudSyncMode mode) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_SYNCING")));
 
 	CloudSyncResult syncResult;
 	CloudCommandResult downloadResult;
-	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, downloadResult);
+	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, downloadResult);
 	if (!downloadResult.success) {
 		syncResult.success = false;
 		syncResult.message = downloadResult.message;
@@ -1117,7 +1135,7 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 	}
 
 	lock.unlock();
-	syncResult.analysis = AnalyzeCloudHistory(config, configIndex, console);
+	syncResult.analysis = AnalyzeCloudHistory(config, configIndex);
 	lock.lock();
 	if (!syncResult.analysis.success) {
 		syncResult.success = false;
@@ -1146,7 +1164,7 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 			if (HasLocalBackupOrMetadata(config, entry)) {
 				continue;
 			}
-			CloudCommandResult itemResult = DownloadHistoryEntryNoLock(config, configIndex, entry, console);
+			CloudCommandResult itemResult = DownloadHistoryEntryNoLock(config, configIndex, entry);
 			if (itemResult.success) {
 				recoveredCount++;
 			}
@@ -1170,7 +1188,7 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 	return syncResult;
 }
 
-CloudCommandResult UploadHistoryEntry(const Config& config, int configIndex, const HistoryEntry& entry, Console& console) {
+CloudCommandResult UploadHistoryEntry(const Config& config, int configIndex, const HistoryEntry& entry) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_PREPARING")));
 	const MigrationUnitResult localMigration = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
@@ -1181,22 +1199,22 @@ CloudCommandResult UploadHistoryEntry(const Config& config, int configIndex, con
 		SetCloudRuntimeState(configIndex, false, 100, blocked.message, blocked.message);
 		return blocked;
 	}
-	CloudCommandResult result = UploadHistoryEntryNoLock(config, configIndex, entry, console);
+	CloudCommandResult result = UploadHistoryEntryNoLock(config, configIndex, entry);
 	UpdateConfigCloudLastResult(configIndex, result);
 	SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
 	return result;
 }
 
-CloudCommandResult DownloadHistoryEntry(const Config& config, int configIndex, const HistoryEntry& entry, Console& console) {
+CloudCommandResult DownloadHistoryEntry(const Config& config, int configIndex, const HistoryEntry& entry) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_PREPARING")));
-	CloudCommandResult result = DownloadHistoryEntryNoLock(config, configIndex, entry, console);
+	CloudCommandResult result = DownloadHistoryEntryNoLock(config, configIndex, entry);
 	UpdateConfigCloudLastResult(configIndex, result);
 	SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
 	return result;
 }
 
-CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int configIndex, const wstring& worldName, Console& console) {
+CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int configIndex, const wstring& worldName) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_ARCHIVE")));
 
@@ -1222,7 +1240,6 @@ CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int conf
 	CloudCommandResult result = ExecuteCommandWithRetry(
 		config,
 		configIndex,
-		console,
 		BuildRcloneCopyCommand(config, backupDir.wstring(), remoteWorldRoot),
 		"CLOUD_STATUS_UPLOADING_ARCHIVE",
 		40);
@@ -1239,7 +1256,6 @@ CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int conf
 		CloudCommandResult metadataResult = ExecuteCommandWithRetry(
 			config,
 			configIndex,
-			console,
 			BuildRcloneCopyCommand(config, metadataDir.wstring(), FolderRewindFormat::AppendRemotePath(remoteWorldRoot, { kCloudMetadataDirName })),
 			"CLOUD_STATUS_UPLOADING_METADATA",
 			70);
@@ -1263,7 +1279,7 @@ CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int conf
 			paths.metadataStateRemotePath);
 	}
 
-	CloudCommandResult historyResult = UploadConfigurationHistorySnapshotNoLock(config, configIndex, console);
+	CloudCommandResult historyResult = UploadConfigurationHistorySnapshotNoLock(config, configIndex);
 	if (!historyResult.success) {
 		warningMessage = historyResult.message;
 	}
@@ -1287,11 +1303,11 @@ bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const Hi
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_DOWNLOADING_ARCHIVE")));
 
 	CloudCommandResult remoteLoadResult;
-	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, console, remoteLoadResult);
+	vector<HistoryEntry> remoteEntries = LoadRemoteHistoryEntriesNoLock(config, configIndex, remoteLoadResult);
 	if (remoteLoadResult.success) {
 		CloudActiveHistoryManifest activeManifest;
 		CloudCommandResult manifestResult;
-		const ActiveManifestLoadStatus manifestStatus = TryLoadActiveManifestNoLock(config, configIndex, console, activeManifest, manifestResult);
+		const ActiveManifestLoadStatus manifestStatus = TryLoadActiveManifestNoLock(config, configIndex, activeManifest, manifestResult);
 		if (manifestStatus == ActiveManifestLoadStatus::Failed) {
 			UpdateConfigCloudLastResult(configIndex, manifestResult);
 			SetCloudRuntimeState(configIndex, false, 100, manifestResult.message, manifestResult.message);
@@ -1336,7 +1352,7 @@ bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const Hi
 		if (HasLocalBackupOrMetadata(config, entry)) {
 			continue;
 		}
-		CloudCommandResult result = DownloadHistoryEntryNoLock(config, configIndex, entry, console);
+		CloudCommandResult result = DownloadHistoryEntryNoLock(config, configIndex, entry);
 		if (!result.success) {
 			UpdateConfigCloudLastResult(configIndex, result);
 			SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
@@ -1356,10 +1372,10 @@ bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const Hi
 	return true;
 }
 
-CloudCommandResult UploadConfigurationHistorySnapshot(const Config& config, int configIndex, Console& console) {
+CloudCommandResult UploadConfigurationHistorySnapshot(const Config& config, int configIndex) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_HISTORY")));
-	CloudCommandResult result = UploadConfigurationHistorySnapshotNoLock(config, configIndex, console);
+	CloudCommandResult result = UploadConfigurationHistorySnapshotNoLock(config, configIndex);
 	UpdateConfigCloudLastResult(configIndex, result);
 	SetCloudRuntimeState(configIndex, false, 100, result.message, result.message);
 	return result;
@@ -1367,8 +1383,7 @@ CloudCommandResult UploadConfigurationHistorySnapshot(const Config& config, int 
 
 PortableConfigTransferPreparation PreparePortableConfigUpload(
 	const Config& config,
-	const map<int, Config>& localConfigs,
-	Console& console) {
+	const map<int, Config>& localConfigs) {
 	PortableConfigTransferPreparation preparation;
 	const int configIndex = ResolveConfigIndexForCloud(config);
 	unique_lock<mutex> lock(g_cloudMutex);
@@ -1384,7 +1399,7 @@ PortableConfigTransferPreparation PreparePortableConfigUpload(
 	PortableConfigDocument remote;
 	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_portable_config_prepare", L".json");
 	CloudCommandResult download = ExecuteCommandWithRetry(
-		config, configIndex, console,
+		config, configIndex,
 		BuildRcloneCopyToCommand(config,
 			AppendRemotePath(config.rcloneRemotePath, {kPortableCloudConfigFileName}), tempPath.wstring()),
 		"CLOUD_STATUS_DOWNLOADING_CONFIG", 35);
@@ -1440,8 +1455,7 @@ PortableConfigTransferPreparation PreparePortableConfigUpload(
 
 PortableConfigTransferPreparation PreparePortableConfigImport(
 	const Config& config,
-	const map<int, Config>& localConfigs,
-	Console& console) {
+	const map<int, Config>& localConfigs) {
 	PortableConfigTransferPreparation preparation;
 	const int configIndex = ResolveConfigIndexForCloud(config);
 	unique_lock<mutex> lock(g_cloudMutex);
@@ -1456,7 +1470,7 @@ PortableConfigTransferPreparation PreparePortableConfigImport(
 
 	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_portable_config_import", L".json");
 	preparation.result = ExecuteCommandWithRetry(
-		config, configIndex, console,
+		config, configIndex,
 		BuildRcloneCopyToCommand(config,
 			AppendRemotePath(config.rcloneRemotePath, {kPortableCloudConfigFileName}), tempPath.wstring()),
 		"CLOUD_STATUS_DOWNLOADING_CONFIG", 65);
@@ -1495,8 +1509,7 @@ PortableConfigTransferPreparation PreparePortableConfigImport(
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 PortableConfigTransferPreparation PrepareLegacyPortableConfigImport(
 	const Config& config,
-	const map<int, Config>& localConfigs,
-	Console& console) {
+	const map<int, Config>& localConfigs) {
 	PortableConfigTransferPreparation preparation;
 	const int configIndex = ResolveConfigIndexForCloud(config);
 	unique_lock<mutex> lock(g_cloudMutex);
@@ -1509,7 +1522,7 @@ PortableConfigTransferPreparation PrepareLegacyPortableConfigImport(
 	}
 	const filesystem::path tempPath = BuildTempFilePath(L"MineBackup_legacy_remote_config", L".ini");
 	preparation.result = ExecuteCommandWithRetry(
-		config, configIndex, console,
+		config, configIndex,
 		BuildRcloneCopyToCommand(config,
 			AppendRemotePath(config.rcloneRemotePath, {L"config.ini"}), tempPath.wstring()),
 		"CLOUD_STATUS_DOWNLOADING_CONFIG", 50);
@@ -1538,8 +1551,7 @@ PortableConfigTransferPreparation PrepareLegacyPortableConfigImport(
 
 CloudCommandResult CommitPortableConfigUpload(
 	const Config& config,
-	const string& payload,
-	Console& console) {
+	const string& payload) {
 	const int configIndex = ResolveConfigIndexForCloud(config);
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_CONFIG")));
@@ -1564,7 +1576,7 @@ CloudCommandResult CommitPortableConfigUpload(
 			}
 			else {
 				result = ExecuteCommandWithRetry(
-					config, configIndex, console,
+					config, configIndex,
 					BuildRcloneCopyToCommand(config, tempPath.wstring(),
 						AppendRemotePath(config.rcloneRemotePath, {kPortableCloudConfigFileName})),
 					"CLOUD_STATUS_UPLOADING_CONFIG", 70);
@@ -1581,11 +1593,11 @@ CloudCommandResult CommitPortableConfigUpload(
 	return result;
 }
 
-CloudCommandResult ExportHistoryToCloud(const Config& config, int configIndex, Console& console) {
-	return UploadConfigurationHistorySnapshot(config, configIndex, console);
+CloudCommandResult ExportHistoryToCloud(const Config& config, int configIndex) {
+	return UploadConfigurationHistorySnapshot(config, configIndex);
 }
 
-CloudCommandResult ImportHistoryFromCloud(const Config& config, int configIndex, bool mergeExisting, Console& console) {
+CloudCommandResult ImportHistoryFromCloud(const Config& config, int configIndex, bool mergeExisting) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	SetCloudRuntimeState(configIndex, true, 0, utf8_to_wstring(L("CLOUD_STATUS_DOWNLOADING_HISTORY")));
 
@@ -1600,7 +1612,6 @@ CloudCommandResult ImportHistoryFromCloud(const Config& config, int configIndex,
 	CloudCommandResult result = ExecuteCommandWithRetry(
 		config,
 		configIndex,
-		console,
 		BuildRcloneCopyToCommand(config, FolderRewindFormat::BuildGlobalHistoryRemotePath(config), tempPath.wstring()),
 		"CLOUD_STATUS_DOWNLOADING_HISTORY",
 		70);

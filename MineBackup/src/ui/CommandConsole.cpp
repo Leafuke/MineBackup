@@ -1,6 +1,5 @@
 #include "CommandConsole.h"
 
-#include "Console.h"
 #include "KnotLinkService.h"
 #include "i18n.h"
 #include "imgui.h"
@@ -128,7 +127,7 @@ private:
             }
         } else {
             lastResult_ = minebackup::knotlink::GetKnotLinkService()
-                .HandlePayload(command, console);
+                .HandlePayload(command);
         }
     }
 

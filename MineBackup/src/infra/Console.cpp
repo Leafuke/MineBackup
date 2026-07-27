@@ -10,8 +10,7 @@ Console console;
 std::mutex consoleMutex;
 
 std::string ProcessCommand(const std::string& command, Console* targetConsole) {
-    Console& output = targetConsole != nullptr ? *targetConsole : console;
-    return minebackup::knotlink::GetKnotLinkService().HandlePayload(command, output);
+    return minebackup::knotlink::GetKnotLinkService().HandlePayload(command);
 }
 
 void ConsoleLog(Console* targetConsole, const char* format, ...) {

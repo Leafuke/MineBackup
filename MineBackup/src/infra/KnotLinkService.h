@@ -8,8 +8,6 @@
 #include <string>
 #include <string_view>
 
-struct Console;
-
 namespace minebackup::knotlink {
 
 class KnotLinkService {
@@ -20,11 +18,11 @@ public:
     KnotLinkService(const KnotLinkService&) = delete;
     KnotLinkService& operator=(const KnotLinkService&) = delete;
 
-    bool Start(Console& console);
+    bool Start();
     void Stop();
     bool IsRunning() const noexcept;
 
-    std::string HandlePayload(std::string_view payload, Console& console);
+    std::string HandlePayload(std::string_view payload);
     void Broadcast(
         std::string_view eventName,
         const KnotLinkProtocolFormatter::Fields& fields = {},
@@ -41,8 +39,7 @@ private:
     mutable std::mutex lifecycleMutex_;
 
     std::string HandleRequest(
-        const std::shared_ptr<KnotLinkCommandContext>& context,
-        Console& console);
+        const std::shared_ptr<KnotLinkCommandContext>& context);
 };
 
 KnotLinkService& GetKnotLinkService();

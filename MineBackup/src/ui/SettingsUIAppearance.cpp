@@ -338,7 +338,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Analyze cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			AnalyzeCloudHistory(configCopy, configIndex, console);
+			AnalyzeCloudHistory(configCopy, configIndex);
 		});
 	}
 	ImGui::SameLine();
@@ -346,7 +346,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Sync cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly, console);
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly);
 		});
 	}
 	ImGui::SameLine();
@@ -354,7 +354,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Sync cloud backups",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups, console);
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups);
 		});
 	}
 
@@ -362,7 +362,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Upload cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			UploadConfigurationHistorySnapshot(configCopy, configIndex, console);
+			UploadConfigurationHistorySnapshot(configCopy, configIndex);
 		});
 	}
 	ImGui::SameLine();
@@ -375,7 +375,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		}
 		TaskCoordinator::Instance().Submit(L"Export cloud configuration",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
-			const auto preparation = PreparePortableConfigUpload(configCopy, configsCopy, console);
+			const auto preparation = PreparePortableConfigUpload(configCopy, configsCopy);
 			TaskEvent event{L"portable-config-preview", preparation.result.detail};
 			event.values[L"success"] = preparation.result.success ? L"1" : L"0";
 			event.values[L"action"] = L"upload";
@@ -396,7 +396,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		}
 		TaskCoordinator::Instance().Submit(L"Import cloud configuration",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
-			const auto preparation = PreparePortableConfigImport(configCopy, configsCopy, console);
+			const auto preparation = PreparePortableConfigImport(configCopy, configsCopy);
 			TaskEvent event{L"portable-config-preview", preparation.result.detail};
 			event.values[L"success"] = preparation.result.success ? L"1" : L"0";
 			event.values[L"action"] = L"import";
@@ -423,7 +423,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 			TaskCoordinator::Instance().Submit(L"Prepare legacy remote configuration import",
 				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
 				[configCopy, configsCopy, configIndex](stop_token) {
-					const auto preparation = PrepareLegacyPortableConfigImport(configCopy, configsCopy, console);
+					const auto preparation = PrepareLegacyPortableConfigImport(configCopy, configsCopy);
 					TaskEvent event{L"portable-config-preview", preparation.result.detail};
 					event.values[L"success"] = preparation.result.success ? L"1" : L"0";
 					event.values[L"action"] = L"import";
@@ -442,7 +442,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Export cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			ExportHistoryToCloud(configCopy, configIndex, console);
+			ExportHistoryToCloud(configCopy, configIndex);
 		});
 	}
 	ImGui::SameLine();
@@ -450,7 +450,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Import cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			ImportHistoryFromCloud(configCopy, configIndex, true, console);
+			ImportHistoryFromCloud(configCopy, configIndex, true);
 		});
 	}
 	if (!canRunCloudActions) ImGui::EndDisabled();

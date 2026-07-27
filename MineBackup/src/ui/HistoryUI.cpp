@@ -8,7 +8,6 @@
 #include "i18n.h"
 #include "AppState.h"
 #include "IconsFontAwesome6.h"
-#include "Console.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "HistoryManager.h"
@@ -22,8 +21,6 @@
 using namespace std;
 
 // 前向声明
-extern Console console;
-void ConsoleLog(Console* console, const char* format, ...);
 
 void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	// 使用 (worldName, backupFile) 键值对标识选中项，避免指针悬垂
@@ -80,7 +77,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		const int configIndex = tempCurrentConfigIndex;
 		TaskCoordinator::Instance().Submit(L"Analyze cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			AnalyzeCloudHistory(configCopy, configIndex, console);
+			AnalyzeCloudHistory(configCopy, configIndex);
 		});
 	}
 	ImGui::SameLine();
@@ -89,7 +86,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		const int configIndex = tempCurrentConfigIndex;
 		TaskCoordinator::Instance().Submit(L"Sync cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly, console);
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly);
 		});
 	}
 	ImGui::SameLine();
@@ -98,7 +95,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 		const int configIndex = tempCurrentConfigIndex;
 		TaskCoordinator::Instance().Submit(L"Sync cloud backups",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups, console);
+			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups);
 		});
 	}
 	if (!CanUseCloudActions(cfg)) ImGui::EndDisabled();
@@ -405,7 +402,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			const int configIndex = tempCurrentConfigIndex;
 			TaskCoordinator::Instance().Submit(L"Upload backup",
 				{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex, entryCopy](stop_token) {
-				UploadHistoryEntry(configCopy, configIndex, entryCopy, console);
+				UploadHistoryEntry(configCopy, configIndex, entryCopy);
 			});
 		}
 		if (!canUseCloud || !file_exists) ImGui::EndDisabled();
@@ -417,7 +414,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			const int configIndex = tempCurrentConfigIndex;
 			TaskCoordinator::Instance().Submit(L"Download backup",
 				{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex, entryCopy](stop_token) {
-				DownloadHistoryEntry(configCopy, configIndex, entryCopy, console);
+				DownloadHistoryEntry(configCopy, configIndex, entryCopy);
 			});
 		}
 		if (!canUseCloud || !has_cloud_copy) ImGui::EndDisabled();

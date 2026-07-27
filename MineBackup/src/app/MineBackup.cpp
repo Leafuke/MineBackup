@@ -61,6 +61,19 @@ inline int _getch() { return std::getchar(); }
 
 using namespace std;
 
+#define APP_PRINTF_INFO(eventId, ...) \
+	MB_LOG_PRINTF_INFO(minebackup::logging::LogCategory::Application, eventId, __VA_ARGS__)
+#define APP_PRINTF_WARNING(eventId, ...) \
+	MB_LOG_PRINTF_WARNING(minebackup::logging::LogCategory::Application, eventId, __VA_ARGS__)
+#define APP_PRINTF_ERROR(eventId, ...) \
+	MB_LOG_PRINTF_ERROR(minebackup::logging::LogCategory::Application, eventId, __VA_ARGS__)
+#define PLATFORM_PRINTF_INFO(eventId, ...) \
+	MB_LOG_PRINTF_INFO(minebackup::logging::LogCategory::Platform, eventId, __VA_ARGS__)
+#define PLATFORM_PRINTF_WARNING(eventId, ...) \
+	MB_LOG_PRINTF_WARNING(minebackup::logging::LogCategory::Platform, eventId, __VA_ARGS__)
+#define PLATFORM_PRINTF_ERROR(eventId, ...) \
+	MB_LOG_PRINTF_ERROR(minebackup::logging::LogCategory::Platform, eventId, __VA_ARGS__)
+
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
 static vector<int> worldIconWidths, worldIconHeights;
@@ -360,14 +373,18 @@ int main(int argc, char** argv)
 	const auto interruptedRecovery = RecoverInterruptedTaskArtifacts(
 		paths.runtimeRoot, paths.stateRoot / L"task-recovery" / L"last-interrupted.json");
 	if (!interruptedRecovery.removedPaths.empty() || !interruptedRecovery.errors.empty()) {
-		console.AddLog("[Recovery] Removed %zu interrupted task artifact(s), %llu byte(s).",
+		APP_PRINTF_WARNING("application.recovery.interrupted_tasks",
+			"Removed %zu interrupted task artifact(s), %llu byte(s).",
 			interruptedRecovery.removedPaths.size(),
 			static_cast<unsigned long long>(interruptedRecovery.removedBytes));
 		if (!interruptedRecovery.reportPath.empty()) {
-			console.AddLog("[Recovery] Report: %s", wstring_to_utf8(interruptedRecovery.reportPath.wstring()).c_str());
+			APP_PRINTF_INFO("application.recovery.report",
+				"Recovery report: %s",
+				wstring_to_utf8(interruptedRecovery.reportPath.wstring()).c_str());
 		}
 		for (const auto& error : interruptedRecovery.errors) {
-			console.AddLog("[Recovery] %s", wstring_to_utf8(error).c_str());
+			APP_PRINTF_ERROR("application.recovery.failed",
+				"Recovery failed: %s", wstring_to_utf8(error).c_str());
 		}
 	}
 	vector<LegacyLocationProbe> locationProbes = {
@@ -559,11 +576,13 @@ int main(int argc, char** argv)
 			|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
 		const auto autostartStatus = desktopServices->SetAutostart(autostartEnabled);
 		if (!autostartStatus.IsAvailable() && !autostartStatus.diagnostic.empty()) {
-			console.AddLog("[Desktop] Autostart reconciliation failed: %s",
+			PLATFORM_PRINTF_WARNING("platform.autostart.reconcile_failed",
+				"Autostart reconciliation failed: %s",
 				wstring_to_utf8(autostartStatus.diagnostic).c_str());
 		}
 		else if (!autostartStatus.diagnostic.empty()) {
-			console.AddLog("[Desktop] Autostart reconciliation: %s",
+			PLATFORM_PRINTF_INFO("platform.autostart.reconciled",
+				"Autostart reconciliation: %s",
 				wstring_to_utf8(autostartStatus.diagnostic).c_str());
 			if (!launchSilentStartup) {
 				MessageBoxWin(L("AUTOSTART_ENTRY_TITLE"),
@@ -648,7 +667,7 @@ int main(int argc, char** argv)
 	if (g_enableKnotLink) {
 		// 初始化 KnotLink （异步进行避免卡顿）
 		TaskCoordinator::Instance().Submit(L"knotlink-loader", {L"service:knotlink"}, [](stop_token) {
-			if (InitKnotLink(console)) {
+			if (InitKnotLink()) {
 				BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
 			}
 		});
@@ -727,7 +746,8 @@ int main(int argc, char** argv)
 		const wstring detail = startupTrayStatus.diagnostic.empty()
 			? L"The system tray is unavailable in this desktop session."
 			: startupTrayStatus.diagnostic;
-		console.AddLog("[Desktop] Startup-to-tray was disabled for this run: %s",
+		PLATFORM_PRINTF_WARNING("platform.tray.startup_fallback",
+			"Startup-to-tray was disabled for this run: %s",
 			wstring_to_utf8(detail).c_str());
 		MessageBoxWin("MineBackup", L("TRAY_FALLBACK_MESSAGE"), 1);
 	}
@@ -797,11 +817,13 @@ int main(int argc, char** argv)
 	const char* selectedGlfwPlatformName = selectedGlfwPlatform == GLFW_PLATFORM_WAYLAND ? "Wayland"
 		: selectedGlfwPlatform == GLFW_PLATFORM_X11 ? "X11" : "Other";
 	fprintf(stderr, "[Desktop] GLFW selected platform: %s\n", selectedGlfwPlatformName);
-	console.AddLog("[Desktop] GLFW selected platform: %s", selectedGlfwPlatformName);
+	PLATFORM_PRINTF_INFO("platform.glfw.selected",
+		"GLFW selected platform: %s", selectedGlfwPlatformName);
 #endif
 	const auto traySetup = desktopServices->SetTrayVisible(true);
 	if (!traySetup.IsAvailable() && !traySetup.diagnostic.empty()) {
-		console.AddLog("[Desktop] Tray unavailable: %s", wstring_to_utf8(traySetup.diagnostic).c_str());
+		PLATFORM_PRINTF_WARNING("platform.tray.unavailable",
+			"Tray unavailable: %s", wstring_to_utf8(traySetup.diagnostic).c_str());
 	}
 	auto currentGlobalHotkeys = []() {
 		return vector<GlobalHotkeyBinding>{
@@ -813,7 +835,8 @@ int main(int argc, char** argv)
 	};
 	const auto hotkeySetup = desktopServices->ConfigureGlobalHotkeys(currentGlobalHotkeys());
 	if (!hotkeySetup.IsAvailable() && !hotkeySetup.diagnostic.empty()) {
-		console.AddLog("[Desktop] Global hotkeys unavailable: %s",
+		PLATFORM_PRINTF_WARNING("platform.hotkey.unavailable",
+			"Global hotkeys unavailable: %s",
 			wstring_to_utf8(hotkeySetup.diagnostic).c_str());
 	}
 
@@ -966,7 +989,7 @@ int main(int argc, char** argv)
 #endif
 	}
 
-	console.AddLog(L("CONSOLE_WELCOME"));
+	APP_PRINTF_INFO("application.welcome", L("CONSOLE_WELCOME"));
 
 	// 记录注释
 	static char backupComment[CONSTANT1] = "";
@@ -1047,7 +1070,8 @@ int main(int argc, char** argv)
 			g_appState.showMainApp = true;
 			const auto activation = desktopServices->ActivateWindow();
 			if (!activation.IsAvailable() && !activation.diagnostic.empty()) {
-				console.AddLog("[Desktop] Window activation failed: %s",
+				PLATFORM_PRINTF_WARNING("platform.window.activation_failed",
+					"Window activation failed: %s",
 					wstring_to_utf8(activation.diagnostic).c_str());
 			}
 			if (request.type == InstanceRequestType::SelectConfig) {
@@ -1066,11 +1090,15 @@ int main(int argc, char** argv)
 			}
 		}
 		if (!instanceError.empty()) {
-			ConsoleLog(&console, "[SingleInstance] %s", wstring_to_utf8(instanceError).c_str());
+			PLATFORM_PRINTF_WARNING("platform.single_instance.poll_failed",
+				"Single-instance request failed: %s",
+				wstring_to_utf8(instanceError).c_str());
 		}
 		for (const auto& event : TaskCoordinator::Instance().PollEvents()) {
 			if (event.type == L"task-failed") {
-				console.AddLog("[Task] Background task failed: %s", wstring_to_utf8(event.message).c_str());
+				MB_LOG_ERROR(minebackup::logging::LogCategory::Task,
+					"task.background.failed", "Background task failed: {}",
+					wstring_to_utf8(event.message));
 			}
 			else if (event.type == L"auto-backup-finished") {
 				lock_guard<mutex> lock(g_appState.task_mutex);
@@ -1085,7 +1113,9 @@ int main(int argc, char** argv)
 				g_ReleaseNotes = wstring_to_utf8(event.values.at(L"notes"));
 				g_UpdateCheckDone = true;
 				if (event.values.at(L"success") != L"1" && !event.message.empty()) {
-					console.AddLog("[Network] Update check failed: %s", wstring_to_utf8(event.message).c_str());
+					MB_LOG_ERROR(minebackup::logging::LogCategory::Network,
+						"network.update_check.failed", "Update check failed: {}",
+						wstring_to_utf8(event.message));
 				}
 			}
 			else if (event.type == L"notice-check-complete") {
@@ -1094,7 +1124,9 @@ int main(int argc, char** argv)
 				g_NoticeUpdatedAt = wstring_to_utf8(event.values.at(L"content-id"));
 				g_NoticeCheckDone = true;
 				if (event.values.at(L"success") != L"1" && !event.message.empty()) {
-					console.AddLog("[Network] Notice check failed: %s", wstring_to_utf8(event.message).c_str());
+					MB_LOG_ERROR(minebackup::logging::LogCategory::Network,
+						"network.notice_check.failed", "Notice check failed: {}",
+						wstring_to_utf8(event.message));
 				}
 			}
 			else if (event.type == L"rclone-install-complete") {
@@ -1105,13 +1137,18 @@ int main(int argc, char** argv)
 						wstring_to_utf8(event.values.at(L"path")).c_str())
 					: (event.message.empty() ? utf8_to_wstring(L("RCLONE_INSTALL_FAILED")) : event.message);
 				if (!g_RcloneInstallSucceeded) {
-					console.AddLog("[Tools] rclone installation failed: %s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
+					MB_LOG_ERROR(minebackup::logging::LogCategory::Process,
+						"process.rclone.install_failed",
+						"rclone installation failed: {}",
+						wstring_to_utf8(g_RcloneInstallMessage));
 				}
 			}
 			else if (event.type == L"portable-config-preview") {
 				if (event.values.at(L"success") != L"1") {
 					const wstring detail = event.message.empty() ? L"Unable to prepare the portable configuration preview." : event.message;
-					console.AddLog("[Cloud] %s", wstring_to_utf8(detail).c_str());
+					MB_LOG_ERROR(minebackup::logging::LogCategory::Cloud,
+						"cloud.portable_config.prepare_failed", "{}",
+						wstring_to_utf8(detail));
 					MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_PREPARE_FAILED"), 2);
 					continue;
 				}
@@ -1128,7 +1165,9 @@ int main(int argc, char** argv)
 					continue;
 				}
 				if (!ConfirmMessageBox(L("PORTABLE_CONFIG_PREVIEW_TITLE"), wstring_to_utf8(event.values.at(L"preview")))) {
-					console.AddLog("[Cloud] Portable configuration transfer cancelled after preview.");
+					MB_LOG_INFO(minebackup::logging::LogCategory::Cloud,
+						"cloud.portable_config.cancelled",
+						"Portable configuration transfer cancelled after preview");
 					continue;
 				}
 				const int configIndex = stoi(event.values.at(L"config-index"));
@@ -1144,7 +1183,7 @@ int main(int argc, char** argv)
 					TaskCoordinator::Instance().Submit(L"Commit portable configuration upload",
 						{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
 						[cloudConfig, payload](stop_token) {
-							CommitPortableConfigUpload(cloudConfig, payload, console);
+							CommitPortableConfigUpload(cloudConfig, payload);
 						});
 				}
 				else {
@@ -1152,7 +1191,10 @@ int main(int argc, char** argv)
 					wstring parseError;
 					PortableConfigMergePreview appliedPreview;
 					if (!PortableConfigDocument::Parse(wstring_to_utf8(event.values.at(L"payload")), remote, parseError)) {
-						console.AddLog("[Cloud] Portable configuration parse failed: %s", wstring_to_utf8(parseError).c_str());
+						MB_LOG_ERROR(minebackup::logging::LogCategory::Cloud,
+							"cloud.portable_config.parse_failed",
+							"Portable configuration parse failed: {}",
+							wstring_to_utf8(parseError));
 						MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_INVALID"), 2);
 						continue;
 					}
@@ -1164,10 +1206,15 @@ int main(int argc, char** argv)
 					}
 					if (applied) {
 						SaveConfigs();
-						console.AddLog("[Cloud] Portable configuration import applied after confirmation.");
+						MB_LOG_INFO(minebackup::logging::LogCategory::Cloud,
+							"cloud.portable_config.imported",
+							"Portable configuration import applied after confirmation");
 					}
 					else {
-						console.AddLog("[Cloud] Portable configuration apply failed: %s", wstring_to_utf8(parseError).c_str());
+						MB_LOG_ERROR(minebackup::logging::LogCategory::Cloud,
+							"cloud.portable_config.apply_failed",
+							"Portable configuration apply failed: {}",
+							wstring_to_utf8(parseError));
 						MessageBoxWin(L("PORTABLE_CONFIG_TITLE"), L("PORTABLE_CONFIG_INVALID"), 2);
 					}
 				}
@@ -1264,7 +1311,9 @@ int main(int argc, char** argv)
 							L"config_export.ini", L"INI Files (*.ini)\0*.ini\0All Files (*.*)\0*.*\0").path.wstring();
 						if (!exportPath.empty()) {
 							SaveConfigs(exportPath);
-							console.AddLog(L("LOG_CONFIG_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+							MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Application,
+								"application.config.exported", "LOG_CONFIG_EXPORTED",
+								wstring_to_utf8(exportPath).c_str());
 						}
 					}
 					// 导入配置
@@ -1283,13 +1332,18 @@ int main(int argc, char** argv)
 						if (!exportPath.empty()) {
 							try {
 								if (ExportHistoryToFile(exportPath)) {
-									console.AddLog(L("LOG_HISTORY_EXPORTED"), wstring_to_utf8(exportPath).c_str());
+									MB_LOG_I18N_INFO(minebackup::logging::LogCategory::History,
+										"history.export.completed", "LOG_HISTORY_EXPORTED",
+										wstring_to_utf8(exportPath).c_str());
 								}
 								else {
-									console.AddLog("[Error] Failed to export history.");
+									MB_LOG_ERROR(minebackup::logging::LogCategory::History,
+										"history.export.failed", "Failed to export history");
 								}
 							} catch (const exception& e) {
-								console.AddLog("[Error] Failed to export history: %s", e.what());
+								MB_LOG_ERROR(minebackup::logging::LogCategory::History,
+									"history.export.failed",
+									"Failed to export history: {}", e.what());
 							}
 						}
 					}
@@ -1321,7 +1375,9 @@ int main(int argc, char** argv)
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(importBtnW, 0))) {
 						LoadConfigs(filesystem::path(pendingImportPath));
 						SaveConfigs(); // 保存到默认位置
-						console.AddLog(L("LOG_CONFIG_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+						MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Application,
+							"application.config.imported", "LOG_CONFIG_IMPORTED",
+							wstring_to_utf8(pendingImportPath).c_str());
 						showImportConfigConfirm = false;
 						ImGui::CloseCurrentPopup();
 					}
@@ -1346,13 +1402,18 @@ int main(int argc, char** argv)
 						try {
 							if (ImportHistoryFromFile(pendingImportPath, g_appState.currentConfigIndex, true)) {
 								LoadHistory();
-								console.AddLog(L("LOG_HISTORY_IMPORTED"), wstring_to_utf8(pendingImportPath).c_str());
+								MB_LOG_I18N_INFO(minebackup::logging::LogCategory::History,
+									"history.import.completed", "LOG_HISTORY_IMPORTED",
+									wstring_to_utf8(pendingImportPath).c_str());
 							}
 							else {
-								console.AddLog("[Error] Failed to import history.");
+								MB_LOG_ERROR(minebackup::logging::LogCategory::History,
+									"history.import.failed", "Failed to import history");
 							}
 						} catch (const exception& e) {
-							console.AddLog("[Error] Failed to import history: %s", e.what());
+							MB_LOG_ERROR(minebackup::logging::LogCategory::History,
+								"history.import.failed",
+								"Failed to import history: {}", e.what());
 						}
 						showImportHistoryConfirm = false;
 						ImGui::CloseCurrentPopup();
@@ -1375,7 +1436,8 @@ int main(int argc, char** argv)
 						const auto status = desktopServices->SetAutostart(g_RunOnStartup || anySpecialStartup);
 						if (!status.IsAvailable()) {
 							g_RunOnStartup = previous;
-							console.AddLog("[Desktop] Autostart update failed: %s",
+							PLATFORM_PRINTF_ERROR("platform.autostart.update_failed",
+								"Autostart update failed: %s",
 								wstring_to_utf8(status.diagnostic).c_str());
 							MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
 						}
@@ -1423,12 +1485,16 @@ int main(int argc, char** argv)
 					ImGui::BeginDisabled(!desktopCapabilities.globalHotkeys.IsAvailable());
 					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
 						if (ImGui::MenuItem(L("BUTTON_BACKUP_SELECTED"))) {
-							console.AddLog(L("HOTKEY_INSTRUCTION"));
+							MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Platform,
+								"platform.hotkey.capture_started",
+								"HOTKEY_INSTRUCTION");
 							waitingForHotkey = true;
 							whichFunc = 1;
 						}
 						if (ImGui::MenuItem(L("BUTTON_RESTORE_SELECTED"))) {
-							console.AddLog(L("HOTKEY_INSTRUCTION"));
+							MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Platform,
+								"platform.hotkey.capture_started",
+								"HOTKEY_INSTRUCTION");
 							waitingForHotkey = true;
 							whichFunc = 2;
 						}
@@ -1444,10 +1510,13 @@ int main(int argc, char** argv)
 										currentGlobalHotkeys());
 									if (!status.IsAvailable()) {
 										g_hotKeyBackupId = previousKey;
-										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
+										PLATFORM_PRINTF_ERROR("platform.hotkey.configure_failed",
+											"%s", wstring_to_utf8(status.diagnostic).c_str());
 										MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
 									}
-									console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyBackupId);
+									MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Platform,
+										"platform.hotkey.configured", "HOTKEY_SET_TO",
+										(char)g_hotKeyBackupId);
 										break;
 									}
 								else if (whichFunc == 2) {
@@ -1457,10 +1526,13 @@ int main(int argc, char** argv)
 										currentGlobalHotkeys());
 									if (!status.IsAvailable()) {
 										g_hotKeyRestoreId = previousKey;
-										console.AddLog("[Desktop] %s", wstring_to_utf8(status.diagnostic).c_str());
+										PLATFORM_PRINTF_ERROR("platform.hotkey.configure_failed",
+											"%s", wstring_to_utf8(status.diagnostic).c_str());
 										MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
 									}
-										console.AddLog(L("HOTKEY_SET_TO"), (char)g_hotKeyRestoreId);
+										MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Platform,
+											"platform.hotkey.configured", "HOTKEY_SET_TO",
+											(char)g_hotKeyRestoreId);
 										break;
 									}
 									break;
@@ -2394,11 +2466,12 @@ int main(int argc, char** argv)
 								TaskCoordinator::Instance().Submit(L"manual-cloud-upload",
 									{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
 									[configCopy, baseConfigIndex, worldName](stop_token) {
-									UploadWorldBackupFolderToCloud(configCopy, baseConfigIndex, worldName, console);
+									UploadWorldBackupFolderToCloud(configCopy, baseConfigIndex, worldName);
 								});
 							}
 							else {
-								console.AddLog(L("CLOUD_SYNC_INVALID"));
+								MB_LOG_I18N_WARNING(minebackup::logging::LogCategory::Cloud,
+									"cloud.configuration.invalid", "CLOUD_SYNC_INVALID");
 							}
 						}
 

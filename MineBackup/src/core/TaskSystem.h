@@ -73,9 +73,6 @@ struct TaskRunState {
     time_t nextRunTime = 0;
 };
 
-// 前向声明
-struct Console;
-
 namespace TaskSystem {
 
 enum class LegacyServiceState {
@@ -104,8 +101,8 @@ struct LegacyServiceInspection {
 // 任务系统管理函数声明
 namespace TaskSystem {
     // 任务执行
-    void ExecuteTask(const UnifiedTask& task, Console* console);
-    void ExecuteAllTasks(const std::vector<UnifiedTask>& tasks, Console* console, bool& shouldExit);
+    void ExecuteTask(const UnifiedTask& task);
+    void ExecuteAllTasks(const std::vector<UnifiedTask>& tasks, bool& shouldExit);
     
     // 1.16 only: inspect and remove an already-installed legacy Windows service.
     // There is deliberately no install/start API.

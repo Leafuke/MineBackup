@@ -1,7 +1,7 @@
 ﻿#include "TaskSystem.h"
 #include "AppState.h"
 #include "BackupManager.h"
-#include "Console.h"
+#include "Logging.h"
 #include "i18n.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
@@ -27,9 +27,6 @@
 #include <vector>
 
 using namespace std;
-
-extern Console console;
-void ConsoleLog(Console* console, const char* format, ...);
 
 namespace TaskSystem {
 
@@ -63,23 +60,32 @@ namespace TaskSystem {
     }
 
     // 执行单个任务
-    void ExecuteTask(const UnifiedTask& task, Console* console) {
+    void ExecuteTask(const UnifiedTask& task) {
         if (!task.enabled) return;
 
-        ConsoleLog(console, "[Task] Executing: %s (Type: %s)", 
-            task.name.c_str(), GetTaskTypeName(task.type).c_str());
+        minebackup::logging::ScopedLogContext taskContext({
+            {"task", task.name},
+            {"task_type", GetTaskTypeName(task.type)}
+        });
+        MB_LOG_INFO(minebackup::logging::LogCategory::Task,
+            "task.execution.started", "Executing task '{}' ({})",
+            task.name, GetTaskTypeName(task.type));
 
         switch (task.type) {
             case TaskType::Backup: {
                 // 验证配置和世界索引
                 if (!g_appState.configs.count(task.configIndex)) {
-                    ConsoleLog(console, L("ERROR_INVALID_WORLD_IN_TASK"), task.configIndex, task.worldIndex);
+                    MB_LOG_I18N_ERROR(minebackup::logging::LogCategory::Validation,
+                        "task.invalid_world", "ERROR_INVALID_WORLD_IN_TASK",
+                        task.configIndex, task.worldIndex);
                     return;
                 }
 
                 Config& cfg = g_appState.configs[task.configIndex];
                 if (task.worldIndex < 0 || task.worldIndex >= static_cast<int>(cfg.worlds.size())) {
-                    ConsoleLog(console, L("ERROR_INVALID_WORLD_IN_TASK"), task.configIndex, task.worldIndex);
+                    MB_LOG_I18N_ERROR(minebackup::logging::LogCategory::Validation,
+                        "task.invalid_world", "ERROR_INVALID_WORLD_IN_TASK",
+                        task.configIndex, task.worldIndex);
                     return;
                 }
 
@@ -97,36 +103,62 @@ namespace TaskSystem {
                 TaskCoordinator::Instance().SubmitAndWait(L"task-system backup",
                     {TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
                     [world](stop_token) { DoBackup(world, L"TaskSystem"); });
-                ConsoleLog(console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(worldData.first).c_str());
+                MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Task,
+                    "task.backup.completed", "TASK_SPECIAL_BACKUP_DONE",
+                    wstring_to_utf8(worldData.first).c_str());
                 break;
             }
 
             case TaskType::Command: {
-                ConsoleLog(console, L("LOG_CMD_EXECUTING"), wstring_to_utf8(task.command).c_str());
+                const auto startedAt = chrono::steady_clock::now();
+                MB_LOG_INFO(minebackup::logging::LogCategory::Task,
+                    "task.command.started",
+                    "Executing shell task '{}' (working_directory={})",
+                    task.name, task.workingDirectory.empty() ? "default" : "configured");
                 ShellTaskSpec spec;
                 spec.command = task.command;
                 spec.workingDirectory = task.workingDirectory;
                 const auto result = ProcessRunner::RunShellTask(spec);
-                if (!result.standardOutput.empty()) console->AddLog("%s", result.standardOutput.c_str());
-                if (!result.standardError.empty()) console->AddLog("%s", result.standardError.c_str());
-                if (result.status != ProcessStatus::Succeeded) {
-                    console->AddLog("[Error] Shell task failed with exit code %d.", result.exitCode);
+                if (!result.standardOutput.empty()) {
+                    minebackup::logging::LogRaw(
+                        minebackup::logging::LogCategory::Process,
+                        "process.stdout", result.standardOutput,
+                        minebackup::logging::LogLevel::Debug, MB_LOG_SOURCE);
                 }
-                
-                ConsoleLog(console, "[Task] Command completed: %s", task.name.c_str());
+                if (!result.standardError.empty()) {
+                    minebackup::logging::LogRaw(
+                        minebackup::logging::LogCategory::Process,
+                        "process.stderr", result.standardError,
+                        minebackup::logging::LogLevel::Debug, MB_LOG_SOURCE);
+                }
+                const auto elapsedMs = chrono::duration_cast<chrono::milliseconds>(
+                    chrono::steady_clock::now() - startedAt).count();
+                if (result.status != ProcessStatus::Succeeded) {
+                    MB_LOG_ERROR(minebackup::logging::LogCategory::Process,
+                        "process.exit.nonzero",
+                        "Shell task '{}' failed (exit_code={}, duration_ms={})",
+                        task.name, result.exitCode, elapsedMs);
+                } else {
+                    MB_LOG_INFO(minebackup::logging::LogCategory::Task,
+                        "task.command.completed",
+                        "Shell task '{}' completed (exit_code={}, duration_ms={})",
+                        task.name, result.exitCode, elapsedMs);
+                }
                 break;
             }
 
             case TaskType::Script: {
                 // 未来扩展：脚本执行
-                ConsoleLog(console, "[Task] Script execution not yet implemented");
+                MB_LOG_WARNING(minebackup::logging::LogCategory::Task,
+                    "task.script.unsupported",
+                    "Script task '{}' is not implemented", task.name);
                 break;
             }
         }
     }
 
     // 执行所有任务
-    void ExecuteAllTasks(const vector<UnifiedTask>& tasks, Console* console, bool& shouldExit) {
+    void ExecuteAllTasks(const vector<UnifiedTask>& tasks, bool& shouldExit) {
         // 按ID排序任务
         vector<UnifiedTask> sortedTasks = tasks;
         sort(sortedTasks.begin(), sortedTasks.end(), 
@@ -142,8 +174,8 @@ namespace TaskSystem {
             // 检查执行模式
             if (task.executionMode == TaskExecutionMode::Parallel) {
                 // 并行执行：在新线程中运行
-                parallelThreads.emplace_back([task, console]() {
-                    ExecuteTask(task, console);
+                parallelThreads.emplace_back([task]() {
+                    ExecuteTask(task);
                 });
             } else {
                 // 顺序执行：等待之前的并行任务完成
@@ -153,7 +185,7 @@ namespace TaskSystem {
                 parallelThreads.clear();
                 
                 // 执行当前任务
-                ExecuteTask(task, console);
+                ExecuteTask(task);
             }
         }
 
