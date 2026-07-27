@@ -135,6 +135,9 @@
     <ClCompile Include="src\infra\AtomicFileWriter.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\DiagnosticLogExporter.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\AppPaths.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -315,6 +318,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\AtomicFileWriter.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\DiagnosticLogExporter.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\AppPaths.h">

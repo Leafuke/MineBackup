@@ -120,6 +120,7 @@
     <ClCompile Include="src\core\SpecialConfigPolicy.cpp" />
     <ClCompile Include="src\core\LegacyServicePolicy.cpp" />
     <ClCompile Include="src\infra\AtomicFileWriter.cpp" />
+    <ClCompile Include="src\infra\DiagnosticLogExporter.cpp" />
     <ClCompile Include="src\infra\AppPaths.cpp" />
     <ClCompile Include="src\infra\SingleInstanceService.cpp" />
     <ClCompile Include="src\infra\LegacyLocationDiscovery.cpp" />
@@ -189,6 +190,7 @@
     <ClInclude Include="src\core\SpecialConfigPolicy.h" />
     <ClInclude Include="src\core\LegacyServicePolicy.h" />
     <ClInclude Include="src\infra\AtomicFileWriter.h" />
+    <ClInclude Include="src\infra\DiagnosticLogExporter.h" />
     <ClInclude Include="src\infra\AppPaths.h" />
     <ClInclude Include="src\infra\SingleInstanceService.h" />
     <ClInclude Include="src\infra\LegacyLocationDiscovery.h" />

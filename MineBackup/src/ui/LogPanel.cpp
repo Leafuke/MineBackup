@@ -1,15 +1,20 @@
 #include "LogPanel.h"
 
+#include "AppState.h"
 #include "AppPaths.h"
+#include "DiagnosticLogExporter.h"
 #include "DesktopServices.h"
+#include "Globals.h"
 #include "Logging.h"
 #include "i18n.h"
 #include "imgui.h"
+#include "text_to_text.h"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <ctime>
 #include <iomanip>
 #include <memory>
@@ -26,6 +31,87 @@ using minebackup::logging::LogRecord;
 constexpr std::size_t kLevelCount = 6;
 constexpr std::size_t kCategoryCount = 12;
 constexpr std::size_t kLocalRecordLimit = 20'000;
+
+const char* PlatformName() {
+#ifdef _WIN32
+    return "windows";
+#elif defined(__APPLE__)
+    return "macos";
+#else
+    return "linux";
+#endif
+}
+
+const char* ProfileModeName(AppPathMode mode) {
+    switch (mode) {
+    case AppPathMode::Installed: return "installed";
+    case AppPathMode::Portable: return "portable";
+    case AppPathMode::Explicit: return "explicit";
+    }
+    return "unknown";
+}
+
+void AddRedaction(
+    minebackup::diagnostics::DiagnosticExportOptions& options,
+    const std::wstring& value,
+    std::string replacement) {
+    if (!value.empty()) {
+        options.redactions.push_back(
+            {wstring_to_utf8(value), std::move(replacement)});
+    }
+}
+
+void AddPathRedaction(
+    minebackup::diagnostics::DiagnosticExportOptions& options,
+    const std::filesystem::path& value,
+    std::string replacement) {
+    AddRedaction(options, value.wstring(), std::move(replacement));
+}
+
+minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
+    minebackup::diagnostics::DiagnosticExportOptions options;
+    const auto& paths = GetAppPaths();
+    options.logsDirectory = paths.logsRoot;
+    options.applicationVersion = CURRENT_VERSION;
+    options.platform = PlatformName();
+    options.profileMode = ProfileModeName(paths.mode);
+
+    AddPathRedaction(
+        options, paths.configRoot.parent_path(), "<profile-root>");
+    AddPathRedaction(options, paths.configRoot, "<profile-root>");
+    AddPathRedaction(
+        options, GetExecutablePath().parent_path(), "<application-root>");
+#ifdef _WIN32
+    if (const char* home = std::getenv("USERPROFILE")) {
+#else
+    if (const char* home = std::getenv("HOME")) {
+#endif
+        AddPathRedaction(options, std::filesystem::path(home), "<user-home>");
+    }
+
+    std::lock_guard lock(g_appState.configsMutex);
+    for (const auto& [index, config] : g_appState.configs) {
+        (void)index;
+        AddRedaction(options, config.saveRoot, "<save-root>");
+        AddRedaction(options, config.backupPath, "<backup-root>");
+        AddRedaction(options, config.zipPath, "<local-tool>");
+        AddRedaction(options, config.fontPath, "<local-font>");
+        AddRedaction(options, config.rclonePath, "<local-tool>");
+        AddRedaction(options, config.cloudWorkingDirectory, "<working-directory>");
+        AddRedaction(options, config.snapshotPath, "<snapshot-root>");
+        AddRedaction(options, config.othersPath, "<external-root>");
+        AddRedaction(options, config.weSnapshotPath, "<worldedit-root>");
+        AddRedaction(options, config.rcloneRemotePath, "<rclone-remote>");
+    }
+    for (const auto& [index, special] : g_appState.specialConfigs) {
+        (void)index;
+        for (const auto& task : special.unifiedTasks) {
+            AddRedaction(
+                options, task.workingDirectory, "<working-directory>");
+        }
+    }
+    return options;
+}
 
 std::string FormatTime(
     std::chrono::system_clock::time_point timestamp, bool includeDate) {
@@ -82,6 +168,7 @@ public:
         bool appended = false;
         if (!paused_) appended = Refresh();
         appended = DrawToolbar() || appended;
+        DrawExportDialog();
         DrawBackendStatus();
         RebuildFilterIfNeeded();
         DrawTable(appended);
@@ -143,6 +230,10 @@ private:
             (void)GetDesktopServices()->OpenFolder(GetAppPaths().logsRoot);
         }
         ImGui::SameLine();
+        if (ImGui::Button(L("LOG_EXPORT_DIAGNOSTICS"))) {
+            ImGui::OpenPopup("##diagnostic-export-confirm");
+        }
+        ImGui::SameLine();
         ImGui::Checkbox(L("LOG_AUTO_TAIL"), &autoTail_);
 
         if (ImGui::Button(L("LOG_LEVEL_FILTER"))) ImGui::OpenPopup("##log-level-filter");
@@ -179,6 +270,42 @@ private:
         ImGui::SameLine();
         ImGui::TextDisabled("%zu / %zu", filteredIndices_.size(), records_.size());
         return appendedOnResume;
+    }
+
+    void DrawExportDialog() {
+        if (ImGui::BeginPopupModal(
+                "##diagnostic-export-confirm", nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("%s", L("LOG_EXPORT_DIAGNOSTICS_WARNING"));
+            ImGui::Separator();
+            if (ImGui::Button(L("BUTTON_CONFIRM"))) {
+                const auto result =
+                    minebackup::diagnostics::ExportDiagnostics(BuildExportOptions());
+                if (result.success) {
+                    exportStatus_ = wstring_to_utf8(MineFormatMessage(
+                        "LOG_EXPORT_DIAGNOSTICS_SUCCESS",
+                        wstring_to_utf8(result.path.wstring()).c_str()));
+                    (void)GetDesktopServices()->RevealInFolder(
+                        result.path.parent_path(), result.path);
+                    MB_LOG_INFO(minebackup::logging::LogCategory::Application,
+                        "diagnostics.export.completed",
+                        "Diagnostic log exported to {}", result.path.filename().string());
+                } else {
+                    exportStatus_ = wstring_to_utf8(MineFormatMessage(
+                        "LOG_EXPORT_DIAGNOSTICS_FAILED", result.error.c_str()));
+                    MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
+                        "diagnostics.export.failed",
+                        "Diagnostic log export failed: {}", result.error);
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(L("BUTTON_CANCEL"))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        if (!exportStatus_.empty()) {
+            ImGui::TextWrapped("%s", exportStatus_.c_str());
+        }
     }
 
     void DrawBackendStatus() {
@@ -351,6 +478,7 @@ private:
     bool filterDirty_ = true;
     bool showBackendError_ = false;
     std::string lastBackendError_;
+    std::string exportStatus_;
 };
 
 } // namespace
