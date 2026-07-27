@@ -54,12 +54,12 @@
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);IMGUI_DISABLE_OBSOLETE_FUNCTIONS;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);IMGUI_DISABLE_OBSOLETE_FUNCTIONS;SPDLOG_COMPILED_LIB;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
-      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;.\third_party\knotlink-sdk-cpp-2.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;.\third_party\knotlink-sdk-cpp-2.0;.\third_party\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -78,10 +78,10 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);IMGUI_DISABLE_OBSOLETE_FUNCTIONS;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MINEBACKUP_ENABLE_V15_MIGRATION=$(MineBackupEnableV15Migration);IMGUI_DISABLE_OBSOLETE_FUNCTIONS;SPDLOG_COMPILED_LIB;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;.\third_party\knotlink-sdk-cpp-2.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MineBackupGlfwBuildDir)\_deps\glfw-src\include;$(ProjectDir)$(IntDir)generated;.\;.\src\app;.\src\core;.\src\infra;.\src\platform;.\src\ui;.\src\utils;.\third_party;.\third_party\imgui;.\third_party\json;.\third_party\stb;.\third_party\knotlink-sdk-cpp-2.0;.\third_party\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
@@ -155,6 +155,13 @@
     <ClCompile Include="third_party\imgui\imgui_impl_opengl3.cpp" />
     <ClCompile Include="third_party\imgui\imgui_tables.cpp" />
     <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="third_party\spdlog\src\async.cpp" />
+    <ClCompile Include="third_party\spdlog\src\bundled_fmtlib_format.cpp" />
+    <ClCompile Include="third_party\spdlog\src\cfg.cpp" />
+    <ClCompile Include="third_party\spdlog\src\color_sinks.cpp" />
+    <ClCompile Include="third_party\spdlog\src\file_sinks.cpp" />
+    <ClCompile Include="third_party\spdlog\src\spdlog.cpp" />
+    <ClCompile Include="third_party\spdlog\src\stdout_sinks.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\AppState.h" />

@@ -17,6 +17,23 @@
       "distribution": "selected sources vendored and statically linked"
     },
     {
+      "name": "spdlog",
+      "version": "1.17.0",
+      "source": "https://github.com/gabime/spdlog/releases/tag/v1.17.0",
+      "sourceArchiveSha256": "b11912a82d149792fef33fabd0503b13d54aeac25c1464755461d4108ea71fc2",
+      "license": "MIT",
+      "vendoredPath": "MineBackup/third_party/spdlog",
+      "distribution": "source vendored and statically linked"
+    },
+    {
+      "name": "fmt",
+      "version": "12.1.0",
+      "source": "https://github.com/fmtlib/fmt/releases/tag/12.1.0",
+      "license": "MIT",
+      "vendoredPath": "MineBackup/third_party/spdlog/include/spdlog/fmt/bundled",
+      "distribution": "bundled with spdlog and statically linked"
+    },
+    {
       "name": "KnotLink C++ SDK",
       "version": "2.0",
       "source": "user-supplied upstream source drop",

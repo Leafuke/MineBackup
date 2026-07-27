@@ -92,6 +92,16 @@ set(MINEBACKUP_IMGUI_SOURCES
     ${MINEBACKUP_IMGUI_DIR}/imgui_impl_opengl3.cpp
 )
 
+set(MINEBACKUP_SPDLOG_SOURCES
+    ${MINEBACKUP_SPDLOG_DIR}/src/async.cpp
+    ${MINEBACKUP_SPDLOG_DIR}/src/bundled_fmtlib_format.cpp
+    ${MINEBACKUP_SPDLOG_DIR}/src/cfg.cpp
+    ${MINEBACKUP_SPDLOG_DIR}/src/color_sinks.cpp
+    ${MINEBACKUP_SPDLOG_DIR}/src/file_sinks.cpp
+    ${MINEBACKUP_SPDLOG_DIR}/src/spdlog.cpp
+    ${MINEBACKUP_SPDLOG_DIR}/src/stdout_sinks.cpp
+)
+
 set(MINEBACKUP_PUBLIC_HEADERS
     ${MINEBACKUP_APP_DIR}/AppState.h ${MINEBACKUP_APP_DIR}/DataModels.h ${MINEBACKUP_APP_DIR}/Globals.h ${MINEBACKUP_APP_DIR}/LaunchOptions.h ${MINEBACKUP_APP_DIR}/MainUI.h
     ${MINEBACKUP_CORE_DIR}/BackupManager.h ${MINEBACKUP_CORE_DIR}/BackupManagerRestore.inl ${MINEBACKUP_CORE_DIR}/CloudSyncService.h

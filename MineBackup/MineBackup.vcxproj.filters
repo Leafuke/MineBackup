@@ -34,6 +34,9 @@
     <Filter Include="third_party\stb">
       <UniqueIdentifier>{89064A90-A00E-44D4-A6D9-E678C5718036}</UniqueIdentifier>
     </Filter>
+    <Filter Include="third_party\spdlog">
+      <UniqueIdentifier>{662CA514-8D83-4D05-8CA7-CF6A2DAB0D16}</UniqueIdentifier>
+    </Filter>
     <Filter Include="resources">
       <UniqueIdentifier>{7B44FA14-0C85-4871-8A62-D64C232978A8}</UniqueIdentifier>
     </Filter>
@@ -41,6 +44,27 @@
   <ItemGroup>
     <ClCompile Include="src\app\AppState.cpp">
       <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\async.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\bundled_fmtlib_format.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\cfg.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\color_sinks.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\file_sinks.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\spdlog.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\stdout_sinks.cpp">
+      <Filter>third_party\spdlog</Filter>
     </ClCompile>
     <ClCompile Include="src\app\LaunchOptions.cpp">
       <Filter>src\app</Filter>

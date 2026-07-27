@@ -41,6 +41,7 @@ set(MINEBACKUP_UTILS_DIR ${MINEBACKUP_SRC_DIR}/utils)
 set(MINEBACKUP_THIRD_PARTY_DIR ${MINEBACKUP_SOURCE_DIR}/third_party)
 set(MINEBACKUP_IMGUI_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/imgui)
 set(MINEBACKUP_KNOTLINK_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/knotlink-sdk-cpp-2.0)
+set(MINEBACKUP_SPDLOG_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/spdlog)
 set(MINEBACKUP_JSON_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/json)
 set(MINEBACKUP_STB_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/stb)
 
@@ -101,6 +102,11 @@ target_include_directories(minebackup_third_party_imgui PUBLIC ${MINEBACKUP_IMGU
 target_link_libraries(minebackup_third_party_imgui PUBLIC ${MINEBACKUP_GLFW_TARGET})
 target_compile_definitions(minebackup_third_party_imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 
+add_library(minebackup_third_party_spdlog STATIC ${MINEBACKUP_SPDLOG_SOURCES})
+target_include_directories(minebackup_third_party_spdlog PUBLIC ${MINEBACKUP_SPDLOG_DIR}/include)
+target_link_libraries(minebackup_third_party_spdlog PUBLIC Threads::Threads)
+target_compile_definitions(minebackup_third_party_spdlog PUBLIC SPDLOG_COMPILED_LIB)
+
 set(MINEBACKUP_DESKTOP_SOURCES ${MINEBACKUP_APPLICATION_SOURCES} ${MINEBACKUP_UI_SOURCES})
 if(WIN32)
     list(APPEND MINEBACKUP_DESKTOP_SOURCES ${MINEBACKUP_WINDOWS_SOURCES})
@@ -118,13 +124,13 @@ set(MINEBACKUP_COMMON_INCLUDE_DIRS
     ${MINEBACKUP_GENERATED_DIR} ${MINEBACKUP_SOURCE_DIR} ${MINEBACKUP_APP_DIR} ${MINEBACKUP_CORE_DIR}
     ${MINEBACKUP_INFRA_DIR} ${MINEBACKUP_PLATFORM_DIR} ${MINEBACKUP_UI_DIR} ${MINEBACKUP_UTILS_DIR}
     ${MINEBACKUP_THIRD_PARTY_DIR} ${MINEBACKUP_IMGUI_DIR} ${MINEBACKUP_KNOTLINK_DIR}
-    ${MINEBACKUP_JSON_DIR} ${MINEBACKUP_STB_DIR}
+    ${MINEBACKUP_JSON_DIR} ${MINEBACKUP_STB_DIR} ${MINEBACKUP_SPDLOG_DIR}/include
 )
 target_compile_definitions(minebackup_data_core PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)
 target_compile_definitions(minebackup_desktop PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)
 target_include_directories(minebackup_data_core PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
 target_include_directories(minebackup_desktop PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
-target_link_libraries(minebackup_data_core PUBLIC Threads::Threads)
+target_link_libraries(minebackup_data_core PUBLIC Threads::Threads minebackup_third_party_spdlog)
 if(NOT WIN32)
     target_link_libraries(minebackup_data_core PUBLIC Iconv::Iconv)
 endif()
@@ -137,11 +143,13 @@ if(MSVC)
     target_compile_options(minebackup_data_core PRIVATE /utf-8 /FS)
     target_compile_options(minebackup_desktop PRIVATE /utf-8 /FS)
     target_compile_options(minebackup_third_party_imgui PRIVATE /utf-8 /FS)
+    target_compile_options(minebackup_third_party_spdlog PRIVATE /utf-8 /FS)
     target_compile_options(MineBackup PRIVATE /utf-8 /FS)
 else()
     target_compile_options(minebackup_data_core PRIVATE -fno-strict-aliasing)
     target_compile_options(minebackup_desktop PRIVATE -fno-strict-aliasing)
     target_compile_options(minebackup_third_party_imgui PRIVATE -fno-strict-aliasing)
+    target_compile_options(minebackup_third_party_spdlog PRIVATE -fno-strict-aliasing)
 endif()
 
 if(APPLE
