@@ -23,7 +23,7 @@ category, stable event ID, localized UTF-8 message, session ID, producer thread,
 source filename/line and structured context. The supported levels are Trace,
 Debug, Info, Warning, Error and Critical; categories cover Application, Backup,
 Restore, History, Cloud, Task, Process, Network, KnotLink, Migration, Platform
-and Validation.
+Validation and Session.
 
 Messages are normalized before storage: CRLF becomes a single line break, ANSI
 escapes and unsafe controls are removed, multiline output becomes separate
@@ -46,11 +46,28 @@ eviction count. Its sequence cursor lets the UI catch up without rescanning all
 records.
 
 The local file is `minebackup.log`, with a 10 MiB current file and four
-archives (about 50 MiB total). It is UTF-8 and includes local ISO-8601 time and
-timezone, sequence, session, level, category, thread, event ID, context and
-source. A single worker drains an 8,192-record blocking queue. The backend
+archives (about 50 MiB total). It is UTF-8 and starts each line with a readable
+local timestamp/timezone, level and category. At the default Info file level,
+the rest of the line is the localized message. Debug file mode appends the
+stable event ID, producer thread, context and source location. Sequence and
+full session IDs remain in the in-memory record and diagnostic export instead
+of being repeated in every local line. Session start/end records show an
+eight-character session ID so multiple appended sessions remain easy to
+distinguish. A single worker drains an 8,192-record blocking queue. The backend
 flushes every second; Error and Critical request an additional flush, and
 normal shutdown drains the queue.
+
+Typical Info output:
+
+```text
+[2026-07-27 13:57:09.979 +08:00] [INFO] [Backup] Starting backup for world: world
+```
+
+The same record written while the file level is Debug may include:
+
+```text
+ | event=backup.started thread=40244 context=[world=world] source=BackupManager.cpp:1249
+```
 
 The file level is configured as `[General] LogFileLevel=off|info|debug` and
 defaults to `info`. A legacy `AutoLog=0` maps to Off and `AutoLog=1` maps to
@@ -71,11 +88,21 @@ deleted.
 
 ## Log and command UI
 
-The **Log** tab shows a clipped table with time, level, category and message.
-Info and above are visible by default; Debug/Trace, category and full-text
-filters are independent. Pause freezes only the view, not collection or file
-output. Resume catches up from the sequence cursor. **Clear View** advances
-that panel's cursor and does not delete session or file records.
+The **Log** tab shows a clipped, fixed-height event stream optimized for the
+narrow side panel. Its default row contains the message and a severity accent;
+Warning and above also show a text tag. Time and category are hidden by default
+and can be enabled from display options. Double-clicking a row, or choosing
+**View Details** from its context menu, opens a non-modal detail popup without
+reserving permanent space below the list.
+
+The minimum visible level is a threshold rather than six independent switches.
+Its value, auto-tail and the time/category display choices are saved in
+`LogViewLevel`, `LogViewAutoTail`, `LogViewShowTime` and
+`LogViewShowCategory`. Search text, pause, selection, category filters and the
+clear-view cursor remain session-only. Pause freezes only the view, not
+collection or file output. Resume catches up from the sequence cursor.
+**Clear View** advances that panel's cursor and does not delete session or file
+records.
 
 The **Command** tab owns only input, completion and at most 100 history entries.
 It is not a log store. Copying a row or filtered results is a local operation
