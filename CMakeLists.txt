@@ -105,7 +105,10 @@ target_compile_definitions(minebackup_third_party_imgui PUBLIC IMGUI_DISABLE_OBS
 add_library(minebackup_third_party_spdlog STATIC ${MINEBACKUP_SPDLOG_SOURCES})
 target_include_directories(minebackup_third_party_spdlog PUBLIC ${MINEBACKUP_SPDLOG_DIR}/include)
 target_link_libraries(minebackup_third_party_spdlog PUBLIC Threads::Threads)
-target_compile_definitions(minebackup_third_party_spdlog PUBLIC SPDLOG_COMPILED_LIB)
+target_compile_definitions(minebackup_third_party_spdlog PUBLIC
+    SPDLOG_COMPILED_LIB
+    $<$<PLATFORM_ID:Windows>:SPDLOG_WCHAR_FILENAMES>
+)
 
 set(MINEBACKUP_DESKTOP_SOURCES ${MINEBACKUP_APPLICATION_SOURCES} ${MINEBACKUP_UI_SOURCES})
 if(WIN32)
@@ -313,6 +316,9 @@ if(BUILD_TESTING)
 
     add_executable(minebackup_data_tests tests/TestMain.cpp)
     target_link_libraries(minebackup_data_tests PRIVATE minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_data_tests PRIVATE /utf-8 /FS)
+    endif()
     if(WIN32)
         target_link_libraries(minebackup_data_tests PRIVATE shell32)
     endif()

@@ -141,6 +141,9 @@
     <ClCompile Include="src\infra\RotatingFileLog.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\Logging.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\SingleInstanceService.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>

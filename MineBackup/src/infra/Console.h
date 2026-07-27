@@ -8,6 +8,7 @@
 #include "AppPaths.h"
 #include "DesktopServices.h"
 #include "i18n.h"
+#include "Logging.h"
 #include "text_to_text.h"
 
 #include <mutex>
@@ -75,8 +76,6 @@ struct Console
 	//显示消息
 	void    AddLog(const char* fmt, ...)
 	{
-		if (isSilence) return;
-		std::lock_guard<std::mutex> lock(logMutex);
 		va_list args;
 		va_start(args, fmt);
 		va_list args_copy;
@@ -87,6 +86,10 @@ struct Console
 		std::vector<char> buf(static_cast<size_t>(needed) + 1);
 		vsnprintf(buf.data(), buf.size(), fmt, args);
 		va_end(args);
+		minebackup::logging::LogLegacyMessage(
+			buf.data(), minebackup::logging::SourceLocation{__FILE__, __LINE__});
+		if (isSilence) return;
+		std::lock_guard<std::mutex> lock(logMutex);
 		Items.push_back(Strdup(buf.data()));
 	}
 

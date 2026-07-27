@@ -8,6 +8,7 @@
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
+#include "Logging.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
 #include "InterruptedTaskRecovery.h"
@@ -1200,6 +1201,52 @@ void TestSpecialConfigExecutionPolicy(TestContext& test) {
         "OS autostart should resolve to exactly one persisted special configuration");
 }
 
+void TestLoggingCore(TestContext& test, const std::filesystem::path& root) {
+    using namespace minebackup::logging;
+
+    bool valid = false;
+    test.Expect(ParseFileLevel("DEBUG", &valid) == LogFileLevel::Debug && valid,
+        "log file levels should parse case-insensitively");
+    test.Expect(ParseFileLevel("unexpected", &valid) == LogFileLevel::Info && !valid,
+        "invalid log file levels should safely fall back to info");
+
+    {
+        ScopedLogContext context{{"operation_id", "backup;42"}, {"world", "测试世界"}};
+        Write(minebackup::logging::LogLevel::Warning, LogCategory::Backup, "backup.test",
+            "\x1b[31mfirst\r\nsecond\x01", {"LoggingCoreTest.cpp", 42});
+    }
+    LogPrintf(minebackup::logging::LogLevel::Info, LogCategory::Application, "format.bad",
+        {"LoggingCoreTest.cpp", 50}, "%");
+    Write(minebackup::logging::LogLevel::Debug, LogCategory::Process, "process.long",
+        std::string(70 * 1024, 'x'), {"LoggingCoreTest.cpp", 53});
+
+    const auto read = ReadAfter(0);
+    test.Expect(read.records.size() == 4,
+        "multiline logging and formatting failures should create independent records");
+    test.Expect(read.records[0]->message == "first" && read.records[1]->message == "second",
+        "logging should normalize CRLF and remove ANSI/control characters");
+    test.Expect(read.records[0]->sequence + 1 == read.records[1]->sequence
+        && read.records[1]->sequence + 1 == read.records[2]->sequence,
+        "structured records should receive monotonically increasing sequences");
+    test.Expect(read.records[0]->context.size() == 2
+        && read.records[0]->context[0].value == "backup;42",
+        "scoped logging context should be copied into immutable records");
+    test.Expect(read.records[2]->eventId == "logging.format_error",
+        "runtime printf failures should degrade to a safe logging event");
+    test.Expect(read.records[3]->message.size() <= 64 * 1024
+        && read.records[3]->message.find("[truncated at 64 KiB]") != std::string::npos,
+        "oversized log lines should be explicitly truncated at 64 KiB");
+
+    InitializeOptions options;
+    options.logsDirectory = root / "logging-off";
+    options.fileLevel = LogFileLevel::Off;
+    Initialize(options);
+    Write(minebackup::logging::LogLevel::Info, LogCategory::Application, "logging.off", "memory only");
+    Shutdown();
+    test.Expect(!std::filesystem::exists(options.logsDirectory / "minebackup.log"),
+        "file logging off should not create a log file");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1291,6 +1338,7 @@ int main(int argc, char** argv) {
     TestTaskCoordinator(test, temporary.path);
     TestDesktopServicesAndCapabilities(test);
     TestSpecialConfigExecutionPolicy(test);
+    TestLoggingCore(test, temporary.path);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";
