@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -98,6 +99,12 @@ struct LoggingStatus {
     std::filesystem::path logsDirectory;
 };
 
+struct LogFileLevelResolution {
+    LogFileLevel level = LogFileLevel::Info;
+    bool usedLegacyAutoLog = false;
+    bool invalidConfiguredValue = false;
+};
+
 class ScopedLogContext {
 public:
     ScopedLogContext(std::initializer_list<LogField> fields) noexcept;
@@ -125,6 +132,9 @@ const char* ToString(LogLevel level) noexcept;
 const char* ToString(LogCategory category) noexcept;
 const char* ToString(LogFileLevel level) noexcept;
 LogFileLevel ParseFileLevel(std::string_view value, bool* valid = nullptr) noexcept;
+LogFileLevelResolution ResolveFileLevel(
+    std::optional<std::string_view> configuredValue,
+    std::optional<bool> legacyAutoLog) noexcept;
 
 void Write(
     LogLevel level,

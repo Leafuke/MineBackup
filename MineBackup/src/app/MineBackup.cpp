@@ -2675,11 +2675,11 @@ int main(int argc, char** argv)
 
 			if (ImGui::Begin(L("CONSOLE_TITLE"), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 				if (ImGui::BeginTabBar("##logging-tabs")) {
-					if (ImGui::BeginTabItem(L("LOG_PANEL_TAB"))) {
+					if (ImGui::BeginTabItem(L("TAB_LOG_PANEL"))) {
 						DrawLogPanel();
 						ImGui::EndTabItem();
 					}
-					if (ImGui::BeginTabItem(L("COMMAND_CONSOLE_TAB"))) {
+					if (ImGui::BeginTabItem(L("TAB_COMMAND_CONSOLE"))) {
 						DrawCommandConsole();
 						ImGui::EndTabItem();
 					}

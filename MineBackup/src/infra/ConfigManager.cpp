@@ -449,20 +449,19 @@ void LoadConfigs(const filesystem::path& filename) {
 			}
 		}
 	}
-	if (configuredLogFileLevel) {
-		bool valid = false;
-		const auto configuredValue = wstring_to_utf8(*configuredLogFileLevel);
-		g_logFileLevel = minebackup::logging::ParseFileLevel(configuredValue, &valid);
-		if (!valid) {
-			MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
-				"logging.config.invalid_level",
-				"Invalid LogFileLevel '{}'; using info.", configuredValue);
-		}
+	const optional<string> configuredValue = configuredLogFileLevel
+		? optional<string>(wstring_to_utf8(*configuredLogFileLevel)) : nullopt;
+	const auto logLevelResolution = minebackup::logging::ResolveFileLevel(
+		configuredValue
+			? optional<string_view>(*configuredValue) : nullopt,
+		legacyAutoLog);
+	g_logFileLevel = logLevelResolution.level;
+	if (logLevelResolution.invalidConfiguredValue) {
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
+			"logging.config.invalid_level",
+			"Invalid LogFileLevel '{}'; using info.", *configuredValue);
 	}
-	else if (legacyAutoLog) {
-		g_logFileLevel = *legacyAutoLog
-			? minebackup::logging::LogFileLevel::Info
-			: minebackup::logging::LogFileLevel::Off;
+	else if (logLevelResolution.usedLegacyAutoLog) {
 		MB_LOG_INFO(minebackup::logging::LogCategory::Migration,
 			"logging.config.legacy_auto_log",
 			"Migrated legacy AutoLog={} to LogFileLevel={}.",

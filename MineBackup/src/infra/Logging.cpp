@@ -669,6 +669,24 @@ LogFileLevel ParseFileLevel(std::string_view value, bool* valid) noexcept {
     return LogFileLevel::Info;
 }
 
+LogFileLevelResolution ResolveFileLevel(
+    std::optional<std::string_view> configuredValue,
+    std::optional<bool> legacyAutoLog) noexcept {
+    LogFileLevelResolution result;
+    if (configuredValue) {
+        bool valid = false;
+        result.level = ParseFileLevel(*configuredValue, &valid);
+        result.invalidConfiguredValue = !valid;
+        return result;
+    }
+    if (legacyAutoLog) {
+        result.level = *legacyAutoLog
+            ? LogFileLevel::Info : LogFileLevel::Off;
+        result.usedLegacyAutoLog = true;
+    }
+    return result;
+}
+
 void Write(LogLevel level, LogCategory category, std::string_view eventId,
     std::string_view message, SourceLocation source) noexcept {
     Service().WriteRecord(level, category, eventId, message, source);

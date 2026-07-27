@@ -46,7 +46,11 @@ int main() {
         "TASK_COMMAND_WARNING",
         "RCLONE_INSTALL_BUTTON",
         "CLOUD_HISTORY_IMPORT_SUCCEEDED",
-        "CLOUD_STATUS_DOWNLOADING_HISTORY"
+        "CLOUD_STATUS_DOWNLOADING_HISTORY",
+        "TAB_LOG_PANEL",
+        "TAB_COMMAND_CONSOLE",
+        "LOG_EXPORT_DIAGNOSTICS",
+        "LOG_EXPORT_DIAGNOSTICS_WARNING"
     };
     for (const char* language : lang_codes) {
         SetLanguage(language);
@@ -54,6 +58,19 @@ int main() {
             Check(std::string(L(key)) != key,
                 std::string(language) + " translation is missing or empty: " + key);
         }
+        const auto stringAndInteger = MineFormatMessage(
+            "CONFIRM_DELETE_MSG", 7, "Profile");
+        const auto sizeValue = MineFormatMessage(
+            "LOG_BACKUP_SMART_INFO", static_cast<std::size_t>(42));
+        Check(!stringAndInteger.empty()
+                && stringAndInteger.find(L"%d") == std::wstring::npos
+                && stringAndInteger.find(L"%s") == std::wstring::npos,
+            std::string(language)
+                + " printf translation should format string/integer arguments");
+        Check(!sizeValue.empty()
+                && sizeValue.find(L"%zu") == std::wstring::npos,
+            std::string(language)
+                + " printf translation should format size_t arguments");
     }
 
     if (failures == 0) {
