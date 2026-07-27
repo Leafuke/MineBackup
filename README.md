@@ -111,6 +111,10 @@ MineBackup stores data in a platform profile, not beside the executable. Read
 before moving an existing installation. Windows Service Mode is deprecated and
 cannot be newly installed or started. rclone is optional, not bundled, and is
 downloaded only after explicit confirmation with version/hash validation.
+Logging defaults to an Info-level rotating `logs/minebackup.log`. Settings can
+switch Off/Info/Debug at runtime, and the Log panel can export a diagnostic copy
+with known paths redacted. See [logging and diagnostics](docs/logging-and-diagnostics.md)
+for locations, retention, privacy boundaries and troubleshooting.
 
 ---
 

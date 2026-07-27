@@ -14,6 +14,15 @@ desktop features are environment-dependent: the UI reports `Available`,
 Missing portals, a missing StatusNotifier host or a rejected shortcut must not
 disable backup and restore or make the main window unreachable.
 
+## Logging verification
+
+All platforms use the same structured record and rotation contract. Validate
+the platform log root, runtime Off/Info/Debug switching, five-file maximum,
+unwritable-directory degradation, forced-exit warning and clean marker removal
+as described in [Logging and diagnostics](logging-and-diagnostics.md). Release
+dependency inspection must not report a spdlog or fmt runtime library: both are
+statically linked from the pinned source.
+
 Linux release binaries use the Ubuntu 24.04 toolchain baseline and require
 glibc 2.39 or later. Ubuntu 22.04 and Debian 12 are not supported.
 
