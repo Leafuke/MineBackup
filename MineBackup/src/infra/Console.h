@@ -88,7 +88,6 @@ struct Console
 		va_end(args);
 		minebackup::logging::LogLegacyMessage(
 			buf.data(), minebackup::logging::SourceLocation{__FILE__, __LINE__});
-		if (isSilence) return;
 		std::lock_guard<std::mutex> lock(logMutex);
 		Items.push_back(Strdup(buf.data()));
 	}

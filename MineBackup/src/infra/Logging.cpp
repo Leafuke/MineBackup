@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstdio>
 #include <deque>
+#include <fstream>
 #include <iomanip>
 #include <iterator>
 #include <mutex>
@@ -230,24 +231,38 @@ public:
     LoggingService() : sessionId_(MakeSessionId()) {}
 
     void InitializeService(const InitializeOptions& options) noexcept {
+        bool reportPreviousAbnormalSession = false;
         try {
-            std::lock_guard lock(dispatchMutex_);
-            logsDirectory_ = options.logsDirectory;
-            fileLevel_ = options.fileLevel;
-            consoleEnabled_ = options.consoleEnabled;
-            if (!threadPoolInitialized_) {
-                spdlog::init_thread_pool(kAsyncQueueCapacity, 1);
-                threadPoolInitialized_ = true;
-                spdlog::flush_every(std::chrono::seconds(1));
-            }
-            initialized_ = true;
-            RebuildBackendLocked();
-            if (logger_) {
-                for (const auto& record : startupRecords_) {
-                    DispatchToBackendLocked(*record);
+            {
+                std::lock_guard lock(dispatchMutex_);
+                logsDirectory_ = options.logsDirectory;
+                activeSessionPath_ = logsDirectory_ / ".active-session";
+                std::error_code markerError;
+                previousSessionAbnormal_ = std::filesystem::is_regular_file(
+                    activeSessionPath_, markerError) && !markerError;
+                reportPreviousAbnormalSession = previousSessionAbnormal_;
+                fileLevel_ = options.fileLevel;
+                consoleEnabled_ = options.consoleEnabled;
+                if (!threadPoolInitialized_) {
+                    spdlog::init_thread_pool(kAsyncQueueCapacity, 1);
+                    threadPoolInitialized_ = true;
+                    spdlog::flush_every(std::chrono::seconds(1));
                 }
+                initialized_ = true;
+                RebuildBackendLocked();
+                UpdateActiveSessionMarkerLocked();
+                if (logger_) {
+                    for (const auto& record : startupRecords_) {
+                        DispatchToBackendLocked(*record);
+                    }
+                }
+                startupRecords_.clear();
             }
-            startupRecords_.clear();
+            if (reportPreviousAbnormalSession) {
+                WriteRecord(LogLevel::Warning, LogCategory::Application,
+                    "logging.previous_session_abnormal",
+                    "The previous MineBackup session did not shut down cleanly.", {});
+            }
         } catch (const std::exception& error) {
             SetBackendError(error.what());
         } catch (...) {
@@ -259,7 +274,10 @@ public:
         try {
             std::lock_guard lock(dispatchMutex_);
             fileLevel_ = level;
-            if (initialized_) RebuildBackendLocked();
+            if (initialized_) {
+                RebuildBackendLocked();
+                UpdateActiveSessionMarkerLocked();
+            }
         } catch (const std::exception& error) {
             SetBackendError(error.what());
         } catch (...) {
@@ -285,12 +303,13 @@ public:
                 std::lock_guard lock(dispatchMutex_);
                 if (logger_) logger_->flush();
                 logger_.reset();
+                if (threadPoolInitialized_) {
+                    spdlog::shutdown();
+                    threadPoolInitialized_ = false;
+                }
                 initialized_ = false;
                 fileBackendActive_.store(false, std::memory_order_release);
-            }
-            if (threadPoolInitialized_) {
-                spdlog::shutdown();
-                threadPoolInitialized_ = false;
+                RemoveActiveSessionMarkerLocked();
             }
         } catch (const std::exception& error) {
             SetBackendError(error.what());
@@ -379,6 +398,7 @@ public:
                 status.latestSequence = latestSequence_;
                 status.sessionId = sessionId_;
                 status.logsDirectory = logsDirectory_;
+                status.previousSessionAbnormal = previousSessionAbnormal_;
             }
             status.fileBackendActive = fileBackendActive_.load(std::memory_order_acquire);
             {
@@ -459,6 +479,36 @@ private:
         if (record.level >= LogLevel::Error) logger_->flush();
     }
 
+    void UpdateActiveSessionMarkerLocked() {
+        if (!fileBackendActive_.load(std::memory_order_acquire)) {
+            RemoveActiveSessionMarkerLocked();
+            return;
+        }
+        std::error_code error;
+        std::filesystem::create_directories(logsDirectory_, error);
+        if (error) {
+            SetBackendError(error.message());
+            return;
+        }
+        std::ofstream marker(activeSessionPath_, std::ios::binary | std::ios::trunc);
+        if (!marker.is_open()) {
+            SetBackendError("could not create the active logging session marker");
+            return;
+        }
+        marker << sessionId_ << '\n';
+        if (!marker.good()) {
+            SetBackendError("could not write the active logging session marker");
+            return;
+        }
+    }
+
+    void RemoveActiveSessionMarkerLocked() noexcept {
+        if (activeSessionPath_.empty()) return;
+        std::error_code error;
+        std::filesystem::remove(activeSessionPath_, error);
+        if (error) SetBackendError(error.message());
+    }
+
     void SetBackendError(std::string_view error) noexcept {
         {
             std::lock_guard lock(statusMutex_);
@@ -478,6 +528,7 @@ private:
     std::deque<std::shared_ptr<const LogRecord>> startupRecords_;
     std::shared_ptr<spdlog::logger> logger_;
     std::filesystem::path logsDirectory_;
+    std::filesystem::path activeSessionPath_;
     std::string sessionId_;
     std::string lastBackendError_;
     std::uint64_t latestSequence_ = 0;
@@ -487,6 +538,7 @@ private:
     bool initialized_ = false;
     bool consoleEnabled_ = false;
     bool threadPoolInitialized_ = false;
+    bool previousSessionAbnormal_ = false;
     std::atomic_bool fileBackendActive_ = false;
 };
 

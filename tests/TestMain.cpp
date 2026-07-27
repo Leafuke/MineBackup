@@ -1245,6 +1245,40 @@ void TestLoggingCore(TestContext& test, const std::filesystem::path& root) {
     Shutdown();
     test.Expect(!std::filesystem::exists(options.logsDirectory / "minebackup.log"),
         "file logging off should not create a log file");
+
+    options.logsDirectory = root / "logging-info";
+    options.fileLevel = LogFileLevel::Info;
+    Initialize(options);
+    test.Expect(std::filesystem::is_regular_file(options.logsDirectory / ".active-session"),
+        "enabled file logging should create an active-session marker");
+    Write(minebackup::logging::LogLevel::Debug, LogCategory::Application,
+        "logging.filtered", "debug should be filtered");
+    Write(minebackup::logging::LogLevel::Info, LogCategory::Application,
+        "logging.persisted", "info should be persisted");
+    SetFileLevel(LogFileLevel::Off);
+    test.Expect(!std::filesystem::exists(options.logsDirectory / ".active-session"),
+        "disabling file logging should remove the active-session marker");
+    Write(minebackup::logging::LogLevel::Error, LogCategory::Application,
+        "logging.disabled", "file remains disabled");
+    Shutdown();
+    std::ifstream persistedLog(options.logsDirectory / "minebackup.log", std::ios::binary);
+    const std::string persisted((std::istreambuf_iterator<char>(persistedLog)),
+        std::istreambuf_iterator<char>());
+    test.Expect(persisted.find("event=logging.persisted") != std::string::npos
+        && persisted.find("event=logging.filtered") == std::string::npos
+        && persisted.find("event=logging.disabled") == std::string::npos,
+        "runtime file levels should filter and disable persistence immediately");
+
+    options.logsDirectory = root / "logging-abnormal";
+    std::filesystem::create_directories(options.logsDirectory);
+    std::ofstream(options.logsDirectory / ".active-session") << "abandoned-session\n";
+    options.fileLevel = LogFileLevel::Off;
+    Initialize(options);
+    const auto abnormalStatus = GetStatus();
+    test.Expect(abnormalStatus.previousSessionAbnormal
+        && !std::filesystem::exists(options.logsDirectory / ".active-session"),
+        "a stale session marker should be reported once and cleared when logging is off");
+    Shutdown();
 }
 
 } // namespace

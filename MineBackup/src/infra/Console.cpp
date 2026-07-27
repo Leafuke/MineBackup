@@ -26,8 +26,9 @@ void ConsoleLog(Console* targetConsole, const char* format, ...) {
 
     if (targetConsole != nullptr) {
         targetConsole->AddLog("%s", buffer);
+    } else {
+        minebackup::logging::LogLegacyMessage(buffer);
     }
-    std::printf("%s\n", buffer);
 }
 
 void Console::ExecCommand(const char* commandLine) {

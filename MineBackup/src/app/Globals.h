@@ -6,6 +6,7 @@
 // 定义在 MineBackup.cpp 中，其他文件通过 #include "Globals.h" 访问
 
 #include "AppState.h"
+#include "Logging.h"
 #include "MineBackupVersion.h"
 #include "imgui.h"
 #include <atomic>
@@ -49,7 +50,6 @@ struct AppUiState {
 };
 
 struct AppSettingsState {
-	bool silence = false;
 	bool safeDelete = true;
 	bool checkForUpdates = true;
 	bool receiveNotices = true;
@@ -57,7 +57,7 @@ struct AppSettingsState {
 	bool runOnStartup = false;
 	bool silentStartupToTray = false;
 	bool autoScanForWorlds = false;
-	bool autoLogEnabled = true;
+	minebackup::logging::LogFileLevel logFileLevel = minebackup::logging::LogFileLevel::Info;
 	bool enableKnotLink = true;
 	bool autoStartKnotLinkServer = true;
 	std::atomic<bool> coreValidationPending{ false };
@@ -124,7 +124,6 @@ inline bool& g_rememberCloseAction = g_globals.ui.rememberCloseAction;
 inline bool& g_showCloseConfirmDialog = g_globals.ui.showCloseConfirmDialog;
 inline std::wstring& g_worldToFocusInHistory = g_globals.ui.worldToFocusInHistory;
 
-inline bool& isSilence = g_globals.settings.silence;
 inline bool& isSafeDelete = g_globals.settings.safeDelete;
 inline bool& g_CheckForUpdates = g_globals.settings.checkForUpdates;
 inline bool& g_ReceiveNotices = g_globals.settings.receiveNotices;
@@ -132,7 +131,7 @@ inline bool& g_StopAutoBackupOnExit = g_globals.settings.stopAutoBackupOnExit;
 inline bool& g_RunOnStartup = g_globals.settings.runOnStartup;
 inline bool& g_SilentStartupToTray = g_globals.settings.silentStartupToTray;
 inline bool& g_AutoScanForWorlds = g_globals.settings.autoScanForWorlds;
-inline bool& g_autoLogEnabled = g_globals.settings.autoLogEnabled;
+inline minebackup::logging::LogFileLevel& g_logFileLevel = g_globals.settings.logFileLevel;
 inline bool& g_enableKnotLink = g_globals.settings.enableKnotLink;
 inline bool& g_autoStartKnotLinkServer = g_globals.settings.autoStartKnotLinkServer;
 inline std::atomic<bool>& g_CoreValidationPending = g_globals.settings.coreValidationPending;

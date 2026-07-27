@@ -6,6 +6,7 @@
 #include "MigrationCoordinator.h"
 #include "SpecialConfigPolicy.h"
 #include "Globals.h"
+#include "Logging.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "PlatformCompat.h"
@@ -15,6 +16,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <set>
+#include <optional>
 using namespace std;
 
 static wstring GetDefaultFontPath() {
@@ -184,8 +186,14 @@ void LoadConfigs(const filesystem::path& filename) {
 	g_appState.specialConfigs.clear();
 	g_appState.specialConfigMode = false;
 	restoreWhitelist.clear();
+	g_logFileLevel = minebackup::logging::LogFileLevel::Info;
+	optional<wstring> configuredLogFileLevel;
+	optional<bool> legacyAutoLog;
 	ifstream in(filename, ios::binary);
-	if (!in.is_open()) return;
+	if (!in.is_open()) {
+		minebackup::logging::SetFileLevel(g_logFileLevel);
+		return;
+	}
 	string line1;
 	wstring line, section;
 	// cur作为一个指针，指向 g_appState.configs 这个全局 map<int, Config> 中的元素 Config
@@ -247,7 +255,7 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"KeepCount") cur->keepCount = stoi(val);
 				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
-				else if (key == L"SilenceMode") isSilence = (val != L"0");
+				else if (key == L"SilenceMode") { /* ignored legacy setting */ }
 				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
@@ -420,8 +428,11 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"HotkeyRestore") {
 					g_hotKeyRestoreId = stoi(val);
 				}
+				else if (key == L"LogFileLevel") {
+					configuredLogFileLevel = val;
+				}
 				else if (key == L"AutoLog") {
-					g_autoLogEnabled = (val != L"0");
+					legacyAutoLog = (val != L"0");
 				}
 				else if (key == L"CoreValidationPending") {
 					g_CoreValidationPending.store(val != L"0");
@@ -438,6 +449,26 @@ void LoadConfigs(const filesystem::path& filename) {
 			}
 		}
 	}
+	if (configuredLogFileLevel) {
+		bool valid = false;
+		const auto configuredValue = wstring_to_utf8(*configuredLogFileLevel);
+		g_logFileLevel = minebackup::logging::ParseFileLevel(configuredValue, &valid);
+		if (!valid) {
+			MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
+				"logging.config.invalid_level",
+				"Invalid LogFileLevel '{}'; using info.", configuredValue);
+		}
+	}
+	else if (legacyAutoLog) {
+		g_logFileLevel = *legacyAutoLog
+			? minebackup::logging::LogFileLevel::Info
+			: minebackup::logging::LogFileLevel::Off;
+		MB_LOG_INFO(minebackup::logging::LogCategory::Migration,
+			"logging.config.legacy_auto_log",
+			"Migrated legacy AutoLog={} to LogFileLevel={}.",
+			*legacyAutoLog ? 1 : 0, minebackup::logging::ToString(g_logFileLevel));
+	}
+	minebackup::logging::SetFileLevel(g_logFileLevel);
 	set<wstring> usedConfigIds;
 	for (auto& kv : g_appState.configs) {
 		Config& cfg = kv.second;
@@ -541,7 +572,8 @@ bool SaveConfigs(const filesystem::path& filename) {
 	buffer << L"UIScale=" << g_uiScale << L"\n";
 	buffer << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
 	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
-	buffer << L"AutoLog=" << (g_autoLogEnabled ? 1 : 0) << L"\n";
+	buffer << L"LogFileLevel="
+		<< utf8_to_wstring(minebackup::logging::ToString(g_logFileLevel)) << L"\n";
 	buffer << L"CoreValidationPending=" << (g_CoreValidationPending.load() ? 1 : 0) << L"\n";
 	buffer << L"CoreValidationPassed=" << (g_CoreValidationPassed.load() ? 1 : 0) << L"\n";
 	buffer << L"CloseAction=" << g_closeAction << L"\n";
@@ -575,7 +607,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"KeepCount=" << c.keepCount << L"\n";
 		buffer << L"SmartBackup=" << c.backupMode << L"\n";
 		buffer << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
-		buffer << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
 		buffer << L"Theme=" << c.theme << L"\n";
 		buffer << L"Font=" << c.fontPath << L"\n";
 		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";

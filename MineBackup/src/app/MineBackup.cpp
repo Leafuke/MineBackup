@@ -32,6 +32,7 @@
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
+#include "Logging.h"
 #include "Sha256.h"
 #include "SpecialConfigPolicy.h"
 #if MINEBACKUP_ENABLE_V15_MIGRATION
@@ -429,6 +430,16 @@ int main(int argc, char** argv)
 	V15MigrationAdapter::Install();
 #endif
 	LoadConfigs();
+	minebackup::logging::Initialize({
+		paths.logsRoot,
+		g_logFileLevel,
+		false
+	});
+	struct LoggingShutdownGuard {
+		~LoggingShutdownGuard() { minebackup::logging::Shutdown(); }
+	} loggingShutdownGuard;
+	MB_LOG_INFO(minebackup::logging::LogCategory::Application,
+		"application.session.started", "MineBackup {} session started.", CURRENT_VERSION);
 	MigrationCoordinator::RunStartupMigration();
 	CheckForConfigConflicts();
 	LoadHistory();
@@ -511,8 +522,10 @@ int main(int argc, char** argv)
 			SetConsoleOutputCP(CP_UTF8);
 		}
 		#endif
+		minebackup::logging::SetConsoleEnabled(!hide);
 
 		RunSpecialMode(g_appState.currentConfigIndex);
+		minebackup::logging::SetConsoleEnabled(false);
 
 		// 将捕获到的所有日志写入文件
 		ostringstream specialModeLog;
@@ -532,14 +545,6 @@ int main(int argc, char** argv)
 	};
 
 #ifdef _WIN32
-	if (g_autoLogEnabled)
-	{
-		time_t now = time(0);
-		char time_buf[100];
-		ctime_s(time_buf, sizeof(time_buf), &now);
-		ConsoleLog(&console, L("AUTO_LOG_START"), time_buf);
-	}
-
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
 	auto desktopServices = CreateNativeDesktopServices({
 		reinterpret_cast<void*>(hInstance), reinterpret_cast<void*>(hwnd_hidden),
@@ -1387,7 +1392,24 @@ int main(int argc, char** argv)
 					ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray);
 					ImGui::EndDisabled();
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
-					ImGui::Checkbox(L("BUTTON_AUTO_LOG"), &g_autoLogEnabled);
+					if (ImGui::BeginMenu(L("LOG_FILE_LEVEL"))) {
+						const struct {
+							minebackup::logging::LogFileLevel value;
+							const char* label;
+						} levels[] = {
+							{minebackup::logging::LogFileLevel::Off, "LOG_FILE_LEVEL_OFF"},
+							{minebackup::logging::LogFileLevel::Info, "LOG_FILE_LEVEL_INFO"},
+							{minebackup::logging::LogFileLevel::Debug, "LOG_FILE_LEVEL_DEBUG"},
+						};
+						for (const auto& level : levels) {
+							if (ImGui::MenuItem(L(level.label), nullptr, g_logFileLevel == level.value)) {
+								g_logFileLevel = level.value;
+								minebackup::logging::SetFileLevel(level.value);
+							}
+						}
+						ImGui::EndMenu();
+					}
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_LOG_FILE_LEVEL"));
 					ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
 					ImGui::Checkbox(L("RECEIVE_NOTICES"), &g_ReceiveNotices);

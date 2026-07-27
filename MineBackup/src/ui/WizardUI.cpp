@@ -389,7 +389,6 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				initialConfig.backupBefore = false;
 				initialConfig.skipIfUnchanged = true;
 				initialConfig.theme = themeId;
-				isSilence = false;
 				if (strlen(wizardFontPath) > 0) {
 					initialConfig.fontPath = utf8_to_wstring(wizardFontPath);
 				} else {
