@@ -185,14 +185,45 @@ std::string EscapeField(std::string_view value) {
     return escaped;
 }
 
-std::string FilePayload(const LogRecord& record) {
+const char* FileLevelName(LogLevel level) {
+    switch (level) {
+    case LogLevel::Trace: return "TRACE";
+    case LogLevel::Debug: return "DEBUG";
+    case LogLevel::Info: return "INFO";
+    case LogLevel::Warning: return "WARNING";
+    case LogLevel::Error: return "ERROR";
+    case LogLevel::Critical: return "CRITICAL";
+    }
+    return "INFO";
+}
+
+const char* FileCategoryName(LogCategory category) {
+    switch (category) {
+    case LogCategory::Application: return "Application";
+    case LogCategory::Backup: return "Backup";
+    case LogCategory::Restore: return "Restore";
+    case LogCategory::History: return "History";
+    case LogCategory::Cloud: return "Cloud";
+    case LogCategory::Task: return "Task";
+    case LogCategory::Process: return "Process";
+    case LogCategory::Network: return "Network";
+    case LogCategory::KnotLink: return "KnotLink";
+    case LogCategory::Migration: return "Migration";
+    case LogCategory::Platform: return "Platform";
+    case LogCategory::Validation: return "Validation";
+    case LogCategory::Session: return "Session";
+    }
+    return "Application";
+}
+
+std::string FilePayload(const LogRecord& record, bool includeExtendedFields) {
     std::ostringstream stream;
-    stream << "seq=" << record.sequence
-           << " session=" << EscapeField(record.sessionId)
-           << " level=" << ToString(record.level)
-           << " category=" << ToString(record.category)
-           << " thread=" << EscapeField(record.threadId)
-           << " event=" << EscapeField(record.eventId);
+    stream << '[' << FileLevelName(record.level) << "] ["
+           << FileCategoryName(record.category) << "] " << record.message;
+    if (!includeExtendedFields) return stream.str();
+
+    stream << " | event=" << EscapeField(record.eventId)
+           << " thread=" << EscapeField(record.threadId);
     if (!record.context.empty()) {
         stream << " context=[";
         bool first = true;
@@ -206,7 +237,6 @@ std::string FilePayload(const LogRecord& record) {
     if (!record.sourceFile.empty()) {
         stream << " source=" << EscapeField(record.sourceFile) << ':' << record.sourceLine;
     }
-    stream << " message=\"" << EscapeField(record.message) << '"';
     return stream.str();
 }
 
@@ -243,6 +273,7 @@ public:
                 reportPreviousAbnormalSession = previousSessionAbnormal_;
                 fileLevel_ = options.fileLevel;
                 consoleEnabled_ = options.consoleEnabled;
+                applicationVersion_ = options.applicationVersion;
                 if (!threadPoolInitialized_) {
                     spdlog::init_thread_pool(kAsyncQueueCapacity, 1);
                     threadPoolInitialized_ = true;
@@ -256,10 +287,14 @@ public:
                         DispatchToBackendLocked(*record);
                     }
                 }
+                if (fileBackendActive_.load(std::memory_order_acquire)
+                    && !sessionBoundaryWritten_) {
+                    AppendSessionBoundaryLocked(true);
+                }
                 startupRecords_.clear();
             }
             if (reportPreviousAbnormalSession) {
-                WriteRecord(LogLevel::Warning, LogCategory::Application,
+                WriteRecord(LogLevel::Warning, LogCategory::Session,
                     "logging.previous_session_abnormal",
                     "The previous MineBackup session did not shut down cleanly.", {});
             }
@@ -277,6 +312,10 @@ public:
             if (initialized_) {
                 RebuildBackendLocked();
                 UpdateActiveSessionMarkerLocked();
+                if (fileBackendActive_.load(std::memory_order_acquire)
+                    && !sessionBoundaryWritten_) {
+                    AppendSessionBoundaryLocked(true);
+                }
             }
         } catch (const std::exception& error) {
             SetBackendError(error.what());
@@ -301,6 +340,9 @@ public:
         try {
             {
                 std::lock_guard lock(dispatchMutex_);
+                if (logger_ && sessionBoundaryWritten_) {
+                    AppendSessionBoundaryLocked(false);
+                }
                 if (logger_) logger_->flush();
                 logger_.reset();
                 if (threadPoolInitialized_) {
@@ -310,6 +352,7 @@ public:
                 initialized_ = false;
                 fileBackendActive_.store(false, std::memory_order_release);
                 RemoveActiveSessionMarkerLocked();
+                sessionBoundaryWritten_ = false;
             }
         } catch (const std::exception& error) {
             SetBackendError(error.what());
@@ -333,23 +376,9 @@ public:
 
             std::lock_guard lock(dispatchMutex_);
             for (auto& line : lines) {
-                auto record = std::make_shared<LogRecord>();
-                record->sequence = ++latestSequence_;
-                record->timestamp = timestamp;
-                record->level = level;
-                record->category = category;
-                record->eventId = StripAnsiAndControls(eventId);
-                record->message = std::move(line);
-                record->sessionId = sessionId_;
-                record->threadId = threadId;
-                record->sourceFile = sourceFile;
-                record->sourceLine = source.line;
-                record->context = context;
-                records_.push_back(record);
-                if (records_.size() > kSessionCapacity) {
-                    records_.pop_front();
-                    ++evictedCount_;
-                }
+                auto record = AppendRecordLocked(level, category,
+                    StripAnsiAndControls(eventId), std::move(line), sourceFile,
+                    source.line, timestamp, threadId, context);
                 if (!initialized_) {
                     startupRecords_.push_back(record);
                     if (startupRecords_.size() > kStartupCapacity) startupRecords_.pop_front();
@@ -411,6 +440,61 @@ public:
     }
 
 private:
+    std::shared_ptr<const LogRecord> AppendRecordLocked(
+        LogLevel level,
+        LogCategory category,
+        std::string eventId,
+        std::string message,
+        std::string sourceFile,
+        std::uint_least32_t sourceLine,
+        std::chrono::system_clock::time_point timestamp,
+        std::string threadId,
+        std::vector<LogField> context) {
+        auto record = std::make_shared<LogRecord>();
+        record->sequence = ++latestSequence_;
+        record->timestamp = timestamp;
+        record->level = level;
+        record->category = category;
+        record->eventId = std::move(eventId);
+        record->message = std::move(message);
+        record->sessionId = sessionId_;
+        record->threadId = std::move(threadId);
+        record->sourceFile = std::move(sourceFile);
+        record->sourceLine = sourceLine;
+        record->context = std::move(context);
+        records_.push_back(record);
+        if (records_.size() > kSessionCapacity) {
+            records_.pop_front();
+            ++evictedCount_;
+        }
+        return record;
+    }
+
+    std::string ShortSessionId() const {
+        return sessionId_.substr(0, std::min<std::size_t>(8, sessionId_.size()));
+    }
+
+    void AppendSessionBoundaryLocked(bool starting) {
+        std::string message;
+        if (starting) {
+            message = "===== MineBackup";
+            if (!applicationVersion_.empty()) {
+                message.append(" ").append(applicationVersion_);
+            }
+            message.append(" session started (").append(ShortSessionId()).append(") =====");
+        } else {
+            message = "===== MineBackup session ended normally (";
+            message.append(ShortSessionId()).append(") =====");
+        }
+        const auto record = AppendRecordLocked(
+            LogLevel::Info, LogCategory::Session,
+            starting ? "logging.session.started" : "logging.session.ended",
+            std::move(message), {}, 0, std::chrono::system_clock::now(),
+            CurrentThreadId(), {});
+        DispatchToBackendLocked(*record);
+        sessionBoundaryWritten_ = starting;
+    }
+
     void RebuildBackendLocked() {
         if (logger_) {
             logger_->flush();
@@ -436,7 +520,7 @@ private:
                     filename, kRotatingFileBytes, kRotatingArchiveCount, false);
                 sink->set_level(fileLevel_ == LogFileLevel::Debug
                     ? spdlog::level::debug : spdlog::level::info);
-                sink->set_pattern("%Y-%m-%dT%H:%M:%S.%e%z %v");
+                sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e %z] %v");
                 sinks.push_back(std::move(sink));
                 fileActive = true;
                 ClearBackendError();
@@ -447,7 +531,7 @@ private:
         if (consoleEnabled_) {
             auto sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
             sink->set_level(spdlog::level::trace);
-            sink->set_pattern("%Y-%m-%dT%H:%M:%S.%e%z %v");
+            sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e %z] %v");
             sinks.push_back(std::move(sink));
         }
 
@@ -475,7 +559,8 @@ private:
         if (!logger_) return;
         const bool fileAccepts = IsEnabledForFile(record.level, fileLevel_);
         if (!fileAccepts && !consoleEnabled_) return;
-        logger_->log(ToSpdlogLevel(record.level), FilePayload(record));
+        logger_->log(ToSpdlogLevel(record.level),
+            FilePayload(record, fileLevel_ == LogFileLevel::Debug));
         if (record.level >= LogLevel::Error) logger_->flush();
     }
 
@@ -530,6 +615,7 @@ private:
     std::filesystem::path logsDirectory_;
     std::filesystem::path activeSessionPath_;
     std::string sessionId_;
+    std::string applicationVersion_;
     std::string lastBackendError_;
     std::uint64_t latestSequence_ = 0;
     std::uint64_t evictedCount_ = 0;
@@ -539,6 +625,7 @@ private:
     bool consoleEnabled_ = false;
     bool threadPoolInitialized_ = false;
     bool previousSessionAbnormal_ = false;
+    bool sessionBoundaryWritten_ = false;
     std::atomic_bool fileBackendActive_ = false;
 };
 
@@ -636,6 +723,7 @@ const char* ToString(LogCategory category) noexcept {
     case LogCategory::Migration: return "migration";
     case LogCategory::Platform: return "platform";
     case LogCategory::Validation: return "validation";
+    case LogCategory::Session: return "session";
     }
     return "application";
 }
@@ -647,6 +735,28 @@ const char* ToString(LogFileLevel level) noexcept {
     case LogFileLevel::Debug: return "debug";
     }
     return "info";
+}
+
+LogLevel ParseLogLevel(std::string_view value, bool* valid) noexcept {
+    std::string normalized(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    const std::array<std::pair<std::string_view, LogLevel>, 6> levels{{
+        {"trace", LogLevel::Trace},
+        {"debug", LogLevel::Debug},
+        {"info", LogLevel::Info},
+        {"warning", LogLevel::Warning},
+        {"error", LogLevel::Error},
+        {"critical", LogLevel::Critical},
+    }};
+    for (const auto& [name, level] : levels) {
+        if (normalized == name) {
+            if (valid) *valid = true;
+            return level;
+        }
+    }
+    if (valid) *valid = false;
+    return LogLevel::Info;
 }
 
 LogFileLevel ParseFileLevel(std::string_view value, bool* valid) noexcept {

@@ -448,13 +448,12 @@ int main(int argc, char** argv)
 	minebackup::logging::Initialize({
 		paths.logsRoot,
 		g_logFileLevel,
-		false
+		false,
+		CURRENT_VERSION
 	});
 	struct LoggingShutdownGuard {
 		~LoggingShutdownGuard() { minebackup::logging::Shutdown(); }
 	} loggingShutdownGuard;
-	MB_LOG_INFO(minebackup::logging::LogCategory::Application,
-		"application.session.started", "MineBackup {} session started.", CURRENT_VERSION);
 	MigrationCoordinator::RunStartupMigration();
 	CheckForConfigConflicts();
 	LoadHistory();

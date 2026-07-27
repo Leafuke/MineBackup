@@ -1193,6 +1193,10 @@ void TestLoggingCore(TestContext& test, const std::filesystem::path& root) {
     using namespace minebackup::logging;
 
     bool valid = false;
+    test.Expect(ParseLogLevel("WARNING", &valid) == LogLevel::Warning && valid,
+        "log view levels should parse case-insensitively");
+    test.Expect(ParseLogLevel("unexpected", &valid) == LogLevel::Info && !valid,
+        "invalid log view levels should safely fall back to info");
     test.Expect(ParseFileLevel("DEBUG", &valid) == LogFileLevel::Debug && valid,
         "log file levels should parse case-insensitively");
     test.Expect(ParseFileLevel("unexpected", &valid) == LogFileLevel::Info && !valid,
@@ -1257,6 +1261,7 @@ void TestLoggingCore(TestContext& test, const std::filesystem::path& root) {
     Initialize(options);
     test.Expect(std::filesystem::is_regular_file(options.logsDirectory / ".active-session"),
         "enabled file logging should create an active-session marker");
+    const auto fileSession = GetStatus().sessionId;
     Write(minebackup::logging::LogLevel::Debug, LogCategory::Application,
         "logging.filtered", "debug should be filtered");
     Write(minebackup::logging::LogLevel::Info, LogCategory::Application,
@@ -1276,12 +1281,19 @@ void TestLoggingCore(TestContext& test, const std::filesystem::path& root) {
     std::ifstream persistedLog(options.logsDirectory / "minebackup.log", std::ios::binary);
     const std::string persisted((std::istreambuf_iterator<char>(persistedLog)),
         std::istreambuf_iterator<char>());
-    test.Expect(persisted.find("event=logging.persisted") != std::string::npos
+    test.Expect(persisted.find("[INFO] [Application] info should be persisted")
+            != std::string::npos
         && persisted.find("event=logging.debug_enabled") != std::string::npos
         && persisted.find("event=logging.filtered") == std::string::npos
         && persisted.find("event=logging.debug_disabled") == std::string::npos
         && persisted.find("event=logging.disabled") == std::string::npos,
-        "runtime file levels should filter and disable persistence immediately");
+        "info files should stay concise while debug mode adds structured fields");
+    test.Expect(persisted.find("[INFO] [Session] ===== MineBackup session started (")
+            != std::string::npos
+        && persisted.find(fileSession) == std::string::npos
+        && persisted.find(" session=") == std::string::npos
+        && persisted.find(" seq=") == std::string::npos,
+        "local files should use short session boundaries instead of repeating identifiers");
 
     options.logsDirectory = root / "logging-abnormal";
     std::filesystem::create_directories(options.logsDirectory);
@@ -1352,13 +1364,13 @@ void TestLoggingStressAndRotation(
     Shutdown();
     const auto startupText = ReadText(
         startupOptions.logsDirectory / "minebackup.log");
-    test.Expect(GetStatus().latestSequence == startupBaseline + 300,
-        "pre-initialization writes should all receive global sequences");
+    test.Expect(GetStatus().latestSequence == startupBaseline + 302,
+        "pre-initialization writes and session boundaries should receive global sequences");
     test.Expect(CountOccurrences(
         startupText, "event=logging.startup_buffer") == 256,
         "only the newest 256 pre-initialization records should replay to disk");
-    test.Expect(startupText.find("message=\"startup-record-43\"") == std::string::npos
-        && startupText.find("message=\"startup-record-44\"") != std::string::npos,
+    test.Expect(startupText.find("startup-record-43") == std::string::npos
+        && startupText.find("startup-record-44") != std::string::npos,
         "startup replay should retain the documented newest-record boundary");
 
     InitializeOptions options{
@@ -1404,9 +1416,7 @@ void TestLoggingStressAndRotation(
     const auto files = OrderedLogFiles(options.logsDirectory);
     test.Expect(files.size() >= 2 && files.size() <= 5,
         "the stress log should rotate while retaining at most four archives");
-    std::uint64_t previousSequence = 0;
     std::size_t persistedRecords = 0;
-    bool fileOrderValid = true;
     bool completeUtf8Lines = true;
     for (const auto& path : files) {
         std::error_code sizeError;
@@ -1418,31 +1428,13 @@ void TestLoggingStressAndRotation(
         while (std::getline(lines, line)) {
             if (line.find("event=logging.concurrent") == std::string::npos) continue;
             ++persistedRecords;
-            const auto marker = line.find("seq=");
-            const auto end = marker == std::string::npos
-                ? std::string::npos : line.find(' ', marker);
-            if (marker == std::string::npos || end == std::string::npos) {
-                fileOrderValid = false;
-                continue;
-            }
             completeUtf8Lines = completeUtf8Lines
-                && line.find("message=\"worker\\=") != std::string::npos
-                && line.find("utf8\\=世界\"") != std::string::npos;
-            const auto sequence = std::stoull(
-                line.substr(marker + 4, end - marker - 4));
-            if (previousSequence != 0 && sequence != previousSequence + 1) {
-                std::cerr << "[INFO] sequence discontinuity in "
-                          << path.filename().string() << ": "
-                          << previousSequence << " -> " << sequence << '\n';
-                fileOrderValid = false;
-            }
-            previousSequence = sequence;
+                && line.find("[DEBUG] [Task] worker=") != std::string::npos
+                && line.find("utf8=世界 | event=logging.concurrent") != std::string::npos;
         }
     }
     test.Expect(persistedRecords == threadCount * recordsPerThread,
         "blocking overflow and shutdown drain should persist all 100,000 records");
-    test.Expect(fileOrderValid,
-        "rotation should preserve file sequence order");
     test.Expect(completeUtf8Lines,
         "rotation should preserve complete UTF-8 log lines");
 }

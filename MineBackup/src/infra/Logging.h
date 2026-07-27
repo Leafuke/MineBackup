@@ -38,6 +38,7 @@ enum class LogCategory {
     Migration,
     Platform,
     Validation,
+    Session,
 };
 
 enum class LogFileLevel {
@@ -74,6 +75,7 @@ struct InitializeOptions {
     std::filesystem::path logsDirectory;
     LogFileLevel fileLevel = LogFileLevel::Info;
     bool consoleEnabled = false;
+    std::string applicationVersion;
 };
 
 struct LogReadResult {
@@ -131,6 +133,7 @@ LoggingStatus GetStatus() noexcept;
 const char* ToString(LogLevel level) noexcept;
 const char* ToString(LogCategory category) noexcept;
 const char* ToString(LogFileLevel level) noexcept;
+LogLevel ParseLogLevel(std::string_view value, bool* valid = nullptr) noexcept;
 LogFileLevel ParseFileLevel(std::string_view value, bool* valid = nullptr) noexcept;
 LogFileLevelResolution ResolveFileLevel(
     std::optional<std::string_view> configuredValue,
