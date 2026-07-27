@@ -10,6 +10,8 @@
 #include "i18n.h"
 #include "Logging.h"
 #include "text_to_text.h"
+#include "LogPanel.h"
+#include "CommandConsole.h"
 
 #include <mutex>
 #include <fstream>
@@ -195,6 +197,19 @@ struct Console
 
 	void DrawEmbedded()
 	{
+		if (ImGui::BeginTabBar("##logging-tabs")) {
+			if (ImGui::BeginTabItem(L("TAB_LOG_PANEL"))) {
+				DrawLogPanel();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem(L("TAB_COMMAND_CONSOLE"))) {
+				DrawCommandConsole();
+				ImGui::EndTabItem();
+			}
+			ImGui::EndTabBar();
+		}
+		return;
+
 		// NOTE: this code is the inner body of the original Console::Draw,
 		//       adapted to run *inside* an existing ImGui window/child.
 		//       It intentionally DOES NOT call ImGui::SetNextWindowSize/ImGui::Begin/ImGui::End.

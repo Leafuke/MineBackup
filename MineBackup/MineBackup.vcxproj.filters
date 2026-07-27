@@ -201,6 +201,12 @@
     <ClCompile Include="src\ui\HistoryUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\CommandConsole.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\LogPanel.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\MigrationReportUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>

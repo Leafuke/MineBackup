@@ -142,6 +142,8 @@
     <ClCompile Include="src\platform\NativeDesktopServices.cpp" />
     <ClCompile Include="src\platform\NetworkBackend_win.cpp" />
     <ClCompile Include="src\ui\HistoryUI.cpp" />
+    <ClCompile Include="src\ui\CommandConsole.cpp" />
+    <ClCompile Include="src\ui\LogPanel.cpp" />
     <ClCompile Include="src\ui\MigrationReportUI.cpp" />
     <ClCompile Include="src\ui\SettingsUIAppearance.cpp" />
     <ClCompile Include="src\ui\SettingsUIConfig.cpp" />
@@ -214,6 +216,8 @@
     <ClInclude Include="src\platform\Platform_win.h" />
     <ClInclude Include="src\platform\NetworkBackendFactory.h" />
     <ClInclude Include="src\ui\IconsFontAwesome6.h" />
+    <ClInclude Include="src\ui\CommandConsole.h" />
+    <ClInclude Include="src\ui\LogPanel.h" />
     <ClInclude Include="src\ui\MigrationReportUI.h" />
     <ClInclude Include="src\ui\SettingsUI.h" />
     <ClInclude Include="src\ui\SettingsUIPrivate.h" />
