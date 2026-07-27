@@ -5,7 +5,6 @@
 #include <filesystem>
 #include <atomic>
 #include "AppState.h"
-#include "Console.h"
 
 enum class BackupCheckResult {
 	NO_CHANGE,
@@ -42,25 +41,23 @@ enum class BackupOutcome {
 	Rejected
 };
 
-BackupOutcome DoBackup(const MyFolder& folder, Console& console, const std::wstring& comment = L"");
-bool DoRestore2(const Config& config, const std::wstring& worldName, const std::filesystem::path& fullBackupPath, Console& console, int restoreMethod);
+BackupOutcome DoBackup(const MyFolder& folder, const std::wstring& comment = L"");
+bool DoRestore2(const Config& config, const std::wstring& worldName, const std::filesystem::path& fullBackupPath, int restoreMethod);
 bool DoRestore(
 	const Config& config,
 	const std::wstring& worldName,
 	const std::wstring& backupFile,
-	Console& console,
 	int restoreMethod,
 	const std::string& customRestoreList = "",
 	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr);
 bool DoHotRestore(
 	const MyFolder& world,
-	Console& console,
 	bool deleteBackup,
 	const std::wstring& backupFile = L"",
 	int restoreMethod = 0,
 	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr);
-void DoOthersBackup(const Config& config, std::filesystem::path backupWhat, const std::wstring& comment, Console& console);
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, Console* console, std::stop_token stopToken);
+void DoOthersBackup(const Config& config, std::filesystem::path backupWhat, const std::wstring& comment);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, std::stop_token stopToken);
 
 enum class BackupDeleteMode {
 	HistoryOnly = 0,
@@ -68,8 +65,8 @@ enum class BackupDeleteMode {
 	LocalArchiveAndHistory = 2
 };
 
-void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelete, int configIndex, BackupDeleteMode mode, bool useSafeDelete, Console& console);
-void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex, Console& console);
-void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex, Console& console);
-void AddBackupToWESnapshots(const Config& config, const std::wstring& worldName, const std::wstring& backupFile, Console& console);
+void DeleteBackupWithMode(const Config& config, const HistoryEntry& entryToDelete, int configIndex, BackupDeleteMode mode, bool useSafeDelete);
+void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int configIndex);
+void DoDeleteBackup(const Config& config, const HistoryEntry& entryToDelete, int& configIndex);
+void AddBackupToWESnapshots(const Config& config, const std::wstring& worldName, const std::wstring& backupFile);
 #endif // BACKUP_MANAGER_H

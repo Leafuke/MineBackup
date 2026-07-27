@@ -954,7 +954,7 @@ int ResolveConfigIndexForCloud(const Config& config) {
 	return -1;
 }
 
-bool QueueUploadAfterBackup(const Config& config, int configIndex, const MyFolder& folder, const wstring& archiveFile, const wstring& comment, Console& console) {
+bool QueueUploadAfterBackup(const Config& config, int configIndex, const MyFolder& folder, const wstring& archiveFile, const wstring& comment) {
 	(void)comment;
 	if (!config.cloudSyncEnabled) {
 		return false;
@@ -974,7 +974,7 @@ bool QueueUploadAfterBackup(const Config& config, int configIndex, const MyFolde
 
 	return TaskCoordinator::Instance().Submit(L"cloud-upload-after-backup",
 		{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
-		[configCopy, configIndexCopy, entryCopy, &console](stop_token) {
+		[configCopy, configIndexCopy, entryCopy](stop_token) {
 		unique_lock<mutex> lock(g_cloudMutex);
 		SetCloudRuntimeState(configIndexCopy, true, 5, utf8_to_wstring(L("CLOUD_STATUS_PREPARING")));
 		CloudCommandResult result = UploadHistoryEntryNoLock(configCopy, configIndexCopy, entryCopy, console);
@@ -983,7 +983,7 @@ bool QueueUploadAfterBackup(const Config& config, int configIndex, const MyFolde
 	});
 }
 
-bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int configIndex, const char* reason, Console& console) {
+bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int configIndex, const char* reason) {
 	if (!config.cloudSyncEnabled || !CanUseCloudActions(config)) {
 		return false;
 	}
@@ -992,7 +992,7 @@ bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int con
 	const string reasonCopy = reason ? reason : "";
 	return TaskCoordinator::Instance().Submit(L"cloud-history-sync",
 		{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
-		[configCopy, configIndex, reasonCopy, &console](stop_token) {
+		[configCopy, configIndex, reasonCopy](stop_token) {
 		unique_lock<mutex> lock(g_cloudMutex);
 		SetCloudRuntimeState(configIndex, true, 5, utf8_to_wstring(L("CLOUD_STATUS_UPLOADING_HISTORY")));
 		CloudCommandResult result = UploadConfigurationHistorySnapshotNoLock(configCopy, configIndex, console);
@@ -1278,7 +1278,7 @@ CloudCommandResult UploadWorldBackupFolderToCloud(const Config& config, int conf
 	return result;
 }
 
-bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const HistoryEntry& targetEntry, Console& console) {
+bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const HistoryEntry& targetEntry) {
 	if (!config.cloudAutoDownloadBeforeRestore || !CanUseCloudActions(config)) {
 		return false;
 	}

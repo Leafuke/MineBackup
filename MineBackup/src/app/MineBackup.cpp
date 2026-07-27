@@ -266,7 +266,7 @@ static void EnsureWorldIconLoaded(const filesystem::path& worldFolder)
 void GameSessionWatcherThread(std::stop_token stopToken);
 
 string ProcessCommand(const string& commandStr, Console* console);
-void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description, Console& console);
+void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description);
 void ConsoleLog(Console* console, const char* format, ...);
 
 #ifdef _WIN32
@@ -1226,7 +1226,7 @@ int main(int argc, char** argv)
 		}
 
 		if (!showConfigWizard && g_appState.showMainApp && g_CoreValidationPending.load() && !g_CoreValidationRunning.load()) {
-			StartCoreValidationAsync(true, console);
+			StartCoreValidationAsync(true);
 		}
 
 		if (showConfigWizard) {
@@ -1487,7 +1487,7 @@ int main(int argc, char** argv)
 					const bool validationRunning = g_CoreValidationRunning.load();
 					if (validationRunning) ImGui::BeginDisabled();
 					if (ImGui::MenuItem(L("MENU_CORE_VALIDATION"))) {
-						StartCoreValidationAsync(false, console);
+						StartCoreValidationAsync(false);
 					}
 					if (validationRunning) ImGui::EndDisabled();
 					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -2222,7 +2222,7 @@ int main(int argc, char** argv)
 							MyFolder world = { JoinPath(displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot, displayWorlds[selectedWorldIndex].name).wstring(), displayWorlds[selectedWorldIndex].name, displayWorlds[selectedWorldIndex].desc, displayWorlds[selectedWorldIndex].effectiveConfig, displayWorlds[selectedWorldIndex].baseConfigIndex, selectedWorldIndex };
 							TaskCoordinator::Instance().Submit(L"manual-backup",
 								{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
-								[world, comment = utf8_to_wstring(backupComment)](stop_token) { DoBackup(world, console, comment); });
+								[world, comment = utf8_to_wstring(backupComment)](stop_token) { DoBackup(world, comment); });
 							strcpy_s(backupComment, "");
 						}
 						ImGui::SameLine();
@@ -2324,7 +2324,7 @@ int main(int argc, char** argv)
 									TaskCoordinator::Instance().Submit(L"mods-backup",
 										{TaskCoordinator::WorldResourceKey(configCopy.configId, modsPath)},
 										[configCopy, modsPath, comment = utf8_to_wstring(mods_comment)](stop_token) {
-											DoOthersBackup(configCopy, modsPath, comment, console);
+											DoOthersBackup(configCopy, modsPath, comment);
 										});
 									strcpy_s(mods_comment, "");
 								}
@@ -2371,7 +2371,7 @@ int main(int argc, char** argv)
 								TaskCoordinator::Instance().Submit(L"other-path-backup",
 									{TaskCoordinator::WorldResourceKey(configCopy.configId, othersPath)},
 									[configCopy, othersPath, comment = utf8_to_wstring(others_comment)](stop_token) {
-										DoOthersBackup(configCopy, othersPath, comment, console);
+										DoOthersBackup(configCopy, othersPath, comment);
 									});
 								strcpy_s(others_comment, "");
 								SaveConfigs(); // 保存一下路径
@@ -2508,7 +2508,7 @@ int main(int argc, char** argv)
 									{TaskCoordinator::WorldResourceKey(exportConfig.configId, worldFullPath)},
 									[exportConfig, worldName = dw.name, worldFullPath,
 									 outputPath = utf8_to_wstring(outputPathBuf), description = utf8_to_wstring(descBuf)](stop_token) {
-										DoExportForSharing(exportConfig, worldName, worldFullPath, outputPath, description, console);
+										DoExportForSharing(exportConfig, worldName, worldFullPath, outputPath, description);
 									});
 
 								ImGui::CloseCurrentPopup();
@@ -2582,7 +2582,7 @@ int main(int argc, char** argv)
 										task.taskName = TaskCoordinator::AutoBackupTaskName(taskKey.first, taskKey.second);
 										const bool started = TaskCoordinator::Instance().Submit(task.taskName, {},
 											[taskName = task.taskName, configIndex = taskKey.first, worldIndex = taskKey.second, interval = last_interval](stop_token token) {
-												AutoBackupThreadFunction(configIndex, worldIndex, interval, &console, token);
+												AutoBackupThreadFunction(configIndex, worldIndex, interval, token);
 												TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
 											});
 										if (!started) g_appState.g_active_auto_backups.erase(taskKey);

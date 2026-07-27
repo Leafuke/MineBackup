@@ -39,7 +39,7 @@ bool WaitForSpecialTask(std::stop_token stopToken, const atomic<bool>& shouldExi
 bool RunSpecialBackup(const MyFolder& world, Console& output) {
 	return TaskCoordinator::Instance().SubmitAndWait(L"special-mode backup",
 		{ TaskCoordinator::WorldResourceKey(world.config.configId, world.path) },
-		[world, &output](stop_token) { DoBackup(world, output, L"SpecialMode"); });
+		[world](stop_token) { DoBackup(world, L"SpecialMode"); });
 }
 
 void RunUserShellTask(const wstring& command, const filesystem::path& workingDirectory, Console& output) {

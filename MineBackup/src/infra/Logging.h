@@ -218,3 +218,14 @@ void LogPrintf(
     ::minebackup::logging::LogPrintf(::minebackup::logging::LogLevel::Error, category, eventId, MB_LOG_SOURCE, L(key) __VA_OPT__(,) __VA_ARGS__)
 #define MB_LOG_I18N_CRITICAL(category, eventId, key, ...) \
     ::minebackup::logging::LogPrintf(::minebackup::logging::LogLevel::Critical, category, eventId, MB_LOG_SOURCE, L(key) __VA_OPT__(,) __VA_ARGS__)
+
+#define MB_LOG_PRINTF_DEBUG(category, eventId, ...) \
+    ::minebackup::logging::LogPrintf(::minebackup::logging::LogLevel::Debug, category, eventId, MB_LOG_SOURCE, __VA_ARGS__)
+#define MB_LOG_PRINTF_INFO(category, eventId, ...) \
+    ::minebackup::logging::LogPrintf(::minebackup::logging::LogLevel::Info, category, eventId, MB_LOG_SOURCE, __VA_ARGS__)
+#define MB_LOG_PRINTF_WARNING(category, eventId, ...) \
+    ::minebackup::logging::LogPrintf(::minebackup::logging::LogLevel::Warning, category, eventId, MB_LOG_SOURCE, __VA_ARGS__)
+#define MB_LOG_PRINTF_ERROR(category, eventId, ...) \
+    ::minebackup::logging::LogPrintf(::minebackup::logging::LogLevel::Error, category, eventId, MB_LOG_SOURCE, __VA_ARGS__)
+#define MB_LOG_PRINTF_CRITICAL(category, eventId, ...) \
+    ::minebackup::logging::LogPrintf(::minebackup::logging::LogLevel::Critical, category, eventId, MB_LOG_SOURCE, __VA_ARGS__)

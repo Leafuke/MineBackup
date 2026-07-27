@@ -351,9 +351,9 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					[configCopy, entryCopy, configIndex, restoreMethod, customItems, worldPath](stop_token) {
 						if (configCopy.backupBefore) {
 							MyFolder world = { worldPath.wstring(), entryCopy.worldName, L"", configCopy, configIndex, -1 };
-							DoBackup(world, console, L"BeforeRestore");
+							DoBackup(world, L"BeforeRestore");
 						}
-						DoRestore(configCopy, entryCopy.worldName, entryCopy.backupFile, console,
+						DoRestore(configCopy, entryCopy.worldName, entryCopy.backupFile,
 							restoreMethod, customItems);
 					});
 				ImGui::CloseCurrentPopup();
@@ -369,7 +369,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					TaskCoordinator::Instance().Submit(L"Restore custom backup",
 						{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, worldName)) },
 						[configCopy, worldName, selectedFile, restoreMethod](stop_token) {
-							DoRestore2(configCopy, worldName, selectedFile, console, restoreMethod);
+							DoRestore2(configCopy, worldName, selectedFile, restoreMethod);
 						});
 					ImGui::CloseCurrentPopup(); // Close method choice
 					//entry_for_action = nullptr; // Reset selection
@@ -429,7 +429,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 			TaskCoordinator::Instance().Submit(L"Create WorldEdit snapshot",
 				{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, entryCopy.worldName)) },
 				[configCopy, entryCopy](stop_token) {
-					AddBackupToWESnapshots(configCopy, entryCopy.worldName, entryCopy.backupFile, console);
+					AddBackupToWESnapshots(configCopy, entryCopy.worldName, entryCopy.backupFile);
 				});
 		}
 
@@ -485,7 +485,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 				TaskCoordinator::Instance().Submit(L"Delete backup",
 					{ TaskCoordinator::WorldResourceKey(configCopy.configId, JoinPath(configCopy.saveRoot, entryCopy.worldName)) },
 					[configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread](stop_token) mutable {
-					DeleteBackupWithMode(configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread, console);
+					DeleteBackupWithMode(configCopy, entryCopy, configIndex, selectedMode, useSafeDeleteForThread);
 				});
 				is_comment_editing = false;
 				ImGui::CloseCurrentPopup();

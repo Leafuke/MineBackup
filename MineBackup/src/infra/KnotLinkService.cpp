@@ -705,8 +705,8 @@ std::string KnotLinkService::HandleRequest(
         return submit(
             L"KnotLink v2 backup",
             {TaskCoordinator::WorldResourceKey(target.config.configId, target.path)},
-            [target, comment, &console] {
-                const BackupOutcome outcome = DoBackup(target, console, comment);
+            [target, comment] {
+                const BackupOutcome outcome = DoBackup(target, comment);
                 switch (outcome) {
                     case BackupOutcome::Created:
                         return std::pair{true, std::string("Backup created.")};
@@ -746,13 +746,13 @@ std::string KnotLinkService::HandleRequest(
         const std::wstring comment = utf8_to_wstring(request.Get("comment"));
         return submit(
             L"KnotLink v2 backup all", std::move(resources),
-            [this, context, targets = std::move(targets), comment, &console] {
+            [this, context, targets = std::move(targets), comment] {
                 Broadcast("backup_all_started", {}, context);
                 int created = 0;
                 int unchanged = 0;
                 int failed = 0;
                 for (const auto& target : targets) {
-                    switch (DoBackup(target, console, comment)) {
+                    switch (DoBackup(target, comment)) {
                         case BackupOutcome::Created: ++created; break;
                         case BackupOutcome::NoChanges: ++unchanged; break;
                         case BackupOutcome::Failed:
@@ -820,7 +820,7 @@ std::string KnotLinkService::HandleRequest(
                 {TaskCoordinator::WorldResourceKey(
                     target.config.configId, target.path)},
                 [target, backupFile, mode,
-                 restoreWhitelist = std::move(restoreWhitelist), &console] {
+                 restoreWhitelist = std::move(restoreWhitelist)] {
                     HotRestoreState expected = HotRestoreState::IDLE;
                     if (!g_appState.hotkeyRestoreState.compare_exchange_strong(
                             expected, HotRestoreState::WAITING_FOR_MOD)) {
@@ -842,7 +842,7 @@ std::string KnotLinkService::HandleRequest(
                                 "current-world restore.")};
                     }
                     const bool restored = DoHotRestore(
-                        target, console, false, backupFile,
+                        target, false, backupFile,
                         mode == "clean" ? 0 : 1, &restoreWhitelist);
                     return std::pair{
                         restored,
@@ -857,9 +857,9 @@ std::string KnotLinkService::HandleRequest(
             L"KnotLink v2 restore",
             {TaskCoordinator::WorldResourceKey(config.configId, folder->folderPath)},
             [config, worldName, backupFile, mode,
-             restoreWhitelist = std::move(restoreWhitelist), &console] {
+             restoreWhitelist = std::move(restoreWhitelist)] {
                 const bool restored = DoRestore(
-                    config, worldName, backupFile, console,
+                    config, worldName, backupFile,
                     mode == "clean" ? 0 : 1, "", &restoreWhitelist);
                 return std::pair{
                     restored,
@@ -889,12 +889,12 @@ std::string KnotLinkService::HandleRequest(
         Broadcast("command_accepted", {{"command", request.command}}, context);
         const bool queued = TaskCoordinator::Instance().Submit(
             taskName, {},
-            [this, context, key, interval, &console, taskName](
+            [this, context, key, interval, taskName](
                 std::stop_token token) {
                 ContextScope scope(context);
                 Broadcast("command_started", {{"command", "AUTO_BACKUP"}}, context);
                 AutoBackupThreadFunction(
-                    key.first, key.second, interval, &console, token);
+                    key.first, key.second, interval, token);
                 Broadcast("command_completed",
                           {{"command", "AUTO_BACKUP"}}, context);
                 TaskCoordinator::Instance().PostEvent(

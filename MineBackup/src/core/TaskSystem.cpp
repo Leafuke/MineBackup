@@ -96,7 +96,7 @@ namespace TaskSystem {
                 g_appState.realConfigIndex = task.configIndex;
                 TaskCoordinator::Instance().SubmitAndWait(L"task-system backup",
                     {TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
-                    [world, console](stop_token) { DoBackup(world, *console, L"TaskSystem"); });
+                    [world](stop_token) { DoBackup(world, L"TaskSystem"); });
                 ConsoleLog(console, L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(worldData.first).c_str());
                 break;
             }
