@@ -8,9 +8,7 @@
 #include "Globals.h"
 #include "resource.h"
 #include "i18n.h"
-#include "Console.h"
 #include "ConfigManager.h"
-#include "RotatingFileLog.h"
 #include <shobjidl.h>
 #include <shlobj.h>
 #include <GLFW/glfw3.h>
@@ -398,33 +396,6 @@ wstring GetLastBackupTime(const wstring& backupDir) {
 	catch (...) {
 		return L"N/A";
 	}
-}
-
-static std::filesystem::path g_logFilePath;
-
-void SetLogFilePath(const std::string& path) {
-    g_logFilePath = std::filesystem::u8path(path);
-}
-
-std::string GetCurrentTimestamp() {
-    std::time_t now = std::time(nullptr);
-    std::tm tm_now;
-    localtime_s(&tm_now, &now);
-    std::ostringstream oss;
-    oss << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
-    return oss.str();
-}
-
-void WriteLogEntry(const std::string& message, LogLevel level) {
-    std::string level_str;
-    switch (level) {
-        case LogLevel::Info: level_str = "[INFO]"; break;
-        case LogLevel::Warning: level_str = "[WARN]"; break;
-        case LogLevel::Error: level_str = "[ERROR]"; break;
-        default: level_str = "[INFO]"; break;
-    }
-    const auto path = g_logFilePath.empty() ? GetAppPaths().logsRoot / "auto_log.txt" : g_logFilePath;
-    RotatingFileLog::Append(path, GetCurrentTimestamp() + " " + level_str + " " + message + "\n");
 }
 
 bool ConfirmMessageBox(const string& title, const string& message) {

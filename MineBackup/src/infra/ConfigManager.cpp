@@ -699,9 +699,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口
 // 例如：
-// WriteLogEntry("Configs loaded from " + filename, LogLevel::Info);
-// WriteLogEntry("Configs saved to " + wstring_to_utf8(filename), LogLevel::Info);
-// WriteLogEntry("Config conflict detected: " + wstring_to_utf8(conflictDetails), LogLevel::Warning);
 
 void CheckForConfigConflicts() {
 	lock_guard<mutex> lock(g_appState.configsMutex);

@@ -8,9 +8,6 @@
 #include <vector>
 #include <string>
 
-// 前向声明
-struct Console;
-
 // WizardUI.cpp — 首次启动配置向导
 void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtracted,
 	const std::wstring& g_7zTempPath);

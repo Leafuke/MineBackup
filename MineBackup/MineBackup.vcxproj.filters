@@ -138,9 +138,6 @@
     <ClCompile Include="src\infra\AppPaths.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
-    <ClCompile Include="src\infra\RotatingFileLog.cpp">
-      <Filter>src\infra</Filter>
-    </ClCompile>
     <ClCompile Include="src\infra\Logging.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -181,9 +178,6 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\ConfigManager.cpp">
-      <Filter>src\infra</Filter>
-    </ClCompile>
-    <ClCompile Include="src\infra\Console.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\i18n.cpp">
@@ -326,9 +320,6 @@
     <ClInclude Include="src\infra\AppPaths.h">
       <Filter>src\infra</Filter>
     </ClInclude>
-    <ClInclude Include="src\infra\RotatingFileLog.h">
-      <Filter>src\infra</Filter>
-    </ClInclude>
     <ClInclude Include="src\infra\SingleInstanceService.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -363,9 +354,6 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\ConfigManager.h">
-      <Filter>src\infra</Filter>
-    </ClInclude>
-    <ClInclude Include="src\infra\Console.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\i18n.h">

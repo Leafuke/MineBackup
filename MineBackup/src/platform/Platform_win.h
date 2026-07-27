@@ -5,12 +5,6 @@
 #include <windows.h>
 #include <cstddef>
 #include <string>
-struct Console;
-enum class LogLevel {
-    Info,
-    Warning,
-    Error
-};
 std::wstring SelectFileDialog();
 std::wstring SelectFolderDialog();
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName = L"", const std::wstring& filter = L"");

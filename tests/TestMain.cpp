@@ -4,7 +4,6 @@
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
 #include "MigrationCoordinator.h"
-#include "RotatingFileLog.h"
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
@@ -354,19 +353,6 @@ void TestMigrationCoordinator(TestContext& test, const std::filesystem::path& ro
     MigrationCoordinator::SetHistoryPersistenceBlocked(true);
     test.Expect(MigrationCoordinator::IsHistoryPersistenceBlocked(), "the coordinator should expose the history write gate");
     MigrationCoordinator::SetHistoryPersistenceBlocked(false);
-}
-
-void TestRotatingLog(TestContext& test, const std::filesystem::path& root) {
-    const auto path = root / "logs" / "minebackup.log";
-    test.Expect(RotatingFileLog::Append(path, std::string(45, 'a'), 16, 3),
-        "a large log append should rotate across bounded files");
-    test.Expect(std::filesystem::exists(path), "the active rotated log should exist");
-    test.Expect(std::filesystem::exists(path.wstring() + L".1"), "the first archived log should exist");
-    test.Expect(std::filesystem::exists(path.wstring() + L".2"), "the final retained archived log should exist");
-    test.Expect(!std::filesystem::exists(path.wstring() + L".3"), "the log file count should stay bounded");
-    for (const auto& entry : std::filesystem::directory_iterator(path.parent_path())) {
-        test.Expect(entry.file_size() <= 16, "each rotated log file should stay under its size limit");
-    }
 }
 
 void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path& root) {
@@ -1357,7 +1343,6 @@ int main(int argc, char** argv) {
     TestMetadataRoundTrip(test, temporary.path);
     TestHistoryRoundTrip(test, temporary.path);
     TestMigrationCoordinator(test, temporary.path);
-    TestRotatingLog(test, temporary.path);
     TestLaunchOptionsAndAppPaths(test, temporary.path);
     TestLegacyServicePolicy(test);
     TestSingleInstance(test, temporary.path);

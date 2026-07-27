@@ -20,7 +20,7 @@
 #include "PlatformCompat.h"
 #include "DesktopServices.h"
 #include "NativeDesktopServices.h"
-#include "Console.h"
+#include "CommandConsole.h"
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "HistoryManager.h"
@@ -28,7 +28,7 @@
 #include "CloudSyncService.h"
 #include "CoreValidation.h"
 #include "MigrationCoordinator.h"
-#include "RotatingFileLog.h"
+#include "LogPanel.h"
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
@@ -278,9 +278,7 @@ static void EnsureWorldIconLoaded(const filesystem::path& worldFolder)
 
 void GameSessionWatcherThread(std::stop_token stopToken);
 
-string ProcessCommand(const string& commandStr, Console* console);
 void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description);
-void ConsoleLog(Console* console, const char* format, ...);
 
 #ifdef _WIN32
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
@@ -543,14 +541,6 @@ int main(int argc, char** argv)
 
 		RunSpecialMode(g_appState.currentConfigIndex);
 		minebackup::logging::SetConsoleEnabled(false);
-
-		// 将捕获到的所有日志写入文件
-		ostringstream specialModeLog;
-		for (const char* item : console.Items) specialModeLog << item << '\n';
-		specialModeLog << L("SPECIAL_MODE_LOG_END") << "\n\n";
-		if (!RotatingFileLog::Append(paths.logsRoot / "special_mode_log.txt", specialModeLog.str())) {
-			ConsoleLog(nullptr, L("SPECIAL_MODE_LOG_FILE_ERROR"));
-		}
 
 		#ifdef _WIN32
 		if (!hide) {
@@ -2684,7 +2674,17 @@ int main(int argc, char** argv)
 			ImGui::End();
 
 			if (ImGui::Begin(L("CONSOLE_TITLE"), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-				console.DrawEmbedded();
+				if (ImGui::BeginTabBar("##logging-tabs")) {
+					if (ImGui::BeginTabItem(L("LOG_PANEL_TAB"))) {
+						DrawLogPanel();
+						ImGui::EndTabItem();
+					}
+					if (ImGui::BeginTabItem(L("COMMAND_CONSOLE_TAB"))) {
+						DrawCommandConsole();
+						ImGui::EndTabItem();
+					}
+					ImGui::EndTabBar();
+				}
 			}
 			ImGui::End();
 
@@ -2708,7 +2708,6 @@ int main(int argc, char** argv)
 					ShowHistoryWindow(g_appState.currentConfigIndex);
 				}
 			}
-			//console.Draw(L("CONSOLE_TITLE"), &g_appState.showMainApp);
 		}
 
 		// Rendering
@@ -2748,12 +2747,6 @@ int main(int argc, char** argv)
 
 	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
-
-	// 将捕获到的所有日志写入文件
-	ostringstream automaticLog;
-	for (const char* item : console.Items) automaticLog << item << '\n';
-	automaticLog << "=== End ===\n\n";
-	RotatingFileLog::Append(paths.logsRoot / "auto_log.txt", automaticLog.str());
 
 	(void)desktopServices->ConfigureGlobalHotkeys({});
 	(void)desktopServices->SetTrayVisible(false);

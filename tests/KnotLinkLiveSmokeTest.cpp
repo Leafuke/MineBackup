@@ -1,6 +1,5 @@
 #include "knotlink/OpenSocketQuerier.hpp"
 
-#include "Console.h"
 #include "KnotLinkProtocol.h"
 #include "KnotLinkServerManager.h"
 #include "KnotLinkService.h"
@@ -21,9 +20,8 @@ int main() {
         return 0;
     }
 
-    Console output;
     KnotLinkService service;
-    if (!service.Start(output)) {
+    if (!service.Start()) {
         std::cerr << "[FAIL] compatible ready server rejected SDK startup\n";
         return 1;
     }
@@ -59,7 +57,7 @@ int main() {
     }
 
     service.Stop();
-    if (!service.Start(output)) {
+    if (!service.Start()) {
         std::cerr << "[FAIL] KnotLink client did not restart cleanly\n";
         return 1;
     }

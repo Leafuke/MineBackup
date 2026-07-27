@@ -2,7 +2,6 @@
 
 #include "AppPaths.h"
 #include "Broadcast.h"
-#include "Console.h"
 #include "ExternalToolManager.h"
 #include "KnotLinkServerManager.h"
 #include "KnotLinkService.h"
