@@ -339,6 +339,34 @@ if(BUILD_TESTING)
         target_link_libraries(minebackup_i18n_tests PRIVATE Iconv::Iconv)
     endif()
     add_test(NAME minebackup.i18n COMMAND minebackup_i18n_tests)
+
+    add_executable(minebackup_ui_tests
+        tests/UiTest.cpp
+        ${MINEBACKUP_INFRA_DIR}/i18n.cpp
+        ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp)
+    target_include_directories(minebackup_ui_tests PRIVATE
+        ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+    target_link_libraries(minebackup_ui_tests PRIVATE
+        minebackup_third_party_imgui)
+    if(MSVC)
+        target_compile_options(minebackup_ui_tests PRIVATE /utf-8 /FS)
+    else()
+        target_compile_options(minebackup_ui_tests PRIVATE -fno-strict-aliasing)
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(minebackup_ui_tests PRIVATE Iconv::Iconv)
+    endif()
+    add_test(NAME minebackup.ui COMMAND minebackup_ui_tests)
+
+    add_executable(minebackup_appearance_config_tests
+        tests/AppearanceConfigTest.cpp)
+    target_link_libraries(minebackup_appearance_config_tests PRIVATE
+        minebackup_desktop)
+    if(MSVC)
+        target_compile_options(minebackup_appearance_config_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.appearance_config
+        COMMAND minebackup_appearance_config_tests)
 endif()
 
 add_custom_target(check_msbuild_source_parity

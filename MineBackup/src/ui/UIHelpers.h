@@ -81,6 +81,26 @@ struct HistoryResponsiveLayout {
 	float detailsWidth = 0.0f;
 };
 
+struct UiScaleMigrationResult {
+	float scale = 1.0f;
+	bool migrated = false;
+};
+
+inline UiScaleMigrationResult MigrateUiScale(
+	float configuredScale,
+	float primaryDpiScale,
+	bool usesLegacySemantics) {
+	UiScaleMigrationResult result;
+	result.scale = configuredScale;
+	result.migrated = usesLegacySemantics;
+	if (usesLegacySemantics) {
+		const float safeDpi = primaryDpiScale > 0.0f ? primaryDpiScale : 1.0f;
+		if (std::abs(result.scale - safeDpi) <= 0.05f) result.scale = 1.0f;
+	}
+	result.scale = (std::clamp)(result.scale, 0.75f, 2.5f);
+	return result;
+}
+
 inline HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
 	float availableWidth,
 	float em,

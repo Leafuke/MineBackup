@@ -2837,6 +2837,7 @@ void ApplyTheme()
 		case 6: ImGuiTheme::ApplyNord(true); break;
 		default: ImGuiTheme::ApplyImGuiLight(); break;
 		}
+		ImGuiTheme::EnsureAccessibleThemeContrast(ImGui::GetStyle());
 	};
 
 	bool applied = true;

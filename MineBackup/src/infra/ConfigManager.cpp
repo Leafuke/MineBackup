@@ -1,5 +1,6 @@
 ﻿#include "ConfigManager.h"
 #include "AppState.h"
+#include "UIHelpers.h"
 #include "AppPaths.h"
 #include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
@@ -643,14 +644,10 @@ void LoadConfigs(const filesystem::path& filename) {
 }
 
 void FinalizeUiScaleMigration(float primaryDpiScale) {
-	const float safeDpi = primaryDpiScale > 0.0f ? primaryDpiScale : 1.0f;
-	if (g_uiScaleMigrationPending) {
-		if (std::abs(g_uiScale - safeDpi) <= 0.05f) {
-			g_uiScale = 1.0f;
-		}
-		g_uiScaleMigrationPending = false;
-	}
-	g_uiScale = (std::clamp)(g_uiScale, 0.75f, 2.5f);
+	const UiScaleMigrationResult migration = MigrateUiScale(
+		g_uiScale, primaryDpiScale, g_uiScaleMigrationPending);
+	g_uiScale = migration.scale;
+	g_uiScaleMigrationPending = false;
 	g_uiScaleV2 = true;
 	g_appearanceSchema = 1;
 }

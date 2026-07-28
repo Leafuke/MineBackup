@@ -105,6 +105,44 @@ namespace ImGuiTheme {
             colors[ImGuiCol_FrameBg], colors[ImGuiCol_FrameBgHovered], 0.65f);
     }
 
+    inline ImVec4 MostContrastingBackground(const ImVec4& foreground) {
+        const ImVec4 black(0.02f, 0.02f, 0.02f, 1.0f);
+        const ImVec4 white(0.98f, 0.98f, 0.98f, 1.0f);
+        return ContrastRatio(foreground, black) >= ContrastRatio(foreground, white)
+            ? black : white;
+    }
+
+    inline void EnsureAccessibleThemeContrast(ImGuiStyle& style) {
+        ImVec4* colors = style.Colors;
+        const ImGuiCol textBackgrounds[] = {
+            ImGuiCol_WindowBg,
+            ImGuiCol_TitleBgActive,
+            ImGuiCol_Button,
+            ImGuiCol_FrameBg
+        };
+        for (ImGuiCol background : textBackgrounds) {
+            const ImVec4 composited = CompositeOver(
+                colors[background], colors[ImGuiCol_WindowBg]);
+            if (ContrastRatio(colors[ImGuiCol_Text], composited) < 4.5f) {
+                colors[background] = MostContrastingBackground(colors[ImGuiCol_Text]);
+            }
+        }
+        if (ContrastRatio(colors[ImGuiCol_TextDisabled],
+            colors[ImGuiCol_WindowBg]) < 3.0f) {
+            colors[ImGuiCol_TextDisabled] = Blend(
+                colors[ImGuiCol_Text], colors[ImGuiCol_WindowBg], 0.72f);
+            if (ContrastRatio(colors[ImGuiCol_TextDisabled],
+                colors[ImGuiCol_WindowBg]) < 3.0f) {
+                colors[ImGuiCol_TextDisabled] = colors[ImGuiCol_Text];
+            }
+        }
+        if (ContrastRatio(colors[ImGuiCol_CheckMark],
+            colors[ImGuiCol_CheckboxSelectedBg]) < 3.0f) {
+            colors[ImGuiCol_CheckboxSelectedBg] =
+                MostContrastingBackground(colors[ImGuiCol_CheckMark]);
+        }
+    }
+
     inline std::string ImVec4ToHex(const ImVec4& color) {
         std::stringstream ss;
         int r = static_cast<int>(std::round(color.x * 255.0f));
