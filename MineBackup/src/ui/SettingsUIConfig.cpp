@@ -286,7 +286,7 @@ void DrawPathSettings(Config& cfg) {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SNAPSHOT_PATH"));
 }
 
-void DrawModIntegrationSettings(Config& cfg) {
+void DrawSystemIntegrationSettings() {
 	ImGui::SeparatorText(L("GROUP_MINEBACKUP_MOD_INTEGRATION"));
 	ImGui::TextWrapped("%s", L("TIP_MINEBACKUP_MOD_INTEGRATION_SUMMARY"));
 	ImGui::Spacing();
@@ -295,14 +295,20 @@ void DrawModIntegrationSettings(Config& cfg) {
 		if (!g_enableKnotLink) {
 			CleanupKnotLink();
 			minebackup::knotlink::GetKnotLinkServerManager().Refresh(false);
+			SaveConfigs();
 		}
 		else {
-			TaskCoordinator::Instance().Submit(
+			const bool submitted = TaskCoordinator::Instance().Submit(
 				L"knotlink-settings-enable", {L"service:knotlink"}, [](stop_token) {
-					if (InitKnotLink()) {
+					const bool success = InitKnotLink();
+					if (success) {
 						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
 					}
+					TaskEvent event{L"knotlink-settings-enable-complete", {}};
+					event.values[L"success"] = success ? L"1" : L"0";
+					TaskCoordinator::Instance().PostEvent(std::move(event));
 				});
+			if (!submitted) g_enableKnotLink = false;
 		}
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
@@ -347,8 +353,9 @@ void DrawModIntegrationSettings(Config& cfg) {
 		(void)GetDesktopServices()->OpenUri(L"https://github.com/KnotLink-Protocol/KnotLink/releases");
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_KNOTLINK_DOWNLOAD_LINK"));
+}
 
-	ImGui::Spacing();
+void DrawWorldEditSettings(Config& cfg) {
 	ImGui::SeparatorText(L("GROUP_WE_INTEGRATION"));
 	ImGui::TextWrapped("%s", L("TIP_WE_INTEGRATION_SUMMARY"));
 	ImGui::Spacing();

@@ -1132,6 +1132,18 @@ int main(int argc, char** argv)
 						wstring_to_utf8(g_RcloneInstallMessage));
 				}
 			}
+			else if (event.type == L"knotlink-settings-enable-complete") {
+				const bool enabled = event.values.at(L"success") == L"1";
+				g_enableKnotLink = enabled;
+				if (enabled) {
+					SaveConfigs();
+				}
+				else {
+					MB_LOG_ERROR(minebackup::logging::LogCategory::Network,
+						"network.knotlink.enable_failed",
+						"KnotLink could not be enabled; the setting was restored.");
+				}
+			}
 			else if (event.type == L"portable-config-preview") {
 				if (event.values.at(L"success") != L"1") {
 					const wstring detail = event.message.empty() ? L"Unable to prepare the portable configuration preview." : event.message;

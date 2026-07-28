@@ -69,7 +69,8 @@ inline void GetSpecialConfigCompressionLevelRange(const SpecialConfig& spCfg, in
 
 void DrawConfigManagementPanel();
 void DrawPathSettings(Config& cfg);
-void DrawModIntegrationSettings(Config& cfg);
+void DrawSystemIntegrationSettings();
+void DrawWorldEditSettings(Config& cfg);
 void DrawWorldManagement(Config& cfg);
 void DrawBackupBehavior(Config& cfg);
 void DrawBlacklistSettings(Config& cfg);
@@ -79,4 +80,10 @@ void DrawCloudSyncSettings(Config& cfg);
 bool IsWEIntegrationPathValidForSave(const Config& cfg);
 void DrawUnifiedTaskManager(SpecialConfig& spCfg);
 void DrawServiceSettings(SpecialConfig& spCfg);
-void DrawSpecialConfigSettings(SpecialConfig& spCfg);
+enum class SpecialSettingsPage {
+	Overview,
+	Tasks,
+	Backup,
+	LegacyCleanup
+};
+void DrawSpecialConfigSettings(SpecialConfig& spCfg, SpecialSettingsPage page);

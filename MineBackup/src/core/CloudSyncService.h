@@ -15,6 +15,7 @@ struct PortableConfigTransferPreparation {
 };
 
 bool CanUseCloudActions(const Config& config);
+std::wstring GetCloudActionsUnavailableReason(const Config& config);
 bool HasHistoryCloudCopy(const HistoryEntry& entry);
 bool HasLocalBackupOrMetadata(const Config& config, const HistoryEntry& entry);
 bool QueueConfigurationHistorySyncAfterLocalChange(const Config& config, int configIndex, const char* reason);

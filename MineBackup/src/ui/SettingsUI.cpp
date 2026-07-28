@@ -243,7 +243,7 @@ void DrawNormalCategory(Config& config) {
 		DrawCloudSyncSettings(config);
 		break;
 	case SettingsCategory::NormalWorldEdit:
-		DrawModIntegrationSettings(config);
+		DrawWorldEditSettings(config);
 		break;
 	default:
 		break;
@@ -258,6 +258,9 @@ void DrawSelectedContent(Config& normalConfig) {
 		break;
 	case SettingsCategory::Integration:
 		ImGui::SeparatorText(L("SETTINGS_CATEGORY_INTEGRATION"));
+		DrawSystemIntegrationSettings();
+		ImGui::Spacing();
+		ImGui::SeparatorText(L("CAPABILITIES_HEADER"));
 		DrawDesktopCapabilitySummary();
 		break;
 	case SettingsCategory::Migration:
@@ -266,7 +269,17 @@ void DrawSelectedContent(Config& normalConfig) {
 	default:
 		if (specialSetting) {
 			SpecialConfig& special = g_appState.specialConfigs.at(g_appState.currentConfigIndex);
-			DrawSpecialConfigSettings(special);
+			SpecialSettingsPage page = SpecialSettingsPage::Overview;
+			if (g_selectedCategory == SettingsCategory::SpecialTasks) {
+				page = SpecialSettingsPage::Tasks;
+			}
+			else if (g_selectedCategory == SettingsCategory::SpecialBackup) {
+				page = SpecialSettingsPage::Backup;
+			}
+			else if (g_selectedCategory == SettingsCategory::SpecialCleanup) {
+				page = SpecialSettingsPage::LegacyCleanup;
+			}
+			DrawSpecialConfigSettings(special, page);
 		}
 		else {
 			DrawNormalCategory(normalConfig);

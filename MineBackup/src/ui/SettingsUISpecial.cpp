@@ -6,51 +6,76 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 	ImGui::SeparatorText(L("TASK_MANAGER_TITLE"));
 
 	static int selectedTaskIndex = -1;
+	static bool narrowShowEditor = false;
+	const UiMetrics metrics = GetUiMetrics();
+	const bool wideLayout = ImGui::GetContentRegionAvail().x >= metrics.Em(52.0f);
 
-	if (ImGui::Button(L("TASK_ADD_BACKUP"))) {
+	auto addTask = [&](TaskTypeV2 type) {
 		UnifiedTaskV2 newTask;
 		newTask.id = spCfg.unifiedTasks.empty() ? 1 : (spCfg.unifiedTasks.back().id + 1);
-		newTask.name = wstring_to_utf8(MineFormatMessage("TASK_DEFAULT_BACKUP_NAME", newTask.id));
-		newTask.type = TaskTypeV2::Backup;
+		const char* nameKey = type == TaskTypeV2::Backup
+			? "TASK_DEFAULT_BACKUP_NAME" : "TASK_DEFAULT_COMMAND_NAME";
+		newTask.name = wstring_to_utf8(MineFormatMessage(nameKey, newTask.id));
+		newTask.type = type;
 		spCfg.unifiedTasks.push_back(newTask);
+		selectedTaskIndex = static_cast<int>(spCfg.unifiedTasks.size()) - 1;
+		narrowShowEditor = !wideLayout;
+	};
+
+	if (ImGui::Button(L("TASK_ADD_MENU"))) ImGui::OpenPopup("##AddTask");
+	if (ImGui::BeginPopup("##AddTask")) {
+		if (ImGui::MenuItem(L("TASK_ADD_BACKUP"))) addTask(TaskTypeV2::Backup);
+		if (ImGui::MenuItem(L("TASK_ADD_COMMAND"))) addTask(TaskTypeV2::Command);
+		ImGui::BeginDisabled();
+		ImGui::MenuItem(L("TASK_ADD_SCRIPT"));
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+			ImGui::SetTooltip("%s", L("TASK_SCRIPT_NOT_IMPLEMENTED"));
+		}
+		ImGui::EndPopup();
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(L("TASK_ADD_COMMAND"))) {
-		UnifiedTaskV2 newTask;
-		newTask.id = spCfg.unifiedTasks.empty() ? 1 : (spCfg.unifiedTasks.back().id + 1);
-		newTask.name = wstring_to_utf8(MineFormatMessage("TASK_DEFAULT_COMMAND_NAME", newTask.id));
-		newTask.type = TaskTypeV2::Command;
-		spCfg.unifiedTasks.push_back(newTask);
-	}
-	ImGui::SameLine();
-	if (ImGui::Button(L("TASK_REMOVE")) && selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(spCfg.unifiedTasks.size())) {
+	ImGui::BeginDisabled(selectedTaskIndex < 0);
+	if (ImGui::Button(L("TASK_REMOVE")) && selectedTaskIndex < static_cast<int>(spCfg.unifiedTasks.size())) {
 		spCfg.unifiedTasks.erase(spCfg.unifiedTasks.begin() + selectedTaskIndex);
 		selectedTaskIndex = -1;
+		narrowShowEditor = false;
 	}
+	ImGui::EndDisabled();
 	ImGui::SameLine();
 	ImGui::BeginDisabled(selectedTaskIndex <= 0);
-	if (ImGui::Button(L("TASK_MOVE_UP"))) {
+	if (ImGui::Button("^##TaskUp")) {
 		swap(spCfg.unifiedTasks[selectedTaskIndex], spCfg.unifiedTasks[selectedTaskIndex - 1]);
 		selectedTaskIndex--;
+	}
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+		ImGui::SetTooltip("%s", L("TASK_MOVE_UP"));
 	}
 	ImGui::EndDisabled();
 	ImGui::SameLine();
 	ImGui::BeginDisabled(selectedTaskIndex < 0 || selectedTaskIndex >= static_cast<int>(spCfg.unifiedTasks.size()) - 1);
-	if (ImGui::Button(L("TASK_MOVE_DOWN"))) {
+	if (ImGui::Button("v##TaskDown")) {
 		swap(spCfg.unifiedTasks[selectedTaskIndex], spCfg.unifiedTasks[selectedTaskIndex + 1]);
 		selectedTaskIndex++;
+	}
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+		ImGui::SetTooltip("%s", L("TASK_MOVE_DOWN"));
 	}
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
 
-	if (ImGui::BeginTable("TasksTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY, ImVec2(0, 200))) {
-		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30);
+	if (!wideLayout && narrowShowEditor && ImGui::Button(L("TASK_BACK_TO_LIST"))) {
+		narrowShowEditor = false;
+	}
+
+	if (wideLayout || !narrowShowEditor) {
+		const float listWidth = wideLayout ? metrics.Em(20.0f) : ImGui::GetContentRegionAvail().x;
+		ImGui::BeginChild("##TaskListPane", ImVec2(listWidth, wideLayout ? metrics.Em(28.0f) : 0.0f),
+			ImGuiChildFlags_Borders);
+	if (ImGui::BeginTable("TasksTable", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY, ImVec2(0, 0))) {
+		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, metrics.Em(2.0f));
 		ImGui::TableSetupColumn(L("TASK_NAME"), ImGuiTableColumnFlags_WidthStretch);
-		ImGui::TableSetupColumn(L("TASK_TYPE"), ImGuiTableColumnFlags_WidthFixed, 80);
-		ImGui::TableSetupColumn(L("TASK_EXEC_MODE"), ImGuiTableColumnFlags_WidthFixed, 100);
-		ImGui::TableSetupColumn(L("TASK_TRIGGER"), ImGuiTableColumnFlags_WidthFixed, 80);
-		ImGui::TableSetupColumn(L("TASK_ENABLED"), ImGuiTableColumnFlags_WidthFixed, 60);
 		ImGui::TableHeadersRow();
 
 		for (int i = 0; i < static_cast<int>(spCfg.unifiedTasks.size()); ++i) {
@@ -61,33 +86,28 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			ImGui::TableSetColumnIndex(0);
 			if (ImGui::Selectable(to_string(i + 1).c_str(), selectedTaskIndex == i, ImGuiSelectableFlags_SpanAllColumns)) {
 				selectedTaskIndex = i;
+				narrowShowEditor = !wideLayout;
 			}
 
 			ImGui::TableSetColumnIndex(1);
-			ImGui::Text("%s", task.name.c_str());
-
-			ImGui::TableSetColumnIndex(2);
-			const char* typeNames[] = { L("TASK_TYPE_BACKUP"), L("TASK_TYPE_COMMAND"), L("TASK_TYPE_SCRIPT") };
-			ImGui::Text("%s", typeNames[static_cast<int>(task.type)]);
-
-			ImGui::TableSetColumnIndex(3);
-			const char* execModeNames[] = { L("TASK_EXEC_SEQUENTIAL"), L("TASK_EXEC_PARALLEL") };
-			ImGui::Text("%s", execModeNames[static_cast<int>(task.executionMode)]);
-
-			ImGui::TableSetColumnIndex(4);
-			const char* triggerNames[] = { L("SCHED_MODES_ONCE"), L("SCHED_MODES_INTERVAL"), L("SCHED_MODES_SCHED") };
-			ImGui::Text("%s", triggerNames[static_cast<int>(task.triggerMode)]);
-
-			ImGui::TableSetColumnIndex(5);
-			ImGui::Checkbox("##enabled", &task.enabled);
+			TextEllipsisWithTooltip(task.name.c_str(), ImGui::GetContentRegionAvail().x);
 
 			ImGui::PopID();
 		}
 
 		ImGui::EndTable();
 	}
+		ImGui::EndChild();
+	}
 
-	if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(spCfg.unifiedTasks.size())) {
+	if (wideLayout) {
+		ImGui::SameLine();
+		ImGui::BeginChild("##TaskEditorPane", ImVec2(0.0f, metrics.Em(28.0f)),
+			ImGuiChildFlags_Borders);
+	}
+
+	if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(spCfg.unifiedTasks.size())
+		&& (wideLayout || narrowShowEditor)) {
 		auto& task = spCfg.unifiedTasks[selectedTaskIndex];
 
 		ImGui::Spacing();
@@ -95,7 +115,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 
 		char nameBuf[128];
 		strncpy_s(nameBuf, task.name.c_str(), sizeof(nameBuf));
-		ImGui::SetNextItemWidth(300);
+		ImGui::SetNextItemWidth(-1.0f);
 		if (ImGui::InputText(L("TASK_NAME"), nameBuf, sizeof(nameBuf))) {
 			task.name = nameBuf;
 		}
@@ -190,17 +210,18 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 				ImGui::AlignTextToFramePadding();
 				ImGui::TextUnformatted(L("SCHEDULE_AT"));
 				ImGui::TableNextColumn();
-				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_hour", &task.schedHour);
+				const float scheduleFieldWidth = GetUiMetrics().Em(5.0f);
+				ImGui::SetNextItemWidth(scheduleFieldWidth); ImGui::InputInt("##sched_hour", &task.schedHour);
 				ImGui::SameLine(); ImGui::TextUnformatted(":"); ImGui::SameLine();
-				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_minute", &task.schedMinute);
+				ImGui::SetNextItemWidth(scheduleFieldWidth); ImGui::InputInt("##sched_minute", &task.schedMinute);
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn();
 				ImGui::AlignTextToFramePadding();
 				ImGui::TextUnformatted(L("SCHEDULE_ON"));
 				ImGui::TableNextColumn();
-				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_month", &task.schedMonth);
+				ImGui::SetNextItemWidth(scheduleFieldWidth); ImGui::InputInt("##sched_month", &task.schedMonth);
 				ImGui::SameLine(); ImGui::TextUnformatted("/"); ImGui::SameLine();
-				ImGui::SetNextItemWidth(80); ImGui::InputInt("##sched_day", &task.schedDay);
+				ImGui::SetNextItemWidth(scheduleFieldWidth); ImGui::InputInt("##sched_day", &task.schedDay);
 				ImGui::SameLine(); ImGui::TextDisabled("%s", L("SCHED_EVERY_HINT"));
 				ImGui::EndTable();
 			}
@@ -211,6 +232,10 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			task.schedDay = max(0, min(31, task.schedDay));
 		}
 	}
+	else if (wideLayout) {
+		ImGui::TextDisabled("%s", L("TASK_SELECT_TO_EDIT"));
+	}
+	if (wideLayout) ImGui::EndChild();
 }
 
 void DrawServiceSettings(SpecialConfig& spCfg) {
@@ -268,99 +293,85 @@ void DrawServiceSettings(SpecialConfig& spCfg) {
 #endif
 }
 
-void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
+void DrawSpecialConfigSettings(SpecialConfig& spCfg, SpecialSettingsPage page) {
 	char buf[128];
 	strncpy_s(buf, spCfg.name.c_str(), sizeof(buf));
+	ImGui::SetNextItemWidth(-1.0f);
 	if (ImGui::InputText(L("CONFIG_NAME"), buf, sizeof(buf))) spCfg.name = buf;
 
 	ImGui::Spacing();
 
-	if (ImGui::BeginTabBar("SpecialConfigTabs", ImGuiTabBarFlags_None)) {
-		if (ImGui::BeginTabItem(L("TAB_STARTUP"))) {
-			ImGui::Spacing();
-			if (ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute)) {
-				SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
-					g_appState.currentConfigIndex, spCfg.autoExecute);
-			}
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_EXECUTE_ON_STARTUP"));
-			ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
+	if (page == SpecialSettingsPage::Tasks) {
+		DrawUnifiedTaskManager(spCfg);
+		return;
+	}
+	if (page == SpecialSettingsPage::LegacyCleanup) {
+		DrawServiceSettings(spCfg);
+		return;
+	}
+	if (page == SpecialSettingsPage::Backup) {
+		ImGui::Checkbox(L("BACKUP_ON_START"), &spCfg.backupOnGameStart);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BACKUP_ON_START"));
+		ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_LOW_PRIORITY"));
 
-			const auto services = GetDesktopServices();
-			const auto autostartCapability = services->Capabilities().autostart;
-			map<int, bool> previousStartupSelections;
-			for (const auto& [index, config] : g_appState.specialConfigs) {
-				previousStartupSelections[index] = config.runOnStartup;
-			}
-			ImGui::BeginDisabled(!autostartCapability.IsAvailable());
-			if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
-				SetExclusiveSpecialRunOnStartup(g_appState.specialConfigs,
-					g_appState.currentConfigIndex, spCfg.runOnStartup);
-				const bool enabled = g_RunOnStartup
-					|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
-				const auto status = services->SetAutostart(enabled);
-				if (!status.IsAvailable()) {
-					for (const auto& [index, selected] : previousStartupSelections) {
-						g_appState.specialConfigs[index].runOnStartup = selected;
-					}
-					MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
-				}
-			}
-			ImGui::EndDisabled();
-			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
-				&& !autostartCapability.IsAvailable()) {
-				ImGui::SetTooltip("%s", wstring_to_utf8(autostartCapability.diagnostic).c_str());
-			}
+		const int maxThreads = (std::max)(1u, thread::hardware_concurrency());
+		const float fieldWidth = (std::min)(GetUiMetrics().Em(18.0f),
+			ImGui::GetContentRegionAvail().x);
+		ImGui::SetNextItemWidth(fieldWidth);
+		ImGui::SliderInt(L("CPU_THREAD_COUNT"), &spCfg.cpuThreads, 0, maxThreads);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_CPU_THREADS"));
 
-			ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
+		int minLevel = 1;
+		int maxLevel = 9;
+		GetSpecialConfigCompressionLevelRange(spCfg, minLevel, maxLevel);
+		spCfg.zipLevel = (std::clamp)(spCfg.zipLevel, minLevel, maxLevel);
+		ImGui::SetNextItemWidth(fieldWidth);
+		ImGui::SliderInt(L("COMPRESSION_LEVEL"), &spCfg.zipLevel, minLevel, maxLevel);
+		ImGui::SetNextItemWidth(fieldWidth);
+		ImGui::InputInt(L("BACKUPS_TO_KEEP"), &spCfg.keepCount);
+		return;
+	}
 
-			ImGui::Spacing();
-			if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
-				SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
-					g_appState.currentConfigIndex, true);
-				SaveConfigs();
-				(void)services->RestartApplication();
-				g_appState.done = true;
+	if (ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute)) {
+		SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
+			g_appState.currentConfigIndex, spCfg.autoExecute);
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_EXECUTE_ON_STARTUP"));
+	ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
+
+	const auto services = GetDesktopServices();
+	const auto autostartCapability = services->Capabilities().autostart;
+	map<int, bool> previousStartupSelections;
+	for (const auto& [index, config] : g_appState.specialConfigs) {
+		previousStartupSelections[index] = config.runOnStartup;
+	}
+	ImGui::BeginDisabled(!autostartCapability.IsAvailable());
+	if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
+		SetExclusiveSpecialRunOnStartup(g_appState.specialConfigs,
+			g_appState.currentConfigIndex, spCfg.runOnStartup);
+		const bool enabled = g_RunOnStartup
+			|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
+		const auto status = services->SetAutostart(enabled);
+		if (!status.IsAvailable()) {
+			for (const auto& [index, selected] : previousStartupSelections) {
+				g_appState.specialConfigs[index].runOnStartup = selected;
 			}
-			ImGui::EndTabItem();
+			MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
 		}
+	}
+	ImGui::EndDisabled();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+		&& !autostartCapability.IsAvailable()) {
+		ImGui::SetTooltip("%s", wstring_to_utf8(autostartCapability.diagnostic).c_str());
+	}
 
-		if (ImGui::BeginTabItem(L("TAB_TASKS"))) {
-			ImGui::Spacing();
-			DrawUnifiedTaskManager(spCfg);
-			ImGui::EndTabItem();
-		}
-
-		if (ImGui::BeginTabItem(L("TAB_SERVICE"))) {
-			ImGui::Spacing();
-			DrawServiceSettings(spCfg);
-			ImGui::EndTabItem();
-		}
-
-		if (ImGui::BeginTabItem(L("TAB_BACKUP_OVERRIDES"))) {
-			ImGui::Spacing();
-			ImGui::Checkbox(L("BACKUP_ON_START"), &spCfg.backupOnGameStart);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BACKUP_ON_START"));
-			ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_LOW_PRIORITY"));
-
-			int max_threads = thread::hardware_concurrency();
-			ImGui::SetNextItemWidth(200);
-			ImGui::SliderInt(L("CPU_THREAD_COUNT"), &spCfg.cpuThreads, 0, max_threads);
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_CPU_THREADS"));
-
-			ImGui::SetNextItemWidth(200);
-			int spMinLevel = 1;
-			int spMaxLevel = 9;
-			GetSpecialConfigCompressionLevelRange(spCfg, spMinLevel, spMaxLevel);
-			if (spCfg.zipLevel < spMinLevel) spCfg.zipLevel = spMinLevel;
-			if (spCfg.zipLevel > spMaxLevel) spCfg.zipLevel = spMaxLevel;
-			ImGui::SliderInt(L("COMPRESSION_LEVEL"), &spCfg.zipLevel, spMinLevel, spMaxLevel);
-
-			ImGui::SetNextItemWidth(150);
-			ImGui::InputInt(L("BACKUPS_TO_KEEP"), &spCfg.keepCount);
-			ImGui::EndTabItem();
-		}
-
-		ImGui::EndTabBar();
+	ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
+	ImGui::Spacing();
+	if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
+		SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
+			g_appState.currentConfigIndex, true);
+		SaveConfigs();
+		if (services->RestartApplication().IsAvailable()) g_appState.done = true;
 	}
 }

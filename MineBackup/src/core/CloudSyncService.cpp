@@ -936,8 +936,17 @@ namespace {
 }
 
 bool CanUseCloudActions(const Config& config) {
+	if (!config.cloudSyncEnabled) return false;
 	CloudCommandResult result;
 	return EnsureCloudConfigured(config, result);
+}
+
+wstring GetCloudActionsUnavailableReason(const Config& config) {
+	if (!config.cloudSyncEnabled) return utf8_to_wstring(L("CLOUD_SYNC_DISABLED_REASON"));
+	CloudCommandResult result;
+	if (EnsureCloudConfigured(config, result)) return {};
+	if (!result.detail.empty()) return result.message + L"\n" + result.detail;
+	return result.message;
 }
 
 bool HasHistoryCloudCopy(const HistoryEntry& entry) {

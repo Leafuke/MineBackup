@@ -213,6 +213,8 @@ void DrawAppearanceSettings(Config& cfg) {
 void DrawCloudSyncSettings(Config& cfg) {
 	const int configIndex = g_appState.currentConfigIndex;
 
+	ImGui::SeparatorText(L("CLOUD_TOOLS_CARD"));
+	BeginUiCard("##CloudTools");
 	ImGui::Checkbox(L("ENABLE_CLOUD_SYNC"), &cfg.cloudSyncEnabled);
 
 	char rclonePathBuf[260];
@@ -298,7 +300,11 @@ void DrawCloudSyncSettings(Config& cfg) {
 	if (ImGui::InputText("##CloudWorkDir", workDirBuf, sizeof(workDirBuf))) {
 		cfg.cloudWorkingDirectory = utf8_to_wstring(workDirBuf);
 	}
+	EndUiCard();
+	ImGui::Spacing();
 
+	ImGui::SeparatorText(L("CLOUD_POLICY_CARD"));
+	BeginUiCard("##CloudPolicy");
 	const char* syncModes[] = {
 		L("CLOUD_MODE_HISTORY_ONLY"),
 		L("CLOUD_MODE_HISTORY_AND_BACKUPS")
@@ -317,9 +323,11 @@ void DrawCloudSyncSettings(Config& cfg) {
 
 	ImGui::Checkbox(L("CLOUD_SYNC_HISTORY_AFTER_UPLOAD"), &cfg.cloudSyncHistoryAfterUpload);
 	ImGui::Checkbox(L("CLOUD_AUTO_DOWNLOAD_BEFORE_RESTORE"), &cfg.cloudAutoDownloadBeforeRestore);
+	EndUiCard();
 
 	ImGui::Spacing();
-	ImGui::SeparatorText(L("CLOUD_STATUS_HEADER"));
+	ImGui::SeparatorText(L("CLOUD_STATUS_CARD"));
+	BeginUiCard("##CloudStatus");
 	{
 		lock_guard<mutex> cloudLock(g_appState.cloudTask.mutex);
 		ImGui::Text("%s", L("CLOUD_LAST_STATUS"));
@@ -342,10 +350,13 @@ void DrawCloudSyncSettings(Config& cfg) {
 	if (!cfg.cloudLastErrorMessage.empty()) {
 		ImGui::TextWrapped("%s", wstring_to_utf8(cfg.cloudLastErrorMessage).c_str());
 	}
+	EndUiCard();
 
 	ImGui::Spacing();
-	ImGui::SeparatorText(L("CLOUD_ACTIONS_HEADER"));
+	ImGui::SeparatorText(L("CLOUD_PRIMARY_ACTIONS_CARD"));
+	BeginUiCard("##CloudPrimaryActions");
 	const bool canRunCloudActions = CanUseCloudActions(cfg);
+	const wstring cloudUnavailableReason = GetCloudActionsUnavailableReason(cfg);
 	if (!canRunCloudActions) ImGui::BeginDisabled();
 	if (ImGui::Button(L("CLOUD_ANALYZE_BUTTON"))) {
 		const Config configCopy = cfg;
@@ -355,22 +366,29 @@ void DrawCloudSyncSettings(Config& cfg) {
 		});
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(L("CLOUD_SYNC_HISTORY_BUTTON"))) {
+	if (ImGui::Button(L("CLOUD_SYNC_NOW_BUTTON"))) {
 		const Config configCopy = cfg;
-		TaskCoordinator::Instance().Submit(L"Sync cloud history",
-			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryOnly);
+		const CloudSyncMode mode = cfg.cloudSyncMode == static_cast<int>(CloudSyncMode::HistoryAndBackups)
+			? CloudSyncMode::HistoryAndBackups : CloudSyncMode::HistoryOnly;
+		TaskCoordinator::Instance().Submit(L"Sync cloud data",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex, mode](stop_token) {
+			SyncConfigFromCloud(configCopy, configIndex, mode);
 		});
 	}
-	ImGui::SameLine();
-	if (ImGui::Button(L("CLOUD_SYNC_ALL_BUTTON"))) {
-		const Config configCopy = cfg;
-		TaskCoordinator::Instance().Submit(L"Sync cloud backups",
-			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			SyncConfigFromCloud(configCopy, configIndex, CloudSyncMode::HistoryAndBackups);
-		});
+	if (!canRunCloudActions) ImGui::EndDisabled();
+	if (!canRunCloudActions) {
+		ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.20f, 1.0f), "%s",
+			L("CLOUD_ACTION_UNAVAILABLE"));
+		if (!cloudUnavailableReason.empty()) {
+			ImGui::TextWrapped("%s", wstring_to_utf8(cloudUnavailableReason).c_str());
+		}
 	}
+	EndUiCard();
+	ImGui::Spacing();
 
+	ImGui::SeparatorText(L("CLOUD_MANUAL_ACTIONS_CARD"));
+	BeginUiCard("##CloudManualActions");
+	if (!canRunCloudActions) ImGui::BeginDisabled();
 	if (ImGui::Button(L("CLOUD_UPLOAD_HISTORY_BUTTON"))) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Upload cloud history",
@@ -378,7 +396,6 @@ void DrawCloudSyncSettings(Config& cfg) {
 			UploadConfigurationHistorySnapshot(configCopy, configIndex);
 		});
 	}
-	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_EXPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
 		map<int, Config> configsCopy;
@@ -399,7 +416,6 @@ void DrawCloudSyncSettings(Config& cfg) {
 			TaskCoordinator::Instance().PostEvent(std::move(event));
 		});
 	}
-	ImGui::SameLine();
 	if (ImGui::Button(L("CLOUD_IMPORT_CONFIG_BUTTON"))) {
 		const Config configCopy = cfg;
 		map<int, Config> configsCopy;
@@ -420,8 +436,28 @@ void DrawCloudSyncSettings(Config& cfg) {
 			TaskCoordinator::Instance().PostEvent(std::move(event));
 		});
 	}
+	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"))) {
+		const Config configCopy = cfg;
+		TaskCoordinator::Instance().Submit(L"Export cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
+			ExportHistoryToCloud(configCopy, configIndex);
+		});
+	}
+	if (ImGui::Button(L("CLOUD_IMPORT_HISTORY_BUTTON"))) {
+		const Config configCopy = cfg;
+		TaskCoordinator::Instance().Submit(L"Import cloud history",
+			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
+			ImportHistoryFromCloud(configCopy, configIndex, true);
+		});
+	}
+	if (!canRunCloudActions) ImGui::EndDisabled();
+	EndUiCard();
+
 #if MINEBACKUP_ENABLE_V15_MIGRATION
-	ImGui::SameLine();
+	ImGui::Spacing();
+	ImGui::SeparatorText(L("CLOUD_LEGACY_MIGRATION_CARD"));
+	BeginUiCard("##CloudLegacyMigration");
+	if (!canRunCloudActions) ImGui::BeginDisabled();
 	if (ImGui::Button(L("LEGACY_REMOTE_IMPORT_BUTTON"),
 		ImVec2(CalcButtonWidth(L("LEGACY_REMOTE_IMPORT_BUTTON")), 0))) {
 		if (ConfirmMessageBox(
@@ -449,22 +485,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 				});
 		}
 	}
-#endif
-
-	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"))) {
-		const Config configCopy = cfg;
-		TaskCoordinator::Instance().Submit(L"Export cloud history",
-			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			ExportHistoryToCloud(configCopy, configIndex);
-		});
-	}
-	ImGui::SameLine();
-	if (ImGui::Button(L("CLOUD_IMPORT_HISTORY_BUTTON"))) {
-		const Config configCopy = cfg;
-		TaskCoordinator::Instance().Submit(L"Import cloud history",
-			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
-			ImportHistoryFromCloud(configCopy, configIndex, true);
-		});
-	}
 	if (!canRunCloudActions) ImGui::EndDisabled();
+	EndUiCard();
+#endif
 }
