@@ -15,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <cmath>
 #include <set>
 #include <optional>
 using namespace std;
@@ -185,6 +186,12 @@ void LoadConfigs(const filesystem::path& filename) {
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
 	g_appState.specialConfigMode = false;
+	g_theme = static_cast<int>(ThemeId::ImGuiLight);
+	g_lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
+	Fontss.clear();
+	g_appearanceSchema = 1;
+	g_uiScaleV2 = true;
+	g_uiScaleMigrationPending = false;
 	restoreWhitelist.clear();
 	g_logFileLevel = minebackup::logging::LogFileLevel::Info;
 	g_logViewLevel = minebackup::logging::LogLevel::Info;
@@ -196,9 +203,16 @@ void LoadConfigs(const filesystem::path& filename) {
 	optional<bool> legacyAutoLog;
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) {
+		Fontss = GetDefaultFontPath();
 		minebackup::logging::SetFileLevel(g_logFileLevel);
 		return;
 	}
+	optional<int> configuredGlobalTheme;
+	optional<int> configuredThemeFallback;
+	optional<wstring> configuredGlobalFont;
+	optional<int> configuredAppearanceSchema;
+	bool configuredUiScaleV2 = false;
+	bool configuredUiScaleFound = false;
 	string line1;
 	wstring line, section;
 	// cur作为一个指针，指向 g_appState.configs 这个全局 map<int, Config> 中的元素 Config
@@ -285,23 +299,9 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
-					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
 				}
 				else if (key == L"Font") {
 					cur->fontPath = val;
-					Fontss = val;
-					auto applyDefaultFont = [&]() {
-						Fontss = GetDefaultFontPath();
-						cur->fontPath = Fontss;
-					};
-					if (val.empty()) {
-						applyDefaultFont();
-					}
-					else if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
-						MessageBoxWin(L("WARNING_TITLE"), L("INVALID_FONT_PATH"), 1);
-						GetUserDefaultUILanguageWin();
-						applyDefaultFont();
-					}
 				}
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
@@ -423,6 +423,22 @@ void LoadConfigs(const filesystem::path& filename) {
 				}
 				else if (key == L"UIScale") {
 					g_uiScale = stof(val);
+					configuredUiScaleFound = true;
+				}
+				else if (key == L"UIScaleMode") {
+					configuredUiScaleV2 = (val == L"UserMultiplierV2");
+				}
+				else if (key == L"AppearanceSchema") {
+					configuredAppearanceSchema = stoi(val);
+				}
+				else if (key == L"Theme") {
+					configuredGlobalTheme = stoi(val);
+				}
+				else if (key == L"ThemeFallback") {
+					configuredThemeFallback = stoi(val);
+				}
+				else if (key == L"Font") {
+					configuredGlobalFont = val;
 				}
 				else if (key == L"AutoScanForWorlds") {
 					g_AutoScanForWorlds = (val != L"0");
@@ -568,6 +584,75 @@ void LoadConfigs(const filesystem::path& filename) {
 			+ executionPolicy.disabledDuplicateRunOnStartup;
 		MigrationCoordinator::RecordUnit(normalized);
 	}
+
+	auto validFontPath = [](const wstring& value) {
+		return !value.empty() && value.size() >= 3 && filesystem::exists(value);
+	};
+
+	if (configuredGlobalTheme && IsValidThemeId(*configuredGlobalTheme)) {
+		g_theme = *configuredGlobalTheme;
+	}
+	else {
+		auto normal = g_appState.configs.find(g_appState.currentConfigIndex);
+		auto special = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
+		if (normal != g_appState.configs.end() && IsValidThemeId(normal->second.theme)) {
+			g_theme = normal->second.theme;
+		}
+		else if (special != g_appState.specialConfigs.end() && IsValidThemeId(special->second.theme)) {
+			g_theme = special->second.theme;
+		}
+	}
+	if (configuredThemeFallback
+		&& *configuredThemeFallback >= static_cast<int>(ThemeId::ImGuiDark)
+		&& *configuredThemeFallback <= static_cast<int>(ThemeId::NordDark)) {
+		g_lastValidTheme = *configuredThemeFallback;
+	}
+	else if (g_theme != static_cast<int>(ThemeId::Custom)) {
+		g_lastValidTheme = g_theme;
+	}
+
+	if (configuredGlobalFont && validFontPath(*configuredGlobalFont)) {
+		Fontss = *configuredGlobalFont;
+	}
+	else {
+		auto normal = g_appState.configs.find(g_appState.currentConfigIndex);
+		if (normal != g_appState.configs.end() && validFontPath(normal->second.fontPath)) {
+			Fontss = normal->second.fontPath;
+		}
+		if (Fontss.empty()) {
+			for (const auto& [index, config] : g_appState.configs) {
+				(void)index;
+				if (validFontPath(config.fontPath)) {
+					Fontss = config.fontPath;
+					break;
+				}
+			}
+		}
+	}
+	if (Fontss.empty()) {
+		if (configuredGlobalFont && !configuredGlobalFont->empty()) {
+			MessageBoxWin(L("WARNING_TITLE"), L("INVALID_FONT_PATH"), 1);
+		}
+		Fontss = GetDefaultFontPath();
+	}
+
+	g_appearanceSchema = configuredAppearanceSchema.value_or(1);
+	g_uiScaleV2 = configuredUiScaleV2 || !configuredUiScaleFound;
+	g_uiScaleMigrationPending = configuredUiScaleFound && !configuredUiScaleV2;
+	g_uiScale = (std::clamp)(g_uiScale, 0.75f, 2.5f);
+}
+
+void FinalizeUiScaleMigration(float primaryDpiScale) {
+	const float safeDpi = primaryDpiScale > 0.0f ? primaryDpiScale : 1.0f;
+	if (g_uiScaleMigrationPending) {
+		if (std::abs(g_uiScale - safeDpi) <= 0.05f) {
+			g_uiScale = 1.0f;
+		}
+		g_uiScaleMigrationPending = false;
+	}
+	g_uiScale = (std::clamp)(g_uiScale, 0.75f, 2.5f);
+	g_uiScaleV2 = true;
+	g_appearanceSchema = 1;
 }
 
 bool SaveConfigs() {
@@ -597,6 +682,11 @@ bool SaveConfigs(const filesystem::path& filename) {
 	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
 	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
 	buffer << L"UIScale=" << g_uiScale << L"\n";
+	buffer << L"UIScaleMode=UserMultiplierV2\n";
+	buffer << L"AppearanceSchema=" << g_appearanceSchema << L"\n";
+	buffer << L"Theme=" << g_theme << L"\n";
+	buffer << L"ThemeFallback=" << g_lastValidTheme << L"\n";
+	buffer << L"Font=" << Fontss << L"\n";
 	buffer << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
 	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
 	buffer << L"LogFileLevel="
@@ -639,8 +729,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"KeepCount=" << c.keepCount << L"\n";
 		buffer << L"SmartBackup=" << c.backupMode << L"\n";
 		buffer << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
-		buffer << L"Theme=" << c.theme << L"\n";
-		buffer << L"Font=" << c.fontPath << L"\n";
 		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		buffer << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		buffer << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
@@ -706,7 +794,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"CpuThreads=" << sc.cpuThreads << L"\n";
 		buffer << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
 		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
-		buffer << L"Theme=" << sc.theme << L"\n";
 		// 1.16 preserves these local, read-only values solely so a custom-named
 		// legacy service remains discoverable until the user removes it. They are
 		// excluded from portable configuration and are removed from the model in 1.17.

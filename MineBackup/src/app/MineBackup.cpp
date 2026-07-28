@@ -719,6 +719,7 @@ int main(int argc, char** argv)
 	applyLinuxWindowIdentity();
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
+	FinalizeUiScaleMigration(main_scale);
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
@@ -933,10 +934,7 @@ int main(int argc, char** argv)
 	// Load font sources. The 1.92 renderer texture protocol rasterizes glyphs
 	// incrementally, so glyph ranges and an eager atlas Build() are unnecessary.
 
-	if (g_appState.configs.count(g_appState.currentConfigIndex))
-		ApplyTheme(g_appState.configs[g_appState.currentConfigIndex].theme); // 把主题加载放在这里了
-	else if (g_appState.specialConfigs.count(g_appState.currentConfigIndex))
-		ApplyTheme(g_appState.specialConfigs[g_appState.currentConfigIndex].theme);
+	ApplyTheme();
 
 	if (isFirstRun) {
 		GetUserDefaultUILanguageWin();
@@ -1365,6 +1363,8 @@ int main(int argc, char** argv)
 					float importBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(importBtnW, 0))) {
 						LoadConfigs(filesystem::path(pendingImportPath));
+						FinalizeUiScaleMigration(ImGui::GetMainViewport()->DpiScale);
+						ApplyTheme();
 						SaveConfigs(); // 保存到默认位置
 						MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Application,
 							"application.config.imported", "LOG_CONFIG_IMPORTED",
@@ -1909,7 +1909,6 @@ int main(int argc, char** argv)
 						if (ImGui::Selectable(label.c_str(), is_selected)) {
 							g_appState.currentConfigIndex = idx;
 							specialSetting = false;
-							ApplyTheme(val.theme);
 						}
 						if (is_selected) {
 							ImGui::SetItemDefaultFocus();
@@ -1923,7 +1922,6 @@ int main(int argc, char** argv)
 						if (ImGui::Selectable(label.c_str(), is_selected)) {
 							g_appState.currentConfigIndex = (idx);
 							specialSetting = true;
-							ApplyTheme(val.theme);
 							//g_appState.specialConfigMode = true;
 						}
 						if (is_selected) ImGui::SetItemDefaultFocus();
@@ -2806,7 +2804,7 @@ bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_w
 	return true;
 }
 
-void ApplyTheme(const int& theme)
+void ApplyTheme()
 {
 	// ScaleAllSizes() is lossy. Always rebuild from a fresh, unscaled style so
 	// repeated theme and scale changes cannot compound rounded dimensions.
@@ -2815,15 +2813,47 @@ void ApplyTheme(const int& theme)
 	style = ImGuiStyle();
 	style.FontScaleDpi = dpiScale;
 
-	switch (theme) {
-	case 0: ImGuiTheme::ApplyImGuiDark(); break;
-	case 1: ImGuiTheme::ApplyImGuiLight(); break;
-	case 2: ImGuiTheme::ApplyImGuiClassic(); break;
-	case 3: ImGuiTheme::ApplyWindows11(false); break;
-	case 4: ImGuiTheme::ApplyWindows11(true); break;
-	case 5: ImGuiTheme::ApplyNord(false); break;
-	case 6: ImGuiTheme::ApplyNord(true); break;
-	case 7: ImGuiTheme::ApplyCustom(GetAppPaths().configRoot / L"custom_theme.json"); break;
+	auto applyBuiltInTheme = [](int theme) {
+		switch (theme) {
+		case 0: ImGuiTheme::ApplyImGuiDark(); break;
+		case 1: ImGuiTheme::ApplyImGuiLight(); break;
+		case 2: ImGuiTheme::ApplyImGuiClassic(); break;
+		case 3: ImGuiTheme::ApplyWindows11(false); break;
+		case 4: ImGuiTheme::ApplyWindows11(true); break;
+		case 5: ImGuiTheme::ApplyNord(false); break;
+		case 6: ImGuiTheme::ApplyNord(true); break;
+		default: ImGuiTheme::ApplyImGuiLight(); break;
+		}
+	};
+
+	bool applied = true;
+	g_customThemeError.clear();
+	if (g_theme == static_cast<int>(ThemeId::Custom)) {
+		applied = ImGuiTheme::ApplyCustom(
+			GetAppPaths().configRoot / L"custom_theme.json", &g_customThemeError);
+		if (applied) {
+			applied = ImGuiTheme::ValidateTextContrast(style, &g_customThemeError);
+		}
+	}
+	else if (IsValidThemeId(g_theme)) {
+		applyBuiltInTheme(g_theme);
+		g_lastValidTheme = g_theme;
+	}
+	else {
+		g_theme = static_cast<int>(ThemeId::ImGuiLight);
+		g_lastValidTheme = g_theme;
+		applyBuiltInTheme(g_theme);
+	}
+
+	if (!applied) {
+		style = ImGuiStyle();
+		style.FontScaleDpi = dpiScale;
+		applyBuiltInTheme(g_lastValidTheme);
+	}
+
+	if (g_theme == static_cast<int>(ThemeId::Custom) && applied) {
+		EnableDarkModeWin(
+			ImGuiTheme::RelativeLuminance(style.Colors[ImGuiCol_WindowBg]) < 0.45f);
 	}
 
 	style.FontScaleMain = g_uiScale;

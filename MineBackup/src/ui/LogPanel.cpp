@@ -84,6 +84,7 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
     AddPathRedaction(options, paths.configRoot, "<profile-root>");
     AddPathRedaction(
         options, GetExecutablePath().parent_path(), "<application-root>");
+    AddRedaction(options, Fontss, "<local-font>");
 #ifdef _WIN32
     if (const char* home = std::getenv("USERPROFILE")) {
 #else
@@ -98,7 +99,6 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
         AddRedaction(options, config.saveRoot, "<save-root>");
         AddRedaction(options, config.backupPath, "<backup-root>");
         AddRedaction(options, config.zipPath, "<local-tool>");
-        AddRedaction(options, config.fontPath, "<local-font>");
         AddRedaction(options, config.rclonePath, "<local-tool>");
         AddRedaction(options, config.cloudWorkingDirectory, "<working-directory>");
         AddRedaction(options, config.snapshotPath, "<snapshot-root>");

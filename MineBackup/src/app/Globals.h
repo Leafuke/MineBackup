@@ -18,12 +18,38 @@
 struct GLFWwindow;
 struct ImVec4;
 
+enum class ThemeId : int {
+	ImGuiDark = 0,
+	ImGuiLight = 1,
+	ImGuiClassic = 2,
+	WindowsLight = 3,
+	WindowsDark = 4,
+	NordLight = 5,
+	NordDark = 6,
+	Custom = 7
+};
+
+inline bool IsValidThemeId(int value) {
+	return value >= static_cast<int>(ThemeId::ImGuiDark)
+		&& value <= static_cast<int>(ThemeId::Custom);
+}
+
 struct AppWindowState {
 	GLFWwindow* handle = nullptr;
 	int width = 1280;
 	int height = 800;
-	float uiScale = 1.0f;
 	ImVec4 clearColor = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+};
+
+struct AppAppearanceState {
+	int theme = static_cast<int>(ThemeId::ImGuiLight);
+	int lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
+	std::wstring fontPath;
+	std::string customThemeError;
+	float userScale = 1.0f;
+	int schema = 1;
+	bool userScaleV2 = true;
+	bool pendingScaleMigration = false;
 };
 
 struct AppUpdateState {
@@ -39,7 +65,6 @@ struct AppUpdateState {
 };
 
 struct AppUiState {
-	std::wstring fontPath;
 	bool showSettings = false;
 	bool showHistoryWindow = false;
 	bool specialSetting = false;
@@ -90,6 +115,7 @@ struct ExternalToolRuntimeState {
 struct AppGlobalState {
 	std::string currentVersion = MINEBACKUP_VERSION_STRING;
 	AppWindowState window;
+	AppAppearanceState appearance;
 	AppUpdateState update;
 	AppUiState ui;
 	AppSettingsState settings;
@@ -115,11 +141,17 @@ inline std::string& g_NoticeLastSeenVersion = g_globals.update.noticeLastSeenVer
 
 inline int& g_windowWidth = g_globals.window.width;
 inline int& g_windowHeight = g_globals.window.height;
-inline float& g_uiScale = g_globals.window.uiScale;
+inline float& g_uiScale = g_globals.appearance.userScale;
+inline int& g_theme = g_globals.appearance.theme;
+inline int& g_lastValidTheme = g_globals.appearance.lastValidTheme;
+inline std::string& g_customThemeError = g_globals.appearance.customThemeError;
+inline int& g_appearanceSchema = g_globals.appearance.schema;
+inline bool& g_uiScaleV2 = g_globals.appearance.userScaleV2;
+inline bool& g_uiScaleMigrationPending = g_globals.appearance.pendingScaleMigration;
 inline ImVec4& clear_color = g_globals.window.clearColor;
 
 inline int& last_interval = g_globals.settings.lastIntervalMinutes;
-inline std::wstring& Fontss = g_globals.ui.fontPath;
+inline std::wstring& Fontss = g_globals.appearance.fontPath;
 inline bool& showSettings = g_globals.ui.showSettings;
 inline bool& showHistoryWindow = g_globals.ui.showHistoryWindow;
 inline bool& specialSetting = g_globals.ui.specialSetting;

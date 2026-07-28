@@ -1007,7 +1007,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{"THEME_LIGHT", "ImGui Light"},
 		{"THEME_CLASSIC", "ImGui Classic"},
 		{"THEME_NORD_LIGHT", "Nord"},
-		{"THEME_NORD_DARK", "ImGui(dark)"},
+		{"THEME_NORD_DARK", "Nord Dark"},
 		{"THEME_WIN_LIGHT", "Windows Light"},
 		{"THEME_WIN_DARK", "Windows Dark"},
 		{"THEME_CUSTOM", "Custom"},

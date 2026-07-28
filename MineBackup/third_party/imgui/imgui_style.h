@@ -1,10 +1,13 @@
 ﻿#pragma once
 #include "imgui.h"
 #include "json.hpp"
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
+#include <string>
 
 void EnableDarkModeWin(bool enable);
 #ifndef _WIN32
@@ -27,6 +30,67 @@ namespace ImGuiTheme {
             from.z + (to.z - from.z) * amount,
             from.w + (to.w - from.w) * amount
         );
+    }
+
+    inline float SrgbToLinear(float value) {
+        return value <= 0.04045f
+            ? value / 12.92f
+            : std::pow((value + 0.055f) / 1.055f, 2.4f);
+    }
+
+    inline float RelativeLuminance(const ImVec4& color) {
+        return 0.2126f * SrgbToLinear(color.x)
+            + 0.7152f * SrgbToLinear(color.y)
+            + 0.0722f * SrgbToLinear(color.z);
+    }
+
+    inline ImVec4 CompositeOver(const ImVec4& foreground, const ImVec4& background) {
+        const float alpha = std::clamp(foreground.w, 0.0f, 1.0f);
+        return ImVec4(
+            foreground.x * alpha + background.x * (1.0f - alpha),
+            foreground.y * alpha + background.y * (1.0f - alpha),
+            foreground.z * alpha + background.z * (1.0f - alpha),
+            1.0f);
+    }
+
+    inline float ContrastRatio(const ImVec4& foreground, const ImVec4& background) {
+        const float foregroundLuminance = RelativeLuminance(foreground);
+        const float backgroundLuminance = RelativeLuminance(background);
+        const float lighter = (std::max)(foregroundLuminance, backgroundLuminance);
+        const float darker = (std::min)(foregroundLuminance, backgroundLuminance);
+        return (lighter + 0.05f) / (darker + 0.05f);
+    }
+
+    inline bool ValidateTextContrast(const ImGuiStyle& style, std::string* error = nullptr) {
+        const ImVec4 window = style.Colors[ImGuiCol_WindowBg];
+        const ImVec4 text = style.Colors[ImGuiCol_Text];
+        struct ContrastPair {
+            ImGuiCol background;
+            const char* name;
+        };
+        const ContrastPair pairs[] = {
+            { ImGuiCol_WindowBg, "window" },
+            { ImGuiCol_TitleBgActive, "active title bar" },
+            { ImGuiCol_Button, "button" },
+            { ImGuiCol_FrameBg, "input field" }
+        };
+        for (const ContrastPair& pair : pairs) {
+            const ImVec4 background = CompositeOver(style.Colors[pair.background], window);
+            if (ContrastRatio(text, background) < 4.5f) {
+                if (error) {
+                    *error = std::string("Text contrast is below 4.5:1 on the ")
+                        + pair.name + ".";
+                }
+                return false;
+            }
+        }
+        const ImVec4 disabled = style.Colors[ImGuiCol_TextDisabled];
+        if (ContrastRatio(disabled, window) < 3.0f) {
+            if (error) *error = "Disabled text contrast is below 3:1.";
+            return false;
+        }
+        if (error) error->clear();
+        return true;
     }
 
     inline void ApplyNewWidgetDefaults(ImGuiStyle& style) {
@@ -489,6 +553,9 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_Border] = border;
             colors[ImGuiCol_BorderShadow] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TitleBg] = Hex(0x272C36);
+            colors[ImGuiCol_TitleBgActive] = bg_child;
+            colors[ImGuiCol_TitleBgCollapsed] = Hex(0x272C36, 0.85f);
             colors[ImGuiCol_MenuBarBg] = Hex(0x2B303B);
 
             colors[ImGuiCol_Header] = Hex(0x81A1C1, 0.25f);
@@ -573,6 +640,9 @@ namespace ImGuiTheme {
 
             colors[ImGuiCol_Border] = border;
             colors[ImGuiCol_BorderShadow] = Hex(0x000000, 0.0f);
+            colors[ImGuiCol_TitleBg] = bg_child;
+            colors[ImGuiCol_TitleBgActive] = Hex(0xD8DEE9);
+            colors[ImGuiCol_TitleBgCollapsed] = Hex(0xE5E9F0, 0.90f);
             colors[ImGuiCol_MenuBarBg] = Hex(0xEAEFF7);
 
             colors[ImGuiCol_Header] = Hex(0x5E81AC, 0.20f);
@@ -838,72 +908,84 @@ namespace ImGuiTheme {
         ApplyCheckboxSelectedFallback(colors);
     }
 
-    inline void ApplyCustom(const std::filesystem::path& themePath) {
+    inline bool ApplyCustom(const std::filesystem::path& themePath, std::string* error = nullptr) {
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
         try {
             std::ifstream file(themePath);
-            if (file.is_open()) {
-                nlohmann::json j;
-                file >> j;
-                style.WindowRounding = j.value("window_rounding", 0.0f);
-                style.ChildRounding = j.value("child_rounding", 0.0f);
-                style.FrameRounding = j.value("frame_rounding", 0.0f);
-                style.GrabRounding = j.value("grab_rounding", 0.0f);
-                style.PopupRounding = j.value("popup_rounding", 0.0f);
-                style.ScrollbarRounding = j.value("scrollbar_rounding", 0.0f);
-                style.TabRounding = j.value("tab_rounding", 0.0f);
-                style.MenuItemRounding = j.value("menu_item_rounding", style.FrameRounding);
-                style.SelectableRounding = 0.0f;
-                style.DragDropTargetRounding = j.value("drag_drop_target_rounding", style.FrameRounding);
-                style.InputTextCursorSize = j.value("input_text_cursor_size", 1.0f);
-
-                style.WindowBorderSize = j.value("window_border_size", 0.0f);
-                style.ChildBorderSize = j.value("child_border_size", 0.0f);
-                style.PopupBorderSize = j.value("popup_border_size", 0.0f);
-                style.FrameBorderSize = j.value("frame_border_size", 0.0f);
-                style.TabBorderSize = j.value("tab_border_size", 0.0f);
-
-                style.WindowPadding = ImVec2(
-                    j.value("window_padding_x", 8),
-                    j.value("window_padding_y", 8)
-                );
-                style.FramePadding = ImVec2(
-                    j.value("frame_padding_x", 6),
-                    j.value("frame_padding_y", 4)
-                );
-                style.ItemSpacing = ImVec2(
-                    j.value("item_spacing_x", 8),
-                    j.value("item_spacing_y", 6)
-                );
-                style.ScrollbarSize = j.value("scrollbar_size", 14.0f);
-
-                const char* checkboxColorName = ImGui::GetStyleColorName(ImGuiCol_CheckboxSelectedBg);
-                const bool hasCheckboxSelectedColor =
-                    j.contains("colors") && j["colors"].contains(checkboxColorName);
-                for (auto& [key, value] : j["colors"].items()) {
-                    // hex: "0xRRGGBB"
-                    std::string hexstr = value["hex"].get<std::string>();
-                    unsigned int hex = std::stoul(hexstr.substr(1), nullptr, 16); // ����"#"
-                    float alpha = value.value("alpha", 1.0f);
-                    ImVec4 col = Hex(hex, alpha);
-                    ImGuiCol col_index = ImGuiCol_COUNT;
-                    for (int i = 0; i < ImGuiCol_COUNT; i++) {
-                        if (std::string(ImGui::GetStyleColorName(static_cast<ImGuiCol>(i))) == key) {
-                            col_index = static_cast<ImGuiCol>(i);
-                            break;
-                        }
-                    }
-                    if (col_index != ImGuiCol_COUNT)
-                        colors[col_index] = col;
-                }
-                if (!hasCheckboxSelectedColor) {
-                    ApplyCheckboxSelectedFallback(colors);
-                }
+            if (!file.is_open()) {
+                if (error) *error = "Custom theme file could not be opened.";
+                return false;
             }
+            nlohmann::json j;
+            file >> j;
+            if (!j.contains("colors") || !j["colors"].is_object()) {
+                if (error) *error = "Custom theme is missing the colors object.";
+                return false;
+            }
+            style.WindowRounding = j.value("window_rounding", 0.0f);
+            style.ChildRounding = j.value("child_rounding", 0.0f);
+            style.FrameRounding = j.value("frame_rounding", 0.0f);
+            style.GrabRounding = j.value("grab_rounding", 0.0f);
+            style.PopupRounding = j.value("popup_rounding", 0.0f);
+            style.ScrollbarRounding = j.value("scrollbar_rounding", 0.0f);
+            style.TabRounding = j.value("tab_rounding", 0.0f);
+            style.MenuItemRounding = j.value("menu_item_rounding", style.FrameRounding);
+            style.SelectableRounding = 0.0f;
+            style.DragDropTargetRounding = j.value("drag_drop_target_rounding", style.FrameRounding);
+            style.InputTextCursorSize = j.value("input_text_cursor_size", 1.0f);
+
+            style.WindowBorderSize = j.value("window_border_size", 0.0f);
+            style.ChildBorderSize = j.value("child_border_size", 0.0f);
+            style.PopupBorderSize = j.value("popup_border_size", 0.0f);
+            style.FrameBorderSize = j.value("frame_border_size", 0.0f);
+            style.TabBorderSize = j.value("tab_border_size", 0.0f);
+
+            style.WindowPadding = ImVec2(
+                j.value("window_padding_x", 8),
+                j.value("window_padding_y", 8)
+            );
+            style.FramePadding = ImVec2(
+                j.value("frame_padding_x", 6),
+                j.value("frame_padding_y", 4)
+            );
+            style.ItemSpacing = ImVec2(
+                j.value("item_spacing_x", 8),
+                j.value("item_spacing_y", 6)
+            );
+            style.ScrollbarSize = j.value("scrollbar_size", 14.0f);
+
+            const char* checkboxColorName = ImGui::GetStyleColorName(ImGuiCol_CheckboxSelectedBg);
+            const bool hasCheckboxSelectedColor = j["colors"].contains(checkboxColorName);
+            for (auto& [key, value] : j["colors"].items()) {
+                // hex: "0xRRGGBB"
+                std::string hexstr = value["hex"].get<std::string>();
+                unsigned int hex = std::stoul(hexstr.substr(1), nullptr, 16);
+                float alpha = value.value("alpha", 1.0f);
+                ImVec4 col = Hex(hex, alpha);
+                ImGuiCol col_index = ImGuiCol_COUNT;
+                for (int i = 0; i < ImGuiCol_COUNT; i++) {
+                    if (std::string(ImGui::GetStyleColorName(static_cast<ImGuiCol>(i))) == key) {
+                        col_index = static_cast<ImGuiCol>(i);
+                        break;
+                    }
+                }
+                if (col_index != ImGuiCol_COUNT)
+                    colors[col_index] = col;
+            }
+            if (!hasCheckboxSelectedColor) {
+                ApplyCheckboxSelectedFallback(colors);
+            }
+            if (error) error->clear();
+            return true;
+        }
+        catch (const std::exception& exception) {
+            if (error) *error = exception.what();
+            return false;
         }
         catch (...) {
-            ApplySolarized(true);
+            if (error) *error = "Unknown custom theme parsing error.";
+            return false;
         }
     }
 

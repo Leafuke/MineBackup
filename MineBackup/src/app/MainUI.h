@@ -26,7 +26,7 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex);
 void RunSpecialMode(int configId);
 
 // MineBackup.cpp 中保留的函数
-void ApplyTheme(const int& theme);
+void ApplyTheme();
 bool LoadTextureFromFileGL(const char* filename, unsigned int* out_texture, int* out_width, int* out_height);
 
 #endif // MAIN_UI_H

@@ -361,16 +361,6 @@ void DrawSpecialConfigSettings(SpecialConfig& spCfg) {
 			ImGui::EndTabItem();
 		}
 
-		if (ImGui::BeginTabItem(L("TAB_APPEARANCE"))) {
-			ImGui::Spacing();
-			const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
-			ImGui::SetNextItemWidth(200);
-			if (ImGui::Combo(L("THEME_SETTINGS"), &spCfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
-				ApplyTheme(spCfg.theme);
-			}
-			ImGui::EndTabItem();
-		}
-
 		ImGui::EndTabBar();
 	}
 }

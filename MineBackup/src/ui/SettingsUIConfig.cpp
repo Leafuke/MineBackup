@@ -51,7 +51,6 @@ void DrawConfigManagementPanel() {
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				g_appState.currentConfigIndex = idx;
 				specialSetting = false;
-				ApplyTheme(val.theme);
 			}
 			if (is_selected) {
 				ImGui::SetItemDefaultFocus();
@@ -64,7 +63,6 @@ void DrawConfigManagementPanel() {
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				g_appState.currentConfigIndex = idx;
 				specialSetting = true;
-				ApplyTheme(val.theme);
 			}
 			if (is_selected) ImGui::SetItemDefaultFocus();
 		}

@@ -111,7 +111,6 @@ void DrawAppearanceSettings(Config& cfg) {
 				wstring chineseFont = GetChineseFontPath();
 				if (!chineseFont.empty()) {
 					Fontss = chineseFont;
-					cfg.fontPath = chineseFont;
 				}
 			}
 		}
@@ -129,14 +128,15 @@ void DrawAppearanceSettings(Config& cfg) {
 	ImGui::Text("%s", L("THEME_SETTINGS"));
 	const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 	ImGui::SetNextItemWidth(300);
-	if (ImGui::Combo("##Theme", &cfg.theme, theme_names, IM_ARRAYSIZE(theme_names))) {
+	if (ImGui::Combo("##Theme", &g_theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
-		if (cfg.theme == 7 && !filesystem::exists(customThemePath)) {
+		if (g_theme == static_cast<int>(ThemeId::Custom) && !filesystem::exists(customThemePath)) {
 			ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
+			ApplyTheme();
 			(void)GetDesktopServices()->OpenFolder(customThemePath);
 		}
 		else {
-			ApplyTheme(cfg.theme);
+			ApplyTheme();
 		}
 	}
 
@@ -151,26 +151,24 @@ void DrawAppearanceSettings(Config& cfg) {
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_OK"))) {
 		g_uiScale = pendingUiScale;
-		ApplyTheme(cfg.theme);
+		ApplyTheme();
 	}
 
 	ImGui::Spacing();
 
 	ImGui::Text("%s", L("FONT_SETTINGS"));
 	char Fonts[256];
-	strncpy_s(Fonts, wstring_to_utf8(cfg.fontPath).c_str(), sizeof(Fonts));
+	strncpy_s(Fonts, wstring_to_utf8(Fontss).c_str(), sizeof(Fonts));
 	if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
 		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
-			cfg.fontPath = sel;
 			Fontss = sel;
 		}
 	}
 	ImGui::SameLine();
 	ImGui::SetNextItemWidth(-1);
 	if (ImGui::InputText("##fontPathValue", Fonts, 256)) {
-		cfg.fontPath = utf8_to_wstring(Fonts);
-		Fontss = cfg.fontPath;
+		Fontss = utf8_to_wstring(Fonts);
 	}
 
 	ImGui::Spacing();
