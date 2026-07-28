@@ -9,6 +9,7 @@
 #include "text_to_text.h"
 #include "DesktopServices.h"
 #include "SpecialConfigPolicy.h"
+#include "UIHelpers.h"
 
 #include <algorithm>
 #include <chrono>
@@ -21,17 +22,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-inline float CalcButtonWidth(const char* text, float minWidth = 80.0f, float padding = 20.0f) {
-	float textWidth = ImGui::CalcTextSize(text).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
-	return (std::max)(textWidth, minWidth);
-}
-
-inline float CalcPairButtonWidth(const char* text1, const char* text2, float minWidth = 100.0f, float padding = 20.0f) {
-	float w1 = ImGui::CalcTextSize(text1).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
-	float w2 = ImGui::CalcTextSize(text2).x + ImGui::GetStyle().FramePadding.x * 2 + padding;
-	return (std::max)((std::max)(w1, w2), minWidth);
-}
 
 inline void GetCompressionLevelRange(const std::wstring& method, int& minLevel, int& maxLevel) {
 	minLevel = 1;

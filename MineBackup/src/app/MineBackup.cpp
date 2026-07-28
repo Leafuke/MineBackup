@@ -743,7 +743,9 @@ int main(int argc, char** argv)
 	g_appState.showMainApp = !isFirstRun && !shouldStartHiddenToTray;
 	if (isFirstRun) {
 		g_windowWidth *= main_scale, g_windowHeight *= main_scale;
-		g_uiScale = main_scale;
+		// The monitor DPI is already applied by ImGui's per-viewport font
+		// scaling. Keep the persisted value as a user preference only.
+		g_uiScale = 1.0f;
 	}
 	if (shouldStartHiddenToTray) {
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
