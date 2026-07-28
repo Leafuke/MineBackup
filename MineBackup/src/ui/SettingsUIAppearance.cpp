@@ -100,7 +100,7 @@ void DrawAppearanceSettings(Config& cfg) {
 		}
 	}
 
-	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
+	SetStandardControlWidth();
 	if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
 		string oldLang = g_CurrentLang;
 		SetLanguage(lang_codes[lang_idx]);
@@ -124,7 +124,7 @@ void DrawAppearanceSettings(Config& cfg) {
 
 	ImGui::Text("%s", L("THEME_SETTINGS"));
 	const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
-	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
+	SetStandardControlWidth();
 	if (ImGui::Combo("##Theme", &g_theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 		if (g_theme == static_cast<int>(ThemeId::Custom) && !filesystem::exists(customThemePath)) {
@@ -160,7 +160,7 @@ void DrawAppearanceSettings(Config& cfg) {
 
 	ImGui::Spacing();
 
-	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
+	SetStandardControlWidth();
 	if (ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f")) {
 		ApplyTheme();
 	}
@@ -170,6 +170,14 @@ void DrawAppearanceSettings(Config& cfg) {
 	ImGui::Text("%s", L("FONT_SETTINGS"));
 	char Fonts[256];
 	strncpy_s(Fonts, wstring_to_utf8(Fontss).c_str(), sizeof(Fonts));
+	const bool fontBrowseInline = ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(27.0f);
+	SetStandardControlWidth();
+	if (ImGui::InputText("##fontPathValue", Fonts, 256)) {
+		Fontss = utf8_to_wstring(Fonts);
+		g_restartRequired = true;
+		g_restartBannerDismissed = false;
+	}
+	if (fontBrowseInline) ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
 		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
@@ -177,13 +185,6 @@ void DrawAppearanceSettings(Config& cfg) {
 			g_restartRequired = true;
 			g_restartBannerDismissed = false;
 		}
-	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-1);
-	if (ImGui::InputText("##fontPathValue", Fonts, 256)) {
-		Fontss = utf8_to_wstring(Fonts);
-		g_restartRequired = true;
-		g_restartBannerDismissed = false;
 	}
 
 	ImGui::Spacing();
@@ -197,7 +198,7 @@ void DrawAppearanceSettings(Config& cfg) {
 	const char* close_behavior_options[] = { L("CLOSE_BEHAVIOR_ASK"), L("CLOSE_BEHAVIOR_MINIMIZE"), L("CLOSE_BEHAVIOR_EXIT") };
 #endif
 	int close_behavior_idx = g_rememberCloseAction ? g_closeAction : 0;
-	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
+	SetStandardControlWidth();
 	if (ImGui::Combo("##CloseBehavior", &close_behavior_idx, close_behavior_options, IM_ARRAYSIZE(close_behavior_options))) {
 		if (close_behavior_idx == 0) {
 			g_rememberCloseAction = false;
@@ -220,6 +221,13 @@ void DrawCloudSyncSettings(Config& cfg) {
 	char rclonePathBuf[260];
 	strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
 	ImGui::Text("%s", L("RCLONE_PATH_LABEL"));
+	const bool rcloneBrowseInline = ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(28.0f);
+	SetStandardControlWidth();
+	if (ImGui::InputText("##RclonePath", rclonePathBuf, sizeof(rclonePathBuf))) {
+		cfg.rclonePath = utf8_to_wstring(rclonePathBuf);
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_PATH"));
+	if (rcloneBrowseInline) ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_SELECT_RCLONE"))) {
 		wstring selected = GetDesktopServices()->SelectFile().path.wstring();
 		if (!selected.empty()) {
@@ -227,17 +235,11 @@ void DrawCloudSyncSettings(Config& cfg) {
 			strncpy_s(rclonePathBuf, wstring_to_utf8(cfg.rclonePath).c_str(), sizeof(rclonePathBuf));
 		}
 	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-1);
-	if (ImGui::InputText("##RclonePath", rclonePathBuf, sizeof(rclonePathBuf))) {
-		cfg.rclonePath = utf8_to_wstring(rclonePathBuf);
-	}
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RCLONE_PATH"));
 
 	ImGui::BeginDisabled(g_RcloneInstallRunning);
 	const char* rcloneInstallLabel = g_RcloneInstallRunning
 		? L("RCLONE_INSTALLING") : L("RCLONE_INSTALL_BUTTON");
-	if (ImGui::Button(rcloneInstallLabel, ImVec2(CalcButtonWidth(rcloneInstallLabel), 0))) {
+	if (ImGui::Button(rcloneInstallLabel, ImVec2(GetStandardActionWidth(), 0))) {
 		const auto sevenZip = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
 		if (!sevenZip.available) {
 			g_RcloneInstallSucceeded = false;
@@ -279,7 +281,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	char remotePathBuf[260];
 	strncpy_s(remotePathBuf, wstring_to_utf8(cfg.rcloneRemotePath).c_str(), sizeof(remotePathBuf));
 	ImGui::Text("%s", L("RCLONE_REMOTE_PATH_LABEL"));
-	ImGui::SetNextItemWidth(-1);
+	SetStandardControlWidth();
 	if (ImGui::InputText("##RemotePath", remotePathBuf, sizeof(remotePathBuf))) {
 		cfg.rcloneRemotePath = utf8_to_wstring(remotePathBuf);
 	}
@@ -288,17 +290,18 @@ void DrawCloudSyncSettings(Config& cfg) {
 	char workDirBuf[260];
 	strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));
 	ImGui::Text("%s", L("CLOUD_WORKDIR_LABEL"));
+	const bool workDirBrowseInline = ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(25.0f);
+	SetStandardControlWidth();
+	if (ImGui::InputText("##CloudWorkDir", workDirBuf, sizeof(workDirBuf))) {
+		cfg.cloudWorkingDirectory = utf8_to_wstring(workDirBuf);
+	}
+	if (workDirBrowseInline) ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
 		wstring selected = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!selected.empty()) {
 			cfg.cloudWorkingDirectory = selected;
 			strncpy_s(workDirBuf, wstring_to_utf8(cfg.cloudWorkingDirectory).c_str(), sizeof(workDirBuf));
 		}
-	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-1);
-	if (ImGui::InputText("##CloudWorkDir", workDirBuf, sizeof(workDirBuf))) {
-		cfg.cloudWorkingDirectory = utf8_to_wstring(workDirBuf);
 	}
 	EndUiCard();
 	ImGui::Spacing();
@@ -310,13 +313,13 @@ void DrawCloudSyncSettings(Config& cfg) {
 		L("CLOUD_MODE_HISTORY_AND_BACKUPS")
 	};
 	ImGui::Text("%s", L("CLOUD_SYNC_MODE_LABEL"));
-	ImGui::SetNextItemWidth(260);
+	SetStandardControlWidth();
 	ImGui::Combo("##CloudSyncMode", &cfg.cloudSyncMode, syncModes, IM_ARRAYSIZE(syncModes));
 
-	ImGui::SetNextItemWidth(160);
+	SetStandardControlWidth(10.0f);
 	ImGui::InputInt(L("CLOUD_TIMEOUT_SECONDS"), &cfg.cloudTimeoutSeconds);
 	if (cfg.cloudTimeoutSeconds < 10) cfg.cloudTimeoutSeconds = 10;
-	ImGui::SetNextItemWidth(160);
+	SetStandardControlWidth(10.0f);
 	ImGui::InputInt(L("CLOUD_RETRY_COUNT"), &cfg.cloudRetryCount);
 	if (cfg.cloudRetryCount < 0) cfg.cloudRetryCount = 0;
 	if (cfg.cloudRetryCount > 5) cfg.cloudRetryCount = 5;
@@ -357,16 +360,21 @@ void DrawCloudSyncSettings(Config& cfg) {
 	BeginUiCard("##CloudPrimaryActions");
 	const bool canRunCloudActions = CanUseCloudActions(cfg);
 	const wstring cloudUnavailableReason = GetCloudActionsUnavailableReason(cfg);
+	const bool primaryActionsInline =
+		ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(27.0f);
+	const float primaryActionWidth = GetStandardActionWidth();
 	if (!canRunCloudActions) ImGui::BeginDisabled();
-	if (ImGui::Button(L("CLOUD_ANALYZE_BUTTON"))) {
+	if (ImGui::Button(L("CLOUD_ANALYZE_BUTTON"),
+		ImVec2(primaryActionWidth, 0.0f))) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Analyze cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			AnalyzeCloudHistory(configCopy, configIndex);
 		});
 	}
-	ImGui::SameLine();
-	if (ImGui::Button(L("CLOUD_SYNC_NOW_BUTTON"))) {
+	if (primaryActionsInline) ImGui::SameLine();
+	if (ImGui::Button(L("CLOUD_SYNC_NOW_BUTTON"),
+		ImVec2(primaryActionWidth, 0.0f))) {
 		const Config configCopy = cfg;
 		const CloudSyncMode mode = cfg.cloudSyncMode == static_cast<int>(CloudSyncMode::HistoryAndBackups)
 			? CloudSyncMode::HistoryAndBackups : CloudSyncMode::HistoryOnly;
@@ -389,14 +397,16 @@ void DrawCloudSyncSettings(Config& cfg) {
 	ImGui::SeparatorText(L("CLOUD_MANUAL_ACTIONS_CARD"));
 	BeginUiCard("##CloudManualActions");
 	if (!canRunCloudActions) ImGui::BeginDisabled();
-	if (ImGui::Button(L("CLOUD_UPLOAD_HISTORY_BUTTON"))) {
+	if (ImGui::Button(L("CLOUD_UPLOAD_HISTORY_BUTTON"),
+		ImVec2(GetStandardActionWidth(), 0.0f))) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Upload cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			UploadConfigurationHistorySnapshot(configCopy, configIndex);
 		});
 	}
-	if (ImGui::Button(L("CLOUD_EXPORT_CONFIG_BUTTON"))) {
+	if (ImGui::Button(L("CLOUD_EXPORT_CONFIG_BUTTON"),
+		ImVec2(GetStandardActionWidth(), 0.0f))) {
 		const Config configCopy = cfg;
 		map<int, Config> configsCopy;
 		{
@@ -416,7 +426,8 @@ void DrawCloudSyncSettings(Config& cfg) {
 			TaskCoordinator::Instance().PostEvent(std::move(event));
 		});
 	}
-	if (ImGui::Button(L("CLOUD_IMPORT_CONFIG_BUTTON"))) {
+	if (ImGui::Button(L("CLOUD_IMPORT_CONFIG_BUTTON"),
+		ImVec2(GetStandardActionWidth(), 0.0f))) {
 		const Config configCopy = cfg;
 		map<int, Config> configsCopy;
 		{
@@ -436,14 +447,16 @@ void DrawCloudSyncSettings(Config& cfg) {
 			TaskCoordinator::Instance().PostEvent(std::move(event));
 		});
 	}
-	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"))) {
+	if (ImGui::Button(L("CLOUD_EXPORT_HISTORY_BUTTON"),
+		ImVec2(GetStandardActionWidth(), 0.0f))) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Export cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
 			ExportHistoryToCloud(configCopy, configIndex);
 		});
 	}
-	if (ImGui::Button(L("CLOUD_IMPORT_HISTORY_BUTTON"))) {
+	if (ImGui::Button(L("CLOUD_IMPORT_HISTORY_BUTTON"),
+		ImVec2(GetStandardActionWidth(), 0.0f))) {
 		const Config configCopy = cfg;
 		TaskCoordinator::Instance().Submit(L"Import cloud history",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configIndex](stop_token) {
@@ -459,7 +472,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	BeginUiCard("##CloudLegacyMigration");
 	if (!canRunCloudActions) ImGui::BeginDisabled();
 	if (ImGui::Button(L("LEGACY_REMOTE_IMPORT_BUTTON"),
-		ImVec2(CalcButtonWidth(L("LEGACY_REMOTE_IMPORT_BUTTON")), 0))) {
+		ImVec2(GetStandardActionWidth(), 0.0f))) {
 		if (ConfirmMessageBox(
 			L("LEGACY_REMOTE_IMPORT_TITLE"),
 			L("LEGACY_REMOTE_IMPORT_MESSAGE"))) {

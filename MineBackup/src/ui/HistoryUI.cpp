@@ -609,8 +609,8 @@ void ShowHistoryWindow(int requestedConfigIndex,
 	}
 
 	const UiMetrics metrics = GetUiMetrics();
-	SetNextWindowSizeFromMetrics(metrics, 72.0f, 46.0f);
-	SetNextWindowConstraintsFromMetrics(metrics, 36.0f, 26.0f);
+	SetNextWindowSizeFromMetrics(metrics, 64.0f, 42.0f);
+	SetNextWindowConstraintsFromMetrics(metrics, 32.0f, 24.0f);
 	const bool visible = ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow,
 		ImGuiWindowFlags_NoDocking);
 	wasOpen = showHistoryWindow;
@@ -786,37 +786,37 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		for (const HistoryEntryView& view : filtered) {
 			HistoryEntry& entry = *view.entry;
 			ImGui::PushID(wstring_to_utf8(entry.worldName + L"\n" + entry.backupFile).c_str());
-			BeginUiCard("##HistoryEntryCard");
 			const bool selected = selectedKey == HistoryEntryKey{entry.worldName, entry.backupFile};
 			const string filename = wstring_to_utf8(entry.backupFile);
-			if (ImGui::Selectable(filename.c_str(), selected)) {
+			const char* icon = view.status == HistoryFileStatus::Normal
+				? ICON_FA_FILE
+				: view.status == HistoryFileStatus::CloudOnly
+					? ICON_FA_CLOUD : ICON_FA_TRIANGLE_EXCLAMATION;
+			const string title = string(icon) + "  " + filename
+				+ (entry.isImportant ? "  ★" : "");
+			if (ImGui::Selectable(title.c_str(), selected,
+				ImGuiSelectableFlags_AllowOverlap)) {
 				selectedKey = {entry.worldName, entry.backupFile};
 				narrowShowDetails = !layout.useSplitView;
 			}
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", filename.c_str());
-			ImGui::TextColored(HistoryStatusColor(view.status), "%s  %s",
-				view.status == HistoryFileStatus::Normal ? ICON_FA_FILE
-					: view.status == HistoryFileStatus::CloudOnly ? ICON_FA_CLOUD
-					: ICON_FA_TRIANGLE_EXCLAMATION,
+			ImGui::TextColored(HistoryStatusColor(view.status), "%s",
 				L(HistoryStatusKey(view.status)));
 			ImGui::SameLine();
 			ImGui::TextDisabled("%s", wstring_to_utf8(entry.timestamp_str).c_str());
-			if (worldFilter.empty()) {
-				ImGui::Text("%s: %s", L("HISTORY_LABEL_WORLD"),
-					wstring_to_utf8(entry.worldName).c_str());
-			}
 			const string sizeLabel = view.fileSize == 0 ? "-"
 				: wstring_to_utf8(MineFormatMessage("HISTORY_SIZE_MB",
 					static_cast<double>(view.fileSize) / (1024.0 * 1024.0)));
-			ImGui::TextDisabled("%s | %s%s", wstring_to_utf8(entry.backupType).c_str(),
-				sizeLabel.c_str(),
-				entry.isImportant ? "  ★" : "");
+			string metadata = wstring_to_utf8(entry.backupType) + " | " + sizeLabel;
+			if (worldFilter.empty()) {
+				metadata += " | " + wstring_to_utf8(entry.worldName);
+			}
+			ImGui::TextDisabled("%s", metadata.c_str());
 			if (!entry.comment.empty()) {
 				TextEllipsisWithTooltip(wstring_to_utf8(entry.comment).c_str(),
 					ImGui::GetContentRegionAvail().x);
 			}
-			EndUiCard();
-			ImGui::Spacing();
+			ImGui::Separator();
 			ImGui::PopID();
 		}
 		ImGui::EndChild();
@@ -950,12 +950,13 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			}
 
 			ImGui::SeparatorText(L("HISTORY_DANGER_ZONE"));
-			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.20f, 0.20f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.40f, 0.40f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.30f, 0.30f, 1.0f));
 			if (ImGui::Button(L("HISTORY_BUTTON_DELETE"))) {
 				deleteKey = selectedKey;
 				requestDeletePopup = true;
 			}
-			ImGui::PopStyleColor();
+			ImGui::PopStyleColor(2);
 		}
 		ImGui::EndChild();
 	}

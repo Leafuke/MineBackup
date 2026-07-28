@@ -135,7 +135,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			string current_config_label = g_appState.configs.count(task.configIndex)
 				? (string(L("CONFIG_N")) + to_string(task.configIndex))
 				: L("TASK_NONE");
-			ImGui::SetNextItemWidth(200);
+			SetStandardControlWidth();
 			if (ImGui::BeginCombo(L("CONFIG_COMBO"), current_config_label.c_str())) {
 				for (auto const& [idx, val] : g_appState.configs) {
 					if (ImGui::Selectable((string(L("CONFIG_N")) + to_string(idx) + " - " + val.name).c_str(), task.configIndex == idx)) {
@@ -152,7 +152,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 				if (!selected_cfg.worlds.empty() && task.worldIndex >= 0 && task.worldIndex < static_cast<int>(selected_cfg.worlds.size())) {
 					current_world_label = wstring_to_utf8(selected_cfg.worlds[task.worldIndex].first);
 				}
-				ImGui::SetNextItemWidth(200);
+				SetStandardControlWidth();
 				if (ImGui::BeginCombo(L("WORLD_COMBO"), current_world_label.c_str())) {
 					for (int w_idx = 0; w_idx < static_cast<int>(selected_cfg.worlds.size()); ++w_idx) {
 						if (ImGui::Selectable(wstring_to_utf8(selected_cfg.worlds[w_idx].first).c_str(), task.worldIndex == w_idx)) {
@@ -176,14 +176,16 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 			char workDirBuf[256];
 			strncpy_s(workDirBuf, wstring_to_utf8(task.workingDirectory).c_str(), sizeof(workDirBuf));
 			ImGui::Text("%s", L("TASK_WORKDIR_LABEL"));
+			const bool workDirBrowseInline =
+				ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(25.0f);
+			SetStandardControlWidth();
+			if (ImGui::InputText("##workdir", workDirBuf, sizeof(workDirBuf))) {
+				task.workingDirectory = utf8_to_wstring(workDirBuf);
+			}
+			if (workDirBrowseInline) ImGui::SameLine();
 			if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
 				wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 				if (!sel.empty()) task.workingDirectory = sel;
-			}
-			ImGui::SameLine();
-			ImGui::SetNextItemWidth(-1);
-			if (ImGui::InputText("##workdir", workDirBuf, sizeof(workDirBuf))) {
-				task.workingDirectory = utf8_to_wstring(workDirBuf);
 			}
 		}
 
@@ -197,7 +199,7 @@ void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
 		task.triggerMode = static_cast<TaskTrigger>(triggerMode);
 
 		if (task.triggerMode == TaskTrigger::Interval) {
-			ImGui::SetNextItemWidth(150);
+			SetStandardControlWidth(10.0f);
 			ImGui::InputInt(L("INTERVAL_MINUTES"), &task.intervalMinutes);
 			if (task.intervalMinutes < 1) task.intervalMinutes = 1;
 		}

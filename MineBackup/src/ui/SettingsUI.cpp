@@ -314,8 +314,8 @@ void ShowSettingsWindowV2() {
 	}
 
 	const UiMetrics metrics = GetUiMetrics();
-	SetNextWindowSizeFromMetrics(metrics, 62.0f, 42.0f);
-	SetNextWindowConstraintsFromMetrics(metrics, 34.0f, 24.0f);
+	SetNextWindowSizeFromMetrics(metrics, 56.0f, 38.0f);
+	SetNextWindowConstraintsFromMetrics(metrics, 30.0f, 22.0f);
 	const bool visible = ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_NoDocking);
 	if (!visible) {
 		ImGui::End();

@@ -483,7 +483,7 @@ void DrawBackupBehavior(Config& cfg) {
 		}
 	}
 
-	ImGui::SetNextItemWidth(300);
+	SetStandardControlWidth();
 	if (ImGui::Combo(L("COMPRESSION_METHOD"), &method_idx, zip_methods, IM_ARRAYSIZE(zip_methods))) {
 		cfg.zipMethod = utf8_to_wstring(zip_methods[method_idx]);
 		ClampCompressionLevel(cfg.zipMethod, cfg.zipLevel);
@@ -491,24 +491,26 @@ void DrawBackupBehavior(Config& cfg) {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_COMPRESSION_METHOD"));
 
 	int max_threads = thread::hardware_concurrency();
-	ImGui::SetNextItemWidth(300);
+	SetStandardControlWidth();
 	ImGui::SliderInt(L("CPU_THREAD_COUNT"), &cfg.cpuThreads, 0, max_threads);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_CPU_THREADS"));
 
-	ImGui::SetNextItemWidth(300);
+	SetStandardControlWidth();
 	int minLevel = 1;
 	int maxLevel = 9;
 	GetCompressionLevelRange(cfg.zipMethod, minLevel, maxLevel);
 	ClampCompressionLevel(cfg.zipMethod, cfg.zipLevel);
 	ImGui::SliderInt(L("COMPRESSION_LEVEL"), &cfg.zipLevel, minLevel, maxLevel);
 
-	ImGui::SetNextItemWidth(300);
+	const bool keepAndSafeDeleteInline =
+		ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(31.0f);
+	SetStandardControlWidth();
 	ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
-	ImGui::SameLine();
+	if (keepAndSafeDeleteInline) ImGui::SameLine();
 	ImGui::Checkbox(L("IS_SAFE_DELETE"), &isSafeDelete);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("IS_SAFE_DELETE_TIP"));
 
-	ImGui::SetNextItemWidth(300);
+	SetStandardControlWidth();
 	ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
 
@@ -538,27 +540,36 @@ static void DrawRuleListBox(const char* listId, vector<wstring>& rules, int& sel
 }
 
 void DrawBlacklistSettings(Config& cfg) {
-	if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"))) {
+	static int sel_bl_item = -1;
+	const int toolbarColumns = ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(38.0f)
+		? 4 : 2;
+	if (ImGui::BeginTable("##BlacklistToolbar", toolbarColumns,
+		ImGuiTableFlags_SizingStretchSame)) {
+	ImGui::TableNextColumn();
+	if (ImGui::Button(L("BUTTON_ADD_FILE_BLACKLIST"), ImVec2(-FLT_MIN, 0.0f))) {
 		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) cfg.blacklist.push_back(sel);
 	}
-	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"))) {
+	ImGui::TableNextColumn();
+	if (ImGui::Button(L("BUTTON_ADD_FOLDER_BLACKLIST"), ImVec2(-FLT_MIN, 0.0f))) {
 		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
 		if (!sel.empty()) cfg.blacklist.push_back(sel);
 	}
-	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_ADD_REGEX_BLACKLIST"))) {
+	ImGui::TableNextColumn();
+	if (ImGui::Button(L("BUTTON_ADD_REGEX_BLACKLIST"), ImVec2(-FLT_MIN, 0.0f))) {
 		ImGui::OpenPopup(L("ADD_REGEX_RULE_TITLE"));
 	}
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 		ImGui::SetTooltip("%s", L("TIP_USE_REGEX"));
-
-	static int sel_bl_item = -1;
-	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST")) && sel_bl_item >= 0 && sel_bl_item < static_cast<int>(cfg.blacklist.size())) {
+	ImGui::TableNextColumn();
+	ImGui::BeginDisabled(sel_bl_item < 0
+		|| sel_bl_item >= static_cast<int>(cfg.blacklist.size()));
+	if (ImGui::Button(L("BUTTON_REMOVE_BLACKLIST"), ImVec2(-FLT_MIN, 0.0f))) {
 		cfg.blacklist.erase(cfg.blacklist.begin() + sel_bl_item);
 		sel_bl_item = -1;
+	}
+	ImGui::EndDisabled();
+	ImGui::EndTable();
 	}
 
 	if (ImGui::BeginPopupModal(L("ADD_REGEX_RULE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {

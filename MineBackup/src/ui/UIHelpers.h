@@ -50,6 +50,20 @@ inline UiMetrics GetUiMetrics() {
 	return metrics;
 }
 
+inline float GetStandardControlWidth(float maximumEm = 18.0f) {
+	const UiMetrics metrics = GetUiMetrics();
+	return (std::min)(ImGui::GetContentRegionAvail().x, metrics.Em(maximumEm));
+}
+
+inline void SetStandardControlWidth(float maximumEm = 18.0f) {
+	ImGui::SetNextItemWidth(GetStandardControlWidth(maximumEm));
+}
+
+inline float GetStandardActionWidth(float maximumEm = 13.0f) {
+	const UiMetrics metrics = GetUiMetrics();
+	return (std::min)(ImGui::GetContentRegionAvail().x, metrics.Em(maximumEm));
+}
+
 struct SettingsResponsiveLayout {
 	bool useSidebar = false;
 	float sidebarWidth = 0.0f;
@@ -64,9 +78,9 @@ inline SettingsResponsiveLayout ComputeSettingsResponsiveLayout(
 	const float gap = spacingX > 0.0f ? spacingX : safeEm * 0.5f;
 	const float safeWidth = (std::max)(availableWidth, 0.0f);
 	SettingsResponsiveLayout result;
-	result.useSidebar = safeWidth >= safeEm * 52.0f;
+	result.useSidebar = safeWidth >= safeEm * 42.0f;
 	if (result.useSidebar) {
-		result.sidebarWidth = (std::clamp)(safeWidth * 0.22f, safeEm * 10.0f, safeEm * 14.0f);
+		result.sidebarWidth = (std::clamp)(safeWidth * 0.18f, safeEm * 8.5f, safeEm * 11.0f);
 		result.contentWidth = (std::max)(safeWidth - result.sidebarWidth - gap, 0.0f);
 	}
 	else {
@@ -109,10 +123,10 @@ inline HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
 	const float gap = spacingX > 0.0f ? spacingX : safeEm * 0.5f;
 	const float safeWidth = (std::max)(availableWidth, 0.0f);
 	HistoryResponsiveLayout result;
-	result.useSplitView = safeWidth >= safeEm * 64.0f;
+	result.useSplitView = safeWidth >= safeEm * 50.0f;
 	if (result.useSplitView) {
 		const float usable = (std::max)(safeWidth - gap, 0.0f);
-		result.listWidth = (std::clamp)(usable * 0.42f, safeEm * 28.0f, usable - safeEm * 30.0f);
+		result.listWidth = (std::clamp)(usable * 0.40f, safeEm * 22.0f, usable - safeEm * 26.0f);
 		result.detailsWidth = (std::max)(usable - result.listWidth, 0.0f);
 	}
 	else {

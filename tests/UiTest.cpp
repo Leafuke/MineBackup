@@ -42,19 +42,19 @@ void ApplyBuiltInTheme(int theme) {
 void TestResponsiveLayouts() {
 	for (float dpi : {1.0f, 1.5f, 2.0f}) {
 		const float em = 16.0f * dpi;
-		const auto settingsNarrow = ComputeSettingsResponsiveLayout(em * 51.9f, em);
-		const auto settingsWide = ComputeSettingsResponsiveLayout(em * 52.0f, em);
-		Check(!settingsNarrow.useSidebar, "settings switches to top navigation below 52em");
-		Check(settingsWide.useSidebar, "settings uses sidebar at 52em");
-		Check(settingsWide.sidebarWidth >= em * 10.0f, "settings sidebar minimum width");
+		const auto settingsNarrow = ComputeSettingsResponsiveLayout(em * 41.9f, em);
+		const auto settingsWide = ComputeSettingsResponsiveLayout(em * 42.0f, em);
+		Check(!settingsNarrow.useSidebar, "settings switches to top navigation below 42em");
+		Check(settingsWide.useSidebar, "settings uses sidebar at 42em");
+		Check(settingsWide.sidebarWidth >= em * 8.5f, "settings sidebar minimum width");
 		Check(settingsWide.contentWidth >= 0.0f, "settings content width is non-negative");
 
-		const auto historyNarrow = ComputeHistoryResponsiveLayout(em * 63.9f, em);
-		const auto historyWide = ComputeHistoryResponsiveLayout(em * 64.0f, em);
-		Check(!historyNarrow.useSplitView, "history switches to paging below 64em");
-		Check(historyWide.useSplitView, "history uses split view at 64em");
-		Check(historyWide.listWidth >= em * 28.0f, "history list minimum width");
-		Check(historyWide.detailsWidth >= em * 30.0f, "history details minimum width");
+		const auto historyNarrow = ComputeHistoryResponsiveLayout(em * 49.9f, em);
+		const auto historyWide = ComputeHistoryResponsiveLayout(em * 50.0f, em);
+		Check(!historyNarrow.useSplitView, "history switches to paging below 50em");
+		Check(historyWide.useSplitView, "history uses split view at 50em");
+		Check(historyWide.listWidth >= em * 22.0f, "history list minimum width");
+		Check(historyWide.detailsWidth >= em * 26.0f, "history details minimum width");
 	}
 	const auto emptySettings = ComputeSettingsResponsiveLayout(-10.0f, 0.0f);
 	const auto emptyHistory = ComputeHistoryResponsiveLayout(-10.0f, 0.0f);
