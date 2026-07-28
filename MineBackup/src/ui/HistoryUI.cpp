@@ -17,12 +17,15 @@
 #include "AppPaths.h"
 #include "TaskCoordinator.h"
 #include "DesktopServices.h"
+#include "HistoryViewModel.h"
+
+#include <optional>
 
 using namespace std;
 
 // 前向声明
 
-void ShowHistoryWindow(int& tempCurrentConfigIndex) {
+static void ShowHistoryWindowLegacy(int& tempCurrentConfigIndex) {
 	// 使用 (worldName, backupFile) 键值对标识选中项，避免指针悬垂
 	static std::wstring sel_world, sel_file;   // 当前选中条目的键
 	static std::wstring del_world, del_file;   // 待删除条目的键
@@ -208,16 +211,12 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 					// 图标
 					const char* icon = file_exists ? (is_small ? ICON_FA_TRIANGLE_EXCLAMATION : ICON_FA_FILE) : ICON_FA_GHOST;
 					ImVec4 icon_color = file_exists ? (is_small ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) : ImVec4(0.6f, 0.9f, 0.6f, 1.0f)) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
-					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 5, p_min.y + (p_max.y - p_min.y) / 2 - ImGui::GetTextLineHeight() / 2));
 					ImGui::TextColored(icon_color, "%s", icon);
 
 					// 文本内容
-					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 30, p_min.y + 5));
 					ImGui::TextUnformatted(entry_label_utf8.c_str());
-					ImGui::SetCursorScreenPos(ImVec2(p_min.x + 30, p_min.y + 5 + ImGui::GetTextLineHeightWithSpacing()));
 					ImGui::TextDisabled("%s", wstring_to_utf8(entry->timestamp_str + L" | " + entry->comment).c_str());
 					ImGui::SameLine();
-					ImGui::SetCursorScreenPos(ImVec2(p_max.x - 2 * ImGui::GetTextLineHeight(), p_min.y + (p_max.y - p_min.y) / 2 - ImGui::GetTextLineHeight() / 2));
 
 					// 重要标记图标
 					if (entry->isImportant) {
@@ -526,6 +525,597 @@ void ShowHistoryWindow(int& tempCurrentConfigIndex) {
 	ImGui::EndChild();
 
 	ImGui::End();
+}
+
+namespace {
+
+const char* HistoryStatusKey(HistoryFileStatus status) {
+	switch (status) {
+	case HistoryFileStatus::Normal: return "HISTORY_STATUS_OK";
+	case HistoryFileStatus::CloudOnly: return "HISTORY_STATUS_CLOUD_ONLY";
+	case HistoryFileStatus::Missing: return "HISTORY_STATUS_MISSING";
+	case HistoryFileStatus::SmallFile: return "HISTORY_STATUS_SMALL";
+	case HistoryFileStatus::Inaccessible: return "HISTORY_STATUS_INACCESSIBLE";
+	}
+	return "HISTORY_STATUS_MISSING";
+}
+
+ImVec4 HistoryStatusColor(HistoryFileStatus status) {
+	switch (status) {
+	case HistoryFileStatus::Normal: return ImVec4(0.35f, 0.80f, 0.45f, 1.0f);
+	case HistoryFileStatus::CloudOnly: return ImVec4(0.40f, 0.70f, 1.0f, 1.0f);
+	case HistoryFileStatus::SmallFile: return ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
+	case HistoryFileStatus::Missing:
+	case HistoryFileStatus::Inaccessible:
+		return ImVec4(0.95f, 0.45f, 0.35f, 1.0f);
+	}
+	return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+}
+
+HistoryEntry* ResolveHistoryEntry(int configIndex, const HistoryEntryKey& key) {
+	if (key.Empty()) return nullptr;
+	const auto history = g_appState.g_history.find(configIndex);
+	if (history == g_appState.g_history.end()) return nullptr;
+	for (HistoryEntry& entry : history->second) {
+		if (entry.worldName == key.worldName && entry.backupFile == key.backupFile) {
+			return &entry;
+		}
+	}
+	return nullptr;
+}
+
+void ConstrainHistoryPopup(const UiMetrics& metrics) {
+	const ImVec2 work = ImGui::GetMainViewport()->WorkSize;
+	ImGui::SetNextWindowSizeConstraints(
+		ImVec2((std::min)(metrics.Em(20.0f), work.x * 0.9f),
+			(std::min)(metrics.Em(10.0f), work.y * 0.9f)),
+		ImVec2(work.x * 0.9f, work.y * 0.9f));
+}
+
+bool SameLineFits(const char* nextLabel) {
+	const float required = ImGui::CalcTextSize(nextLabel).x
+		+ ImGui::GetStyle().FramePadding.x * 2.0f
+		+ ImGui::GetStyle().ItemSpacing.x;
+	if (ImGui::GetContentRegionAvail().x < required) return false;
+	ImGui::SameLine();
+	return true;
+}
+
+} // namespace
+
+void ShowHistoryWindow(int requestedConfigIndex,
+	const optional<wstring>& initialWorld) {
+	static int lockedConfigIndex = -1;
+	static bool wasOpen = false;
+	static HistoryEntryKey selectedKey;
+	static HistoryEntryKey restoreKey;
+	static HistoryEntryKey deleteKey;
+	static HistoryEntryKey commentKey;
+	static wstring worldFilter;
+	static char textFilter[256] = "";
+	static int statusFilterIndex = 0;
+	static bool importantOnly = false;
+	static bool narrowShowDetails = false;
+	static bool requestRestorePopup = false;
+	static bool requestDeletePopup = false;
+	static bool requestCommentPopup = false;
+	static char commentBuffer[1024] = "";
+
+	if (!wasOpen || lockedConfigIndex < 0) {
+		lockedConfigIndex = requestedConfigIndex;
+		worldFilter = initialWorld.value_or(g_worldToFocusInHistory);
+		selectedKey = {};
+		narrowShowDetails = false;
+	}
+
+	const UiMetrics metrics = GetUiMetrics();
+	SetNextWindowSizeFromMetrics(metrics, 72.0f, 46.0f);
+	SetNextWindowConstraintsFromMetrics(metrics, 36.0f, 26.0f);
+	const bool visible = ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow,
+		ImGuiWindowFlags_NoDocking);
+	wasOpen = showHistoryWindow;
+	if (!visible) {
+		ImGui::End();
+		if (!showHistoryWindow) lockedConfigIndex = -1;
+		return;
+	}
+
+	const auto configIt = g_appState.configs.find(lockedConfigIndex);
+	if (configIt == g_appState.configs.end()) {
+		ImGui::TextWrapped("%s", L("HISTORY_CONFIG_UNAVAILABLE"));
+		ImGui::End();
+		return;
+	}
+	Config& config = configIt->second;
+	auto& entries = g_appState.g_history[lockedConfigIndex];
+
+	ImGui::Text("%s: [No.%d] %s", L("HISTORY_LOCKED_CONFIG"), lockedConfigIndex,
+		config.name.c_str());
+	ImGui::Separator();
+
+	vector<wstring> worlds;
+	for (const HistoryEntry& entry : entries) {
+		if (find(worlds.begin(), worlds.end(), entry.worldName) == worlds.end()) {
+			worlds.push_back(entry.worldName);
+		}
+	}
+	sort(worlds.begin(), worlds.end());
+
+	const bool wideToolbar = ImGui::GetContentRegionAvail().x >= metrics.Em(58.0f);
+	const float worldWidth = wideToolbar ? metrics.Em(13.0f) : -1.0f;
+	ImGui::SetNextItemWidth(worldWidth);
+	const string selectedWorldLabel = worldFilter.empty()
+		? string(L("HISTORY_ALL_WORLDS")) : wstring_to_utf8(worldFilter);
+	if (ImGui::BeginCombo("##HistoryWorld", selectedWorldLabel.c_str())) {
+		if (ImGui::Selectable(L("HISTORY_ALL_WORLDS"), worldFilter.empty())) {
+			worldFilter.clear();
+		}
+		for (const wstring& world : worlds) {
+			const bool selected = worldFilter == world;
+			if (ImGui::Selectable(wstring_to_utf8(world).c_str(), selected)) worldFilter = world;
+		}
+		ImGui::EndCombo();
+	}
+	if (wideToolbar) ImGui::SameLine();
+
+	const char* statusNames[] = {
+		L("HISTORY_FILTER_ALL"), L("HISTORY_FILTER_NORMAL"),
+		L("HISTORY_FILTER_CLOUD_ONLY"), L("HISTORY_FILTER_MISSING"),
+		L("HISTORY_FILTER_SMALL")
+	};
+	ImGui::SetNextItemWidth(wideToolbar ? metrics.Em(11.0f) : -1.0f);
+	ImGui::Combo("##HistoryStatus", &statusFilterIndex, statusNames,
+		IM_ARRAYSIZE(statusNames));
+	if (wideToolbar) ImGui::SameLine();
+	ImGui::SetNextItemWidth(wideToolbar ? -1.0f : -1.0f);
+	ImGui::InputTextWithHint("##HistorySearch", L("HISTORY_SEARCH_HINT"), textFilter,
+		IM_ARRAYSIZE(textFilter));
+
+	ImGui::Checkbox(L("HISTORY_IMPORTANT_ONLY"), &importantOnly);
+	SameLineFits(L("HISTORY_CLOUD_MENU"));
+	if (ImGui::Button(L("HISTORY_CLOUD_MENU"))) ImGui::OpenPopup("##HistoryCloudMenu");
+	if (ImGui::BeginPopup("##HistoryCloudMenu")) {
+		const bool canCloud = CanUseCloudActions(config);
+		ImGui::BeginDisabled(!canCloud);
+		if (ImGui::MenuItem(L("HISTORY_CLOUD_ANALYZE"))) {
+			const Config copy = config;
+			const int index = lockedConfigIndex;
+			TaskCoordinator::Instance().Submit(L"Analyze cloud history",
+				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+				[copy, index](stop_token) { AnalyzeCloudHistory(copy, index); });
+		}
+		if (ImGui::MenuItem(L("HISTORY_CLOUD_SYNC_HISTORY"))) {
+			const Config copy = config;
+			const int index = lockedConfigIndex;
+			TaskCoordinator::Instance().Submit(L"Sync cloud history",
+				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+				[copy, index](stop_token) {
+					SyncConfigFromCloud(copy, index, CloudSyncMode::HistoryOnly);
+				});
+		}
+		if (ImGui::MenuItem(L("HISTORY_CLOUD_SYNC_ALL"))) {
+			const Config copy = config;
+			const int index = lockedConfigIndex;
+			TaskCoordinator::Instance().Submit(L"Sync cloud data",
+				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+				[copy, index](stop_token) {
+					SyncConfigFromCloud(copy, index, CloudSyncMode::HistoryAndBackups);
+				});
+		}
+		ImGui::EndDisabled();
+		if (!canCloud) {
+			ImGui::Separator();
+			ImGui::TextWrapped("%s",
+				wstring_to_utf8(GetCloudActionsUnavailableReason(config)).c_str());
+		}
+		ImGui::EndPopup();
+	}
+
+	size_t missingCount = 0;
+	for (HistoryEntry& entry : entries) {
+		const HistoryFileStatus status = BuildHistoryEntryView(config, entry).status;
+		if (status == HistoryFileStatus::Missing
+			|| status == HistoryFileStatus::Inaccessible) ++missingCount;
+	}
+	const string cleanLabel = wstring_to_utf8(MineFormatMessage(
+		"HISTORY_CLEAN_INVALID_COUNT", static_cast<int>(missingCount)));
+	SameLineFits(cleanLabel.c_str());
+	ImGui::BeginDisabled(missingCount == 0);
+	if (ImGui::Button(cleanLabel.c_str())) {
+		ImGui::OpenPopup(L("HISTORY_CONFIRM_CLEAN_TITLE"));
+	}
+	ImGui::EndDisabled();
+
+	ConstrainHistoryPopup(metrics);
+	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextWrapped("%s", L("HISTORY_CONFIRM_CLEAN_MSG"));
+		if (ImGui::Button(L("BUTTON_OK"))) {
+			entries.erase(remove_if(entries.begin(), entries.end(), [&](HistoryEntry& entry) {
+				const HistoryFileStatus status = BuildHistoryEntryView(config, entry).status;
+				return status == HistoryFileStatus::Missing
+					|| status == HistoryFileStatus::Inaccessible;
+			}), entries.end());
+			SaveHistory();
+			if (!ResolveHistoryEntry(lockedConfigIndex, selectedKey)) {
+				selectedKey = {};
+				narrowShowDetails = false;
+			}
+			ImGui::CloseCurrentPopup();
+		}
+		SameLineFits(L("BUTTON_CANCEL"));
+		if (ImGui::Button(L("BUTTON_CANCEL"))) ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+
+	{
+		lock_guard<mutex> cloudLock(g_appState.cloudTask.mutex);
+		if (g_appState.cloudTask.activeConfigIndex == lockedConfigIndex
+			&& (!g_appState.cloudTask.statusText.empty()
+				|| !g_appState.cloudTask.lastMessage.empty())) {
+			ImGui::TextWrapped("%s",
+				wstring_to_utf8(g_appState.cloudTask.statusText).c_str());
+			if (!g_appState.cloudTask.lastMessage.empty()) {
+				ImGui::TextWrapped("%s",
+					wstring_to_utf8(g_appState.cloudTask.lastMessage).c_str());
+			}
+		}
+	}
+	ImGui::Separator();
+
+	const auto filtered = BuildFilteredHistoryViews(config, entries, worldFilter,
+		textFilter, static_cast<HistoryStatusFilter>(statusFilterIndex), importantOnly);
+	HistoryEntry* selectedEntry = ResolveHistoryEntry(lockedConfigIndex, selectedKey);
+	if (!selectedEntry) {
+		selectedKey = {};
+		narrowShowDetails = false;
+	}
+
+	const HistoryResponsiveLayout layout = ComputeHistoryResponsiveLayout(
+		ImGui::GetContentRegionAvail().x, metrics.em, metrics.spacingX);
+	const bool showList = layout.useSplitView || !narrowShowDetails;
+	if (showList) {
+		ImGui::BeginChild("##HistoryList", ImVec2(layout.listWidth, 0.0f),
+			ImGuiChildFlags_Borders);
+		if (entries.empty()) {
+			ImGui::TextWrapped("%s", L("HISTORY_EMPTY"));
+		}
+		else if (filtered.empty()) {
+			ImGui::TextWrapped("%s", L("HISTORY_FILTER_EMPTY"));
+		}
+		for (const HistoryEntryView& view : filtered) {
+			HistoryEntry& entry = *view.entry;
+			ImGui::PushID(wstring_to_utf8(entry.worldName + L"\n" + entry.backupFile).c_str());
+			BeginUiCard("##HistoryEntryCard");
+			const bool selected = selectedKey == HistoryEntryKey{entry.worldName, entry.backupFile};
+			const string filename = wstring_to_utf8(entry.backupFile);
+			if (ImGui::Selectable(filename.c_str(), selected)) {
+				selectedKey = {entry.worldName, entry.backupFile};
+				narrowShowDetails = !layout.useSplitView;
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", filename.c_str());
+			ImGui::TextColored(HistoryStatusColor(view.status), "%s  %s",
+				view.status == HistoryFileStatus::Normal ? ICON_FA_FILE
+					: view.status == HistoryFileStatus::CloudOnly ? ICON_FA_CLOUD
+					: ICON_FA_TRIANGLE_EXCLAMATION,
+				L(HistoryStatusKey(view.status)));
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", wstring_to_utf8(entry.timestamp_str).c_str());
+			if (worldFilter.empty()) {
+				ImGui::Text("%s: %s", L("HISTORY_LABEL_WORLD"),
+					wstring_to_utf8(entry.worldName).c_str());
+			}
+			const string sizeLabel = view.fileSize == 0 ? "-"
+				: wstring_to_utf8(MineFormatMessage("HISTORY_SIZE_MB",
+					static_cast<double>(view.fileSize) / (1024.0 * 1024.0)));
+			ImGui::TextDisabled("%s | %s%s", wstring_to_utf8(entry.backupType).c_str(),
+				sizeLabel.c_str(),
+				entry.isImportant ? "  ★" : "");
+			if (!entry.comment.empty()) {
+				TextEllipsisWithTooltip(wstring_to_utf8(entry.comment).c_str(),
+					ImGui::GetContentRegionAvail().x);
+			}
+			EndUiCard();
+			ImGui::Spacing();
+			ImGui::PopID();
+		}
+		ImGui::EndChild();
+	}
+
+	if (layout.useSplitView) ImGui::SameLine();
+	if (layout.useSplitView || narrowShowDetails) {
+		ImGui::BeginChild("##HistoryDetails", ImVec2(0.0f, 0.0f),
+			ImGuiChildFlags_Borders);
+		if (!layout.useSplitView && ImGui::Button(L("HISTORY_BACK_TO_LIST"))) {
+			narrowShowDetails = false;
+		}
+		selectedEntry = ResolveHistoryEntry(lockedConfigIndex, selectedKey);
+		if (!selectedEntry) {
+			ImGui::TextWrapped("%s", L("HISTORY_SELECT_PROMPT"));
+		}
+		else {
+			const HistoryEntryView selectedView =
+				BuildHistoryEntryView(config, *selectedEntry);
+			const filesystem::path backupPath = filesystem::path(config.backupPath)
+				/ selectedEntry->worldName / selectedEntry->backupFile;
+			const bool localFile = selectedView.status == HistoryFileStatus::Normal
+				|| selectedView.status == HistoryFileStatus::SmallFile;
+			const bool cloudCopy = HasHistoryCloudCopy(*selectedEntry);
+			const bool canCloud = CanUseCloudActions(config);
+
+			ImGui::SeparatorText(L("HISTORY_DETAILS_PANE_TITLE"));
+			if (ImGui::BeginTable("##HistoryDetailsTable", 2,
+				ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+				auto row = [](const char* label, const string& value) {
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn();
+					ImGui::TextUnformatted(label);
+					ImGui::TableNextColumn();
+					ImGui::TextWrapped("%s", value.c_str());
+				};
+				row(L("HISTORY_LABEL_WORLD"), wstring_to_utf8(selectedEntry->worldName));
+				row(L("HISTORY_LABEL_FILENAME"), wstring_to_utf8(selectedEntry->backupFile));
+				row(L("HISTORY_LABEL_BACKUP_TIME"), wstring_to_utf8(selectedEntry->timestamp_str));
+				row(L("TYPE_LABEL"), wstring_to_utf8(selectedEntry->backupType));
+				row(L("HISTORY_LABEL_STATUS"), L(HistoryStatusKey(selectedView.status)));
+				if (localFile) {
+					row(L("HISTORY_LABEL_FILE_SIZE"), wstring_to_utf8(MineFormatMessage(
+						"HISTORY_SIZE_MB", static_cast<double>(selectedView.fileSize)
+							/ (1024.0 * 1024.0))));
+				}
+				ImGui::EndTable();
+			}
+
+			ImGui::SeparatorText(L("HISTORY_PRIMARY_ACTION"));
+			const bool canRestore = localFile
+				|| (cloudCopy && config.cloudAutoDownloadBeforeRestore && canCloud);
+			ImGui::BeginDisabled(!canRestore);
+			if (ImGui::Button(L("HISTORY_BUTTON_RESTORE"), ImVec2(-1.0f, 0.0f))) {
+				restoreKey = selectedKey;
+				requestRestorePopup = true;
+			}
+			ImGui::EndDisabled();
+			if (!canRestore) ImGui::TextDisabled("%s", L(cloudCopy
+				? "HISTORY_RESTORE_NEEDS_CLOUD" : "HISTORY_RESTORE_UNAVAILABLE"));
+
+			ImGui::SeparatorText(L("HISTORY_COMMON_ACTIONS"));
+			ImGui::BeginDisabled(!localFile);
+			if (ImGui::Button(L("HISTORY_BUTTON_OPEN_FOLDER"))) {
+				(void)GetDesktopServices()->RevealInFolder(backupPath.parent_path(), backupPath);
+			}
+			ImGui::EndDisabled();
+			SameLineFits(selectedEntry->isImportant
+				? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"));
+			if (ImGui::Button(selectedEntry->isImportant
+				? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
+				selectedEntry->isImportant = !selectedEntry->isImportant;
+				SaveHistory();
+			}
+			SameLineFits(L("HISTORY_EDIT_COMMENT"));
+			if (ImGui::Button(L("HISTORY_EDIT_COMMENT"))) {
+				commentKey = selectedKey;
+				strncpy_s(commentBuffer,
+					wstring_to_utf8(selectedEntry->comment).c_str(), sizeof(commentBuffer));
+				requestCommentPopup = true;
+			}
+			ImGui::TextWrapped("%s", selectedEntry->comment.empty()
+				? L("HISTORY_NO_COMMENT") : wstring_to_utf8(selectedEntry->comment).c_str());
+
+			ImGui::SeparatorText(L("HISTORY_CONDITIONAL_ACTIONS"));
+			ImGui::BeginDisabled(!canCloud || !localFile);
+			if (ImGui::Button(L("HISTORY_BUTTON_UPLOAD_CLOUD"))) {
+				const Config copy = config;
+				const HistoryEntry entryCopy = *selectedEntry;
+				const int index = lockedConfigIndex;
+				TaskCoordinator::Instance().Submit(L"Upload backup",
+					{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+					[copy, index, entryCopy](stop_token) {
+						UploadHistoryEntry(copy, index, entryCopy);
+					});
+			}
+			ImGui::EndDisabled();
+			SameLineFits(L("HISTORY_BUTTON_DOWNLOAD_CLOUD"));
+			ImGui::BeginDisabled(!canCloud || !cloudCopy);
+			if (ImGui::Button(L("HISTORY_BUTTON_DOWNLOAD_CLOUD"))) {
+				const Config copy = config;
+				const HistoryEntry entryCopy = *selectedEntry;
+				const int index = lockedConfigIndex;
+				TaskCoordinator::Instance().Submit(L"Download backup",
+					{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},
+					[copy, index, entryCopy](stop_token) {
+						DownloadHistoryEntry(copy, index, entryCopy);
+					});
+			}
+			ImGui::EndDisabled();
+			SameLineFits(L("BUTTON_ADD_TO_WE"));
+			ImGui::BeginDisabled(!config.enableWEIntegration || !localFile);
+			if (ImGui::Button(L("BUTTON_ADD_TO_WE"))) {
+				const Config copy = config;
+				const HistoryEntry entryCopy = *selectedEntry;
+				TaskCoordinator::Instance().Submit(L"Create WorldEdit snapshot",
+					{TaskCoordinator::WorldResourceKey(copy.configId,
+						JoinPath(copy.saveRoot, entryCopy.worldName))},
+					[copy, entryCopy](stop_token) {
+						AddBackupToWESnapshots(copy, entryCopy.worldName,
+							entryCopy.backupFile);
+					});
+			}
+			ImGui::EndDisabled();
+			if (!canCloud) {
+				ImGui::TextDisabled("%s",
+					wstring_to_utf8(GetCloudActionsUnavailableReason(config)).c_str());
+			}
+			if (!config.enableWEIntegration) {
+				ImGui::TextDisabled("%s", L("HISTORY_WE_DISABLED_REASON"));
+			}
+
+			ImGui::SeparatorText(L("HISTORY_DANGER_ZONE"));
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.20f, 0.20f, 1.0f));
+			if (ImGui::Button(L("HISTORY_BUTTON_DELETE"))) {
+				deleteKey = selectedKey;
+				requestDeletePopup = true;
+			}
+			ImGui::PopStyleColor();
+		}
+		ImGui::EndChild();
+	}
+
+	if (requestCommentPopup) {
+		ImGui::OpenPopup("##HistoryComment");
+		requestCommentPopup = false;
+	}
+	if (requestRestorePopup) {
+		ImGui::OpenPopup("##HistoryRestore");
+		requestRestorePopup = false;
+	}
+	if (requestDeletePopup) {
+		ImGui::OpenPopup(L("HISTORY_DELETE_POPUP_TITLE"));
+		requestDeletePopup = false;
+	}
+
+	ConstrainHistoryPopup(metrics);
+	if (ImGui::BeginPopupModal("##HistoryComment", nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize)) {
+		HistoryEntry* entry = ResolveHistoryEntry(lockedConfigIndex, commentKey);
+		if (!entry) {
+			ImGui::TextWrapped("%s", L("HISTORY_ENTRY_DISAPPEARED"));
+			if (ImGui::Button(L("BUTTON_OK"))) ImGui::CloseCurrentPopup();
+		}
+		else {
+			ImGui::SetNextItemWidth((std::min)(metrics.Em(32.0f),
+				ImGui::GetMainViewport()->WorkSize.x * 0.8f));
+			ImGui::InputTextMultiline("##Comment", commentBuffer,
+				IM_ARRAYSIZE(commentBuffer), ImVec2(0.0f, metrics.Em(8.0f)));
+			if (ImGui::Button(L("HISTORY_BUTTON_SAVE_COMMENT"))) {
+				entry->comment = utf8_to_wstring(commentBuffer);
+				SaveHistory();
+				ImGui::CloseCurrentPopup();
+			}
+			SameLineFits(L("BUTTON_CANCEL"));
+			if (ImGui::Button(L("BUTTON_CANCEL"))) ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+
+	ConstrainHistoryPopup(metrics);
+	if (ImGui::BeginPopupModal("##HistoryRestore", nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize)) {
+		HistoryEntry* entry = ResolveHistoryEntry(lockedConfigIndex, restoreKey);
+		static int restoreMethod = 0;
+		static char customItems[CONSTANT2] = "";
+		if (!entry) {
+			ImGui::TextWrapped("%s", L("HISTORY_ENTRY_DISAPPEARED"));
+			if (ImGui::Button(L("BUTTON_OK"))) ImGui::CloseCurrentPopup();
+		}
+		else {
+			ImGui::TextWrapped("%s", wstring_to_utf8(entry->backupFile).c_str());
+			ImGui::RadioButton(L("RESTORE_METHOD_CLEAN"), &restoreMethod, 0);
+			ImGui::RadioButton(L("RESTORE_METHOD_OVERWRITE"), &restoreMethod, 1);
+			ImGui::RadioButton(L("RESTORE_METHOD_REVERSE"), &restoreMethod, 2);
+			ImGui::RadioButton(L("RESTORE_METHOD_CUSTOM"), &restoreMethod, 3);
+			if (restoreMethod == 3) {
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::InputTextWithHint("##CustomRestore", L("CUSTOM_RESTORE_ITEMS_HINT"),
+					customItems, IM_ARRAYSIZE(customItems));
+			}
+			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"))) {
+				const Config copy = config;
+				const HistoryEntry entryCopy = *entry;
+				const int index = lockedConfigIndex;
+				const int method = restoreMethod;
+				const string items = customItems;
+				const auto worldPath = JoinPath(copy.saveRoot, entryCopy.worldName);
+				TaskCoordinator::Instance().Submit(L"Restore backup",
+					{TaskCoordinator::WorldResourceKey(copy.configId, worldPath)},
+					[copy, entryCopy, index, method, items, worldPath](stop_token) {
+						if (copy.backupBefore) {
+							MyFolder world = {worldPath.wstring(), entryCopy.worldName,
+								L"", copy, index, -1};
+							DoBackup(world, L"BeforeRestore");
+						}
+						DoRestore(copy, entryCopy.worldName, entryCopy.backupFile,
+							method, items);
+					});
+				ImGui::CloseCurrentPopup();
+			}
+			SameLineFits(L("BUTTON_SELECT_CUSTOM_FILE"));
+			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"))) {
+				const wstring selectedFile = GetDesktopServices()->SelectFile().path.wstring();
+				if (!selectedFile.empty()) {
+					const Config copy = config;
+					const wstring worldName = entry->worldName;
+					const int method = restoreMethod;
+					TaskCoordinator::Instance().Submit(L"Restore custom backup",
+						{TaskCoordinator::WorldResourceKey(copy.configId,
+							JoinPath(copy.saveRoot, worldName))},
+						[copy, worldName, selectedFile, method](stop_token) {
+							DoRestore2(copy, worldName, selectedFile, method);
+						});
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			SameLineFits(L("BUTTON_CANCEL"));
+			if (ImGui::Button(L("BUTTON_CANCEL"))) ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+
+	ConstrainHistoryPopup(metrics);
+	if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize)) {
+		HistoryEntry* entry = ResolveHistoryEntry(lockedConfigIndex, deleteKey);
+		static int deleteMode = 2;
+		static bool useSafeDelete = true;
+		if (!entry) {
+			ImGui::TextWrapped("%s", L("HISTORY_ENTRY_DISAPPEARED"));
+			if (ImGui::Button(L("BUTTON_OK"))) ImGui::CloseCurrentPopup();
+		}
+		else {
+			const HistoryEntryView view = BuildHistoryEntryView(config, *entry);
+			const bool localFile = view.status == HistoryFileStatus::Normal
+				|| view.status == HistoryFileStatus::SmallFile;
+			if (ImGui::IsWindowAppearing()) deleteMode = localFile ? 2 : 0;
+			ImGui::TextWrapped(L("HISTORY_DELETE_POPUP_MSG"),
+				wstring_to_utf8(entry->backupFile).c_str());
+			ImGui::RadioButton(L("HISTORY_DELETE_MODE_HISTORY_ONLY"), &deleteMode, 0);
+			ImGui::BeginDisabled(!localFile);
+			ImGui::RadioButton(L("HISTORY_DELETE_MODE_LOCAL_ONLY"), &deleteMode, 1);
+			ImGui::RadioButton(L("HISTORY_DELETE_MODE_LOCAL_AND_HISTORY"), &deleteMode, 2);
+			ImGui::EndDisabled();
+			const bool canSafeDelete = deleteMode == 2
+				&& entry->backupType.find(L"Smart") != wstring::npos;
+			ImGui::BeginDisabled(!canSafeDelete);
+			ImGui::Checkbox(L("HISTORY_DELETE_USE_SAFE_DELETE"), &useSafeDelete);
+			ImGui::EndDisabled();
+			if (ImGui::Button(L("BUTTON_OK"))) {
+				const HistoryEntry copyEntry = *entry;
+				const Config copyConfig = config;
+				const int index = lockedConfigIndex;
+				const BackupDeleteMode mode = deleteMode == 0
+					? BackupDeleteMode::HistoryOnly
+					: deleteMode == 1 ? BackupDeleteMode::LocalArchiveOnly
+						: BackupDeleteMode::LocalArchiveAndHistory;
+				const bool safeDeleteCopy = useSafeDelete;
+				TaskCoordinator::Instance().Submit(L"Delete backup",
+					{TaskCoordinator::WorldResourceKey(copyConfig.configId,
+						JoinPath(copyConfig.saveRoot, copyEntry.worldName))},
+					[copyConfig, copyEntry, index, mode, safeDeleteCopy](stop_token) mutable {
+						DeleteBackupWithMode(copyConfig, copyEntry, index, mode,
+							safeDeleteCopy);
+					});
+				ImGui::CloseCurrentPopup();
+			}
+			SameLineFits(L("BUTTON_CANCEL"));
+			if (ImGui::Button(L("BUTTON_CANCEL"))) ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+
+	ImGui::End();
+	if (!showHistoryWindow) {
+		lockedConfigIndex = -1;
+		selectedKey = {};
+	}
 }
 
 

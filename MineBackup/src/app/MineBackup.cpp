@@ -2708,7 +2708,8 @@ int main(int argc, char** argv)
 			if (showHistoryWindow) {
 				if (specialSetting) {
 					if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size())
-						ShowHistoryWindow(displayWorlds[selectedWorldIndex].baseConfigIndex);
+						ShowHistoryWindow(displayWorlds[selectedWorldIndex].baseConfigIndex,
+							displayWorlds[selectedWorldIndex].name);
 					else {
 						auto spIt = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
 						if (spIt != g_appState.specialConfigs.end() && !spIt->second.tasks.empty())

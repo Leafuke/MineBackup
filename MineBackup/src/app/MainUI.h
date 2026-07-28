@@ -5,6 +5,7 @@
 // 从 MineBackup.cpp 拆分出的 UI 模块函数声明
 
 #include "AppState.h"
+#include <optional>
 #include <vector>
 #include <string>
 
@@ -20,7 +21,8 @@ std::vector<DisplayWorld> BuildDisplayWorldsForSelection();
 int ImGuiKeyToVK(ImGuiKey key);
 
 // HistoryUI.cpp — 历史窗口
-void ShowHistoryWindow(int& tempCurrentConfigIndex);
+void ShowHistoryWindow(int configIndex,
+	const std::optional<std::wstring>& initialWorld = std::nullopt);
 
 // SpecialMode.cpp — 特殊模式执行
 void RunSpecialMode(int configId);
