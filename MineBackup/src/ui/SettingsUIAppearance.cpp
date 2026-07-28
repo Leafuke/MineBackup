@@ -91,17 +91,16 @@ static wstring GetChineseFontPath() {
 }
 
 void DrawAppearanceSettings(Config& cfg) {
+	(void)cfg;
 	static int lang_idx = 0;
-	static int prev_lang_idx = -1;
 	for (int i = 0; i < IM_ARRAYSIZE(lang_codes); ++i) {
 		if (g_CurrentLang == lang_codes[i]) {
 			lang_idx = i;
 			break;
 		}
 	}
-	if (prev_lang_idx == -1) prev_lang_idx = lang_idx;
 
-	ImGui::SetNextItemWidth(300);
+	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
 	if (ImGui::Combo(L("LANGUAGE"), &lang_idx, langs, IM_ARRAYSIZE(langs))) {
 		string oldLang = g_CurrentLang;
 		SetLanguage(lang_codes[lang_idx]);
@@ -116,18 +115,16 @@ void DrawAppearanceSettings(Config& cfg) {
 		}
 
 		if (oldLang != g_CurrentLang) {
-			SaveConfigs();
-			(void)GetDesktopServices()->RestartApplication();
+			g_restartRequired = true;
+			g_restartBannerDismissed = false;
 		}
-
-		prev_lang_idx = lang_idx;
 	}
 
 	ImGui::Spacing();
 
 	ImGui::Text("%s", L("THEME_SETTINGS"));
 	const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
-	ImGui::SetNextItemWidth(300);
+	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
 	if (ImGui::Combo("##Theme", &g_theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 		if (g_theme == static_cast<int>(ThemeId::Custom) && !filesystem::exists(customThemePath)) {
@@ -139,18 +136,32 @@ void DrawAppearanceSettings(Config& cfg) {
 			ApplyTheme();
 		}
 	}
+	if (g_theme == static_cast<int>(ThemeId::Custom)) {
+		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
+		if (ImGui::Button(L("CUSTOM_THEME_OPEN"))) {
+			if (!filesystem::exists(customThemePath)) {
+				ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
+			}
+			(void)GetDesktopServices()->OpenFolder(customThemePath);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(L("CUSTOM_THEME_RELOAD"))) ApplyTheme();
+		ImGui::SameLine();
+		if (ImGui::Button(L("CUSTOM_THEME_VALIDATE"))) ApplyTheme();
+		if (!g_customThemeError.empty()) {
+			ImGui::TextColored(ImVec4(1.0f, 0.40f, 0.35f, 1.0f), "%s",
+				g_customThemeError.c_str());
+		}
+		else {
+			ImGui::TextColored(ImVec4(0.35f, 0.80f, 0.45f, 1.0f), "%s",
+				L("CUSTOM_THEME_VALID"));
+		}
+	}
 
 	ImGui::Spacing();
 
-	static float pendingUiScale = g_uiScale;
-	if (ImGui::IsWindowAppearing()) {
-		pendingUiScale = g_uiScale;
-	}
-	ImGui::SetNextItemWidth(300);
-	ImGui::SliderFloat(L("UI_SCALE"), &pendingUiScale, 0.75f, 2.5f, "%.2f");
-	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_OK"))) {
-		g_uiScale = pendingUiScale;
+	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
+	if (ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f")) {
 		ApplyTheme();
 	}
 
@@ -163,12 +174,16 @@ void DrawAppearanceSettings(Config& cfg) {
 		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
 			Fontss = sel;
+			g_restartRequired = true;
+			g_restartBannerDismissed = false;
 		}
 	}
 	ImGui::SameLine();
 	ImGui::SetNextItemWidth(-1);
 	if (ImGui::InputText("##fontPathValue", Fonts, 256)) {
 		Fontss = utf8_to_wstring(Fonts);
+		g_restartRequired = true;
+		g_restartBannerDismissed = false;
 	}
 
 	ImGui::Spacing();
@@ -182,7 +197,7 @@ void DrawAppearanceSettings(Config& cfg) {
 	const char* close_behavior_options[] = { L("CLOSE_BEHAVIOR_ASK"), L("CLOSE_BEHAVIOR_MINIMIZE"), L("CLOSE_BEHAVIOR_EXIT") };
 #endif
 	int close_behavior_idx = g_rememberCloseAction ? g_closeAction : 0;
-	ImGui::SetNextItemWidth(300);
+	ImGui::SetNextItemWidth((std::min)(ImGui::GetContentRegionAvail().x, GetUiMetrics().Em(22.0f)));
 	if (ImGui::Combo("##CloseBehavior", &close_behavior_idx, close_behavior_options, IM_ARRAYSIZE(close_behavior_options))) {
 		if (close_behavior_idx == 0) {
 			g_rememberCloseAction = false;

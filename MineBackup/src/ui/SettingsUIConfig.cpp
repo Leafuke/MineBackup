@@ -25,157 +25,180 @@ bool IsWEIntegrationPathValidForSave(const Config& cfg) {
 }
 
 void DrawConfigManagementPanel() {
-	ImGui::SeparatorText(L("CONFIG_MANAGEMENT"));
-
-	string current_config_label = "None";
-	if (g_appState.specialConfigs.count(g_appState.currentConfigIndex)) {
+	string currentLabel = L("NO_CONFIG");
+	if (const auto it = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
+		it != g_appState.specialConfigs.end()) {
 		specialSetting = true;
-		current_config_label = "[Sp." + to_string(g_appState.currentConfigIndex) + "] " + g_appState.specialConfigs[g_appState.currentConfigIndex].name;
+		currentLabel = "[Sp." + to_string(it->first) + "] " + it->second.name;
 	}
-	else if (g_appState.configs.count(g_appState.currentConfigIndex)) {
+	else if (const auto it = g_appState.configs.find(g_appState.currentConfigIndex);
+		it != g_appState.configs.end()) {
 		specialSetting = false;
-		current_config_label = "[No." + to_string(g_appState.currentConfigIndex) + "] " + g_appState.configs[g_appState.currentConfigIndex].name;
-	}
-	else {
-		return;
+		currentLabel = "[No." + to_string(it->first) + "] " + it->second.name;
 	}
 
-	static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
-
-	ImGui::SetNextItemWidth(300);
-	if (ImGui::BeginCombo(L("CURRENT_CONFIG"), current_config_label.c_str())) {
-		for (auto const& [idx, val] : g_appState.configs) {
-			const bool is_selected = (g_appState.currentConfigIndex == idx);
-			string label = "[No." + to_string(idx) + "] " + val.name;
-
-			if (ImGui::Selectable(label.c_str(), is_selected)) {
-				g_appState.currentConfigIndex = idx;
+	const UiMetrics metrics = GetUiMetrics();
+	const float actionWidth = CalcButtonWidth(L("CONFIG_ACTIONS"), metrics.Em(7.0f));
+	ImGui::SetNextItemWidth((std::max)(metrics.Em(12.0f),
+		ImGui::GetContentRegionAvail().x - actionWidth - metrics.spacingX));
+	if (ImGui::BeginCombo("##CurrentConfig", currentLabel.c_str())) {
+		for (const auto& [index, config] : g_appState.configs) {
+			const bool selected = !specialSetting && g_appState.currentConfigIndex == index;
+			const string label = "[No." + to_string(index) + "] " + config.name;
+			if (ImGui::Selectable(label.c_str(), selected)) {
+				g_appState.currentConfigIndex = index;
 				specialSetting = false;
 			}
-			if (is_selected) {
-				ImGui::SetItemDefaultFocus();
-			}
+			if (selected) ImGui::SetItemDefaultFocus();
 		}
-		ImGui::Separator();
-		for (auto const& [idx, val] : g_appState.specialConfigs) {
-			const bool is_selected = (g_appState.currentConfigIndex == idx);
-			string label = "[Sp." + to_string(idx) + "] " + val.name;
-			if (ImGui::Selectable(label.c_str(), is_selected)) {
-				g_appState.currentConfigIndex = idx;
+		if (!g_appState.specialConfigs.empty()) ImGui::Separator();
+		for (const auto& [index, config] : g_appState.specialConfigs) {
+			const bool selected = specialSetting && g_appState.currentConfigIndex == index;
+			const string label = "[Sp." + to_string(index) + "] " + config.name;
+			if (ImGui::Selectable(label.c_str(), selected)) {
+				g_appState.currentConfigIndex = index;
 				specialSetting = true;
 			}
-			if (is_selected) ImGui::SetItemDefaultFocus();
-		}
-
-		ImGui::Separator();
-		if (ImGui::Selectable(L("BUTTON_ADD_CONFIG"))) {
-			showAddConfigPopup = true;
-		}
-
-		if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
-			if ((!specialSetting && g_appState.configs.size() > 1) || (specialSetting && !g_appState.specialConfigs.empty())) {
-				showDeleteConfigPopup = true;
-			}
+			if (selected) ImGui::SetItemDefaultFocus();
 		}
 		ImGui::EndCombo();
 	}
+	ImGui::SameLine();
 
-	if (showDeleteConfigPopup) {
-		ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
+	static int pendingCreateType = -1;
+	static bool requestDelete = false;
+	static char newConfigName[128] = "New Config";
+	if (ImGui::Button(L("CONFIG_ACTIONS"), ImVec2(actionWidth, 0.0f))) {
+		ImGui::OpenPopup("##ConfigActions");
 	}
-	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-		showDeleteConfigPopup = false;
-		if (specialSetting) {
-			ImGui::TextUnformatted(L("SPECIAL_CONFIG_BADGE"));
-			ImGui::SameLine();
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
+	if (ImGui::BeginPopup("##ConfigActions")) {
+		if (ImGui::MenuItem(L("CONFIG_NEW_NORMAL"))) pendingCreateType = 0;
+		if (ImGui::MenuItem(L("CONFIG_NEW_SPECIAL"))) pendingCreateType = 1;
+		const bool canCopy = !specialSetting
+			&& g_appState.configs.contains(g_appState.currentConfigIndex);
+		ImGui::BeginDisabled(!canCopy);
+		if (ImGui::MenuItem(L("CONFIG_COPY_CURRENT"))) {
+			const int sourceIndex = g_appState.currentConfigIndex;
+			const Config source = g_appState.configs.at(sourceIndex);
+			const int newIndex = CreateNewNormalConfig(source.name + " - Copy");
+			g_appState.configs[newIndex] = source;
+			AssignFreshNormalConfigId(newIndex);
+			g_appState.configs[newIndex].name = source.name + " - Copy";
+			g_appState.currentConfigIndex = newIndex;
+			specialSetting = false;
+			ImGui::MarkItemEdited(ImGui::GetItemID());
 		}
-		else {
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
-		}
+		ImGui::EndDisabled();
 		ImGui::Separator();
-		float btnW = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
-		if (ImGui::Button(L("BUTTON_OK"), ImVec2(btnW, 0))) {
+		const bool canDelete = specialSetting
+			? g_appState.specialConfigs.contains(g_appState.currentConfigIndex)
+			: g_appState.configs.size() > 1
+				&& g_appState.configs.contains(g_appState.currentConfigIndex);
+		ImGui::BeginDisabled(!canDelete);
+		if (ImGui::MenuItem(L("CONFIG_DELETE_CURRENT"))) requestDelete = true;
+		ImGui::EndDisabled();
+		ImGui::EndPopup();
+	}
+
+	if (pendingCreateType >= 0) ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+	if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextWrapped("%s", pendingCreateType == 0
+			? L("CONFIG_TYPE_NORMAL_DESC") : L("CONFIG_TYPE_SPECIAL_DESC"));
+		ImGui::SetNextItemWidth(metrics.Em(22.0f));
+		ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), newConfigName, IM_ARRAYSIZE(newConfigName));
+		const float buttonWidth = CalcPairButtonWidth(L("CREATE_BUTTON"), L("BUTTON_CANCEL"));
+		ImGui::BeginDisabled(newConfigName[0] == '\0');
+		if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(buttonWidth, 0.0f))) {
+			const int newIndex = pendingCreateType == 0
+				? CreateNewNormalConfig(newConfigName)
+				: CreateNewSpecialConfig(newConfigName);
+			g_appState.currentConfigIndex = newIndex;
+			specialSetting = pendingCreateType == 1;
+			pendingCreateType = -1;
+			ImGui::MarkItemEdited(ImGui::GetItemID());
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(buttonWidth, 0.0f))) {
+			pendingCreateType = -1;
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+
+	if (requestDelete) ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
+	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize)) {
+		requestDelete = false;
+		const string name = specialSetting
+			? g_appState.specialConfigs.at(g_appState.currentConfigIndex).name
+			: g_appState.configs.at(g_appState.currentConfigIndex).name;
+		ImGui::TextWrapped(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, name.c_str());
+		const float buttonWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
+		if (ImGui::Button(L("BUTTON_OK"), ImVec2(buttonWidth, 0.0f))) {
 			if (specialSetting) {
 				g_appState.specialConfigs.erase(g_appState.currentConfigIndex);
-				g_appState.specialConfigMode = false;
-				g_appState.currentConfigIndex = g_appState.configs.empty() ? 0 : g_appState.configs.begin()->first;
 			}
 			else {
 				g_appState.configs.erase(g_appState.currentConfigIndex);
+			}
+			if (!g_appState.configs.empty()) {
 				g_appState.currentConfigIndex = g_appState.configs.begin()->first;
+				specialSetting = false;
 			}
+			else if (!g_appState.specialConfigs.empty()) {
+				g_appState.currentConfigIndex = g_appState.specialConfigs.begin()->first;
+				specialSetting = true;
+			}
+			ImGui::MarkItemEdited(ImGui::GetItemID());
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(btnW, 0))) {
+		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(buttonWidth, 0.0f))) {
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndPopup();
 	}
+}
 
-	if (showAddConfigPopup) {
-		ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+static void DrawResponsivePathField(
+	const char* labelKey,
+	const char* id,
+	wstring& value,
+	bool selectFile,
+	const char* browseTooltipKey) {
+	const UiMetrics metrics = GetUiMetrics();
+	ImGui::TextUnformatted(L(labelKey));
+	char buffer[512];
+	strncpy_s(buffer, wstring_to_utf8(value).c_str(), sizeof(buffer));
+	const float browseWidth = metrics.Em(2.5f);
+	ImGui::SetNextItemWidth((std::max)(metrics.Em(6.0f),
+		ImGui::GetContentRegionAvail().x - browseWidth - metrics.spacingX));
+	if (ImGui::InputText(id, buffer, sizeof(buffer))) {
+		value = utf8_to_wstring(buffer);
 	}
-	if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
-	{
-		showAddConfigPopup = false;
-		static int config_type = 0;
-		static char new_config_name[128] = "New Config";
-
-		ImGui::TextUnformatted(L("CONFIG_TYPE_LABEL"));
-		ImGui::BeginGroup();
-		ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0);
-		ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));
-		ImGui::EndGroup();
-
-		ImGui::Spacing();
-
-		ImGui::BeginGroup();
-		ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
-		ImGui::TextWrapped("%s", L("CONFIG_TYPE_SPECIAL_DESC"));
-		ImGui::EndGroup();
-
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::Spacing();
-
-		ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
-		ImGui::Separator();
-
-		float createBtnW = CalcPairButtonWidth(L("CREATE_BUTTON"), L("BUTTON_CANCEL"));
-		if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(createBtnW, 0))) {
-			if (strlen(new_config_name) > 0) {
-				if (config_type == 0) {
-					int new_index = CreateNewNormalConfig(new_config_name);
-					if (g_appState.configs.count(g_appState.currentConfigIndex)) {
-						g_appState.configs[new_index] = g_appState.configs[g_appState.currentConfigIndex];
-						AssignFreshNormalConfigId(new_index);
-						g_appState.configs[new_index].name = new_config_name;
-						g_appState.configs[new_index].saveRoot.clear();
-						g_appState.configs[new_index].backupPath.clear();
-						g_appState.configs[new_index].worlds.clear();
-						EnsureDefaultBackupBlacklist(g_appState.configs[new_index].blacklist);
-						EnsureDefaultRestoreWhitelist();
-					}
-					g_appState.currentConfigIndex = new_index;
-					specialSetting = false;
-				}
-				else {
-					int new_index = CreateNewSpecialConfig(new_config_name);
-					g_appState.currentConfigIndex = new_index;
-					specialSetting = true;
-				}
-				showSettings = true;
-				ImGui::CloseCurrentPopup();
-			}
-		}
-		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(createBtnW, 0))) {
-			ImGui::CloseCurrentPopup();
-		}
-		ImGui::EndPopup();
+	ImGui::SameLine();
+	const string browseId = string("...##Browse") + id;
+	if (ImGui::Button(browseId.c_str(), ImVec2(browseWidth, 0.0f))) {
+		const auto selected = selectFile
+			? GetDesktopServices()->SelectFile()
+			: GetDesktopServices()->SelectFolder();
+		if (!selected.path.empty()) value = selected.path.wstring();
 	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(browseTooltipKey));
+
+	if (value.empty()) {
+		ImGui::TextDisabled("%s", L("PATH_STATUS_EMPTY"));
+		return;
+	}
+	error_code error;
+	const bool exists = filesystem::exists(value, error) && !error;
+	ImGui::TextColored(exists
+		? ImVec4(0.35f, 0.80f, 0.45f, 1.0f)
+		: ImVec4(0.95f, 0.65f, 0.20f, 1.0f),
+		"%s", L(exists ? "PATH_STATUS_VALID" : "PATH_STATUS_NOT_FOUND"));
 }
 
 void DrawPathSettings(Config& cfg) {
@@ -184,63 +207,25 @@ void DrawPathSettings(Config& cfg) {
 		ImGui::TextWrapped("%s", L("PORTABLE_BINDING_NOTICE"));
 		ImGui::PopStyleColor();
 	}
-	char rootBufA[256];
-	strncpy_s(rootBufA, wstring_to_utf8(cfg.saveRoot).c_str(), sizeof(rootBufA));
-
-	ImGui::Text("%s", L("SAVES_ROOT_PATH"));
-	if (ImGui::Button(L("BUTTON_SELECT_SAVES_DIR"))) {
-		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
-		if (!sel.empty()) {
-			cfg.saveRoot = sel;
-		}
-	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-1);
-	if (ImGui::InputText("##SavesRoot", rootBufA, 256)) {
-		cfg.saveRoot = utf8_to_wstring(rootBufA);
-	}
+	DrawResponsivePathField("SAVES_ROOT_PATH", "##SavesRoot", cfg.saveRoot, false,
+		"BUTTON_SELECT_SAVES_DIR");
 
 	ImGui::Spacing();
 
-	char buf[256];
-	strncpy_s(buf, wstring_to_utf8(cfg.backupPath).c_str(), sizeof(buf));
-	ImGui::Text("%s", L("BACKUP_DEST_PATH_LABEL"));
-	if (ImGui::Button(L("BUTTON_SELECT_BACKUP_DIR"))) {
-		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
-		if (!sel.empty()) {
-			cfg.backupPath = sel;
-		}
-	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-1);
-	if (ImGui::InputText("##BackupPath", buf, 256)) {
-		cfg.backupPath = utf8_to_wstring(buf);
-	}
+	DrawResponsivePathField("BACKUP_DEST_PATH_LABEL", "##BackupPath", cfg.backupPath,
+		false, "BUTTON_SELECT_BACKUP_DIR");
 
 	ImGui::Spacing();
 
-	char zipBuf[256];
-	strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
 	if (cfg.zipPath.empty()) {
 		const auto detected = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
 		if (detected.available) {
 			cfg.zipPath = detected.executable.wstring();
-			strncpy_s(zipBuf, wstring_to_utf8(cfg.zipPath).c_str(), sizeof(zipBuf));
 			ImGui::Text("%s", L("AUTODETECTED_7Z"));
 		}
 	}
-	ImGui::Text("%s", L("7Z_PATH_LABEL"));
-	if (ImGui::Button(L("BUTTON_SELECT_7Z"))) {
-		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
-		if (!sel.empty()) {
-			cfg.zipPath = sel;
-		}
-	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-1);
-	if (ImGui::InputText("##ZipPath", zipBuf, 256)) {
-		cfg.zipPath = utf8_to_wstring(zipBuf);
-	}
+	DrawResponsivePathField("7Z_PATH_LABEL", "##ZipPath", cfg.zipPath, true,
+		"BUTTON_SELECT_7Z");
 	static wstring toolStatus;
 	static bool toolStatusOk = false;
 	if (ImGui::Button(L("BUTTON_VERIFY_COMPRESSION_TOOL"),
@@ -296,20 +281,8 @@ void DrawPathSettings(Config& cfg) {
 
 	ImGui::Spacing();
 
-	char snapshotPathBuf[256];
-	strncpy_s(snapshotPathBuf, wstring_to_utf8(cfg.snapshotPath).c_str(), sizeof(snapshotPathBuf));
-	ImGui::Text("%s", L("SNAPSHOT_PATH"));
-	if (ImGui::Button(L("BUTTON_SELECT_SNAPSHOT_DIR"))) {
-		wstring sel = GetDesktopServices()->SelectFolder().path.wstring();
-		if (!sel.empty()) {
-			cfg.snapshotPath = sel;
-		}
-	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-1);
-	if (ImGui::InputText("##SnapshotPath", snapshotPathBuf, 256)) {
-		cfg.snapshotPath = utf8_to_wstring(snapshotPathBuf);
-	}
+	DrawResponsivePathField("SNAPSHOT_PATH", "##SnapshotPath", cfg.snapshotPath, false,
+		"BUTTON_SELECT_SNAPSHOT_DIR");
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_SNAPSHOT_PATH"));
 }
 

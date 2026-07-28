@@ -66,6 +66,8 @@ struct AppUpdateState {
 
 struct AppUiState {
 	bool showSettings = false;
+	bool restartRequired = false;
+	bool restartBannerDismissed = false;
 	bool showHistoryWindow = false;
 	bool specialSetting = false;
 	int closeAction = 0;
@@ -153,6 +155,8 @@ inline ImVec4& clear_color = g_globals.window.clearColor;
 inline int& last_interval = g_globals.settings.lastIntervalMinutes;
 inline std::wstring& Fontss = g_globals.appearance.fontPath;
 inline bool& showSettings = g_globals.ui.showSettings;
+inline bool& g_restartRequired = g_globals.ui.restartRequired;
+inline bool& g_restartBannerDismissed = g_globals.ui.restartBannerDismissed;
 inline bool& showHistoryWindow = g_globals.ui.showHistoryWindow;
 inline bool& specialSetting = g_globals.ui.specialSetting;
 inline int& g_closeAction = g_globals.ui.closeAction;
