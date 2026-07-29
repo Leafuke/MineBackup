@@ -263,6 +263,8 @@ jobs:
     runs-on: ubuntu-24.04
     needs: assemble
     environment: release
+    env:
+      GH_REPO: ${{ github.repository }}
     permissions:
       contents: write
     steps:
