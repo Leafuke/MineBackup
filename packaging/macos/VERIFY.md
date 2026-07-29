@@ -40,7 +40,7 @@ git -C build/7zip-zstd fetch --depth 1 origin 2dcb6815c0e6877988171c47e1824b8617
 git -C build/7zip-zstd checkout --detach FETCH_HEAD
 bash packaging/macos/build-sevenzip.sh build/7zip-zstd build/package-inputs/7zz
 MINEBACKUP_CODESIGN_IDENTITY=- bash packaging/macos/build-dmg.sh \
-  build/macos-arm64/bin/MineBackup.app build/package-inputs/7zz build/release
+  build/macos-arm64/bin/MineBackup.app build/package-inputs/7zz build/release 1.16.0
 
 hdiutil attach build/release/MineBackup-1.16.0-macos-arm64.dmg
 codesign --verify --strict --verbose=2 /Volumes/'MineBackup 1.16.0'/MineBackup.app

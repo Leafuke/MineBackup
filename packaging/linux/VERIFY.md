@@ -46,7 +46,8 @@ runs:
 bash packaging/linux/build-packages.sh \
   build/linux-x64/bin/MineBackup build/release \
   build/package-inputs/linux-gcc-x64.zip \
-  build/package-inputs/linuxdeploy-x86_64.AppImage
+  build/package-inputs/linuxdeploy-x86_64.AppImage \
+  1.16.0
 
 sudo apt install ./build/release/minebackup_1.16.0_amd64.deb
 MineBackup --data-dir "$(mktemp -d)/profile"

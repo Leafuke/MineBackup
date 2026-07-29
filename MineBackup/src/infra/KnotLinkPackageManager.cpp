@@ -1,6 +1,7 @@
 #include "KnotLinkPackageManager.h"
 
 #include "AppPaths.h"
+#include "MineBackupVersion.h"
 #include "NetworkService.h"
 #include "ProcessRunner.h"
 
@@ -83,7 +84,8 @@ KnotLinkPackageInstallResult DownloadAndOpenCurrentKnotLinkPackage(
         }
         NetworkRequest request;
         request.url = candidate;
-        request.userAgent = "MineBackup KnotLink Installer/1.16";
+        request.userAgent =
+            "MineBackup/" MINEBACKUP_VERSION_STRING " KnotLinkInstaller";
         request.totalTimeout = std::chrono::minutes(3);
         lastDownload = network.Download(
             request, destination, {}, stopToken);

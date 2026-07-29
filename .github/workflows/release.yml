@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Existing annotated tag that points at this workflow commit
         required: true
-        default: v1.17.0
+        default: v1.16.0
         type: string
       omit_platform:
         description: Security-only waiver; normal releases must use none
@@ -194,6 +194,14 @@ jobs:
             echo "Tag must follow semantic versioning (vX.Y.Z), got: $tag" >&2
             exit 1
           fi
+          version_file="$RUNNER_TEMP/minebackup-version.txt"
+          cmake -DMINEBACKUP_VERSION_OUTPUT="$version_file" \
+            -P cmake/ExportMineBackupVersion.cmake
+          source_version="$(tr -d '\r\n' < "$version_file")"
+          [[ "$tag" == "v$source_version" ]] || {
+            echo "Release tag $tag does not match source version v$source_version" >&2
+            exit 1
+          }
           [[ "$(git cat-file -t "$tag")" == tag ]] || { echo "The release tag must be annotated" >&2; exit 1; }
           [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]] || {
             echo "The release tag does not point at the workflow commit" >&2
@@ -204,7 +212,7 @@ jobs:
             exit 1
           fi
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
+          echo "version=$source_version" >>"$GITHUB_OUTPUT"
           echo "omitted=$omitted" >>"$GITHUB_OUTPUT"
 
       - name: Download all platform candidates

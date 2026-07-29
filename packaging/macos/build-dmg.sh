@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 3 || $# -gt 4 ]]; then
-  echo "usage: $0 <MineBackup.app> <7zz> <output-dir> [version]" >&2
+if [[ $# -ne 4 ]]; then
+  echo "usage: $0 <MineBackup.app> <7zz> <output-dir> <version>" >&2
   exit 2
 fi
 
 app="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 seven_zip="$(realpath "$2")"
 output_dir="$(mkdir -p "$3" && cd "$3" && pwd)"
-version="${4:-1.16.0}"
+version="$4"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 seven_zip_version=26.02-zs-v1.5.7-r2
 identity="${MINEBACKUP_CODESIGN_IDENTITY:--}"
@@ -20,6 +20,10 @@ dmg="$output_dir/MineBackup-${version}-macos-arm64.dmg"
 [[ "$output_dir" != / && "$work" == "$output_dir"/* ]] || { echo "unsafe output directory" >&2; exit 3; }
 [[ -d "$app" && -x "$app/Contents/MacOS/MineBackup" ]] || { echo "invalid app bundle" >&2; exit 3; }
 [[ -x "$seven_zip" ]] || { echo "7zz is missing" >&2; exit 3; }
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "version must use the numeric X.Y.Z form: $version" >&2
+  exit 3
+}
 lipo -info "$app/Contents/MacOS/MineBackup" | grep -Fq arm64
 ! lipo -info "$app/Contents/MacOS/MineBackup" | grep -Fq x86_64
 "$seven_zip" i | grep -Fq zstd

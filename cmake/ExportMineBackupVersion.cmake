@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.22)
+
+if(NOT DEFINED MINEBACKUP_VERSION_OUTPUT OR
+   MINEBACKUP_VERSION_OUTPUT STREQUAL "")
+    message(FATAL_ERROR
+        "MINEBACKUP_VERSION_OUTPUT must name the version output file.")
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/MineBackupVersion.cmake")
+if(NOT MINEBACKUP_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR
+        "MineBackup version must use the numeric X.Y.Z form: ${MINEBACKUP_VERSION}")
+endif()
+
+get_filename_component(
+    MINEBACKUP_VERSION_OUTPUT_ABSOLUTE
+    "${MINEBACKUP_VERSION_OUTPUT}" ABSOLUTE)
+get_filename_component(
+    MINEBACKUP_VERSION_OUTPUT_DIRECTORY
+    "${MINEBACKUP_VERSION_OUTPUT_ABSOLUTE}" DIRECTORY)
+file(MAKE_DIRECTORY "${MINEBACKUP_VERSION_OUTPUT_DIRECTORY}")
+file(WRITE "${MINEBACKUP_VERSION_OUTPUT_ABSOLUTE}" "${MINEBACKUP_VERSION}\n")

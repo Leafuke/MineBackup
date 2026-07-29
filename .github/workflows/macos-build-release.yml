@@ -31,11 +31,15 @@ jobs:
           cmake --build build/macos-arm64 --parallel
           ctest --preset macos-arm64 --output-on-failure
 
-      - name: Extract version from CMake
+      - name: Resolve version from CMake
         id: version
-        if: matrix.runner == 'macos-15'
         run: |
-          version=$(grep -oP 'set\(MINEBACKUP_VERSION "\K[^"]+' cmake/MineBackupVersion.cmake)
+          set -euo pipefail
+          version_file="$RUNNER_TEMP/minebackup-version.txt"
+          cmake -DMINEBACKUP_VERSION_OUTPUT="$version_file" \
+            -P cmake/ExportMineBackupVersion.cmake
+          version="$(tr -d '\r\n' < "$version_file")"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Extracted version: $version"
 
