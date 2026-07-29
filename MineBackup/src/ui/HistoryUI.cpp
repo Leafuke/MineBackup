@@ -639,9 +639,9 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			worlds.push_back(entry.worldName);
 		}
 	}
-	sort(worlds.begin(), worlds.end());
+		sort(worlds.begin(), worlds.end());
 
-	const bool wideToolbar = ImGui::GetContentRegionAvail().x >= metrics.Em(58.0f);
+	const bool wideToolbar = ImGui::GetContentRegionAvail().x >= metrics.Em(45.0f);
 	const float worldWidth = wideToolbar ? metrics.Em(13.0f) : -1.0f;
 	ImGui::SetNextItemWidth(worldWidth);
 	const string selectedWorldLabel = worldFilter.empty()
@@ -788,35 +788,163 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			ImGui::PushID(wstring_to_utf8(entry.worldName + L"\n" + entry.backupFile).c_str());
 			const bool selected = selectedKey == HistoryEntryKey{entry.worldName, entry.backupFile};
 			const string filename = wstring_to_utf8(entry.backupFile);
-			const char* icon = view.status == HistoryFileStatus::Normal
+
+			// 提取文件名中的类型标签（如 [Full]）
+			string displayLabel = filename;
+			size_t bracketStart = filename.find('[');
+			size_t bracketEnd = filename.find(']');
+			if (bracketStart != string::npos && bracketEnd != string::npos && bracketEnd > bracketStart) {
+				displayLabel = filename.substr(bracketStart, bracketEnd - bracketStart + 1);
+			}
+
+			// 准备卡片数据
+			const char* statusIcon = view.status == HistoryFileStatus::Normal
 				? ICON_FA_FILE
 				: view.status == HistoryFileStatus::CloudOnly
 					? ICON_FA_CLOUD : ICON_FA_TRIANGLE_EXCLAMATION;
-			const string title = string(icon) + "  " + filename
-				+ (entry.isImportant ? "  ★" : "");
-			if (ImGui::Selectable(title.c_str(), selected,
-				ImGuiSelectableFlags_AllowOverlap)) {
-				selectedKey = {entry.worldName, entry.backupFile};
-				narrowShowDetails = !layout.useSplitView;
-			}
-			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", filename.c_str());
-			ImGui::TextColored(HistoryStatusColor(view.status), "%s",
-				L(HistoryStatusKey(view.status)));
-			ImGui::SameLine();
-			ImGui::TextDisabled("%s", wstring_to_utf8(entry.timestamp_str).c_str());
+			const ImVec4 statusIconColor = view.status == HistoryFileStatus::Normal
+				? ImVec4(0.4f, 0.85f, 0.5f, 1.0f)
+				: view.status == HistoryFileStatus::CloudOnly
+					? ImVec4(0.45f, 0.75f, 1.0f, 1.0f)
+					: view.status == HistoryFileStatus::SmallFile
+						? ImVec4(1.0f, 0.75f, 0.25f, 1.0f)
+						: ImVec4(0.95f, 0.45f, 0.35f, 1.0f);
+
 			const string sizeLabel = view.fileSize == 0 ? "-"
 				: wstring_to_utf8(MineFormatMessage("HISTORY_SIZE_MB",
 					static_cast<double>(view.fileSize) / (1024.0 * 1024.0)));
-			string metadata = wstring_to_utf8(entry.backupType) + " | " + sizeLabel;
-			if (worldFilter.empty()) {
-				metadata += " | " + wstring_to_utf8(entry.worldName);
+
+			// 格式化时间戳，去除 T
+			string formattedTimestamp = wstring_to_utf8(entry.timestamp_str);
+			size_t tPos = formattedTimestamp.find('T');
+			if (tPos != string::npos) {
+				formattedTimestamp[tPos] = ' ';
 			}
-			ImGui::TextDisabled("%s", metadata.c_str());
+
+			// 计算卡片高度：顶部padding + 第一行 + 行间距 + 第二行 + 底部padding
+			const float lineHeight = ImGui::GetTextLineHeight();
+			const float cardPadding = metrics.cardPadding;
+			const float lineSpacing = metrics.smallGap;
+			const float cardHeight = cardPadding * 2.0f + lineHeight * 2.0f + lineSpacing;
+
+			// 渲染卡片背景
+			const ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+			const float cardWidth = ImGui::GetContentRegionAvail().x;
+			const ImVec2 cardMin = cursorPos;
+			const ImVec2 cardMax = ImVec2(cursorPos.x + cardWidth, cursorPos.y + cardHeight);
+
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			const ImU32 bgColor = selected
+				? ImGui::GetColorU32(ImGuiCol_HeaderActive, 0.4f)
+				: ImGui::GetColorU32(ImGuiCol_ChildBg, 0.5f);
+			const float cornerRadius = 6.0f;
+
+			// 绘制卡片背景
+			drawList->AddRectFilled(cardMin, cardMax, bgColor, cornerRadius);
+
+			// Hover 效果
+			ImGui::SetCursorScreenPos(cardMin);
+			ImGui::InvisibleButton("##card", ImVec2(cardWidth, cardHeight));
+			const bool hovered = ImGui::IsItemHovered();
+			if (hovered) {
+				drawList->AddRect(cardMin, cardMax,
+					ImGui::GetColorU32(ImGuiCol_Border, 0.8f), cornerRadius, 2.0f);
+			}
+			if (ImGui::IsItemClicked()) {
+				selectedKey = {entry.worldName, entry.backupFile};
+				narrowShowDetails = !layout.useSplitView;
+			}
+
+			// 选中边框
+			if (selected) {
+				drawList->AddRect(cardMin, cardMax,
+					ImGui::GetColorU32(ImGuiCol_HeaderActive), cornerRadius, 2.5f);
+			}
+
+			// 渲染卡片内容
+			ImGui::SetCursorScreenPos(ImVec2(cardMin.x + cardPadding, cardMin.y + cardPadding));
+
+			// 第一行：图标 + 类型标签 + 注释 + 星标
+			ImGui::PushStyleColor(ImGuiCol_Text, statusIconColor);
+			ImGui::TextUnformatted(statusIcon);
+			ImGui::PopStyleColor();
+
+			ImGui::SameLine();
+			ImGui::TextUnformatted(displayLabel.c_str());
+
+			// 如果有注释，显示在同一行
 			if (!entry.comment.empty()) {
-				TextEllipsisWithTooltip(wstring_to_utf8(entry.comment).c_str(),
-					ImGui::GetContentRegionAvail().x);
+				ImGui::SameLine();
+				const string commentText = wstring_to_utf8(entry.comment);
+				// 计算剩余宽度
+				const float starWidth = entry.isImportant ? (ImGui::CalcTextSize(ICON_FA_STAR).x + ImGui::GetStyle().ItemSpacing.x) : 0.0f;
+				const float availableWidth = cardWidth - (ImGui::GetCursorPosX() - cardMin.x) - starWidth - cardPadding;
+
+				// 使用 ImGui 的文本裁剪功能
+				ImVec2 textSize = ImGui::CalcTextSize(commentText.c_str());
+				if (textSize.x > availableWidth) {
+					// 需要截断
+					const char* ellipsis = "...";
+					const float ellipsisWidth = ImGui::CalcTextSize(ellipsis).x;
+					const float targetWidth = availableWidth - ellipsisWidth;
+
+					// 二分查找合适的截断位置
+					int left = 0, right = static_cast<int>(commentText.length());
+					int bestPos = 0;
+					while (left <= right) {
+						int mid = (left + right) / 2;
+						ImVec2 size = ImGui::CalcTextSize(commentText.c_str(), commentText.c_str() + mid);
+						if (size.x <= targetWidth) {
+							bestPos = mid;
+							left = mid + 1;
+						} else {
+							right = mid - 1;
+						}
+					}
+					string truncated = commentText.substr(0, bestPos) + ellipsis;
+					ImGui::TextDisabled("%s", truncated.c_str());
+				} else {
+					ImGui::TextDisabled("%s", commentText.c_str());
+				}
 			}
-			ImGui::Separator();
+
+			if (hovered) {
+				ImGui::SetTooltip("%s", filename.c_str());
+			}
+
+			// 星标固定在右上角
+			if (entry.isImportant) {
+				const float starSize = ImGui::CalcTextSize(ICON_FA_STAR).x;
+				ImGui::SameLine(cardWidth - starSize - cardPadding * 2.0f);
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.2f, 1.0f));
+				ImGui::TextUnformatted(ICON_FA_STAR);
+				ImGui::PopStyleColor();
+			}
+
+			// 第二行：状态 + 大小 + 世界名 + 时间戳
+			ImGui::SetCursorScreenPos(ImVec2(cardMin.x + cardPadding,
+				cardMin.y + cardPadding + lineHeight + lineSpacing));
+			ImGui::TextDisabled("%s", L(HistoryStatusKey(view.status)));
+			ImGui::SameLine();
+			ImGui::TextDisabled("|");
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", sizeLabel.c_str());
+			if (worldFilter.empty()) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("|");
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s", wstring_to_utf8(entry.worldName).c_str());
+			}
+
+			ImGui::SameLine();
+			ImGui::TextDisabled("|");
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", formattedTimestamp.c_str());
+
+			// 移动光标到卡片后面，添加间距
+			ImGui::SetCursorScreenPos(ImVec2(cardMin.x, cardMax.y + metrics.smallGap * 1.0f));
+			ImGui::Dummy(ImVec2(0, 0));
+
 			ImGui::PopID();
 		}
 		ImGui::EndChild();

@@ -1647,7 +1647,8 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("NOTICE_POPUP_TITLE"), &notice_popup_opened, ImGuiWindowFlags_AlwaysAutoResize)) {
 					ImGui::TextWrapped("%s", L("NOTICE_POPUP_DESC"));
 					ImGui::Separator();
-					ImGui::BeginChild("NoticeContent", ImVec2(ImGui::GetContentRegionAvail().x, 320), true);
+					const UiMetrics noticeMetrics = GetUiMetrics();
+					ImGui::BeginChild("NoticeContent", ImVec2(noticeMetrics.Em(22.0f), noticeMetrics.Em(16.0f)), true);
 					ImGui::TextWrapped("%s", g_NoticeContent.c_str());
 					ImGui::EndChild();
 					ImGui::Separator();

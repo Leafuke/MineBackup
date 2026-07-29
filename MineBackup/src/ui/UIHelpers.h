@@ -78,7 +78,7 @@ inline SettingsResponsiveLayout ComputeSettingsResponsiveLayout(
 	const float gap = spacingX > 0.0f ? spacingX : safeEm * 0.5f;
 	const float safeWidth = (std::max)(availableWidth, 0.0f);
 	SettingsResponsiveLayout result;
-	result.useSidebar = safeWidth >= safeEm * 42.0f;
+	result.useSidebar = safeWidth >= safeEm * 38.0f;
 	if (result.useSidebar) {
 		result.sidebarWidth = (std::clamp)(safeWidth * 0.18f, safeEm * 8.5f, safeEm * 11.0f);
 		result.contentWidth = (std::max)(safeWidth - result.sidebarWidth - gap, 0.0f);
@@ -123,10 +123,10 @@ inline HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
 	const float gap = spacingX > 0.0f ? spacingX : safeEm * 0.5f;
 	const float safeWidth = (std::max)(availableWidth, 0.0f);
 	HistoryResponsiveLayout result;
-	result.useSplitView = safeWidth >= safeEm * 50.0f;
+	result.useSplitView = safeWidth >= safeEm * 38.0f;
 	if (result.useSplitView) {
 		const float usable = (std::max)(safeWidth - gap, 0.0f);
-		result.listWidth = (std::clamp)(usable * 0.40f, safeEm * 22.0f, usable - safeEm * 26.0f);
+		result.listWidth = (std::clamp)(usable * 0.40f, safeEm * 18.0f, usable - safeEm * 22.0f);
 		result.detailsWidth = (std::max)(usable - result.listWidth, 0.0f);
 	}
 	else {
