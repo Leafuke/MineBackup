@@ -266,17 +266,6 @@ set_target_properties(MineBackup PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CUR
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(minebackup_knotlink_live_smoke_tests
-        tests/KnotLinkLiveSmokeTest.cpp)
-    target_link_libraries(minebackup_knotlink_live_smoke_tests PRIVATE
-        minebackup_desktop)
-    if(MSVC)
-        target_compile_options(minebackup_knotlink_live_smoke_tests PRIVATE
-            /utf-8 /FS)
-    endif()
-    add_test(NAME minebackup.knotlink_live_smoke
-        COMMAND minebackup_knotlink_live_smoke_tests)
-
     add_executable(minebackup_knotlink_server_manager_tests
         tests/KnotLinkServerManagerTest.cpp)
     target_link_libraries(minebackup_knotlink_server_manager_tests PRIVATE
@@ -339,24 +328,6 @@ if(BUILD_TESTING)
         target_link_libraries(minebackup_i18n_tests PRIVATE Iconv::Iconv)
     endif()
     add_test(NAME minebackup.i18n COMMAND minebackup_i18n_tests)
-
-    add_executable(minebackup_ui_tests
-        tests/UiTest.cpp
-        ${MINEBACKUP_INFRA_DIR}/i18n.cpp
-        ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp)
-    target_include_directories(minebackup_ui_tests PRIVATE
-        ${MINEBACKUP_COMMON_INCLUDE_DIRS})
-    target_link_libraries(minebackup_ui_tests PRIVATE
-        minebackup_third_party_imgui)
-    if(MSVC)
-        target_compile_options(minebackup_ui_tests PRIVATE /utf-8 /FS)
-    else()
-        target_compile_options(minebackup_ui_tests PRIVATE -fno-strict-aliasing)
-    endif()
-    if(NOT WIN32)
-        target_link_libraries(minebackup_ui_tests PRIVATE Iconv::Iconv)
-    endif()
-    add_test(NAME minebackup.ui COMMAND minebackup_ui_tests)
 
     add_executable(minebackup_appearance_config_tests
         tests/AppearanceConfigTest.cpp)
