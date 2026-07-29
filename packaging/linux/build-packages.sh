@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "usage: $0 <MineBackup> <output-dir> <linux-gcc-x64.zip> <linuxdeploy.AppImage>" >&2
+if [[ $# -lt 4 || $# -gt 5 ]]; then
+  echo "usage: $0 <MineBackup> <output-dir> <linux-gcc-x64.zip> <linuxdeploy.AppImage> [version]" >&2
   exit 2
 fi
 
@@ -11,7 +11,7 @@ binary="$(realpath "$1")"
 output_dir="$(mkdir -p "$2" && realpath "$2")"
 seven_zip_archive="$(realpath "$3")"
 linuxdeploy="$(realpath "$4")"
-version=1.16.0
+version="${5:-1.16.0}"
 seven_zip_version=26.02-zs-v1.5.7-r2
 work="${output_dir}/.linux-package-work"
 generated_desktop="$(realpath "$(dirname "$binary")/../generated/io.github.leafuke.MineBackup.desktop")"

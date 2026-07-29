@@ -31,13 +31,22 @@ jobs:
           cmake --build build/macos-arm64 --parallel
           ctest --preset macos-arm64 --output-on-failure
 
+      - name: Extract version from CMake
+        id: version
+        if: matrix.runner == 'macos-15'
+        run: |
+          version=$(grep -oP 'set\(MINEBACKUP_VERSION "\K[^"]+' cmake/MineBackupVersion.cmake)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $version"
+
       - name: Verify bundle metadata and architecture
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           app=build/macos-arm64/bin/MineBackup.app
           test -d "$app"
           plutil -lint "$app/Contents/Info.plist"
           test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = "io.github.leafuke.MineBackup"
-          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "1.16.0"
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$VERSION"
           test "$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")" = "15.0"
           lipo -info "$app/Contents/MacOS/MineBackup" | tee build/macos-arm64/lipo.txt
           grep -Fq 'arm64' build/macos-arm64/lipo.txt
@@ -56,11 +65,12 @@ jobs:
       - name: Build ad-hoc signed DMG candidate
         if: matrix.runner == 'macos-15'
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           mkdir -p build/release
           MINEBACKUP_CODESIGN_IDENTITY=- bash packaging/macos/build-dmg.sh \
             build/macos-arm64/bin/MineBackup.app \
-            build/package-inputs/7zz build/release
-          test -f build/release/MineBackup-1.16.0-macos-arm64.dmg
+            build/package-inputs/7zz build/release "$VERSION"
+          test -f "build/release/MineBackup-${VERSION}-macos-arm64.dmg"
 
       - name: Create macOS cross-restore fixtures
         if: matrix.runner == 'macos-15'
@@ -99,7 +109,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            build/release/MineBackup-1.16.0-macos-arm64.dmg
+            build/release/MineBackup-${{ steps.version.outputs.version }}-macos-arm64.dmg
 
       - name: Upload macOS cross-restore fixtures
         if: matrix.runner == 'macos-15'

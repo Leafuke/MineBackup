@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-  echo "usage: $0 <MineBackup.app> <7zz> <output-dir>" >&2
+if [[ $# -lt 3 || $# -gt 4 ]]; then
+  echo "usage: $0 <MineBackup.app> <7zz> <output-dir> [version]" >&2
   exit 2
 fi
 
 app="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 seven_zip="$(realpath "$2")"
 output_dir="$(mkdir -p "$3" && cd "$3" && pwd)"
+version="${4:-1.16.0}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-version=1.16.0
 seven_zip_version=26.02-zs-v1.5.7-r2
 identity="${MINEBACKUP_CODESIGN_IDENTITY:--}"
 work="$output_dir/.macos-package-work"
