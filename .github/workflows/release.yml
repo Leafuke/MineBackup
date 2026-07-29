@@ -172,6 +172,7 @@ jobs:
       - name: Checkout exact release source
         uses: actions/checkout@v4
         with:
+          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Resolve and verify release identity
