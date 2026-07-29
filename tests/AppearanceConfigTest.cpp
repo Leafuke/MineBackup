@@ -1,6 +1,7 @@
 #include "ConfigManager.h"
 #include "Globals.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -25,8 +26,13 @@ std::string ReadFile(const std::filesystem::path& path) {
 } // namespace
 
 int main() {
-	const std::filesystem::path root = std::filesystem::temp_directory_path()
-		/ "minebackup-appearance-config-test";
+	const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+	// macOS exposes its temporary directory through /var, a trusted system
+	// symlink to /private/var. Resolve that alias before exercising the atomic
+	// writer, which intentionally rejects linked ancestors in application paths.
+	const std::filesystem::path root =
+		std::filesystem::canonical(std::filesystem::temp_directory_path())
+		/ ("minebackup-appearance-config-test-" + std::to_string(stamp));
 	std::error_code error;
 	std::filesystem::remove_all(root, error);
 	std::filesystem::create_directories(root);

@@ -338,6 +338,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME minebackup.appearance_config
         COMMAND minebackup_appearance_config_tests)
+    set_tests_properties(minebackup.appearance_config PROPERTIES TIMEOUT 30)
 endif()
 
 add_custom_target(check_msbuild_source_parity

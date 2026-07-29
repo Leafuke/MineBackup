@@ -932,8 +932,8 @@ void TestTaskCoordinator(TestContext& test, const std::filesystem::path& root) {
                 while (nowActive > observed && !maximumActive.compare_exchange_weak(observed, nowActive)) {}
                 std::this_thread::sleep_for(std::chrono::milliseconds(30));
                 active.fetch_sub(1);
-                completed.fetch_add(1);
                 coordinator.PostEvent({L"test-complete", token.stop_possible() ? L"stoppable" : L"unstoppable"});
+                completed.fetch_add(1);
             }), "TaskCoordinator should accept work before shutdown");
     }
 
