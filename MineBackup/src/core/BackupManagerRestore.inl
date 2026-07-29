@@ -1,24 +1,24 @@
-﻿static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config, Console& console) {
-	console.AddLog(L("LOG_VERIFYING_BACKUPS"));
+static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config) {
+	RESTORE_INFO(L("LOG_VERIFYING_BACKUPS"));
 	for (const auto& backup : archives) {
 		if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
-			{L"t", backup.wstring(), L"-y"}, {}, config.useLowPriority), console)) {
-			console.AddLog(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());
+			{L"t", backup.wstring(), L"-y"}, {}, config.useLowPriority))) {
+			RESTORE_ERROR(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());
 			return false;
 		}
 	}
-	console.AddLog(L("LOG_BACKUP_VERIFICATION_PASSED"));
+	RESTORE_INFO(L("LOG_BACKUP_VERIFICATION_PASSED"));
 	return true;
 }
 
 static bool ApplyRestoreChain(const vector<filesystem::path>& backupsToApply, const filesystem::path& destinationFolder,
-	const Config& config, Console& console, const vector<wstring>& filesToExtract = {}) {
+	const Config& config, const vector<wstring>& filesToExtract = {}) {
 	for (size_t i = 0; i < backupsToApply.size(); ++i) {
 		const auto& backup = backupsToApply[i];
-		console.AddLog(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
+		RESTORE_INFO(L("RESTORE_STEPS"), i + 1, backupsToApply.size(), wstring_to_utf8(backup.filename().wstring()).c_str());
 		vector<wstring> arguments = {L"x", backup.wstring(), L"-o" + destinationFolder.wstring(), L"-y"};
 		arguments.insert(arguments.end(), filesToExtract.begin(), filesToExtract.end());
-		if (!RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority), console)) {
+		if (!RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority))) {
 			return false;
 		}
 	}
@@ -210,7 +210,7 @@ static bool TryBuildSmartRestorePlan(const filesystem::path& metadataDir, const 
 	return true;
 }
 
-static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem::path& destinationFolder, const Config& config, Console& console) {
+static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem::path& destinationFolder, const Config& config) {
 	vector<SmartRestoreArchiveGroup> groups;
 	for (const auto& group : plan.archiveGroups) {
 		if (!group.files.empty()) {
@@ -223,7 +223,7 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 
 	for (size_t i = 0; i < groups.size(); ++i) {
 		const auto& group = groups[i];
-		console.AddLog(L("RESTORE_STEPS"), i + 1, groups.size(), wstring_to_utf8(group.archive.filename().wstring()).c_str());
+		RESTORE_INFO(L("RESTORE_STEPS"), i + 1, groups.size(), wstring_to_utf8(group.archive.filename().wstring()).c_str());
 
 		wstringstream fileNameBuilder;
 		fileNameBuilder << L"MineBackup_Restore_" << chrono::steady_clock::now().time_since_epoch().count() << L"_" << i << L".txt";
@@ -239,7 +239,7 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 
 			if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
 				{L"x", group.archive.wstring(), L"@" + listFile.wstring(), L"-o" + destinationFolder.wstring(), L"-y"},
-				{}, config.useLowPriority), console)) {
+				{}, config.useLowPriority))) {
 				filesystem::remove(listFile);
 				return false;
 			}
@@ -254,15 +254,19 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 	return true;
 }
 
-bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, Console& console, int restoreMethod) {
+bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, int restoreMethod) {
+	minebackup::logging::ScopedLogContext operationContext{{
+		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
+		{"config_id", wstring_to_utf8(config.configId)},
+		{"world", wstring_to_utf8(worldName)}};
 	if (config.pendingLocalBinding) {
-		console.AddLog("[Blocked] Restore is disabled until local paths are bound.");
+		RESTORE_WARNING("Restore is disabled until local paths are bound.");
 		return false;
 	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
-		console.AddLog(
+		RESTORE_WARNING(
 			L("LOG_OP_REJECTED_BUSY"),
 			wstring_to_utf8(worldName).c_str(),
 			L(FolderStateToI18nKey(opGuard.Existing())),
@@ -276,18 +280,18 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		return false;
 	};
 
-	console.AddLog(L("LOG_RESTORE_START_HEADER"));
-	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
-	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(fullBackupPath.wstring()).c_str());
+	RESTORE_INFO(L("LOG_RESTORE_START_HEADER"));
+	RESTORE_INFO(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
+	RESTORE_INFO(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(fullBackupPath.wstring()).c_str());
 
 	if (!filesystem::exists(config.zipPath)) {
-		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
-		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
+		RESTORE_ERROR(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
+		RESTORE_ERROR(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
 		return failRestore("seven_zip_not_found");
 	}
 
 	vector<filesystem::path> backupsToApply = { fullBackupPath };
-	if (!ValidateRestoreArchives(backupsToApply, config, console)) {
+	if (!ValidateRestoreArchives(backupsToApply, config)) {
 		return failRestore("archive_integrity_check_failed");
 	}
 
@@ -299,10 +303,10 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 			if (!safeRestoreTempDir.empty()) {
 				string rollbackError;
 				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
-					console.AddLog("[Error] Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
+					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 				}
 			}
-			console.AddLog("[Error] Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
 			return failRestore("snapshot_prepare_failed");
 		}
 		safeWorkspacePrepared = !safeRestoreTempDir.empty();
@@ -312,14 +316,14 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		filesystem::create_directories(destinationFolder, ec);
 	}
 
-	bool restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console);
+	bool restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config);
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		if (safeWorkspacePrepared) {
 			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
 			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
-				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
+				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
 	}
@@ -327,13 +331,13 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	if (!restoreSucceeded) {
 		if (safeWorkspacePrepared) {
 			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
-				console.AddLog("[Error] Failed to rollback safe restore workspace: %s", workspaceError.c_str());
+				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
 		return failRestore("command_failed");
 	}
 
-	console.AddLog(L("LOG_RESTORE_END_HEADER"));
+	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
 	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(fullBackupPath.filename().wstring()));
 	return true;
 }
@@ -342,18 +346,21 @@ bool DoRestore(
 	const Config& config,
 	const wstring& worldName,
 	const wstring& backupFile,
-	Console& console,
 	int restoreMethod,
 	const string& customRestoreList,
 	const vector<wstring>* restoreWhitelistOverride) {
+	minebackup::logging::ScopedLogContext operationContext{{
+		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
+		{"config_id", wstring_to_utf8(config.configId)},
+		{"world", wstring_to_utf8(worldName)}};
 	if (config.pendingLocalBinding) {
-		console.AddLog("[Blocked] Restore is disabled until local paths are bound.");
+		RESTORE_WARNING("Restore is disabled until local paths are bound.");
 		return false;
 	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
-		console.AddLog(
+		RESTORE_WARNING(
 			L("LOG_OP_REJECTED_BUSY"),
 			wstring_to_utf8(worldName).c_str(),
 			L(FolderStateToI18nKey(opGuard.Existing())),
@@ -364,7 +371,7 @@ bool DoRestore(
 
 	auto failRestoreWithMessage = [&](const string& reason, const string& message) {
 		if (!message.empty()) {
-			console.AddLog("[Error] %s", message.c_str());
+			RESTORE_ERROR("%s", message.c_str());
 		}
 		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
 		return false;
@@ -373,13 +380,13 @@ bool DoRestore(
 		return failRestoreWithMessage(reason, string{});
 	};
 
-	console.AddLog(L("LOG_RESTORE_START_HEADER"));
-	console.AddLog(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
-	console.AddLog(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
+	RESTORE_INFO(L("LOG_RESTORE_START_HEADER"));
+	RESTORE_INFO(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
+	RESTORE_INFO(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
 
 	if (!filesystem::exists(config.zipPath)) {
-		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
-		console.AddLog(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
+		RESTORE_ERROR(L("LOG_ERROR_7Z_NOT_FOUND"), wstring_to_utf8(config.zipPath).c_str());
+		RESTORE_ERROR(L("LOG_ERROR_7Z_NOT_FOUND_HINT"));
 		return failRestore("seven_zip_not_found");
 	}
 
@@ -389,7 +396,7 @@ bool DoRestore(
 	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(config, resolvedConfigIndex, worldName, destinationFolder.wstring());
 	if ((migration.status == MigrationStatus::Failed || migration.status == MigrationStatus::Degraded)
 		&& IsIncrementalBackupType(backupFile) && restoreMethod == 0) {
-		console.AddLog("[Error] Exact Smart restore is unavailable until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
+		RESTORE_ERROR("Exact Smart restore is unavailable until metadata migration succeeds: %s", wstring_to_utf8(migration.message).c_str());
 		return failRestore("legacy_metadata_migration_incomplete");
 	}
 	HistoryEntry targetHistoryEntry;
@@ -399,11 +406,11 @@ bool DoRestore(
 	// 云存档补链发生在本地存在性校验之前：
 	// 这样本地缺包、增量链缺失元数据时，都可以先尝试从云端补齐。
 	if (hasHistoryEntry && config.cloudAutoDownloadBeforeRestore) {
-		EnsureRestoreChainAvailable(config, resolvedConfigIndex, targetHistoryEntry, console);
+		EnsureRestoreChainAvailable(config, resolvedConfigIndex, targetHistoryEntry);
 	}
 
 	if ((!FolderRewindFormat::IsSmartBackupType(backupFile) && !FolderRewindFormat::IsFullLikeBackupType(backupFile)) || !filesystem::exists(targetBackupPath)) {
-		console.AddLog(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
+		RESTORE_ERROR(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return failRestore("backup_not_found");
 	}
 
@@ -416,7 +423,7 @@ bool DoRestore(
 			MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2
 		);
 		if (msgboxID == IDNO) {
-			console.AddLog("[Info] Restore cancelled by user due to active game session.");
+			RESTORE_INFO("Restore cancelled by user due to active game session.");
 			return failRestore("cancelled_active_world");
 		}
 	}
@@ -430,7 +437,7 @@ bool DoRestore(
 	if (restoreMethod == 2) {
 		backupsToApply = BuildReverseRestoreChain(sourceDir, targetBackupPath);
 		if (backupsToApply.empty()) {
-			console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
+			RESTORE_ERROR(L("LOG_BACKUP_SMART_NO_FOUND"));
 			return failRestore("reverse_chain_not_found");
 		}
 	}
@@ -441,14 +448,14 @@ bool DoRestore(
 		}
 		else {
 			if (restoreMethod == 0) {
-				console.AddLog("[Info] Current MineBackup uses FolderRewind records/*.json for Smart clean restore.");
-				console.AddLog("[Error] Exact Clean Restore for Smart backups requires valid metadata and an intact full base.");
+				RESTORE_INFO("Current MineBackup uses FolderRewind records/*.json for Smart clean restore.");
+				RESTORE_ERROR("Exact Clean Restore for Smart backups requires valid metadata and an intact full base.");
 				return failRestore("exact_clean_restore_unavailable");
 			}
 
 			backupsToApply = BuildLegacyForwardRestoreChain(sourceDir, targetBackupPath);
 			if (backupsToApply.empty()) {
-				console.AddLog(L("LOG_BACKUP_SMART_NO_FOUND"));
+				RESTORE_ERROR(L("LOG_BACKUP_SMART_NO_FOUND"));
 				return failRestore("restore_chain_not_found");
 			}
 		}
@@ -459,7 +466,7 @@ bool DoRestore(
 
 	vector<wstring> filesToExtract;
 	if (restoreMethod == 3 && !customRestoreList.empty()) {
-		console.AddLog(L("LOG_CUSTOM_RESTORE_START"));
+		RESTORE_INFO(L("LOG_CUSTOM_RESTORE_START"));
 		stringstream ss(customRestoreList);
 		string item;
 		while (getline(ss, item, ',')) {
@@ -471,7 +478,7 @@ bool DoRestore(
 		}
 	}
 
-	if (!ValidateRestoreArchives(backupsToApply, config, console)) {
+	if (!ValidateRestoreArchives(backupsToApply, config)) {
 		return failRestore("archive_integrity_check_failed");
 	}
 
@@ -479,7 +486,7 @@ bool DoRestore(
 	const bool useExactSmartCleanRestore = restoreMethod == 0 && targetIsIncremental && chainResult.status == RestoreChainStatus::OK && chainResult.usedMetadata;
 	if (useExactSmartCleanRestore) {
 		if (!TryBuildSmartRestorePlan(metadataDir, backupsToApply, smartRestorePlan)) {
-			console.AddLog("[Error] Smart restore metadata is incomplete or inconsistent. Clean restore aborted to protect data.");
+			RESTORE_ERROR("Smart restore metadata is incomplete or inconsistent. Clean restore aborted to protect data.");
 			return failRestore("smart_restore_plan_invalid");
 		}
 	}
@@ -492,10 +499,10 @@ bool DoRestore(
 			if (!safeRestoreTempDir.empty()) {
 				string rollbackError;
 				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
-					console.AddLog("[Error] Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
+					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 				}
 			}
-			console.AddLog("[Error] Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
 			return failRestore("snapshot_prepare_failed");
 		}
 		safeWorkspacePrepared = !safeRestoreTempDir.empty();
@@ -507,10 +514,10 @@ bool DoRestore(
 
 	bool restoreSucceeded = false;
 	if (useExactSmartCleanRestore) {
-		restoreSucceeded = ApplySmartRestorePlan(smartRestorePlan, destinationFolder, config, console);
+		restoreSucceeded = ApplySmartRestorePlan(smartRestorePlan, destinationFolder, config);
 	}
 	else {
-		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, console, filesToExtract);
+		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, filesToExtract);
 	}
 
 	if (restoreSucceeded) {
@@ -520,7 +527,7 @@ bool DoRestore(
 				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist);
 			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
-				console.AddLog("[Error] Failed to commit safe restore workspace: %s", workspaceError.c_str());
+				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
 	}
@@ -528,13 +535,13 @@ bool DoRestore(
 	if (!restoreSucceeded) {
 		if (safeWorkspacePrepared) {
 			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
-				console.AddLog("[Error] Failed to rollback safe restore workspace: %s", workspaceError.c_str());
+				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
 		return failRestore("command_failed");
 	}
 
-	console.AddLog(L("LOG_RESTORE_END_HEADER"));
+	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
 	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile));
 	return true;
 }

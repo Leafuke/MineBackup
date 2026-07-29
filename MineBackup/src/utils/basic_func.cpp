@@ -353,7 +353,6 @@ bool is_blacklisted(
 				}
 			}
 			catch (const regex_error&) {
-				//console.AddLog("[Error] Invalid regex in blacklist: %s. Error: %s", wstring_to_utf8(rule_orig).c_str(), e.what());
 			}
 		}
 		else { // 普通字符串规则

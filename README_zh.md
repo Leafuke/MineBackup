@@ -73,10 +73,6 @@ MineBackup 现已与 FolderRewind 使用完全相同的严格 KnotLink v2 参数
 percent-encoding；旧式位置参数和自由文本命令会被直接拒绝。联动模组最低
 版本为 **3.1.0**。
 
-Windows 需要 **3.0.0 或更高版本**的 KnotLinkService。MineBackup 会检测
-安装版本、智能启动兼容的已停止服务，并阻止未知或过旧版本。Linux 与 macOS
-保留客户端接入能力，但在上游发布对应服务端前不会内置或托管服务端。
-
 命令、关联元数据、生命周期事件、当前世界参数和完整示例见
 [MineBackup KnotLink v2 协议说明](docs/knotlink-v2.md)。
 
@@ -104,6 +100,9 @@ cmake --build --preset windows-msvc-x64-release  # Windows
 配置不再要求与 EXE 同目录；默认数据目录、便携模式与 1.15 迁移说明见
 [数据与迁移文档](docs/data-and-migration.md)。Windows Service Mode 已弃用，
 不能再安装或启动。rclone 不随包分发，只会在用户确认后下载固定版本并验证哈希。
+日志默认以 Info 级别实时轮转写入配置档的 `logs/minebackup.log`；可在设置中
+切换 Off/Info/Debug，并从日志面板导出已知路径脱敏的诊断副本。位置、保留、
+隐私边界和排障步骤见[日志与诊断说明](docs/logging-and-diagnostics.md)。
 
 ---
 

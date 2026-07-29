@@ -1,11 +1,13 @@
 ﻿#include "ConfigManager.h"
 #include "AppState.h"
+#include "UIHelpers.h"
 #include "AppPaths.h"
 #include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
 #include "MigrationCoordinator.h"
 #include "SpecialConfigPolicy.h"
 #include "Globals.h"
+#include "Logging.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "PlatformCompat.h"
@@ -14,7 +16,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <cmath>
 #include <set>
+#include <optional>
 using namespace std;
 
 static wstring GetDefaultFontPath() {
@@ -183,9 +187,33 @@ void LoadConfigs(const filesystem::path& filename) {
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
 	g_appState.specialConfigMode = false;
+	g_theme = static_cast<int>(ThemeId::ImGuiLight);
+	g_lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
+	Fontss.clear();
+	g_appearanceSchema = 1;
+	g_uiScaleV2 = true;
+	g_uiScaleMigrationPending = false;
 	restoreWhitelist.clear();
+	g_logFileLevel = minebackup::logging::LogFileLevel::Info;
+	g_logViewLevel = minebackup::logging::LogLevel::Info;
+	g_logViewAutoTail = true;
+	g_logViewShowTime = false;
+	g_logViewShowCategory = false;
+	optional<wstring> configuredLogFileLevel;
+	optional<wstring> configuredLogViewLevel;
+	optional<bool> legacyAutoLog;
 	ifstream in(filename, ios::binary);
-	if (!in.is_open()) return;
+	if (!in.is_open()) {
+		Fontss = GetDefaultFontPath();
+		minebackup::logging::SetFileLevel(g_logFileLevel);
+		return;
+	}
+	optional<int> configuredGlobalTheme;
+	optional<int> configuredThemeFallback;
+	optional<wstring> configuredGlobalFont;
+	optional<int> configuredAppearanceSchema;
+	bool configuredUiScaleV2 = false;
+	bool configuredUiScaleFound = false;
 	string line1;
 	wstring line, section;
 	// cur作为一个指针，指向 g_appState.configs 这个全局 map<int, Config> 中的元素 Config
@@ -247,7 +275,7 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"KeepCount") cur->keepCount = stoi(val);
 				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
-				else if (key == L"SilenceMode") isSilence = (val != L"0");
+				else if (key == L"SilenceMode") { /* ignored legacy setting */ }
 				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
@@ -272,23 +300,9 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
 				else if (key == L"Theme") {
 					cur->theme = stoi(val);
-					//ApplyTheme(cur->theme); 这个要转移至有gui之后，否则会直接导致崩溃
 				}
 				else if (key == L"Font") {
 					cur->fontPath = val;
-					Fontss = val;
-					auto applyDefaultFont = [&]() {
-						Fontss = GetDefaultFontPath();
-						cur->fontPath = Fontss;
-					};
-					if (val.empty()) {
-						applyDefaultFont();
-					}
-					else if (val.size() < 3 || !filesystem::exists(val)) { // 字体没有会导致崩溃，所以这里做个兜底
-						MessageBoxWin(L("WARNING_TITLE"), L("INVALID_FONT_PATH"), 1);
-						GetUserDefaultUILanguageWin();
-						applyDefaultFont();
-					}
 				}
 			}
 			else if (spCur) { // Inside a [SpCfgN] section
@@ -410,6 +424,22 @@ void LoadConfigs(const filesystem::path& filename) {
 				}
 				else if (key == L"UIScale") {
 					g_uiScale = stof(val);
+					configuredUiScaleFound = true;
+				}
+				else if (key == L"UIScaleMode") {
+					configuredUiScaleV2 = (val == L"UserMultiplierV2");
+				}
+				else if (key == L"AppearanceSchema") {
+					configuredAppearanceSchema = stoi(val);
+				}
+				else if (key == L"Theme") {
+					configuredGlobalTheme = stoi(val);
+				}
+				else if (key == L"ThemeFallback") {
+					configuredThemeFallback = stoi(val);
+				}
+				else if (key == L"Font") {
+					configuredGlobalFont = val;
 				}
 				else if (key == L"AutoScanForWorlds") {
 					g_AutoScanForWorlds = (val != L"0");
@@ -420,8 +450,23 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"HotkeyRestore") {
 					g_hotKeyRestoreId = stoi(val);
 				}
+				else if (key == L"LogFileLevel") {
+					configuredLogFileLevel = val;
+				}
+				else if (key == L"LogViewLevel") {
+					configuredLogViewLevel = val;
+				}
+				else if (key == L"LogViewAutoTail") {
+					g_logViewAutoTail = (val != L"0");
+				}
+				else if (key == L"LogViewShowTime") {
+					g_logViewShowTime = (val != L"0");
+				}
+				else if (key == L"LogViewShowCategory") {
+					g_logViewShowCategory = (val != L"0");
+				}
 				else if (key == L"AutoLog") {
-					g_autoLogEnabled = (val != L"0");
+					legacyAutoLog = (val != L"0");
 				}
 				else if (key == L"CoreValidationPending") {
 					g_CoreValidationPending.store(val != L"0");
@@ -438,6 +483,36 @@ void LoadConfigs(const filesystem::path& filename) {
 			}
 		}
 	}
+	const optional<string> configuredValue = configuredLogFileLevel
+		? optional<string>(wstring_to_utf8(*configuredLogFileLevel)) : nullopt;
+	const auto logLevelResolution = minebackup::logging::ResolveFileLevel(
+		configuredValue
+			? optional<string_view>(*configuredValue) : nullopt,
+		legacyAutoLog);
+	g_logFileLevel = logLevelResolution.level;
+	if (logLevelResolution.invalidConfiguredValue) {
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
+			"logging.config.invalid_level",
+			"Invalid LogFileLevel '{}'; using info.", *configuredValue);
+	}
+	else if (logLevelResolution.usedLegacyAutoLog) {
+		MB_LOG_INFO(minebackup::logging::LogCategory::Migration,
+			"logging.config.legacy_auto_log",
+			"Migrated legacy AutoLog={} to LogFileLevel={}.",
+			*legacyAutoLog ? 1 : 0, minebackup::logging::ToString(g_logFileLevel));
+	}
+	if (configuredLogViewLevel) {
+		bool validLogViewLevel = false;
+		g_logViewLevel = minebackup::logging::ParseLogLevel(
+			wstring_to_utf8(*configuredLogViewLevel), &validLogViewLevel);
+		if (!validLogViewLevel) {
+			MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
+				"logging.config.invalid_view_level",
+				"Invalid LogViewLevel '{}'; using info.",
+				wstring_to_utf8(*configuredLogViewLevel));
+		}
+	}
+	minebackup::logging::SetFileLevel(g_logFileLevel);
 	set<wstring> usedConfigIds;
 	for (auto& kv : g_appState.configs) {
 		Config& cfg = kv.second;
@@ -510,6 +585,71 @@ void LoadConfigs(const filesystem::path& filename) {
 			+ executionPolicy.disabledDuplicateRunOnStartup;
 		MigrationCoordinator::RecordUnit(normalized);
 	}
+
+	auto validFontPath = [](const wstring& value) {
+		return !value.empty() && value.size() >= 3 && filesystem::exists(value);
+	};
+
+	if (configuredGlobalTheme && IsValidThemeId(*configuredGlobalTheme)) {
+		g_theme = *configuredGlobalTheme;
+	}
+	else {
+		auto normal = g_appState.configs.find(g_appState.currentConfigIndex);
+		auto special = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
+		if (normal != g_appState.configs.end() && IsValidThemeId(normal->second.theme)) {
+			g_theme = normal->second.theme;
+		}
+		else if (special != g_appState.specialConfigs.end() && IsValidThemeId(special->second.theme)) {
+			g_theme = special->second.theme;
+		}
+	}
+	if (configuredThemeFallback
+		&& *configuredThemeFallback >= static_cast<int>(ThemeId::ImGuiDark)
+		&& *configuredThemeFallback <= static_cast<int>(ThemeId::NordDark)) {
+		g_lastValidTheme = *configuredThemeFallback;
+	}
+	else if (g_theme != static_cast<int>(ThemeId::Custom)) {
+		g_lastValidTheme = g_theme;
+	}
+
+	if (configuredGlobalFont && validFontPath(*configuredGlobalFont)) {
+		Fontss = *configuredGlobalFont;
+	}
+	else {
+		auto normal = g_appState.configs.find(g_appState.currentConfigIndex);
+		if (normal != g_appState.configs.end() && validFontPath(normal->second.fontPath)) {
+			Fontss = normal->second.fontPath;
+		}
+		if (Fontss.empty()) {
+			for (const auto& [index, config] : g_appState.configs) {
+				(void)index;
+				if (validFontPath(config.fontPath)) {
+					Fontss = config.fontPath;
+					break;
+				}
+			}
+		}
+	}
+	if (Fontss.empty()) {
+		if (configuredGlobalFont && !configuredGlobalFont->empty()) {
+			MessageBoxWin(L("WARNING_TITLE"), L("INVALID_FONT_PATH"), 1);
+		}
+		Fontss = GetDefaultFontPath();
+	}
+
+	g_appearanceSchema = configuredAppearanceSchema.value_or(1);
+	g_uiScaleV2 = configuredUiScaleV2 || !configuredUiScaleFound;
+	g_uiScaleMigrationPending = configuredUiScaleFound && !configuredUiScaleV2;
+	g_uiScale = (std::clamp)(g_uiScale, 0.75f, 2.5f);
+}
+
+void FinalizeUiScaleMigration(float primaryDpiScale) {
+	const UiScaleMigrationResult migration = MigrateUiScale(
+		g_uiScale, primaryDpiScale, g_uiScaleMigrationPending);
+	g_uiScale = migration.scale;
+	g_uiScaleMigrationPending = false;
+	g_uiScaleV2 = true;
+	g_appearanceSchema = 1;
 }
 
 bool SaveConfigs() {
@@ -539,9 +679,20 @@ bool SaveConfigs(const filesystem::path& filename) {
 	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
 	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
 	buffer << L"UIScale=" << g_uiScale << L"\n";
+	buffer << L"UIScaleMode=UserMultiplierV2\n";
+	buffer << L"AppearanceSchema=" << g_appearanceSchema << L"\n";
+	buffer << L"Theme=" << g_theme << L"\n";
+	buffer << L"ThemeFallback=" << g_lastValidTheme << L"\n";
+	buffer << L"Font=" << Fontss << L"\n";
 	buffer << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
 	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
-	buffer << L"AutoLog=" << (g_autoLogEnabled ? 1 : 0) << L"\n";
+	buffer << L"LogFileLevel="
+		<< utf8_to_wstring(minebackup::logging::ToString(g_logFileLevel)) << L"\n";
+	buffer << L"LogViewLevel="
+		<< utf8_to_wstring(minebackup::logging::ToString(g_logViewLevel)) << L"\n";
+	buffer << L"LogViewAutoTail=" << (g_logViewAutoTail ? 1 : 0) << L"\n";
+	buffer << L"LogViewShowTime=" << (g_logViewShowTime ? 1 : 0) << L"\n";
+	buffer << L"LogViewShowCategory=" << (g_logViewShowCategory ? 1 : 0) << L"\n";
 	buffer << L"CoreValidationPending=" << (g_CoreValidationPending.load() ? 1 : 0) << L"\n";
 	buffer << L"CoreValidationPassed=" << (g_CoreValidationPassed.load() ? 1 : 0) << L"\n";
 	buffer << L"CloseAction=" << g_closeAction << L"\n";
@@ -575,9 +726,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"KeepCount=" << c.keepCount << L"\n";
 		buffer << L"SmartBackup=" << c.backupMode << L"\n";
 		buffer << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
-		buffer << L"SilenceMode=" << (isSilence ? 1 : 0) << L"\n";
-		buffer << L"Theme=" << c.theme << L"\n";
-		buffer << L"Font=" << c.fontPath << L"\n";
 		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
 		buffer << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
 		buffer << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
@@ -643,7 +791,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"CpuThreads=" << sc.cpuThreads << L"\n";
 		buffer << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
 		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
-		buffer << L"Theme=" << sc.theme << L"\n";
 		// 1.16 preserves these local, read-only values solely so a custom-named
 		// legacy service remains discoverable until the user removes it. They are
 		// excluded from portable configuration and are removed from the model in 1.17.
@@ -668,9 +815,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口
 // 例如：
-// WriteLogEntry("Configs loaded from " + filename, LogLevel::Info);
-// WriteLogEntry("Configs saved to " + wstring_to_utf8(filename), LogLevel::Info);
-// WriteLogEntry("Config conflict detected: " + wstring_to_utf8(conflictDetails), LogLevel::Warning);
 
 void CheckForConfigConflicts() {
 	lock_guard<mutex> lock(g_appState.configsMutex);

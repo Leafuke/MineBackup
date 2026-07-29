@@ -1,12 +1,12 @@
 #include "KnotLinkService.h"
 
+#include "Logging.h"
 #include "knotlink/OpenSocketResponser.hpp"
 #include "knotlink/SignalSender.hpp"
 
 #include "AppState.h"
 #include "BackupManager.h"
 #include "Broadcast.h"
-#include "Console.h"
 #include "FolderRewindFormat.h"
 #include "Globals.h"
 #include "HistoryManager.h"
@@ -315,7 +315,6 @@ KnotLinkProtocolFormatter::Fields EventTargetFields(const ResolvedFolder& folder
 struct KnotLinkService::Implementation {
     std::unique_ptr<::knotlink::SignalSender> sender;
     std::unique_ptr<::knotlink::OpenSocketResponser> responder;
-    Console* console = nullptr;
 };
 
 class KnotLinkService::ContextScope {
@@ -340,13 +339,12 @@ KnotLinkService::~KnotLinkService() {
     Stop();
 }
 
-bool KnotLinkService::Start(Console& console) {
+bool KnotLinkService::Start() {
     std::lock_guard<std::mutex> lock(lifecycleMutex_);
     if (running_.load()) {
         return true;
     }
     try {
-        implementation_->console = &console;
         implementation_->sender = std::make_unique<::knotlink::SignalSender>(
             std::string(KnotLinkCapabilities::AppId),
             std::string(KnotLinkCapabilities::SignalId));
@@ -356,15 +354,18 @@ bool KnotLinkService::Start(Console& console) {
                 std::string(KnotLinkCapabilities::OpenSocketId));
         implementation_->responder->setQuestionHandler(
             [this](const std::string& payload) {
-                return HandlePayload(payload, *implementation_->console);
+                return HandlePayload(payload);
             });
         running_.store(true);
+        MB_LOG_INFO(logging::LogCategory::KnotLink,
+            "knotlink.service.started", "KnotLink service started");
         return true;
     } catch (const std::exception& error) {
         implementation_->responder.reset();
         implementation_->sender.reset();
-        implementation_->console = nullptr;
-        console.AddLog("[KnotLink] Initialization failed: %s", error.what());
+        MB_LOG_ERROR(logging::LogCategory::KnotLink,
+            "knotlink.service.start_failed",
+            "KnotLink initialization failed: {}", error.what());
         running_.store(false);
         return false;
     }
@@ -380,10 +381,6 @@ void KnotLinkService::Stop() {
         sender = std::move(implementation_->sender);
     }
     responder.reset();
-    {
-        std::lock_guard<std::mutex> lock(lifecycleMutex_);
-        implementation_->console = nullptr;
-    }
     sender.reset();
 }
 
@@ -454,7 +451,7 @@ void KnotLinkService::BroadcastLegacyPayload(std::string_view payload) {
 }
 
 std::string KnotLinkService::HandlePayload(
-    std::string_view payload, Console& console) {
+    std::string_view payload) {
     if (!KnotLinkKeyValueCodec::HasCommandField(payload)) {
         return KnotLinkProtocolFormatter::FormatError(
             nullptr,
@@ -475,18 +472,28 @@ std::string KnotLinkService::HandlePayload(
             return KnotLinkProtocolFormatter::FormatError(
                 context.get(), *unsupported, {{"code", "unsupported_parameter"}});
         }
-        return HandleRequest(context, console);
+        logging::ScopedLogContext requestContext({
+            {"request_id", context->metadata.requestId},
+            {"command", context->request.command}
+        });
+        MB_LOG_DEBUG(logging::LogCategory::KnotLink,
+            "knotlink.request.received",
+            "Received KnotLink request '{}'", context->request.command);
+        return HandleRequest(context);
     } catch (const KnotLinkProtocolError& error) {
+        MB_LOG_WARNING(logging::LogCategory::KnotLink,
+            "knotlink.request.invalid", "Invalid KnotLink request: {}", error.what());
         return KnotLinkProtocolFormatter::FormatError(nullptr, error.what());
     } catch (const std::exception& error) {
+        MB_LOG_ERROR(logging::LogCategory::KnotLink,
+            "knotlink.request.failed", "KnotLink request failed: {}", error.what());
         return KnotLinkProtocolFormatter::FormatError(
             nullptr, std::string("Command failed: ") + error.what());
     }
 }
 
 std::string KnotLinkService::HandleRequest(
-    const std::shared_ptr<KnotLinkCommandContext>& context,
-    Console& console) {
+    const std::shared_ptr<KnotLinkCommandContext>& context) {
     const auto& request = context->request;
     auto error = [&](std::string_view message,
                      KnotLinkProtocolFormatter::Fields fields = {}) {
@@ -705,8 +712,8 @@ std::string KnotLinkService::HandleRequest(
         return submit(
             L"KnotLink v2 backup",
             {TaskCoordinator::WorldResourceKey(target.config.configId, target.path)},
-            [target, comment, &console] {
-                const BackupOutcome outcome = DoBackup(target, console, comment);
+            [target, comment] {
+                const BackupOutcome outcome = DoBackup(target, comment);
                 switch (outcome) {
                     case BackupOutcome::Created:
                         return std::pair{true, std::string("Backup created.")};
@@ -746,13 +753,13 @@ std::string KnotLinkService::HandleRequest(
         const std::wstring comment = utf8_to_wstring(request.Get("comment"));
         return submit(
             L"KnotLink v2 backup all", std::move(resources),
-            [this, context, targets = std::move(targets), comment, &console] {
+            [this, context, targets = std::move(targets), comment] {
                 Broadcast("backup_all_started", {}, context);
                 int created = 0;
                 int unchanged = 0;
                 int failed = 0;
                 for (const auto& target : targets) {
-                    switch (DoBackup(target, console, comment)) {
+                    switch (DoBackup(target, comment)) {
                         case BackupOutcome::Created: ++created; break;
                         case BackupOutcome::NoChanges: ++unchanged; break;
                         case BackupOutcome::Failed:
@@ -820,7 +827,7 @@ std::string KnotLinkService::HandleRequest(
                 {TaskCoordinator::WorldResourceKey(
                     target.config.configId, target.path)},
                 [target, backupFile, mode,
-                 restoreWhitelist = std::move(restoreWhitelist), &console] {
+                 restoreWhitelist = std::move(restoreWhitelist)] {
                     HotRestoreState expected = HotRestoreState::IDLE;
                     if (!g_appState.hotkeyRestoreState.compare_exchange_strong(
                             expected, HotRestoreState::WAITING_FOR_MOD)) {
@@ -842,7 +849,7 @@ std::string KnotLinkService::HandleRequest(
                                 "current-world restore.")};
                     }
                     const bool restored = DoHotRestore(
-                        target, console, false, backupFile,
+                        target, false, backupFile,
                         mode == "clean" ? 0 : 1, &restoreWhitelist);
                     return std::pair{
                         restored,
@@ -857,9 +864,9 @@ std::string KnotLinkService::HandleRequest(
             L"KnotLink v2 restore",
             {TaskCoordinator::WorldResourceKey(config.configId, folder->folderPath)},
             [config, worldName, backupFile, mode,
-             restoreWhitelist = std::move(restoreWhitelist), &console] {
+             restoreWhitelist = std::move(restoreWhitelist)] {
                 const bool restored = DoRestore(
-                    config, worldName, backupFile, console,
+                    config, worldName, backupFile,
                     mode == "clean" ? 0 : 1, "", &restoreWhitelist);
                 return std::pair{
                     restored,
@@ -889,12 +896,12 @@ std::string KnotLinkService::HandleRequest(
         Broadcast("command_accepted", {{"command", request.command}}, context);
         const bool queued = TaskCoordinator::Instance().Submit(
             taskName, {},
-            [this, context, key, interval, &console, taskName](
+            [this, context, key, interval, taskName](
                 std::stop_token token) {
                 ContextScope scope(context);
                 Broadcast("command_started", {{"command", "AUTO_BACKUP"}}, context);
                 AutoBackupThreadFunction(
-                    key.first, key.second, interval, &console, token);
+                    key.first, key.second, interval, token);
                 Broadcast("command_completed",
                           {{"command", "AUTO_BACKUP"}}, context);
                 TaskCoordinator::Instance().PostEvent(

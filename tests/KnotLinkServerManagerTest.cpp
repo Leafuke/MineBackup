@@ -21,7 +21,7 @@ void Check(bool condition, const std::string& message) {
 class FakePlatform final : public IKnotLinkServerPlatform {
 public:
     KnotLinkServerDiscovery discovery{
-        true, true, L"C:\\KnotLinkService.exe", "3.0.0.0", {}};
+        true, true, L"C:\\KnotLinkService.exe", "3.2.0.0", {}};
     bool processRunning = false;
     bool signalReady = false;
     bool responderReady = false;
@@ -84,16 +84,20 @@ void TestCompatibilityGate() {
 
     platform->discovery.version = "2.9.9";
     Check(manager.Refresh(true).state == KnotLinkServerState::Incompatible,
-          "server below 3.0.0 should be blocked");
+          "server below 3.2.0.0 should be blocked");
 
     platform->discovery.version = "3.0.0.0";
+    Check(manager.Refresh(true).state == KnotLinkServerState::Incompatible,
+          "legacy 3.0.0.0 should request an update");
+
+    platform->discovery.version = "3.2.0.0";
     Check(manager.Refresh(true).state == KnotLinkServerState::Stopped,
           "compatible installed server without ports should be stopped");
-    Check(KnotLinkServerManager::IsVersionCompatible("3.1.0"),
+    Check(KnotLinkServerManager::IsVersionCompatible("3.2.1"),
           "newer semantic version should be compatible");
-    Check(!KnotLinkServerManager::IsVersionCompatible("3.0"),
+    Check(!KnotLinkServerManager::IsVersionCompatible("3.2"),
           "incomplete version should be rejected");
-    Check(!KnotLinkServerManager::IsVersionCompatible("3.0.0-preview"),
+    Check(!KnotLinkServerManager::IsVersionCompatible("3.2.0-preview"),
           "version suffix should not bypass compatibility gate");
 }
 

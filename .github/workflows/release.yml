@@ -150,6 +150,8 @@ jobs:
   assemble:
     runs-on: ubuntu-24.04
     needs: [windows, linux, macos, cross-restore-windows, cross-restore-linux, cross-restore-macos]
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
     if: >-
       ${{ always()
           && (needs.windows.result == 'success'
@@ -187,7 +189,19 @@ jobs:
             tag="$GITHUB_REF_NAME"
             omitted=none
           fi
-          [[ "$tag" == v1.16.0 ]] || { echo "Only v1.16.0 is supported by this release workflow" >&2; exit 1; }
+          # Validate tag follows semantic versioning pattern
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must follow semantic versioning (vX.Y.Z), got: $tag" >&2
+            exit 1
+          fi
+          version_file="$RUNNER_TEMP/minebackup-version.txt"
+          cmake -DMINEBACKUP_VERSION_OUTPUT="$version_file" \
+            -P cmake/ExportMineBackupVersion.cmake
+          source_version="$(tr -d '\r\n' < "$version_file")"
+          [[ "$tag" == "v$source_version" ]] || {
+            echo "Release tag $tag does not match source version v$source_version" >&2
+            exit 1
+          }
           [[ "$(git cat-file -t "$tag")" == tag ]] || { echo "The release tag must be annotated" >&2; exit 1; }
           [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]] || {
             echo "The release tag does not point at the workflow commit" >&2
@@ -198,29 +212,15 @@ jobs:
             exit 1
           fi
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
+          echo "version=$source_version" >>"$GITHUB_OUTPUT"
           echo "omitted=$omitted" >>"$GITHUB_OUTPUT"
 
-      - name: Download Windows candidate
-        if: steps.identity.outputs.omitted != 'windows'
+      - name: Download all platform candidates
         uses: actions/download-artifact@v4
         with:
-          name: minebackup-windows-candidate
+          pattern: minebackup-*-candidate*
           path: candidate
-
-      - name: Download Linux candidates
-        if: steps.identity.outputs.omitted != 'linux'
-        uses: actions/download-artifact@v4
-        with:
-          name: minebackup-linux-candidates
-          path: candidate
-
-      - name: Download macOS candidate
-        if: steps.identity.outputs.omitted != 'macos'
-        uses: actions/download-artifact@v4
-        with:
-          name: minebackup-macos-candidate
-          path: candidate
+          merge-multiple: true
 
       - name: Remove validation-only files from candidate directory
         shell: bash
@@ -232,12 +232,13 @@ jobs:
         env:
           OMITTED: ${{ steps.identity.outputs.omitted }}
           WAIVER_REASON: ${{ inputs.waiver_reason }}
+          VERSION: ${{ steps.identity.outputs.version }}
         run: |
           set -euo pipefail
           python3 packaging/generate_release_manifest.py \
             --assets-dir candidate \
             --commit "$GITHUB_SHA" \
-            --version "${{ steps.identity.outputs.version }}" \
+            --version "$VERSION" \
             --omitted-platform "$OMITTED" \
             --waiver-reason "$WAIVER_REASON" \
             --dependency-manifest packaging/dependency-manifest.json
@@ -266,7 +267,7 @@ jobs:
       - name: Download audited release candidate
         uses: actions/download-artifact@v4
         with:
-          name: minebackup-1.16.0-release-candidate
+          name: minebackup-${{ needs.assemble.outputs.version }}-release-candidate
           path: candidate
 
       - name: Create or resume draft for this exact tag
@@ -274,13 +275,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          VERSION: ${{ needs.assemble.outputs.version }}
         run: |
           set -euo pipefail
           notes_file="$RUNNER_TEMP/release-notes.md"
           omitted="$(jq -r '.omittedPlatform // "none"' candidate/release-manifest.json)"
           waiver_reason="$(jq -r '.waiverReason // ""' candidate/release-manifest.json)"
           {
-            echo "MineBackup 1.16.0 release for commit \`$GITHUB_SHA\`."
+            echo "MineBackup $VERSION release for commit \`$GITHUB_SHA\`."
             echo
             if [[ "$omitted" == none ]]; then
               echo "Windows, Linux and macOS candidates and the three-platform cross-restore gate passed."
@@ -302,10 +304,10 @@ jobs:
                 "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
             done
             gh release edit "$RELEASE_TAG" --draft=true \
-              --title "MineBackup 1.16.0" --notes-file "$notes_file"
+              --title "MineBackup $VERSION" --notes-file "$notes_file"
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft \
-              --title "MineBackup 1.16.0" \
+              --title "MineBackup $VERSION" \
               --notes-file "$notes_file"
           fi
 

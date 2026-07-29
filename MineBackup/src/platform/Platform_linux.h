@@ -5,7 +5,6 @@
 #include <string>
 #include <filesystem>
 
-struct Console;
 // Linux stub implementations used when building on non-Windows platforms.
 std::wstring SelectFileDialog();
 std::wstring SelectFolderDialog();

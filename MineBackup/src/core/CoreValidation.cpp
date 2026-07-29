@@ -3,7 +3,7 @@
 
 #include "BackupManager.h"
 #include "ConfigManager.h"
-#include "Console.h"
+#include "Logging.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "Globals.h"
@@ -24,6 +24,9 @@
 #include <sstream>
 
 using namespace std;
+
+#define VALIDATION_INFO(...) MB_LOG_PRINTF_INFO(minebackup::logging::LogCategory::Validation, "validation.progress", __VA_ARGS__)
+#define VALIDATION_ERROR(...) MB_LOG_PRINTF_ERROR(minebackup::logging::LogCategory::Validation, "validation.error", __VA_ARGS__)
 
 namespace {
 	constexpr int kValidationConfigIndex = -424242;
@@ -300,12 +303,11 @@ namespace {
 	};
 
 	struct ValidationContext {
-		Console& console;
 		bool automatic = false;
 		vector<string> failures;
 
 		void Info(const string& message) {
-			console.AddLog("[Info] [Validation] %s", message.c_str());
+			VALIDATION_INFO("%s", message.c_str());
 		}
 
 		bool Require(bool condition, const string& successMessage, const string& failureMessage) {
@@ -316,7 +318,7 @@ namespace {
 				return true;
 			}
 			failures.push_back(failureMessage);
-			console.AddLog("[Error] [Validation] %s", failureMessage.c_str());
+			VALIDATION_ERROR("%s", failureMessage.c_str());
 			return false;
 		}
 	};
@@ -375,7 +377,7 @@ namespace {
 			if (filesystem::exists(path)) {
 				const string message = MsgFmt("VAL_ERR_LOCK_ARTIFACT_LEFT", wstring_to_utf8(path.wstring()));
 				ctx.failures.push_back(message);
-				ctx.console.AddLog("[Error] [Validation] %s", message.c_str());
+				VALIDATION_ERROR("%s", message.c_str());
 				return false;
 			}
 		}
@@ -475,7 +477,7 @@ namespace {
 		WriteTextFile(worldPath / L"locks" / L"runtime.lock", "ignored-sub-lock\n");
 
 		world.config.skipIfUnchanged = false;
-		DoBackup(world, ctx.console, L"CoreValidation_Base");
+		DoBackup(world, L"CoreValidation_Base");
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_INITIAL_FULL_CREATED"), L("VAL_ERR_INITIAL_FULL_NOT_CREATED"))) return false;
 		if (!ctx.Require(historyEntries[0].backupType == L"Full", L("VAL_OK_FIRST_TYPE_FULL"), L("VAL_ERR_FIRST_TYPE_NOT_FULL"))) return false;
@@ -486,7 +488,7 @@ namespace {
 
 		world.config.skipIfUnchanged = true;
 		SleepForUniqueBackupName();
-		DoBackup(world, ctx.console, L"CoreValidation_NoChange");
+		DoBackup(world, L"CoreValidation_NoChange");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_SKIP_NO_CHANGE"), L("VAL_ERR_NO_CHANGE_CREATED"))) return false;
 
@@ -501,7 +503,7 @@ namespace {
 			L("VAL_OK_SHARED_LOCK_CREATED"),
 			MsgFmt("VAL_ERR_SHARED_LOCK_CREATE_FAILED", lockError)
 		)) return false;
-		DoBackup(world, ctx.console, L"CoreValidation_Smart_Locked");
+		DoBackup(world, L"CoreValidation_Smart_Locked");
 		sharedWriteHandle.Close();
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_FIRST_SMART_CREATED"), L("VAL_ERR_FIRST_SMART_NOT_CREATED"))) return false;
@@ -514,7 +516,7 @@ namespace {
 		WriteTextFile(worldPath / L"data" / L"base.txt", state3.at(L"data/base.txt"));
 		WriteTextFile(worldPath / L"data" / L"fresh.txt", state3.at(L"data/fresh.txt"));
 		RemoveIfExists(worldPath / L"to_delete.txt");
-		DoBackup(world, ctx.console, L"CoreValidation_Smart_Delete");
+		DoBackup(world, L"CoreValidation_Smart_Delete");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SECOND_SMART_CREATED"), L("VAL_ERR_SECOND_SMART_NOT_CREATED"))) return false;
 		const wstring secondSmartBackupFile = historyEntries.back().backupFile;
@@ -522,7 +524,7 @@ namespace {
 
 		SleepForUniqueBackupName();
 		RemoveIfExists(worldPath / L"data" / L"fresh.txt");
-		DoBackup(world, ctx.console, L"CoreValidation_DeleteOnly");
+		DoBackup(world, L"CoreValidation_DeleteOnly");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 4, L("VAL_OK_DELETION_ONLY_CREATED"), L("VAL_ERR_DELETION_ONLY_NOT_CREATED"))) return false;
 		const wstring latestBackupFile = historyEntries.back().backupFile;
@@ -533,13 +535,13 @@ namespace {
 		WriteTextFile(worldPath / L"manual_only.txt", "should-be-removed\n");
 		WriteTextFile(worldPath / L"session.lock", "should-not-survive-restore\n");
 		WriteTextFile(worldPath / L"locks" / L"runtime.lock", "should-not-survive-restore\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, fullBackupFile, ctx.console, 0, ""), L("VAL_OK_RESTORE_FULL_SUCCESS"), L("VAL_ERR_RESTORE_FULL_FAILED"))) return false;
+		if (!ctx.Require(DoRestore(cfg, world.name, fullBackupFile, 0, ""), L("VAL_OK_RESTORE_FULL_SUCCESS"), L("VAL_ERR_RESTORE_FULL_FAILED"))) return false;
 		string diff;
 		if (!ctx.Require(CompareWorldState(state1, CaptureWorldState(worldPath), diff), L("VAL_OK_RESTORE_FULL_MATCH"), MsgFmt("VAL_ERR_RESTORE_FULL_MISMATCH", diff))) return false;
 		if (!AssertLockArtifactsAbsent(ctx, worldPath)) return false;
 
 		WriteTextFile(worldPath / L"notes.txt", "custom-restore-target\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, secondSmartBackupFile, ctx.console, 3, "notes.txt"), L("VAL_OK_CUSTOM_RESTORE_SUCCESS"), L("VAL_ERR_CUSTOM_RESTORE_FAILED"))) return false;
+		if (!ctx.Require(DoRestore(cfg, world.name, secondSmartBackupFile, 3, "notes.txt"), L("VAL_OK_CUSTOM_RESTORE_SUCCESS"), L("VAL_ERR_CUSTOM_RESTORE_FAILED"))) return false;
 		WorldState customExpected = state1;
 		customExpected[L"notes.txt"] = state3.at(L"notes.txt");
 		if (!ctx.Require(CompareWorldState(customExpected, CaptureWorldState(worldPath), diff), L("VAL_OK_CUSTOM_RESTORE_MATCH"), MsgFmt("VAL_ERR_CUSTOM_RESTORE_MISMATCH", diff))) return false;
@@ -548,7 +550,7 @@ namespace {
 			return entry.backupFile == firstSmartBackupFile;
 		});
 		if (!ctx.Require(safeDeleteTarget != historyEntries.end(), L("VAL_OK_SAFEDELETE_TARGET_FOUND"), L("VAL_ERR_SAFEDELETE_TARGET_NOT_FOUND"))) return false;
-		DoSafeDeleteBackup(cfg, *safeDeleteTarget, kValidationConfigIndex, ctx.console);
+		DoSafeDeleteBackup(cfg, *safeDeleteTarget, kValidationConfigIndex);
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SAFEDELETE_HISTORY_SIZE"), L("VAL_ERR_SAFEDELETE_HISTORY_SIZE"))) return false;
 		if (!ctx.Require(!filesystem::exists(filesystem::path(cfg.backupPath) / world.name / firstSmartBackupFile), L("VAL_OK_SAFEDELETE_ARCHIVE_REMOVED"), L("VAL_ERR_SAFEDELETE_ARCHIVE_PRESENT"))) return false;
@@ -556,7 +558,7 @@ namespace {
 		WriteTextFile(worldPath / L"notes.txt", "corrupted-before-final-restore\n");
 		WriteTextFile(worldPath / L"manual_only.txt", "should-be-removed-again\n");
 		WriteTextFile(worldPath / L"LOCK", "should-not-survive-restore\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, latestBackupFile, ctx.console, 0, ""), L("VAL_OK_FINAL_RESTORE_SUCCESS"), L("VAL_ERR_FINAL_RESTORE_FAILED"))) return false;
+		if (!ctx.Require(DoRestore(cfg, world.name, latestBackupFile, 0, ""), L("VAL_OK_FINAL_RESTORE_SUCCESS"), L("VAL_ERR_FINAL_RESTORE_FAILED"))) return false;
 		if (!ctx.Require(CompareWorldState(state4, CaptureWorldState(worldPath), diff), L("VAL_OK_FINAL_RESTORE_MATCH"), MsgFmt("VAL_ERR_FINAL_RESTORE_MISMATCH", diff))) return false;
 		if (!AssertLockArtifactsAbsent(ctx, worldPath)) return false;
 
@@ -583,21 +585,21 @@ namespace {
 		TemporarySafeDeleteMode noSafeDelete(false);
 
 		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v1", 240));
-		DoBackup(world, ctx.console, L"CoreValidation_Limit_1");
+		DoBackup(world, L"CoreValidation_Limit_1");
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_LIMIT_FIRST_CREATED"), L("VAL_ERR_LIMIT_FIRST_FAILED"))) return false;
 		const wstring oldestBackupFile = historyEntries.front().backupFile;
 
 		SleepForUniqueBackupName();
 		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v2", 260));
-		DoBackup(world, ctx.console, L"CoreValidation_Limit_2");
+		DoBackup(world, L"CoreValidation_Limit_2");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_LIMIT_SECOND_CREATED"), L("VAL_ERR_LIMIT_SECOND_FAILED"))) return false;
 		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_SECOND_IS_SMART"), L("VAL_ERR_LIMIT_SECOND_NOT_SMART"))) return false;
 
 		SleepForUniqueBackupName();
 		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v3", 280));
-		DoBackup(world, ctx.console, L"CoreValidation_Limit_3");
+		DoBackup(world, L"CoreValidation_Limit_3");
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(!historyEntries.empty() && historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_THIRD_IS_SMART"), L("VAL_ERR_LIMIT_THIRD_NOT_SMART"))) return false;
 		auto archives = GetBackupFilesForWorld(cfg, world.name);
@@ -682,8 +684,11 @@ namespace {
 			"[Validation] Legacy archives were not renamed.", "[Validation] Legacy archive files changed during migration.");
 	}
 
-	static bool RunCoreValidation(Console& console, bool automatic) {
-		ValidationContext ctx{ console, automatic };
+	static bool RunCoreValidation(bool automatic) {
+		ValidationContext ctx{ automatic };
+		minebackup::logging::ScopedLogContext validationContext{{
+			"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
+			{"task", automatic ? "automatic_validation" : "manual_validation"}};
 		ctx.Info(automatic ? L("VAL_INFO_START_AUTO") : L("VAL_INFO_START_MANUAL"));
 
 		Config templateConfig;
@@ -728,9 +733,9 @@ namespace {
 			ctx.Info(L("VAL_INFO_COMPLETED"));
 		}
 		else {
-			ctx.console.AddLog("[Error] [Validation] %s", MsgFmt("VAL_ERR_FINISHED_WITH_COUNT", static_cast<int>(ctx.failures.size())).c_str());
+			VALIDATION_ERROR("%s", MsgFmt("VAL_ERR_FINISHED_WITH_COUNT", static_cast<int>(ctx.failures.size())).c_str());
 			for (size_t index = 0; index < ctx.failures.size(); ++index) {
-				ctx.console.AddLog("[Error] [Validation] %d. %s", static_cast<int>(index + 1), ctx.failures[index].c_str());
+				VALIDATION_ERROR("%d. %s", static_cast<int>(index + 1), ctx.failures[index].c_str());
 			}
 		}
 
@@ -738,30 +743,35 @@ namespace {
 	}
 }
 
-void StartCoreValidationAsync(bool automatic, Console& console) {
+void StartCoreValidationAsync(bool automatic) {
 	bool expected = false;
 	if (!g_CoreValidationRunning.compare_exchange_strong(expected, true)) {
-		console.AddLog("[Info] [Validation] %s", L("VAL_INFO_ALREADY_RUNNING"));
+		VALIDATION_INFO("%s", L("VAL_INFO_ALREADY_RUNNING"));
 		return;
 	}
 
-	console.AddLog("[Info] [Validation] %s", automatic ? L("VAL_INFO_QUEUED_AUTO") : L("VAL_INFO_QUEUED_MANUAL"));
-	if (!TaskCoordinator::Instance().Submit(L"core-validation", {L"validation"}, [automatic, &console](stop_token) {
+	VALIDATION_INFO("%s", automatic ? L("VAL_INFO_QUEUED_AUTO") : L("VAL_INFO_QUEUED_MANUAL"));
+	if (!TaskCoordinator::Instance().Submit(L"core-validation", {L"validation"}, [automatic](stop_token) {
 		bool passed = false;
 		try {
-			passed = RunCoreValidation(console, automatic);
+			passed = RunCoreValidation(automatic);
 		}
 		catch (const exception& ex) {
-			console.AddLog("[Error] [Validation] %s", MsgFmt("VAL_ERR_WORKER_CRASHED", ex.what()).c_str());
+			VALIDATION_ERROR("%s", MsgFmt("VAL_ERR_WORKER_CRASHED", ex.what()).c_str());
 		}
 
 		g_CoreValidationPassed.store(passed);
 		g_CoreValidationPending.store(false);
 		SaveConfigs();
-		console.AddLog("[Info] [Validation] %s", passed ? L("VAL_INFO_PASSED") : L("VAL_INFO_FAILED_RETRY"));
+		if (passed) {
+			VALIDATION_INFO("%s", L("VAL_INFO_PASSED"));
+		}
+		else {
+			VALIDATION_ERROR("%s", L("VAL_INFO_FAILED_RETRY"));
+		}
 		g_CoreValidationRunning.store(false);
 	})) {
 		g_CoreValidationRunning.store(false);
-		console.AddLog("[Error] [Validation] Task coordinator is shutting down.");
+		VALIDATION_ERROR("Task coordinator is shutting down.");
 	}
 }

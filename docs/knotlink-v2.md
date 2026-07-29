@@ -138,19 +138,19 @@ The companion mod minimum is 3.1.0. Handshake waits up to three seconds.
 World save, save-and-exit, file release, and rejoin retain the FolderRewind
 10/15/30-second workflow timeouts.
 
-On Windows, KnotLinkService 3.0.0 or newer is required. MineBackup discovers
+On Windows, KnotLinkService 3.2.0.0 or newer is required. MineBackup discovers
 the executable and version from App Paths and both uninstall registry views,
-then falls back to the PE file version. Unknown and older versions are blocked.
+then falls back to the PE file version. Installed unknown and older versions
+are blocked and produce a dismissible reminder on every startup.
 The `AutoStartKnotLinkServer` setting defaults to `1`; a compatible installed
 service may be started and must expose loopback ports 6370 and 6378 within 10
 seconds.
 
-Linux and macOS are client-only until KnotLink publishes servers for those
-platforms. If a future local server exposes the fixed ports, the client can
-connect without a MineBackup update.
-
-MineBackup never downloads or runs a KnotLink installer. Use the
-[official KnotLink releases](https://github.com/KnotLink-Protocol/KnotLink/releases).
+Linux discovers the `knotlinkservice` dpkg package and macOS discovers the
+`com.knotlink.service` Installer receipt. The installed services are managed by
+systemd and launchd. The first-run wizard and Settings can download the official
+3.2.0.0 package, retry through `gh-proxy.org`, and open the platform installer;
+MineBackup does not automate the remaining installer steps.
 
 ---
 
@@ -185,7 +185,9 @@ FolderRewind 的命令专属内部格式：`LIST_CONFIGS` 为
 `RESTORE` 不提供 `file` 时选择最新备份。一次性备份模式、压缩设置、黑名单
 和还原白名单只作用于当前任务，不写回配置。
 
-联动模组最低版本为 3.1.0。Windows KnotLinkService 最低版本为 3.0.0，
-默认允许智能启动；未知或旧版本会被阻止。Linux/macOS 暂时只保留客户端。
-MineBackup 不会自动下载安装器，只会打开
-[KnotLink 官方发布页](https://github.com/KnotLink-Protocol/KnotLink/releases)。
+联动模组最低版本为 3.1.0。KnotLinkService 推荐最低版本为 3.2.0.0。
+Windows 读取注册表和文件版本，Linux 读取 dpkg 包信息，macOS 读取 Installer
+收据；已安装的未知或旧版本会被阻止，并在每次启动时显示可关闭提醒。首次
+向导和设置页可以从
+[KnotLinkService 官方发布](https://github.com/KnotLink-Protocol/KnotLinkService/releases)
+下载对应安装包，官方地址失败后尝试 `gh-proxy.org`，随后交给系统安装器。

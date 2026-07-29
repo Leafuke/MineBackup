@@ -5,8 +5,6 @@
 #include <string>
 #include <filesystem>
 
-struct Console;
-
 std::wstring SelectFileDialog();
 std::wstring SelectFolderDialog();
 std::wstring SelectSaveFileDialog(const std::wstring& defaultFileName = L"", const std::wstring& filter = L"");

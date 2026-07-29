@@ -34,6 +34,9 @@
     <Filter Include="third_party\stb">
       <UniqueIdentifier>{89064A90-A00E-44D4-A6D9-E678C5718036}</UniqueIdentifier>
     </Filter>
+    <Filter Include="third_party\spdlog">
+      <UniqueIdentifier>{662CA514-8D83-4D05-8CA7-CF6A2DAB0D16}</UniqueIdentifier>
+    </Filter>
     <Filter Include="resources">
       <UniqueIdentifier>{7B44FA14-0C85-4871-8A62-D64C232978A8}</UniqueIdentifier>
     </Filter>
@@ -41,6 +44,27 @@
   <ItemGroup>
     <ClCompile Include="src\app\AppState.cpp">
       <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\async.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\bundled_fmtlib_format.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\cfg.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\color_sinks.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\file_sinks.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\spdlog.cpp">
+      <Filter>third_party\spdlog</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\spdlog\src\stdout_sinks.cpp">
+      <Filter>third_party\spdlog</Filter>
     </ClCompile>
     <ClCompile Include="src\app\LaunchOptions.cpp">
       <Filter>src\app</Filter>
@@ -111,10 +135,13 @@
     <ClCompile Include="src\infra\AtomicFileWriter.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\DiagnosticLogExporter.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\AppPaths.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
-    <ClCompile Include="src\infra\RotatingFileLog.cpp">
+    <ClCompile Include="src\infra\Logging.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\SingleInstanceService.cpp">
@@ -144,6 +171,9 @@
     <ClCompile Include="src\infra\Broadcast.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\KnotLinkPackageManager.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -154,9 +184,6 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\ConfigManager.cpp">
-      <Filter>src\infra</Filter>
-    </ClCompile>
-    <ClCompile Include="src\infra\Console.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\i18n.cpp">
@@ -172,6 +199,12 @@
       <Filter>src\platform</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\HistoryUI.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\CommandConsole.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\LogPanel.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\MigrationReportUI.cpp">
@@ -290,10 +323,10 @@
     <ClInclude Include="src\infra\AtomicFileWriter.h">
       <Filter>src\infra</Filter>
     </ClInclude>
-    <ClInclude Include="src\infra\AppPaths.h">
+    <ClInclude Include="src\infra\DiagnosticLogExporter.h">
       <Filter>src\infra</Filter>
     </ClInclude>
-    <ClInclude Include="src\infra\RotatingFileLog.h">
+    <ClInclude Include="src\infra\AppPaths.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\SingleInstanceService.h">
@@ -320,6 +353,9 @@
     <ClInclude Include="src\infra\Broadcast.h">
       <Filter>src\infra</Filter>
     </ClInclude>
+    <ClInclude Include="src\infra\KnotLinkPackageManager.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\KnotLinkProtocol.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -330,9 +366,6 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\ConfigManager.h">
-      <Filter>src\infra</Filter>
-    </ClInclude>
-    <ClInclude Include="src\infra\Console.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\i18n.h">

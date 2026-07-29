@@ -1,10 +1,10 @@
 #include "Broadcast.h"
 
 #include "AppState.h"
-#include "Console.h"
 #include "Globals.h"
 #include "KnotLinkServerManager.h"
 #include "KnotLinkService.h"
+#include "Logging.h"
 
 #include <chrono>
 
@@ -18,18 +18,18 @@ void BroadcastEvent(
     minebackup::knotlink::GetKnotLinkService().Broadcast(eventName, fields);
 }
 
-bool InitKnotLink(Console& console) {
+bool InitKnotLink() {
     const auto serverStatus =
         minebackup::knotlink::GetKnotLinkServerManager().EnsureReady(
             g_enableKnotLink, g_autoStartKnotLinkServer);
     if (serverStatus.state !=
         minebackup::knotlink::KnotLinkServerState::Ready) {
-        console.AddLog(
-            "[KnotLink] Client connection blocked: %s",
-            serverStatus.message.c_str());
+        MB_LOG_ERROR(minebackup::logging::LogCategory::KnotLink,
+            "knotlink.connection.blocked",
+            "Client connection blocked: {}", serverStatus.message);
         return false;
     }
-    return minebackup::knotlink::GetKnotLinkService().Start(console);
+    return minebackup::knotlink::GetKnotLinkService().Start();
 }
 
 void CleanupKnotLink() {

@@ -1,6 +1,7 @@
-﻿#include "Broadcast.h"
+#include "Broadcast.h"
 #include "BackupManager.h"
-#include "Console.h"
+#include "Logging.h"
+#include "i18n.h"
 #include "Globals.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
@@ -9,6 +10,9 @@
 #include <filesystem>
 #include <mutex>
 using namespace std;
+
+#define TASK_INFO(...) MB_LOG_PRINTF_INFO(minebackup::logging::LogCategory::Task, "game_session.progress", __VA_ARGS__)
+#define TASK_WARNING(...) MB_LOG_PRINTF_WARNING(minebackup::logging::LogCategory::Task, "game_session.warning", __VA_ARGS__)
 map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
 
 MyFolder GetOccupiedWorld() {
@@ -60,7 +64,7 @@ MyFolder GetOccupiedWorld() {
 }
 
 void GameSessionWatcherThread(stop_token stopToken) {
-	console.AddLog(L("LOG_START_WATCHER_START"));
+	TASK_INFO(L("LOG_START_WATCHER_START"));
 
 	while (!stopToken.stop_requested()) {
 		map<pair<int, int>, wstring> currently_locked_worlds;
@@ -76,7 +80,7 @@ void GameSessionWatcherThread(stop_token stopToken) {
 		// 检查新启动的世界
 		for (const auto& locked_pair : currently_locked_worlds) {
 			if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
-				console.AddLog(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
+				TASK_INFO(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
 				string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
 				BroadcastEvent(payload);
 				worlds_to_backup.push_back(locked_pair.first);
@@ -85,7 +89,7 @@ void GameSessionWatcherThread(stop_token stopToken) {
 
 		for (const auto& active_pair : g_activeWorlds) {
 			if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
-				console.AddLog(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
+				TASK_INFO(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
 				string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
 				BroadcastEvent(payload);
 
@@ -97,7 +101,7 @@ void GameSessionWatcherThread(stop_token stopToken) {
 						g_appState.g_active_auto_backups.erase(active_pair.first);
 						taskLock.unlock();
 						TaskCoordinator::Instance().RequestStop(taskName);
-						console.AddLog(L("LOG_AUTOBACKUP_STOPPED_ON_EXIT"), wstring_to_utf8(active_pair.second).c_str());
+						TASK_INFO(L("LOG_AUTOBACKUP_STOPPED_ON_EXIT"), wstring_to_utf8(active_pair.second).c_str());
 					}
 				}
 			}
@@ -139,7 +143,7 @@ void GameSessionWatcherThread(stop_token stopToken) {
 					};
 					TaskCoordinator::Instance().Submit(L"game-start-backup",
 						{TaskCoordinator::WorldResourceKey(backupFolder.config.configId, backupFolder.path)},
-						[backupFolder](stop_token) { DoBackup(backupFolder, console, L"OnStart"); });
+						[backupFolder](stop_token) { DoBackup(backupFolder, L"OnStart"); });
 				}
 			}
 		}
@@ -148,24 +152,24 @@ void GameSessionWatcherThread(stop_token stopToken) {
 			this_thread::sleep_for(chrono::milliseconds(100));
 		}
 	}
-	console.AddLog(L("LOG_EXIT_WATCHER_STOP"));
+	TASK_INFO(L("LOG_EXIT_WATCHER_STOP"));
 }
 
 
 void TriggerHotkeyBackup(string comment) {
-	console.AddLog(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
+	TASK_INFO(L("LOG_HOTKEY_BACKUP_TRIGGERED"));
 
 	MyFolder world = GetOccupiedWorld();
 	if (!world.path.empty()) {
-		console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
+		TASK_INFO(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
 
 		TaskCoordinator::Instance().Submit(L"hotkey-backup",
 			{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
-			[world, taskComment = utf8_to_wstring(comment)](stop_token) { DoBackup(world, console, taskComment); });
+			[world, taskComment = utf8_to_wstring(comment)](stop_token) { DoBackup(world, taskComment); });
 		return;
 	}
 
-	console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
+	TASK_INFO(L("LOG_NO_ACTIVE_WORLD_FOUND"));
 }
 
 void TriggerHotkeyRestore(const string& backupFile) {
@@ -173,22 +177,22 @@ void TriggerHotkeyRestore(const string& backupFile) {
 	HotRestoreState expected_idle = HotRestoreState::IDLE;
 	// 使用CAS操作确保线程安全地从IDLE转换到WAITING_FOR_MOD
 	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
-		console.AddLog(L("KNOTLINK_RESTORE_ALREADY_IN_PROGRESS"));
+		TASK_WARNING(L("KNOTLINK_RESTORE_ALREADY_IN_PROGRESS"));
 		return;
 	}
 
 	g_appState.isRespond = false;
-	console.AddLog(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
+	TASK_INFO(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
 
 	MyFolder world = GetOccupiedWorld();
 	if (world.path.empty()) {
 		g_appState.isRespond = false;
-		console.AddLog(L("LOG_NO_ACTIVE_WORLD_FOUND"));
+		TASK_INFO(L("LOG_NO_ACTIVE_WORLD_FOUND"));
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		return;
 	}
 
-	console.AddLog(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
+	TASK_INFO(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
 
 	bool modAvailable = PerformModHandshake("restore", wstring_to_utf8(world.name));
 
@@ -198,25 +202,25 @@ void TriggerHotkeyRestore(const string& backupFile) {
 	if (!modAvailable) {
 		if (g_appState.knotLinkMod.modDetected.load() && !g_appState.knotLinkMod.versionCompatible.load()) {
 			// 检测到模组但版本不兼容
-			console.AddLog(L("KNOTLINK_RESTORE_MOD_VERSION_INCOMPATIBLE"),
+			TASK_WARNING(L("KNOTLINK_RESTORE_MOD_VERSION_INCOMPATIBLE"),
 				g_appState.knotLinkMod.modVersion.c_str(),
 				KnotLinkModInfo::MIN_MOD_VERSION);
 		}
 		else {
 			// 没有检测到模组
-			console.AddLog(L("KNOTLINK_RESTORE_MOD_REQUIRED"));
+			TASK_WARNING(L("KNOTLINK_RESTORE_MOD_REQUIRED"));
 		}
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
 		return;
 	}
 
-	console.AddLog(L("KNOTLINK_RESTORE_MOD_OK"),
+	TASK_INFO(L("KNOTLINK_RESTORE_MOD_OK"),
 		g_appState.knotLinkMod.modVersion.c_str());
 
 	// 联动模组就绪，在后台线程中执行热还原
 	TaskCoordinator::Instance().Submit(L"hotkey-restore",
 		{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)}, [world, backupFile](stop_token) {
-		DoHotRestore(world, ref(console), false, utf8_to_wstring(backupFile));
+		DoHotRestore(world, false, utf8_to_wstring(backupFile));
 	});
 }

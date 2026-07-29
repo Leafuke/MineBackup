@@ -6,6 +6,8 @@
 #include "AppState.h"
 #include "AppPaths.h"
 #include "ConfigManager.h"
+#include "KnotLinkServerManager.h"
+#include "MainUI.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
 #include "DesktopServices.h"
@@ -13,7 +15,7 @@
 using namespace std;
 
 // 前向声明 MineBackup.cpp 中保留的函数
-void ApplyTheme(const int& themeId);
+void ApplyTheme();
 wstring GetDefaultUIFontPath();
 
 void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtracted, const wstring& g_7zTempPath) {
@@ -96,6 +98,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		ImGui::TextUnformatted(L("THEME_SETTINGS"));
 		const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
 		if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
+			g_theme = themeId;
 			const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 			if (themeId == 7 && !filesystem::exists(customThemePath)) {
 				// 打开自定义主题编辑器
@@ -104,7 +107,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				(void)GetDesktopServices()->OpenFolder(customThemePath);
 			}
 			else {
-				ApplyTheme(themeId);
+				ApplyTheme();
 			}
 		}
 
@@ -116,7 +119,8 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_OK"))) {
 			g_uiScale = pendingUiScale;
-			ApplyTheme(themeId);
+			g_theme = themeId;
+			ApplyTheme();
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -275,6 +279,58 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 			ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("WIZARD_PATH_EMPTY_OR_INVALID"));
 	}
 	else if (page == 3) {
+		static bool knotLinkStatusInitialized = false;
+		static minebackup::knotlink::KnotLinkServerStatus knotLinkStatus;
+		if (!knotLinkStatusInitialized) {
+			knotLinkStatus =
+				minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
+			knotLinkStatusInitialized = true;
+		}
+
+		ImGui::TextUnformatted(L("WIZARD_KNOTLINK_TITLE"));
+		ImGui::TextWrapped("%s", L("WIZARD_KNOTLINK_DESC"));
+		ImGui::Dummy(ImVec2(0.0f, 10.0f));
+		ImGui::Text(
+			"%s: %s",
+			L("KNOTLINK_SERVER_STATUS"),
+			minebackup::knotlink::KnotLinkServerManager::StateName(
+				knotLinkStatus.state));
+		ImGui::Text(
+			"%s: %s",
+			L("KNOTLINK_SERVER_VERSION"),
+			knotLinkStatus.version.empty()
+				? L("KNOTLINK_VERSION_UNKNOWN")
+				: knotLinkStatus.version.c_str());
+
+		ImGui::BeginDisabled(g_KnotLinkInstallRunning);
+		if (ImGui::Button(
+			L("KNOTLINK_DOWNLOAD_INSTALLER"), ImVec2(-1, 0))) {
+			(void)StartKnotLinkInstallerDownload();
+		}
+		ImGui::EndDisabled();
+		if (ImGui::Button(L("KNOTLINK_REFRESH_STATUS"), ImVec2(-1, 0))) {
+			knotLinkStatus =
+				minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
+		}
+		if (!g_KnotLinkInstallMessage.empty()) {
+			ImGui::TextWrapped(
+				"%s", wstring_to_utf8(g_KnotLinkInstallMessage).c_str());
+		}
+
+		ImGui::Dummy(ImVec2(0.0f, 20.0f));
+		const float navBtnWidth =
+			CalcPairButtonWidth(L("BUTTON_PREVIOUS"), L("BUTTON_NEXT"));
+		if (ImGui::Button(
+			L("BUTTON_PREVIOUS"), ImVec2(navBtnWidth, 0))) {
+			page--;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(
+			L("BUTTON_NEXT"), ImVec2(navBtnWidth, 0))) {
+			page++;
+		}
+	}
+	else if (page == 4) {
 		ImGui::TextUnformatted(L("WIZARD_STEP3_TITLE"));
 		ImGui::TextWrapped("%s", L("WIZARD_STEP3_DESC"));
 		ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -388,12 +444,11 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				initialConfig.backupMode = 1;
 				initialConfig.backupBefore = false;
 				initialConfig.skipIfUnchanged = true;
-				initialConfig.theme = themeId;
-				isSilence = false;
+				g_theme = themeId;
 				if (strlen(wizardFontPath) > 0) {
-					initialConfig.fontPath = utf8_to_wstring(wizardFontPath);
+					Fontss = utf8_to_wstring(wizardFontPath);
 				} else {
-					initialConfig.fontPath = GetDefaultUIFontPath();
+					Fontss = GetDefaultUIFontPath();
 				}
 				g_appState.specialConfigs.clear();
 				g_CoreValidationPending.store(true);

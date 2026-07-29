@@ -20,4 +20,5 @@ std::vector<std::wstring> DefaultRestoreWhitelist();
 std::vector<std::wstring> BuildEffectiveRestoreWhitelist(const std::vector<std::wstring>& userWhitelist);
 void EnsureDefaultBackupBlacklist(std::vector<std::wstring>& blacklist);
 void EnsureDefaultRestoreWhitelist();
+void FinalizeUiScaleMigration(float primaryDpiScale);
 #endif // CONFIG_MANAGER_H

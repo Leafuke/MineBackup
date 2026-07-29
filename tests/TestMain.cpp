@@ -1,13 +1,15 @@
 #include "AtomicFileWriter.h"
 #include "AppPaths.h"
+#include "DiagnosticLogExporter.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
 #include "MigrationCoordinator.h"
-#include "RotatingFileLog.h"
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
+#include "Logging.h"
+#include "KnotLinkPackageManager.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
 #include "InterruptedTaskRecovery.h"
@@ -30,6 +32,7 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -353,19 +356,6 @@ void TestMigrationCoordinator(TestContext& test, const std::filesystem::path& ro
     MigrationCoordinator::SetHistoryPersistenceBlocked(true);
     test.Expect(MigrationCoordinator::IsHistoryPersistenceBlocked(), "the coordinator should expose the history write gate");
     MigrationCoordinator::SetHistoryPersistenceBlocked(false);
-}
-
-void TestRotatingLog(TestContext& test, const std::filesystem::path& root) {
-    const auto path = root / "logs" / "minebackup.log";
-    test.Expect(RotatingFileLog::Append(path, std::string(45, 'a'), 16, 3),
-        "a large log append should rotate across bounded files");
-    test.Expect(std::filesystem::exists(path), "the active rotated log should exist");
-    test.Expect(std::filesystem::exists(path.wstring() + L".1"), "the first archived log should exist");
-    test.Expect(std::filesystem::exists(path.wstring() + L".2"), "the final retained archived log should exist");
-    test.Expect(!std::filesystem::exists(path.wstring() + L".3"), "the log file count should stay bounded");
-    for (const auto& entry : std::filesystem::directory_iterator(path.parent_path())) {
-        test.Expect(entry.file_size() <= 16, "each rotated log file should stay under its size limit");
-    }
 }
 
 void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path& root) {
@@ -943,8 +933,8 @@ void TestTaskCoordinator(TestContext& test, const std::filesystem::path& root) {
                 while (nowActive > observed && !maximumActive.compare_exchange_weak(observed, nowActive)) {}
                 std::this_thread::sleep_for(std::chrono::milliseconds(30));
                 active.fetch_sub(1);
-                completed.fetch_add(1);
                 coordinator.PostEvent({L"test-complete", token.stop_possible() ? L"stoppable" : L"unstoppable"});
+                completed.fetch_add(1);
             }), "TaskCoordinator should accept work before shutdown");
     }
 
@@ -1097,6 +1087,11 @@ void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
     test.Expect(download.status == NetworkStatus::Succeeded && ReadText(destination) == "abc"
         && download.sha256 == abcHash, "a verified download should commit atomically");
 
+    download = network.Download(request, destination, {});
+    test.Expect(download.status == NetworkStatus::Succeeded && ReadText(destination) == "abc"
+        && download.sha256 == abcHash,
+        "an explicitly unverified HTTPS download should still report its calculated hash");
+
     std::ofstream(destination, std::ios::binary | std::ios::trunc) << "current";
     download = network.Download(request, destination, std::string(64, '0'));
     test.Expect(download.status == NetworkStatus::HashMismatch && ReadText(destination) == "current",
@@ -1128,6 +1123,19 @@ void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
     backend->body = "404: Not Found";
     test.Expect(!CheckMineBackupNotice(network, "en_US", "").success,
         "notice parsing should reject 404 bodies from both direct and mirror text sources");
+}
+
+void TestKnotLinkPackageManifest(TestContext& test) {
+    const auto& package = minebackup::knotlink::CurrentKnotLinkPackage();
+    test.Expect(package.supported,
+        "the release build platforms should have a KnotLinkService package");
+    test.Expect(package.version == "3.2.0.0",
+        "the current KnotLinkService package version should be 3.2.0.0");
+    test.Expect(!package.fileName.empty() &&
+            package.officialUrl.ends_with(package.fileName),
+        "the official KnotLinkService URL should end with the platform asset name");
+    test.Expect(package.mirrorUrl == "https://gh-proxy.org/" + package.officialUrl,
+        "the KnotLinkService mirror URL should prefix the official URL");
 }
 
 void TestDesktopServicesAndCapabilities(TestContext& test) {
@@ -1198,6 +1206,326 @@ void TestSpecialConfigExecutionPolicy(TestContext& test) {
     test.Expect(FindSpecialRunOnStartup(configs) == 5
         && configs[5].runOnStartup && !configs[2].runOnStartup && !configs[8].runOnStartup,
         "OS autostart should resolve to exactly one persisted special configuration");
+}
+
+void TestLoggingCore(TestContext& test, const std::filesystem::path& root) {
+    using namespace minebackup::logging;
+
+    bool valid = false;
+    test.Expect(ParseLogLevel("WARNING", &valid) == LogLevel::Warning && valid,
+        "log view levels should parse case-insensitively");
+    test.Expect(ParseLogLevel("unexpected", &valid) == LogLevel::Info && !valid,
+        "invalid log view levels should safely fall back to info");
+    test.Expect(ParseFileLevel("DEBUG", &valid) == LogFileLevel::Debug && valid,
+        "log file levels should parse case-insensitively");
+    test.Expect(ParseFileLevel("unexpected", &valid) == LogFileLevel::Info && !valid,
+        "invalid log file levels should safely fall back to info");
+    const auto newValueWins = ResolveFileLevel("debug", false);
+    test.Expect(newValueWins.level == LogFileLevel::Debug
+        && !newValueWins.usedLegacyAutoLog
+        && !newValueWins.invalidConfiguredValue,
+        "the new LogFileLevel value should take precedence over legacy AutoLog");
+    const auto legacyDisabled = ResolveFileLevel(std::nullopt, false);
+    const auto legacyEnabled = ResolveFileLevel(std::nullopt, true);
+    const auto defaultLevel = ResolveFileLevel(std::nullopt, std::nullopt);
+    const auto invalidLevel = ResolveFileLevel("verbose", true);
+    test.Expect(legacyDisabled.level == LogFileLevel::Off
+        && legacyDisabled.usedLegacyAutoLog
+        && legacyEnabled.level == LogFileLevel::Info
+        && defaultLevel.level == LogFileLevel::Info,
+        "legacy AutoLog and missing keys should resolve to the documented defaults");
+    test.Expect(invalidLevel.level == LogFileLevel::Info
+        && invalidLevel.invalidConfiguredValue
+        && !invalidLevel.usedLegacyAutoLog,
+        "an invalid new level should fall back to info without consulting AutoLog");
+
+    {
+        ScopedLogContext context{{"operation_id", "backup;42"}, {"world", "测试世界"}};
+        Write(minebackup::logging::LogLevel::Warning, LogCategory::Backup, "backup.test",
+            "\x1b[31mfirst\r\nsecond\x01", {"LoggingCoreTest.cpp", 42});
+    }
+    LogPrintf(minebackup::logging::LogLevel::Info, LogCategory::Application, "format.bad",
+        {"LoggingCoreTest.cpp", 50}, "%");
+    Write(minebackup::logging::LogLevel::Debug, LogCategory::Process, "process.long",
+        std::string(70 * 1024, 'x'), {"LoggingCoreTest.cpp", 53});
+
+    const auto read = ReadAfter(0);
+    test.Expect(read.records.size() == 4,
+        "multiline logging and formatting failures should create independent records");
+    test.Expect(read.records[0]->message == "first" && read.records[1]->message == "second",
+        "logging should normalize CRLF and remove ANSI/control characters");
+    test.Expect(read.records[0]->sequence + 1 == read.records[1]->sequence
+        && read.records[1]->sequence + 1 == read.records[2]->sequence,
+        "structured records should receive monotonically increasing sequences");
+    test.Expect(read.records[0]->context.size() == 2
+        && read.records[0]->context[0].value == "backup;42",
+        "scoped logging context should be copied into immutable records");
+    test.Expect(read.records[2]->eventId == "logging.format_error",
+        "runtime printf failures should degrade to a safe logging event");
+    test.Expect(read.records[3]->message.size() <= 64 * 1024
+        && read.records[3]->message.find("[truncated at 64 KiB]") != std::string::npos,
+        "oversized log lines should be explicitly truncated at 64 KiB");
+
+    InitializeOptions options;
+    options.logsDirectory = root / "logging-off";
+    options.fileLevel = LogFileLevel::Off;
+    Initialize(options);
+    Write(minebackup::logging::LogLevel::Info, LogCategory::Application, "logging.off", "memory only");
+    Shutdown();
+    test.Expect(!std::filesystem::exists(options.logsDirectory / "minebackup.log"),
+        "file logging off should not create a log file");
+
+    options.logsDirectory = root / "logging-info";
+    options.fileLevel = LogFileLevel::Info;
+    Initialize(options);
+    test.Expect(std::filesystem::is_regular_file(options.logsDirectory / ".active-session"),
+        "enabled file logging should create an active-session marker");
+    const auto fileSession = GetStatus().sessionId;
+    Write(minebackup::logging::LogLevel::Debug, LogCategory::Application,
+        "logging.filtered", "debug should be filtered");
+    Write(minebackup::logging::LogLevel::Info, LogCategory::Application,
+        "logging.persisted", "info should be persisted");
+    SetFileLevel(LogFileLevel::Debug);
+    Write(minebackup::logging::LogLevel::Debug, LogCategory::Application,
+        "logging.debug_enabled", "debug should now be persisted");
+    SetFileLevel(LogFileLevel::Info);
+    Write(minebackup::logging::LogLevel::Debug, LogCategory::Application,
+        "logging.debug_disabled", "debug should be filtered again");
+    SetFileLevel(LogFileLevel::Off);
+    test.Expect(!std::filesystem::exists(options.logsDirectory / ".active-session"),
+        "disabling file logging should remove the active-session marker");
+    Write(minebackup::logging::LogLevel::Error, LogCategory::Application,
+        "logging.disabled", "file remains disabled");
+    Shutdown();
+    std::ifstream persistedLog(options.logsDirectory / "minebackup.log", std::ios::binary);
+    const std::string persisted((std::istreambuf_iterator<char>(persistedLog)),
+        std::istreambuf_iterator<char>());
+    test.Expect(persisted.find("[INFO] [Application] info should be persisted")
+            != std::string::npos
+        && persisted.find("event=logging.debug_enabled") != std::string::npos
+        && persisted.find("event=logging.filtered") == std::string::npos
+        && persisted.find("event=logging.debug_disabled") == std::string::npos
+        && persisted.find("event=logging.disabled") == std::string::npos,
+        "info files should stay concise while debug mode adds structured fields");
+    test.Expect(persisted.find("[INFO] [Session] ===== MineBackup session started (")
+            != std::string::npos
+        && persisted.find(fileSession) == std::string::npos
+        && persisted.find(" session=") == std::string::npos
+        && persisted.find(" seq=") == std::string::npos,
+        "local files should use short session boundaries instead of repeating identifiers");
+
+    options.logsDirectory = root / "logging-abnormal";
+    std::filesystem::create_directories(options.logsDirectory);
+    std::ofstream(options.logsDirectory / ".active-session") << "abandoned-session\n";
+    options.fileLevel = LogFileLevel::Off;
+    Initialize(options);
+    const auto abnormalStatus = GetStatus();
+    test.Expect(abnormalStatus.previousSessionAbnormal
+        && !std::filesystem::exists(options.logsDirectory / ".active-session"),
+        "a stale session marker should be reported once and cleared when logging is off");
+    Shutdown();
+}
+
+std::size_t CountOccurrences(
+    std::string_view text, std::string_view needle) {
+    std::size_t count = 0;
+    std::size_t offset = 0;
+    while ((offset = text.find(needle, offset)) != std::string_view::npos) {
+        ++count;
+        offset += needle.size();
+    }
+    return count;
+}
+
+std::vector<std::filesystem::path> OrderedLogFiles(
+    const std::filesystem::path& directory) {
+    std::map<int, std::filesystem::path, std::greater<>> archived;
+    std::filesystem::path active;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (!entry.is_regular_file()) continue;
+        const auto name = entry.path().filename().string();
+        if (name == "minebackup.log") {
+            active = entry.path();
+            continue;
+        }
+        constexpr std::string_view prefix = "minebackup.";
+        constexpr std::string_view suffix = ".log";
+        if (!name.starts_with(prefix) || !name.ends_with(suffix)) continue;
+        const auto number = name.substr(
+            prefix.size(), name.size() - prefix.size() - suffix.size());
+        try {
+            archived.emplace(std::stoi(number), entry.path());
+        } catch (...) {
+        }
+    }
+    std::vector<std::filesystem::path> result;
+    for (const auto& [index, path] : archived) {
+        (void)index;
+        result.push_back(path);
+    }
+    if (!active.empty()) result.push_back(active);
+    return result;
+}
+
+void TestLoggingStressAndRotation(
+    TestContext& test, const std::filesystem::path& root) {
+    using namespace minebackup::logging;
+
+    Shutdown();
+    const auto startupBaseline = GetStatus().latestSequence;
+    for (int index = 0; index < 300; ++index) {
+        Write(LogLevel::Debug, LogCategory::Application,
+            "logging.startup_buffer", "startup-record-" + std::to_string(index));
+    }
+    InitializeOptions startupOptions{
+        root / "logging-startup-buffer", LogFileLevel::Debug, false};
+    Initialize(startupOptions);
+    Shutdown();
+    const auto startupText = ReadText(
+        startupOptions.logsDirectory / "minebackup.log");
+    test.Expect(GetStatus().latestSequence == startupBaseline + 302,
+        "pre-initialization writes and session boundaries should receive global sequences");
+    test.Expect(CountOccurrences(
+        startupText, "event=logging.startup_buffer") == 256,
+        "only the newest 256 pre-initialization records should replay to disk");
+    test.Expect(startupText.find("startup-record-43") == std::string::npos
+        && startupText.find("startup-record-44") != std::string::npos,
+        "startup replay should retain the documented newest-record boundary");
+
+    InitializeOptions options{
+        root / "logging-concurrent", LogFileLevel::Debug, false};
+    Initialize(options);
+    const auto before = GetStatus();
+    constexpr int threadCount = 4;
+    constexpr int recordsPerThread = 25'000;
+    std::vector<std::jthread> writers;
+    for (int worker = 0; worker < threadCount; ++worker) {
+        writers.emplace_back([worker] {
+            for (int index = 0; index < recordsPerThread; ++index) {
+                Write(LogLevel::Debug, LogCategory::Task,
+                    "logging.concurrent",
+                    "worker=" + std::to_string(worker)
+                        + " record=" + std::to_string(index) + " utf8=世界");
+            }
+        });
+    }
+    writers.clear();
+
+    const auto after = GetStatus();
+    const auto retained = ReadAfter(before.latestSequence);
+    test.Expect(after.latestSequence == before.latestSequence
+            + threadCount * recordsPerThread,
+        "four concurrent producers should allocate exactly 100,000 sequences");
+    test.Expect(after.retainedCount == 20'000 && retained.records.size() == 20'000
+            && retained.requestedSequenceWasEvicted,
+        "the session ring should retain 20,000 records and report stale cursors");
+    bool contiguous = !retained.records.empty();
+    for (std::size_t index = 1; index < retained.records.size(); ++index) {
+        contiguous = contiguous
+            && retained.records[index - 1]->sequence + 1
+                == retained.records[index]->sequence;
+    }
+    test.Expect(contiguous
+            && retained.records.back()->sequence == after.latestSequence,
+        "retained concurrent records should have unique contiguous global sequences");
+    Shutdown();
+    test.Expect(!std::filesystem::exists(options.logsDirectory / ".active-session"),
+        "normal shutdown should remove the active-session marker");
+
+    const auto files = OrderedLogFiles(options.logsDirectory);
+    test.Expect(files.size() >= 2 && files.size() <= 5,
+        "the stress log should rotate while retaining at most four archives");
+    std::size_t persistedRecords = 0;
+    bool completeUtf8Lines = true;
+    for (const auto& path : files) {
+        std::error_code sizeError;
+        const auto size = std::filesystem::file_size(path, sizeError);
+        test.Expect(!sizeError && size <= 10 * 1024 * 1024 + 64 * 1024,
+            "rotated files should stay within one maximum log line of 10 MiB");
+        std::istringstream lines(ReadText(path));
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line.find("event=logging.concurrent") == std::string::npos) continue;
+            ++persistedRecords;
+            completeUtf8Lines = completeUtf8Lines
+                && line.find("[DEBUG] [Task] worker=") != std::string::npos
+                && line.find("utf8=世界 | event=logging.concurrent") != std::string::npos;
+        }
+    }
+    test.Expect(persistedRecords == threadCount * recordsPerThread,
+        "blocking overflow and shutdown drain should persist all 100,000 records");
+    test.Expect(completeUtf8Lines,
+        "rotation should preserve complete UTF-8 log lines");
+}
+
+void TestLoggingFailureAndDiagnostics(
+    TestContext& test, const std::filesystem::path& root) {
+    using namespace minebackup::logging;
+    using namespace minebackup::diagnostics;
+
+    const auto invalidTarget = root / "logging-invalid-target";
+    std::ofstream(invalidTarget) << "not a directory";
+    Initialize({invalidTarget, LogFileLevel::Info, false});
+    const auto failedStatus = GetStatus();
+    const auto beforeFailureWrite = failedStatus.latestSequence;
+    Write(LogLevel::Error, LogCategory::Application,
+        "logging.degraded", "memory remains available");
+    const auto degradedRead = ReadAfter(beforeFailureWrite);
+    test.Expect(!failedStatus.fileBackendActive
+            && !failedStatus.lastBackendError.empty(),
+        "an invalid log directory should disable only the file backend");
+    test.Expect(degradedRead.records.size() == 1
+            && degradedRead.records.front()->eventId == "logging.degraded",
+        "backend initialization failure should leave the session store usable");
+    Shutdown();
+
+    const std::string home = "C:\\Users\\Alice";
+    const std::string profile = home + "\\Profiles\\Private";
+    const std::string remote = "secret-remote:private/backups";
+    const std::string secretText =
+        profile + "\\world https://alice:password@example.test/api"
+        "?token=top-secret#fragment " + remote;
+    const std::vector<RedactionRule> rules{
+        {home, "<user-home>"},
+        {profile, "<profile-root>"},
+        {remote, "<rclone-remote>"}};
+    const auto redacted = RedactText(secretText, rules);
+    test.Expect(redacted.find(profile) == std::string::npos
+            && redacted.find("alice:password") == std::string::npos
+            && redacted.find("top-secret") == std::string::npos
+            && redacted.find(remote) == std::string::npos,
+        "diagnostic redaction should remove paths, URL credentials/query, and remotes");
+    test.Expect(redacted.find("<profile-root>") != std::string::npos
+            && redacted.find("<userinfo>") != std::string::npos
+            && redacted.find("?<query>#fragment") != std::string::npos,
+        "longest path and URL redactions should leave explicit diagnostic markers");
+
+    const auto exportDirectory = root / "diagnostics";
+    Initialize({exportDirectory, LogFileLevel::Off, false});
+    Write(LogLevel::Error, LogCategory::Cloud,
+        "diagnostics.secret_fixture", secretText,
+        {"DiagnosticExporterTest.cpp", 77});
+    DiagnosticExportOptions options;
+    options.logsDirectory = exportDirectory;
+    options.applicationVersion = "test-version";
+    options.platform = "test-platform";
+    options.profileMode = "explicit";
+    options.redactions = rules;
+    const auto result = ExportDiagnostics(options);
+    test.Expect(result.success && std::filesystem::is_regular_file(result.path),
+        "diagnostic export should create a timestamped UTF-8 text file");
+    const auto exported = ReadText(result.path);
+    test.Expect(exported.find("version=test-version") != std::string::npos
+            && exported.find("platform=test-platform") != std::string::npos
+            && exported.find("profile_mode=explicit") != std::string::npos
+            && exported.find("event=diagnostics.secret_fixture") != std::string::npos,
+        "diagnostics should contain only the declared metadata and retained records");
+    test.Expect(exported.find(profile) == std::string::npos
+            && exported.find("alice:password") == std::string::npos
+            && exported.find("top-secret") == std::string::npos
+            && exported.find(remote) == std::string::npos,
+        "exported diagnostics must not retain the configured secret fixtures");
+    Shutdown();
 }
 
 } // namespace
@@ -1276,7 +1604,6 @@ int main(int argc, char** argv) {
     TestMetadataRoundTrip(test, temporary.path);
     TestHistoryRoundTrip(test, temporary.path);
     TestMigrationCoordinator(test, temporary.path);
-    TestRotatingLog(test, temporary.path);
     TestLaunchOptionsAndAppPaths(test, temporary.path);
     TestLegacyServicePolicy(test);
     TestSingleInstance(test, temporary.path);
@@ -1288,9 +1615,13 @@ int main(int argc, char** argv) {
     TestPortableConfigDocument(test);
     TestInterruptedTaskRecovery(test, temporary.path);
     TestNetworkService(test, temporary.path);
+    TestKnotLinkPackageManifest(test);
     TestTaskCoordinator(test, temporary.path);
     TestDesktopServicesAndCapabilities(test);
     TestSpecialConfigExecutionPolicy(test);
+    TestLoggingCore(test, temporary.path);
+    TestLoggingStressAndRotation(test, temporary.path);
+    TestLoggingFailureAndDiagnostics(test, temporary.path);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";

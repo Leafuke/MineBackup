@@ -79,11 +79,6 @@ FolderRewind. Payloads are `key=value;key2=value2`, values use RFC 3986
 percent-encoding, and old positional/free-text commands are rejected. The
 companion mod must be version **3.1.0 or newer**.
 
-Windows requires KnotLinkService **3.0.0 or newer**. MineBackup detects the
-installed version, can start a compatible stopped service, and blocks unknown
-or older versions. Linux and macOS retain client support but do not bundle or
-manage a KnotLink server until upstream publishes one.
-
 See the [MineBackup KnotLink v2 reference](docs/knotlink-v2.md) for commands,
 correlation metadata, lifecycle events, current-world requests, and examples.
 
@@ -111,6 +106,10 @@ MineBackup stores data in a platform profile, not beside the executable. Read
 before moving an existing installation. Windows Service Mode is deprecated and
 cannot be newly installed or started. rclone is optional, not bundled, and is
 downloaded only after explicit confirmation with version/hash validation.
+Logging defaults to an Info-level rotating `logs/minebackup.log`. Settings can
+switch Off/Info/Debug at runtime, and the Log panel can export a diagnostic copy
+with known paths redacted. See [logging and diagnostics](docs/logging-and-diagnostics.md)
+for locations, retention, privacy boundaries and troubleshooting.
 
 ---
 

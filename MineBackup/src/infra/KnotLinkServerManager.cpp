@@ -1,5 +1,7 @@
 #include "KnotLinkServerManager.h"
 
+#include "ProcessRunner.h"
+
 #include <array>
 #include <charconv>
 #include <cstdint>
@@ -284,17 +286,75 @@ public:
     }
 };
 
-#else
+#elif defined(__APPLE__)
 
 class NativeKnotLinkServerPlatform final : public IKnotLinkServerPlatform {
 public:
     KnotLinkServerDiscovery Discover() override {
-        return {
-            false, false, {}, {},
-            "KnotLink does not currently provide a server for this platform."};
+        KnotLinkServerDiscovery result;
+        result.managedPlatform = true;
+        result.executablePath = L"/usr/local/KnotLinkService/KnotLinkService";
+
+        ProcessSpec spec;
+        spec.executable = L"/usr/sbin/pkgutil";
+        spec.arguments = {L"--pkg-info", L"com.knotlink.service"};
+        spec.timeout = std::chrono::seconds(5);
+        spec.maximumCapturedBytes = 64u * 1024u;
+        std::error_code executableError;
+        result.installed =
+            std::filesystem::is_regular_file(
+                result.executablePath, executableError) &&
+            !executableError;
+        const auto package = ProcessRunner::Run(spec);
+        if (package.status == ProcessStatus::Succeeded) {
+            constexpr std::string_view prefix = "version:";
+            std::size_t start = 0;
+            while (start < package.standardOutput.size()) {
+                const std::size_t end =
+                    package.standardOutput.find('\n', start);
+                std::string_view line(
+                    package.standardOutput.data() + start,
+                    (end == std::string::npos
+                         ? package.standardOutput.size()
+                         : end) - start);
+                if (line.starts_with(prefix)) {
+                    line.remove_prefix(prefix.size());
+                    while (!line.empty() &&
+                           (line.front() == ' ' || line.front() == '\t')) {
+                        line.remove_prefix(1);
+                    }
+                    while (!line.empty() &&
+                           (line.back() == '\r' || line.back() == ' ')) {
+                        line.remove_suffix(1);
+                    }
+                    result.version.assign(line);
+                    break;
+                }
+                if (end == std::string::npos) {
+                    break;
+                }
+                start = end + 1;
+            }
+        }
+        if (!result.installed) {
+            result.detail = package.status == ProcessStatus::Succeeded
+                ? "The KnotLinkService package is registered but its executable is missing."
+                : "KnotLinkService is not installed.";
+        } else if (result.version.empty()) {
+            result.detail =
+                "The installed KnotLinkService version is unknown.";
+        }
+        return result;
     }
 
-    bool IsProcessRunning() override { return false; }
+    bool IsProcessRunning() override {
+        ProcessSpec spec;
+        spec.executable = L"/bin/launchctl";
+        spec.arguments = {L"print", L"system/com.knotlink.service"};
+        spec.timeout = std::chrono::seconds(3);
+        spec.maximumCapturedBytes = 64u * 1024u;
+        return ProcessRunner::Run(spec).status == ProcessStatus::Succeeded;
+    }
 
     bool IsPortReady(unsigned short port) override {
         const int socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -314,7 +374,112 @@ public:
         return ready;
     }
 
-    bool Start(const std::filesystem::path&) override { return false; }
+    bool Start(const std::filesystem::path&) override {
+        ProcessSpec spec;
+        spec.executable = L"/bin/launchctl";
+        spec.arguments = {
+            L"kickstart", L"-k", L"system/com.knotlink.service"};
+        spec.timeout = std::chrono::seconds(10);
+        spec.maximumCapturedBytes = 64u * 1024u;
+        return ProcessRunner::Run(spec).status == ProcessStatus::Succeeded;
+    }
+
+    bool WaitForReady(
+        std::chrono::milliseconds timeout,
+        unsigned short signalPort,
+        unsigned short responderPort) override {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (IsPortReady(signalPort) && IsPortReady(responderPort)) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        return false;
+    }
+};
+
+#else
+
+class NativeKnotLinkServerPlatform final : public IKnotLinkServerPlatform {
+public:
+    KnotLinkServerDiscovery Discover() override {
+        KnotLinkServerDiscovery result;
+        result.managedPlatform = true;
+        result.executablePath = L"/opt/KnotLinkService/KnotLinkService";
+
+        ProcessSpec spec;
+        spec.executable = L"/usr/bin/dpkg-query";
+        spec.arguments = {
+            L"-W", L"-f=${Status}\t${Version}", L"knotlinkservice"};
+        spec.timeout = std::chrono::seconds(5);
+        spec.maximumCapturedBytes = 64u * 1024u;
+        std::error_code executableError;
+        result.installed =
+            std::filesystem::is_regular_file(
+                result.executablePath, executableError) &&
+            !executableError;
+        const auto package = ProcessRunner::Run(spec);
+        constexpr std::string_view installedPrefix =
+            "install ok installed\t";
+        if (package.status == ProcessStatus::Succeeded &&
+            package.standardOutput.starts_with(installedPrefix)) {
+            std::string_view version(package.standardOutput);
+            version.remove_prefix(installedPrefix.size());
+            while (!version.empty() &&
+                   (version.back() == '\n' || version.back() == '\r' ||
+                    version.back() == ' ')) {
+                version.remove_suffix(1);
+            }
+            result.version.assign(version);
+        }
+        if (!result.installed) {
+            result.detail =
+                package.status == ProcessStatus::Succeeded
+                ? "The KnotLinkService package is registered but its executable is missing."
+                : "KnotLinkService is not installed.";
+        } else if (result.version.empty()) {
+            result.detail =
+                "The installed KnotLinkService version is unknown.";
+        }
+        return result;
+    }
+
+    bool IsProcessRunning() override {
+        ProcessSpec spec;
+        spec.executable = L"/usr/bin/systemctl";
+        spec.arguments = {L"is-active", L"--quiet", L"knotlink.service"};
+        spec.timeout = std::chrono::seconds(3);
+        spec.maximumCapturedBytes = 64u * 1024u;
+        return ProcessRunner::Run(spec).status == ProcessStatus::Succeeded;
+    }
+
+    bool IsPortReady(unsigned short port) override {
+        const int socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (socketHandle < 0) {
+            return false;
+        }
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(port);
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        const bool ready =
+            connect(
+                socketHandle,
+                reinterpret_cast<const sockaddr*>(&address),
+                sizeof(address)) == 0;
+        close(socketHandle);
+        return ready;
+    }
+
+    bool Start(const std::filesystem::path&) override {
+        ProcessSpec spec;
+        spec.executable = L"/usr/bin/systemctl";
+        spec.arguments = {L"start", L"knotlink.service"};
+        spec.timeout = std::chrono::seconds(10);
+        spec.maximumCapturedBytes = 64u * 1024u;
+        return ProcessRunner::Run(spec).status == ProcessStatus::Succeeded;
+    }
 
     bool WaitForReady(
         std::chrono::milliseconds timeout,
@@ -464,7 +629,7 @@ KnotLinkServerStatus KnotLinkServerManager::RefreshLocked(
         status_.state = KnotLinkServerState::Incompatible;
         status_.message = discovery.version.empty()
             ? "The KnotLink server version is unknown; connection was blocked."
-            : "KnotLinkService 3.0.0 or newer is required.";
+            : "KnotLinkService 3.2.0.0 or newer is required.";
         return status_;
     }
     if (status_.signalPortReady && status_.responderPortReady) {

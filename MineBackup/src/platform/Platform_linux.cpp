@@ -1,7 +1,6 @@
 #include "Platform_linux.h"
 #include "text_to_text.h"
 #include "i18n.h"
-#include "Console.h"
 #include "AppState.h"
 #include "AppPaths.h"
 #include "Globals.h"

@@ -8,6 +8,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "MigrationCoordinator.h"
+#include "Logging.h"
 #include "json.hpp"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
@@ -91,6 +92,10 @@ void SaveHistory() {
 	SetFileAttributesWin(filename.wstring(), 0);
 #endif
 	const bool saved = FolderRewindHistoryStore::SaveHistoryFile(filename, g_appState.configs, g_appState.g_history);
+	if (!saved) {
+		MB_LOG_ERROR(minebackup::logging::LogCategory::History,
+			"history.save.failed", "Failed to persist the history store.");
+	}
 #ifdef _WIN32
 	if (saved) SetFileAttributesWin(filename.wstring(), 1);
 #endif
@@ -104,12 +109,19 @@ void LoadHistory() {
 		map<int, vector<HistoryEntry>> loadedHistory;
 		if (FolderRewindHistoryStore::LoadHistoryFile(jsonFilename, g_appState.configs, loadedHistory)) {
 			g_appState.g_history = std::move(loadedHistory);
+			MB_LOG_DEBUG(minebackup::logging::LogCategory::History,
+				"history.load.completed", "Loaded {} configuration history groups.",
+				g_appState.g_history.size());
 			return;
 		}
+		MB_LOG_WARNING(minebackup::logging::LogCategory::History,
+			"history.load.invalid", "The history store could not be parsed; trying legacy recovery.");
 		g_appState.g_history.clear();
 	}
 
 	if (filesystem::exists(legacyFilename) && LoadLegacyHistoryFile(legacyFilename)) {
+		MB_LOG_INFO(minebackup::logging::LogCategory::Migration,
+			"history.migration.completed", "Migrated the legacy history store.");
 		SaveHistory();
 	}
 }

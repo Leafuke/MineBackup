@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "usage: $0 <MineBackup> <output-dir> <linux-gcc-x64.zip> <linuxdeploy.AppImage>" >&2
+if [[ $# -ne 5 ]]; then
+  echo "usage: $0 <MineBackup> <output-dir> <linux-gcc-x64.zip> <linuxdeploy.AppImage> <version>" >&2
   exit 2
 fi
 
@@ -11,7 +11,7 @@ binary="$(realpath "$1")"
 output_dir="$(mkdir -p "$2" && realpath "$2")"
 seven_zip_archive="$(realpath "$3")"
 linuxdeploy="$(realpath "$4")"
-version=1.16.0
+version="$5"
 seven_zip_version=26.02-zs-v1.5.7-r2
 work="${output_dir}/.linux-package-work"
 generated_desktop="$(realpath "$(dirname "$binary")/../generated/io.github.leafuke.MineBackup.desktop")"
@@ -19,6 +19,10 @@ generated_desktop="$(realpath "$(dirname "$binary")/../generated/io.github.leafu
 [[ -x "$binary" ]] || { echo "MineBackup executable is missing: $binary" >&2; exit 3; }
 [[ "$(uname -m)" == x86_64 ]] || { echo "Linux packages must be built on x86_64" >&2; exit 3; }
 [[ "$output_dir" != / && "$work" == "$output_dir"/* ]] || { echo "unsafe output directory" >&2; exit 3; }
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "version must use the numeric X.Y.Z form: $version" >&2
+  exit 3
+}
 
 expected_seven_zip=be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3
 expected_linuxdeploy=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d

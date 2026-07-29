@@ -36,8 +36,9 @@ acceptance must additionally create Full, Smart and Clean Restore fixtures with
 both LZMA2 and zstd on each platform and restore each fixture on the other two
 platforms. KnotLink is a release gate: run the strict protocol, command,
 SDK-lifecycle and server-manager CTest targets on Windows, Ubuntu 24.04 and
-macOS arm64. On Windows, additionally verify an installed KnotLinkService
-3.0.0.0 can be detected and started, then exercise `PING`,
+macOS arm64. On Windows, additionally verify that an installed KnotLinkService
+older than 3.2.0.0 triggers the startup update reminder, while 3.2.0.0 or newer
+can be detected and started. Then exercise `PING`,
 `GET_CAPABILITIES`, disable/re-enable, and restart. With mod 3.1.0 or newer,
 verify handshake, hot backup, hot restore and rejoin events. Confirm that
 `BACKUP 0 0`, `SEND ...` and `RESTORE_CURRENT ...` create no task.
