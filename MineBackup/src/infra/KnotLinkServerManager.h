@@ -54,7 +54,7 @@ public:
 
 class KnotLinkServerManager {
 public:
-    static constexpr std::string_view MinimumVersion = "3.0.0";
+    static constexpr std::string_view MinimumVersion = "3.2.0.0";
     static constexpr unsigned short SignalPort = 6370;
     static constexpr unsigned short ResponderPort = 6378;
 

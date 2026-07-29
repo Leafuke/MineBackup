@@ -5,6 +5,7 @@
 #include "ExternalToolManager.h"
 #include "KnotLinkServerManager.h"
 #include "KnotLinkService.h"
+#include "MainUI.h"
 #include "TaskCoordinator.h"
 
 using namespace std;
@@ -233,6 +234,9 @@ void DrawPathSettings(Config& cfg) {
 		const auto verified = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
 		toolStatusOk = verified.available;
 		if (verified.available) {
+			if (verified.fellBackFromUserPath) {
+				cfg.zipPath = verified.executable.wstring();
+			}
 			toolStatus = verified.fellBackFromUserPath
 				? MineFormatMessage("TOOL_FALLBACK_FORMAT", wstring_to_utf8(verified.executable.wstring()).c_str())
 				: MineFormatMessage("TOOL_FORMATS_VERIFIED", wstring_to_utf8(verified.executable.wstring()).c_str());
@@ -240,6 +244,11 @@ void DrawPathSettings(Config& cfg) {
 		else {
 			toolStatus = verified.diagnostic;
 		}
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("BUTTON_OPEN_CONFIG_FOLDER"),
+		ImVec2(CalcButtonWidth(L("BUTTON_OPEN_CONFIG_FOLDER")), 0))) {
+		(void)GetDesktopServices()->OpenFolder(GetAppPaths().configRoot);
 	}
 	if (!toolStatus.empty()) {
 		ImGui::PushStyleColor(ImGuiCol_Text, toolStatusOk
@@ -314,7 +323,7 @@ void DrawSystemIntegrationSettings() {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 
 	ImGui::Checkbox(L("KNOTLINK_AUTO_START_SERVER"), &g_autoStartKnotLinkServer);
-	const auto serverStatus = minebackup::knotlink::GetKnotLinkServerManager().GetStatus();
+	auto serverStatus = minebackup::knotlink::GetKnotLinkServerManager().GetStatus();
 	ImGui::Text("%s: %s", L("KNOTLINK_CLIENT_STATUS"),
 		minebackup::knotlink::GetKnotLinkService().IsRunning()
 			? L("KNOTLINK_STATUS_READY")
@@ -342,15 +351,30 @@ void DrawSystemIntegrationSettings() {
 				}
 			});
 	}
+	if (ImGui::Button(L("KNOTLINK_REFRESH_STATUS"), ImVec2(-1, 0))) {
+		serverStatus =
+			minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
+	}
+	ImGui::BeginDisabled(g_KnotLinkInstallRunning);
+	if (ImGui::Button(L("KNOTLINK_DOWNLOAD_INSTALLER"), ImVec2(-1, 0))) {
+		(void)StartKnotLinkInstallerDownload();
+	}
+	ImGui::EndDisabled();
+	if (!g_KnotLinkInstallMessage.empty()) {
+		ImGui::TextWrapped(
+			"%s", wstring_to_utf8(g_KnotLinkInstallMessage).c_str());
+	}
 
 	if (ImGui::Button(L("MOD_LINK_MINEBACKUP_MODRINTH"), ImVec2(-1, 0))) {
 		(void)GetDesktopServices()->OpenUri(L"https://modrinth.com/mod/minebackup");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_HOME"), ImVec2(-1, 0))) {
-		(void)GetDesktopServices()->OpenUri(L"https://github.com/KnotLink-Protocol/KnotLink");
+		(void)GetDesktopServices()->OpenUri(
+			L"https://github.com/KnotLink-Protocol/KnotLinkService");
 	}
 	if (ImGui::Button(L("MOD_LINK_KNOTLINK_DOWNLOAD"), ImVec2(-1, 0))) {
-		(void)GetDesktopServices()->OpenUri(L"https://github.com/KnotLink-Protocol/KnotLink/releases");
+		(void)GetDesktopServices()->OpenUri(
+			L"https://github.com/KnotLink-Protocol/KnotLinkService/releases");
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_KNOTLINK_DOWNLOAD_LINK"));
 }

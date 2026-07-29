@@ -9,6 +9,7 @@
 #include "LegacyLocationDiscovery.h"
 #include "LegacyLocationMigration.h"
 #include "Logging.h"
+#include "KnotLinkPackageManager.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
 #include "InterruptedTaskRecovery.h"
@@ -1086,6 +1087,11 @@ void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
     test.Expect(download.status == NetworkStatus::Succeeded && ReadText(destination) == "abc"
         && download.sha256 == abcHash, "a verified download should commit atomically");
 
+    download = network.Download(request, destination, {});
+    test.Expect(download.status == NetworkStatus::Succeeded && ReadText(destination) == "abc"
+        && download.sha256 == abcHash,
+        "an explicitly unverified HTTPS download should still report its calculated hash");
+
     std::ofstream(destination, std::ios::binary | std::ios::trunc) << "current";
     download = network.Download(request, destination, std::string(64, '0'));
     test.Expect(download.status == NetworkStatus::HashMismatch && ReadText(destination) == "current",
@@ -1117,6 +1123,19 @@ void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
     backend->body = "404: Not Found";
     test.Expect(!CheckMineBackupNotice(network, "en_US", "").success,
         "notice parsing should reject 404 bodies from both direct and mirror text sources");
+}
+
+void TestKnotLinkPackageManifest(TestContext& test) {
+    const auto& package = minebackup::knotlink::CurrentKnotLinkPackage();
+    test.Expect(package.supported,
+        "the release build platforms should have a KnotLinkService package");
+    test.Expect(package.version == "3.2.0.0",
+        "the current KnotLinkService package version should be 3.2.0.0");
+    test.Expect(!package.fileName.empty() &&
+            package.officialUrl.ends_with(package.fileName),
+        "the official KnotLinkService URL should end with the platform asset name");
+    test.Expect(package.mirrorUrl == "https://gh-proxy.org/" + package.officialUrl,
+        "the KnotLinkService mirror URL should prefix the official URL");
 }
 
 void TestDesktopServicesAndCapabilities(TestContext& test) {
@@ -1596,6 +1615,7 @@ int main(int argc, char** argv) {
     TestPortableConfigDocument(test);
     TestInterruptedTaskRecovery(test, temporary.path);
     TestNetworkService(test, temporary.path);
+    TestKnotLinkPackageManifest(test);
     TestTaskCoordinator(test, temporary.path);
     TestDesktopServicesAndCapabilities(test);
     TestSpecialConfigExecutionPolicy(test);

@@ -174,10 +174,10 @@ NetworkDownloadResult NetworkService::Download(
     const string expectedSha256 = NormalizeHash(requestedExpectedSha256);
     if (!backend_) return output;
     if (!IsValidRequest(request) || requestedDestination.empty()
-        || expectedSha256.size() != 64
-        || !all_of(expectedSha256.begin(), expectedSha256.end(), [](unsigned char value) { return isxdigit(value) != 0; })) {
+        || (!expectedSha256.empty() && (expectedSha256.size() != 64
+        || !all_of(expectedSha256.begin(), expectedSha256.end(), [](unsigned char value) { return isxdigit(value) != 0; })))) {
         output.status = NetworkStatus::InvalidRequest;
-        output.error = L"Downloads require HTTPS, a destination, and a 64-character SHA-256.";
+        output.error = L"Downloads require HTTPS, a destination, and an optional 64-character SHA-256.";
         return output;
     }
 
@@ -242,7 +242,7 @@ NetworkDownloadResult NetworkService::Download(
     }
     else if (output.status == NetworkStatus::Succeeded) {
         output.sha256 = hash.FinalHex();
-        if (output.sha256 != expectedSha256) {
+        if (!expectedSha256.empty() && output.sha256 != expectedSha256) {
             output.status = NetworkStatus::HashMismatch;
             output.error = L"The downloaded file did not match the expected SHA-256.";
         }

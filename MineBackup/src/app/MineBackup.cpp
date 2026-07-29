@@ -14,6 +14,8 @@
 #include "TaskSystem.h"
 #include "TaskCoordinator.h"
 #include "InterruptedTaskRecovery.h"
+#include "KnotLinkPackageManager.h"
+#include "KnotLinkServerManager.h"
 #include "NetworkBackendFactory.h"
 #include "NetworkService.h"
 #include "RemoteContentService.h"
@@ -73,6 +75,38 @@ using namespace std;
 	MB_LOG_PRINTF_WARNING(minebackup::logging::LogCategory::Platform, eventId, __VA_ARGS__)
 #define PLATFORM_PRINTF_ERROR(eventId, ...) \
 	MB_LOG_PRINTF_ERROR(minebackup::logging::LogCategory::Platform, eventId, __VA_ARGS__)
+
+bool StartKnotLinkInstallerDownload() {
+	if (g_KnotLinkInstallRunning) {
+		return false;
+	}
+	g_KnotLinkInstallRunning = true;
+	g_KnotLinkInstallSucceeded = false;
+	g_KnotLinkInstallMessage =
+		utf8_to_wstring(L("KNOTLINK_INSTALL_DOWNLOADING"));
+	const auto backend = CreatePlatformNetworkBackend();
+	const auto paths = GetAppPaths();
+	const bool submitted = TaskCoordinator::Instance().Submit(
+		L"install-knotlink-service",
+		{L"network:knotlink-installer"},
+		[backend, paths](stop_token token) {
+			NetworkService network(backend);
+			const auto result =
+				minebackup::knotlink::DownloadAndOpenCurrentKnotLinkPackage(
+					network, paths, token);
+			TaskEvent event{L"knotlink-installer-complete", result.error};
+			event.values[L"success"] = result.success ? L"1" : L"0";
+			event.values[L"path"] = result.packagePath.wstring();
+			event.values[L"source"] = utf8_to_wstring(result.sourceUrl);
+			TaskCoordinator::Instance().PostEvent(std::move(event));
+		});
+	if (!submitted) {
+		g_KnotLinkInstallRunning = false;
+		g_KnotLinkInstallMessage =
+			utf8_to_wstring(L("KNOTLINK_INSTALL_BUSY"));
+	}
+	return submitted;
+}
 
 static map<wstring, GLuint> g_worldIconTextures;
 static map<wstring, ImVec2> g_worldIconDimensions;
@@ -653,7 +687,12 @@ int main(int argc, char** argv)
 	}
 	TaskCoordinator::Instance().Submit(L"game-session-watcher", {},
 		[](stop_token token) { GameSessionWatcherThread(token); });
-	if (g_enableKnotLink) {
+	const auto knotLinkStartupStatus =
+		minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
+	const bool knotLinkStartupNeedsUpdate =
+		knotLinkStartupStatus.state ==
+		minebackup::knotlink::KnotLinkServerState::Incompatible;
+	if (g_enableKnotLink && !knotLinkStartupNeedsUpdate) {
 		// 初始化 KnotLink （异步进行避免卡顿）
 		TaskCoordinator::Instance().Submit(L"knotlink-loader", {L"service:knotlink"}, [](stop_token) {
 			if (InitKnotLink()) {
@@ -723,6 +762,9 @@ int main(int argc, char** argv)
 	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
+	bool showKnotLinkUpdateReminder =
+		!isFirstRun && knotLinkStartupNeedsUpdate;
+	bool knotLinkUpdateReminderOpened = false;
 	const bool requestedHiddenToTray = launchSilentStartup && !isFirstRun;
 #ifdef __linux__
 	// Probe the actual AppIndicator/GTK session before deciding to create an
@@ -1132,6 +1174,23 @@ int main(int argc, char** argv)
 						wstring_to_utf8(g_RcloneInstallMessage));
 				}
 			}
+			else if (event.type == L"knotlink-installer-complete") {
+				g_KnotLinkInstallRunning = false;
+				g_KnotLinkInstallSucceeded =
+					event.values.at(L"success") == L"1";
+				g_KnotLinkInstallMessage = g_KnotLinkInstallSucceeded
+					? utf8_to_wstring(L("KNOTLINK_INSTALL_OPENED"))
+					: (event.message.empty()
+						? utf8_to_wstring(L("KNOTLINK_INSTALL_FAILED"))
+						: event.message);
+				if (!g_KnotLinkInstallSucceeded) {
+					MB_LOG_ERROR(
+						minebackup::logging::LogCategory::Network,
+						"network.knotlink_installer.failed",
+						"KnotLinkService installer download/open failed: {}",
+						wstring_to_utf8(g_KnotLinkInstallMessage));
+				}
+			}
 			else if (event.type == L"knotlink-settings-enable-complete") {
 				const bool enabled = event.values.at(L"success") == L"1";
 				g_enableKnotLink = enabled;
@@ -1268,6 +1327,53 @@ int main(int argc, char** argv)
 			ImGui::PopTextWrapPos();
 			if (ImGui::Button(L("BUTTON_OK"), ImVec2(CalcButtonWidth(L("BUTTON_OK")), 0))) {
 				MigrationCoordinator::DismissStartupSummary();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		const string knotLinkUpdatePopupTitle =
+			string(L("KNOTLINK_UPDATE_REMINDER_TITLE")) +
+			"###KnotLinkUpdateReminder";
+		if (showKnotLinkUpdateReminder &&
+			!knotLinkUpdateReminderOpened &&
+			!MigrationCoordinator::ShouldShowStartupSummary()) {
+			ImGui::OpenPopup(knotLinkUpdatePopupTitle.c_str());
+			knotLinkUpdateReminderOpened = true;
+		}
+		ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+		if (ImGui::BeginPopupModal(
+				knotLinkUpdatePopupTitle.c_str(),
+				&showKnotLinkUpdateReminder,
+				ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::PushTextWrapPos(
+				ImGui::GetCursorPosX() + GetUiMetrics().Em(30.0f));
+			ImGui::TextWrapped("%s", L("KNOTLINK_UPDATE_REMINDER_DESC"));
+			ImGui::Spacing();
+			ImGui::Text(
+				"%s: %s",
+				L("KNOTLINK_SERVER_VERSION"),
+				knotLinkStartupStatus.version.empty()
+					? L("KNOTLINK_VERSION_UNKNOWN")
+					: knotLinkStartupStatus.version.c_str());
+			ImGui::PopTextWrapPos();
+			ImGui::Separator();
+			ImGui::BeginDisabled(g_KnotLinkInstallRunning);
+			if (ImGui::Button(
+				L("KNOTLINK_DOWNLOAD_INSTALLER"),
+				ImVec2(-1, 0))) {
+				(void)StartKnotLinkInstallerDownload();
+			}
+			ImGui::EndDisabled();
+			if (!g_KnotLinkInstallMessage.empty()) {
+				ImGui::TextWrapped(
+					"%s",
+					wstring_to_utf8(g_KnotLinkInstallMessage).c_str());
+			}
+			if (ImGui::Button(
+				L("BUTTON_OK"),
+				ImVec2(CalcButtonWidth(L("BUTTON_OK")), 0))) {
+				showKnotLinkUpdateReminder = false;
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();

@@ -112,6 +112,9 @@ struct ExternalToolRuntimeState {
 	bool rcloneInstallRunning = false;
 	bool rcloneInstallSucceeded = false;
 	std::wstring rcloneInstallMessage;
+	bool knotLinkInstallRunning = false;
+	bool knotLinkInstallSucceeded = false;
+	std::wstring knotLinkInstallMessage;
 };
 
 struct AppGlobalState {
@@ -190,6 +193,9 @@ inline std::atomic<bool>& g_CoreValidationRunning = g_globals.coreValidation.run
 inline bool& g_RcloneInstallRunning = g_globals.externalTools.rcloneInstallRunning;
 inline bool& g_RcloneInstallSucceeded = g_globals.externalTools.rcloneInstallSucceeded;
 inline std::wstring& g_RcloneInstallMessage = g_globals.externalTools.rcloneInstallMessage;
+inline bool& g_KnotLinkInstallRunning = g_globals.externalTools.knotLinkInstallRunning;
+inline bool& g_KnotLinkInstallSucceeded = g_globals.externalTools.knotLinkInstallSucceeded;
+inline std::wstring& g_KnotLinkInstallMessage = g_globals.externalTools.knotLinkInstallMessage;
 
 // i18n
 extern const char* lang_codes[2];

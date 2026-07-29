@@ -28,19 +28,21 @@ glibc 2.39 or later. Ubuntu 22.04 and Debian 12 are not supported.
 
 ## KnotLink v2 platform behavior
 
-KnotLink interop is v2-only. Windows x64 requires a locally installed
-KnotLinkService 3.0.0 or newer. MineBackup discovers it through App Paths and
+KnotLink interop is v2-only. Windows x64 expects a locally installed
+KnotLinkService 3.2.0.0 or newer. MineBackup discovers it through App Paths and
 the 32/64-bit uninstall registry views, falls back to the executable file
 version, and requires loopback ports 6370 and 6378 before connecting. An
-unknown or older version is treated as incompatible. A compatible stopped
+installed unknown or older version is treated as incompatible and produces a
+dismissible reminder on every startup. A compatible stopped
 service can be started automatically (enabled by default) or from Settings;
 startup times out after 10 seconds without blocking the main UI.
 
-Linux and macOS no longer contain an embedded KnotLink server. They keep the
-same C++ SDK client and may connect when a future upstream server is listening
-on the fixed loopback ports, but MineBackup does not discover, install, or
-start a server there. No platform downloads or runs a KnotLink installer;
-Settings opens the [official releases page](https://github.com/KnotLink-Protocol/KnotLink/releases).
+Linux reads the installed `knotlinkservice` version through dpkg and macOS reads
+the `com.knotlink.service` Installer receipt. Their packages are managed by
+systemd and launchd respectively. On all supported platforms the first-run
+wizard and Settings may download KnotLinkService 3.2.0.0 from the official
+release URL, retry through `gh-proxy.org`, and open the native system installer.
+The user completes installation there.
 
 The Minecraft companion mod must be version 3.1.0 or newer. Older or malformed
 versions do not participate in hot workflows: hot backup falls back to an

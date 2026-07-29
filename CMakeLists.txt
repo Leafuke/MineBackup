@@ -169,7 +169,7 @@ if(WIN32)
     set_target_properties(MineBackup PROPERTIES WIN32_EXECUTABLE TRUE)
     target_sources(MineBackup PRIVATE ${MINEBACKUP_GENERATED_DIR}/MineBackup.rc)
     target_include_directories(MineBackup PRIVATE ${MINEBACKUP_GENERATED_DIR})
-    target_link_libraries(minebackup_data_core PUBLIC ole32 advapi32)
+    target_link_libraries(minebackup_data_core PUBLIC ole32 advapi32 shell32)
     target_link_libraries(minebackup_desktop PUBLIC ws2_32 winhttp dwmapi version)
 endif()
 

@@ -13,6 +13,8 @@
 void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtracted,
 	const std::wstring& g_7zTempPath);
 
+bool StartKnotLinkInstallerDownload();
+
 // MainUI.cpp — 菜单栏、弹窗、Dock 布局、配置切换器
 // (在主循环中被直接调用的部分，将直接集成在 MineBackup.cpp 的主循环调用中)
 
