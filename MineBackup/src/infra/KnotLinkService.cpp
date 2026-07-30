@@ -1,4 +1,5 @@
 #include "KnotLinkService.h"
+#include "GameSessionManager.h"
 
 #include "Logging.h"
 #include "knotlink/OpenSocketResponser.hpp"
@@ -24,8 +25,6 @@
 #include <sstream>
 #include <stop_token>
 #include <utility>
-
-MyFolder GetOccupiedWorld();
 
 namespace minebackup::knotlink {
 namespace {

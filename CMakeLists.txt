@@ -303,7 +303,12 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME minebackup.knotlink_sdk COMMAND minebackup_knotlink_sdk_tests)
 
-    add_executable(minebackup_data_tests tests/TestMain.cpp)
+    add_executable(minebackup_data_tests
+        tests/TestMain.cpp
+        tests/BackupPipelineTest.cpp
+        tests/StorageMigrationTests.cpp
+        tests/ProcessToolTests.cpp
+        tests/RuntimeInfrastructureTests.cpp)
     target_link_libraries(minebackup_data_tests PRIVATE minebackup_data_core)
     if(MSVC)
         target_compile_options(minebackup_data_tests PRIVATE /utf-8 /FS)

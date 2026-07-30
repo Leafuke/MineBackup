@@ -1,5 +1,6 @@
 #include "Broadcast.h"
 #include "BackupManager.h"
+#include "GameSessionManager.h"
 #include "Logging.h"
 #include "i18n.h"
 #include "Globals.h"

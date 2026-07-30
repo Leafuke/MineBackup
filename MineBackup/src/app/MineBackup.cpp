@@ -29,6 +29,8 @@
 #include "BackupManager.h"
 #include "CloudSyncService.h"
 #include "CoreValidation.h"
+#include "FileName.h"
+#include "GameSessionManager.h"
 #include "MigrationCoordinator.h"
 #include "LogPanel.h"
 #include "SingleInstanceService.h"
@@ -266,9 +268,6 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-void CheckForConfigConflicts();
-bool IsPureASCII(const wstring& s);
-wstring SanitizeFileName(const wstring& input);
 //bool LoadTextureFromFile(const char* filename, ID3D11ShaderResourceView** out_srv, int* out_width, int* out_height);
 bool LoadTextureFromFileGL(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 
@@ -309,10 +308,6 @@ static void EnsureWorldIconLoaded(const filesystem::path& worldFolder)
 			static_cast<float>(textureWidth), static_cast<float>(textureHeight));
 	}
 }
-
-void GameSessionWatcherThread(std::stop_token stopToken);
-
-void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath, wstring outputPath, wstring description);
 
 #ifdef _WIN32
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)

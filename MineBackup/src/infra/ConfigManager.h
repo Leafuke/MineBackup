@@ -21,4 +21,5 @@ std::vector<std::wstring> BuildEffectiveRestoreWhitelist(const std::vector<std::
 void EnsureDefaultBackupBlacklist(std::vector<std::wstring>& blacklist);
 void EnsureDefaultRestoreWhitelist();
 void FinalizeUiScaleMigration(float primaryDpiScale);
+void CheckForConfigConflicts();
 #endif // CONFIG_MANAGER_H

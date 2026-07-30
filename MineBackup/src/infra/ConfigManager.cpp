@@ -88,7 +88,13 @@ static int NormalizeCompressionLevel(const wstring& method, int level) {
 
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 
-bool checkWorldName(const wstring& world, const vector<pair<wstring, wstring>>& worldList);
+static bool IsWorldNameAvailable(
+	const wstring& world,
+	const vector<pair<wstring, wstring>>& worldList) {
+	return none_of(worldList.begin(), worldList.end(), [&](const auto& item) {
+		return item.first == world;
+	});
+}
 
 static bool ContainsRuleIgnoreCase(const vector<wstring>& rules, const wstring& rule) {
 	return any_of(rules.begin(), rules.end(), [&](const wstring& item) {
@@ -262,7 +268,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					}
 					if (filesystem::exists(cur->saveRoot)) {
 						for (auto& entry : filesystem::directory_iterator(cur->saveRoot)) {
-							if (entry.is_directory() && checkWorldName(entry.path().filename().wstring(), cur->worlds))
+							if (entry.is_directory() && IsWorldNameAvailable(entry.path().filename().wstring(), cur->worlds))
 								cur->worlds.push_back({ entry.path().filename().wstring(), L"" });
 						}
 					}
