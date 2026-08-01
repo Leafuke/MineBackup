@@ -231,7 +231,16 @@
     <ClCompile Include="src\ui\HistoryUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\HistoryDialogs.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\HistoryViewModel.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\CommandConsole.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\MainUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\LogPanel.cpp">
@@ -252,7 +261,19 @@
     <ClCompile Include="src\ui\SettingsUISpecial.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\SettingsUIHotkeys.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\WizardUI.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\WorldListController.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\WorldListModel.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\WorldListUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\FileName.cpp">
@@ -437,10 +458,22 @@
     <ClInclude Include="src\ui\IconsFontAwesome6.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\HistoryDialogs.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\HistoryViewModel.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\MainUiController.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\MigrationReportUI.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\SettingsUI.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\SettingsUIHotkeys.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\SettingsUIPrivate.h">
@@ -450,6 +483,12 @@
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\UIHelpers.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\WorldListController.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\WorldListModel.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\utils\FileName.h">

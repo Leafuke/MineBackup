@@ -5,6 +5,8 @@
 #include "MigrationReportUI.h"
 #include "UIHelpers.h"
 #include "MainUI.h"
+#include "MainUiController.h"
+#include "SettingsUIHotkeys.h"
 #include "imgui-all.h"
 #include "imgui_style.h"
 #include "i18n.h"
@@ -110,9 +112,8 @@ bool StartKnotLinkInstallerDownload() {
 	return submitted;
 }
 
-static map<wstring, GLuint> g_worldIconTextures;
-static map<wstring, ImVec2> g_worldIconDimensions;
-static vector<int> worldIconWidths, worldIconHeights;
+static auto& g_worldIconTextures =
+	GetMainUiController().worldList.iconCache.textures;
 wstring GetDefaultUIFontPath() {
 #ifdef _WIN32
 	// 动态获取 Windows 字体目录
@@ -304,8 +305,6 @@ static void EnsureWorldIconLoaded(const filesystem::path& worldFolder)
 	int textureHeight = 0;
 	if (LoadTextureFromFileGL(loadPath.c_str(), &textureId, &textureWidth, &textureHeight) && textureId > 0) {
 		g_worldIconTextures[iconKey] = textureId;
-		g_worldIconDimensions[iconKey] = ImVec2(
-			static_cast<float>(textureWidth), static_cast<float>(textureHeight));
 	}
 }
 
@@ -1017,10 +1016,6 @@ int main(int argc, char** argv)
 
 	APP_PRINTF_INFO("application.welcome", L("CONSOLE_WELCOME"));
 
-	// 记录注释
-	static char backupComment[CONSTANT1] = "";
-
-
 	// 如果开了自动扫描，那么就检查一下，然后添加
 	if (g_AutoScanForWorlds) {
 		for (auto& [idx, config] : g_appState.configs) {
@@ -1382,7 +1377,44 @@ int main(int argc, char** argv)
 			ShowConfigWizard(showConfigWizard, errorShow, sevenZipExtracted, g_7zTempPath);
 		}
 		else if (g_appState.showMainApp) {
-
+			MainUiController& mainUi = GetMainUiController();
+			WorldListController& worldUi = mainUi.worldList;
+			auto& showAboutWindow = mainUi.showAboutWindow;
+			auto& showImportConfigConfirm = mainUi.showImportConfigConfirm;
+			auto& showImportHistoryConfirm = mainUi.showImportHistoryConfirm;
+			auto& pendingImportPath = mainUi.pendingImportPath;
+			auto& waitingForHotkey = mainUi.waitingForHotkey;
+			auto& whichFunc = mainUi.selectedNoticeAction;
+			auto& open_update_popup = mainUi.openUpdatePopup;
+			auto& notice_popup_opened = mainUi.noticePopupOpened;
+			auto& notice_snoozed_this_session = mainUi.noticeSnoozedThisSession;
+			auto& tempRememberChoice = mainUi.rememberNoticeChoice;
+			auto& first_time_layout = mainUi.firstDockLayout;
+			auto& selectedWorldIndex = worldUi.selectedWorldIndex;
+			auto& displayWorlds = worldUi.displayWorlds;
+			auto& cachedConfigIndex = worldUi.cachedConfigIndex;
+			auto& cachedSpecialSetting = worldUi.cachedSpecialSetting;
+			auto& cachedWorldCount = worldUi.cachedWorldCount;
+			auto& lastDisplayWorldsRefresh = worldUi.lastDisplayWorldsRefresh;
+			auto& cachedOpenTimes = worldUi.cachedOpenTimes;
+			auto& cachedBackupTimes = worldUi.cachedBackupTimes;
+			auto& cachedNeedsBackup = worldUi.cachedNeedsBackup;
+			auto& lastTimeCacheRefresh = worldUi.lastTimeCacheRefresh;
+			auto& cachedTaskRunning = worldUi.cachedTaskRunning;
+			auto& showAddConfigPopup = worldUi.showAddConfigPopup;
+			auto& showDeleteConfigPopup = worldUi.showDeleteConfigPopup;
+			auto& config_type = worldUi.configType;
+			auto& tempExportConfig = worldUi.temporaryExportConfig;
+			auto& selectedBlacklistItem = worldUi.selectedBlacklistItem;
+			auto& selectedFormat = worldUi.selectedFormat;
+			char (&backupComment)[1024] = worldUi.backupComment;
+			char (&new_config_name)[128] = worldUi.newConfigName;
+			char (&mods_comment)[256] = worldUi.modsComment;
+			char (&buf)[1024] = worldUi.pathBuffer;
+			char (&others_comment)[1024] = worldUi.othersComment;
+			char (&outputPathBuf)[260] = worldUi.outputPath;
+			char (&descBuf)[2048] = worldUi.description;
+			char (&blacklistAddItemBuf)[1024] = worldUi.blacklistItem;
 
 			ImGuiViewport* viewport = ImGui::GetMainViewport();
 			ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -1399,10 +1431,6 @@ int main(int argc, char** argv)
 			ImGui::Begin("MainDockSpaceHost", nullptr, host_window_flags);
 			ImGui::PopStyleVar(3);
 
-			static bool showAboutWindow = false;
-			static bool showImportConfigConfirm = false;
-			static bool showImportHistoryConfirm = false;
-			static wstring pendingImportPath;
 			// --- 顶部菜单栏 ---
 			if (ImGui::BeginMenuBar()) {
 
@@ -1584,8 +1612,6 @@ int main(int argc, char** argv)
 					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
 					ImGui::Separator();
 					// 热键设置右拉栏（鼠标放上去会向右展开两个）
-					static bool waitingForHotkey = false;
-					static int whichFunc = 0;
 					ImGui::BeginDisabled(!desktopCapabilities.globalHotkeys.IsAvailable());
 					if (ImGui::BeginMenu(L("HOTKEY_SETTINGS"))) {
 						if (ImGui::MenuItem(L("BUTTON_BACKUP_SELECTED"))) {
@@ -1609,7 +1635,7 @@ int main(int argc, char** argv)
 								waitingForHotkey = false;
 								if (whichFunc == 1) {
 									const int previousKey = g_hotKeyBackupId;
-									g_hotKeyBackupId = ImGuiKeyToVK((ImGuiKey)key);
+									g_hotKeyBackupId = ImGuiKeyToPlatformHotkey((ImGuiKey)key);
 									const auto status = desktopServices->ConfigureGlobalHotkeys(
 										currentGlobalHotkeys());
 									if (!status.IsAvailable()) {
@@ -1625,7 +1651,7 @@ int main(int argc, char** argv)
 									}
 								else if (whichFunc == 2) {
 									const int previousKey = g_hotKeyRestoreId;
-									g_hotKeyRestoreId = ImGuiKeyToVK((ImGuiKey)key);
+									g_hotKeyRestoreId = ImGuiKeyToPlatformHotkey((ImGuiKey)key);
 									const auto status = desktopServices->ConfigureGlobalHotkeys(
 										currentGlobalHotkeys());
 									if (!status.IsAvailable()) {
@@ -1700,7 +1726,6 @@ int main(int argc, char** argv)
 					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.902f, 0.6f, 1.0f));
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.9f, 0.5f, 1.0f));
 					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-					static bool open_update_popup = false;
 					if (ImGui::Button(L("UPDATE_AVAILABLE_BUTTON"))) {
 						ImGui::OpenPopup(L("UPDATE_POPUP_TITLE"));
 						open_update_popup = true;
@@ -1737,8 +1762,6 @@ int main(int argc, char** argv)
 					}
 				}
 
-				static bool notice_popup_opened = false;
-				static bool notice_snoozed_this_session = false;
 				if (g_ReceiveNotices && g_NoticeCheckDone && g_NewNoticeAvailable && !notice_popup_opened && !notice_snoozed_this_session) {
 					ImGui::OpenPopup(L("NOTICE_POPUP_TITLE"));
 					notice_popup_opened = true;
@@ -1806,7 +1829,6 @@ int main(int argc, char** argv)
 				ImGui::TextWrapped("%s", L("CLOSE_CONFIRM_MSG"));
 				ImGui::Separator();
 				
-				static bool tempRememberChoice = false;
 				ImGui::Checkbox(L("CLOSE_REMEMBER_CHOICE"), &tempRememberChoice);
 				
 				ImGui::Dummy(ImVec2(0, 10));
@@ -1907,7 +1929,6 @@ int main(int argc, char** argv)
 			ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
 			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar);
 
-			static bool first_time_layout = true;
 			if (first_time_layout) {
 				first_time_layout = false;
 				ImGui::DockBuilderRemoveNode(dockspace_id); // clear any previous layout
@@ -1927,8 +1948,6 @@ int main(int argc, char** argv)
 
 			ImGui::End(); // End of MainDockSpaceHost
 
-			static int selectedWorldIndex = -1;       // 跟踪用户在列表中选择的世界
-			static char backupComment[CONSTANT1] = "";// 备份注释输入框的内容
 			// 获取当前配置
 			if (!g_appState.configs.count(g_appState.currentConfigIndex)) { // 找不到，说明应该对应的是特殊配置
 				specialSetting = true;
@@ -1939,11 +1958,6 @@ int main(int argc, char** argv)
 			float midW = totalW * 0.25f;
 			float rightW = totalW * 0.42f;
 			// 缓存 DisplayWorlds，避免每帧重建（深拷贝 Config + mutex lock）
-			static vector<DisplayWorld> displayWorlds;
-			static int cachedConfigIndex = -999;
-			static bool cachedSpecialSetting = false;
-			static size_t cachedWorldCount = 0;
-			static chrono::steady_clock::time_point lastDisplayWorldsRefresh{};
 			auto now_dw = chrono::steady_clock::now();
 			bool needsRebuild = (cachedConfigIndex != g_appState.currentConfigIndex)
 				|| (cachedSpecialSetting != specialSetting)
@@ -1966,10 +1980,6 @@ int main(int argc, char** argv)
 			int worldCount = (int)displayWorlds.size();
 
 			// 缓存 GetLastOpenTime / GetLastBackupTime，每5秒刷新一次
-			static map<wstring, wstring> cachedOpenTimes;
-			static map<wstring, wstring> cachedBackupTimes;
-			static map<wstring, bool> cachedNeedsBackup;
-			static chrono::steady_clock::time_point lastTimeCacheRefresh{};
 			auto now_tc = chrono::steady_clock::now();
 			bool refreshTimeCache = chrono::duration_cast<chrono::seconds>(now_tc - lastTimeCacheRefresh).count() >= 5;
 			if (refreshTimeCache || needsRebuild) {
@@ -1990,7 +2000,6 @@ int main(int argc, char** argv)
 			}
 
 			// 一次性获取所有任务运行状态
-			static map<pair<int,int>, bool> cachedTaskRunning;
 			{
 				lock_guard<mutex> taskLock(g_appState.task_mutex);
 				cachedTaskRunning.clear();
@@ -2012,7 +2021,6 @@ int main(int argc, char** argv)
 					current_config_label = "[No." + to_string(g_appState.currentConfigIndex) + "] " + g_appState.configs[g_appState.currentConfigIndex].name;
 				}
 				//string(L("CONFIG_N")) + to_string(g_appState.currentConfigIndex)
-				static bool showAddConfigPopup = false, showDeleteConfigPopup = false;
 
 				if (ImGui::BeginCombo("##ConfigSwitcher", current_config_label.c_str())) {
 					// 普通配置
@@ -2097,8 +2105,6 @@ int main(int argc, char** argv)
 				if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize))
 				{
 					showAddConfigPopup = false;
-					static int config_type = 0; // 0 for Normal, 1 for Special
-					static char new_config_name[128] = "New Config";
 
 					ImGui::TextUnformatted(L("CONFIG_TYPE_LABEL"));
 					ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
@@ -2228,7 +2234,6 @@ int main(int argc, char** argv)
 							LoadTextureFromFileGL(wstring_to_utf8(destPath).c_str(), &newTextureId, &tex_w, &tex_h);
 #endif
 							g_worldIconTextures[iconKey] = newTextureId;
-							g_worldIconDimensions[iconKey] = ImVec2((float)tex_w, (float)tex_h);
 						}
 					}
 
@@ -2266,24 +2271,32 @@ int main(int argc, char** argv)
 					ImGui::SameLine();
 					ImGui::BeginGroup(); // 将所有内容组合在一起
 
-					// --- 第一行：世界名和描述 (自动换行) ---
+					// --- 第一行：世界名和描述 ---
 					string name_utf8 = wstring_to_utf8(dw.name);
 					string desc_utf8 = wstring_to_utf8(dw.desc);
-					ImGui::TextWrapped("%s", name_utf8.c_str());
+					const float worldTextWidth =
+						(max)(ImGui::GetContentRegionAvail().x - 48.0f * g_uiScale, 1.0f);
+					TextEllipsisWithTooltip(name_utf8.c_str(), worldTextWidth);
 
 					//// --- 第二行：时间和状态 ---
 					//wstring openTime = GetLastOpenTime(worldFolder);
 					//wstring backupTime = GetLastBackupTime(backupFolder);
 
 					//// 将次要信息颜色变灰，更具层次感
-					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+					const ImVec4 disabledColor =
+						ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
 					if (desc_utf8.empty()) {
-						ImGui::TextWrapped("%s", L("CARD_WORLD_NO_DESC"));
+						TextEllipsisWithTooltip(
+							L("CARD_WORLD_NO_DESC"),
+							worldTextWidth,
+							&disabledColor);
 					}
 					else {
-						ImGui::TextWrapped("%s", desc_utf8.c_str());
+						TextEllipsisWithTooltip(
+							desc_utf8.c_str(),
+							worldTextWidth,
+							&disabledColor);
 					}
-					ImGui::PopStyleColor();
 
 					ImGui::EndGroup();
 
@@ -2482,7 +2495,6 @@ int main(int argc, char** argv)
 
 						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal(L("CONFIRM_BACKUP_OTHERS_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-							static char mods_comment[256] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), mods_comment, IM_ARRAYSIZE(mods_comment));
 							ImGui::Separator();
@@ -2525,7 +2537,6 @@ int main(int argc, char** argv)
 						ImGui::SameLine();
 						ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97f);
 						// 可以输入需要备份的其他内容的路径，比如 D:\Games\g_appState.configs
-						static char buf[CONSTANT1] = "";
 						strcpy_s(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
 						if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
 							displayWorlds[selectedWorldIndex].effectiveConfig.othersPath = utf8_to_wstring(buf);
@@ -2534,7 +2545,6 @@ int main(int argc, char** argv)
 
 						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal(otherBackupPopupTitle.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-							static char others_comment[CONSTANT1] = "";
 							ImGui::TextUnformatted(L("CONFIRM_BACKUP_OTHERS_MSG"));
 							ImGui::InputText(L("HINT_BACKUP_COMMENT"), others_comment, IM_ARRAYSIZE(others_comment));
 							ImGui::Separator();
@@ -2586,13 +2596,7 @@ int main(int argc, char** argv)
 						}
 						ImGui::SetNextWindowViewport(viewport->ID);
 						if (ImGui::BeginPopupModal(L("EXPORT_WINDOW_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-							// 使用 static 变量来持有一次性配置，它们只在弹窗首次打开时被初始化
-							static Config tempExportConfig;
-							static char outputPathBuf[MAX_PATH];
-							static char descBuf[CONSTANT2];
-							static char blacklistAddItemBuf[CONSTANT1];
-							static int selectedBlacklistItem = -1;
-							static int selectedFormat = 0;
+							// 弹窗工作副本由 WorldListController 持有。
 
 							// 弹窗首次打开时，进行初始化
 							if (ImGui::IsWindowAppearing()) {
@@ -2869,8 +2873,6 @@ int main(int argc, char** argv)
 	DestroyWindow(hwnd_hidden);
 #endif
 	g_worldIconTextures.clear();
-	worldIconWidths.clear();
-	worldIconHeights.clear();
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext();

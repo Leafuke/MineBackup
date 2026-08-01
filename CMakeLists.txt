@@ -319,6 +319,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME minebackup.data_core COMMAND minebackup_data_tests)
 
+    add_executable(minebackup_ui_model_tests tests/UiModelTests.cpp)
+    target_link_libraries(minebackup_ui_model_tests PRIVATE minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_ui_model_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.ui_models COMMAND minebackup_ui_model_tests)
+
     add_executable(minebackup_i18n_tests
         tests/I18nTest.cpp
         ${MINEBACKUP_INFRA_DIR}/i18n.cpp

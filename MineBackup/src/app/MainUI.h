@@ -5,6 +5,7 @@
 // 从 MineBackup.cpp 拆分出的 UI 模块函数声明
 
 #include "AppState.h"
+#include "WorldListModel.h"
 #include <optional>
 #include <vector>
 #include <string>
@@ -20,7 +21,6 @@ bool StartKnotLinkInstallerDownload();
 
 // WorldListUI.cpp — 世界列表面板
 std::vector<DisplayWorld> BuildDisplayWorldsForSelection();
-int ImGuiKeyToVK(ImGuiKey key);
 
 // HistoryUI.cpp — 历史窗口
 void ShowHistoryWindow(int configIndex,
