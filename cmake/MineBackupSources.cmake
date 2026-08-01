@@ -3,6 +3,7 @@ set(MINEBACKUP_MAIN_SOURCES ${MINEBACKUP_APP_DIR}/MineBackup.cpp)
 
 set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
+    ${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
     ${MINEBACKUP_INFRA_DIR}/AppPaths.cpp
     ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.cpp
     ${MINEBACKUP_INFRA_DIR}/DiagnosticLogExporter.cpp
@@ -47,8 +48,13 @@ set(MINEBACKUP_V15_DESKTOP_SOURCES
 )
 
 set(MINEBACKUP_APPLICATION_SOURCES
+    ${MINEBACKUP_APP_DIR}/Application.cpp
+    ${MINEBACKUP_APP_DIR}/ApplicationActions.cpp
+    ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.cpp
+    ${MINEBACKUP_APP_DIR}/AppearanceRuntime.cpp
     ${MINEBACKUP_APP_DIR}/AppState.cpp
     ${MINEBACKUP_APP_DIR}/Globals.cpp
+    ${MINEBACKUP_APP_DIR}/ImGuiRuntime.cpp
     ${MINEBACKUP_CORE_DIR}/BackupManager.cpp
     ${MINEBACKUP_CORE_DIR}/BackupAuxiliary.cpp
     ${MINEBACKUP_CORE_DIR}/BackupRestore.cpp
@@ -123,7 +129,7 @@ set(MINEBACKUP_SPDLOG_SOURCES
 )
 
 set(MINEBACKUP_PUBLIC_HEADERS
-    ${MINEBACKUP_APP_DIR}/AppState.h ${MINEBACKUP_APP_DIR}/DataModels.h ${MINEBACKUP_APP_DIR}/Globals.h ${MINEBACKUP_APP_DIR}/LaunchOptions.h ${MINEBACKUP_APP_DIR}/MainUI.h
+    ${MINEBACKUP_APP_DIR}/Application.h ${MINEBACKUP_APP_DIR}/ApplicationActions.h ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.h ${MINEBACKUP_APP_DIR}/AppearanceRuntime.h ${MINEBACKUP_APP_DIR}/AppState.h ${MINEBACKUP_APP_DIR}/ConfigSelection.h ${MINEBACKUP_APP_DIR}/DataModels.h ${MINEBACKUP_APP_DIR}/Globals.h ${MINEBACKUP_APP_DIR}/ImGuiRuntime.h ${MINEBACKUP_APP_DIR}/LaunchOptions.h ${MINEBACKUP_APP_DIR}/MainUI.h
     ${MINEBACKUP_CORE_DIR}/ArchiveRunner.h ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.h ${MINEBACKUP_CORE_DIR}/BackupManager.h ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.h ${MINEBACKUP_CORE_DIR}/CloudSyncInternal.h ${MINEBACKUP_CORE_DIR}/CloudSyncService.h
     ${MINEBACKUP_CORE_DIR}/CoreValidation.h ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.h ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.h
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.h ${MINEBACKUP_CORE_DIR}/GameSessionManager.h ${MINEBACKUP_CORE_DIR}/HistoryManager.h ${MINEBACKUP_CORE_DIR}/LegacyMineBackup15Reader.h ${MINEBACKUP_CORE_DIR}/PathRuleSet.h

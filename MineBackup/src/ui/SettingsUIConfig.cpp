@@ -1,5 +1,6 @@
 ﻿#include "SettingsUIPrivate.h"
 
+#include "ApplicationActions.h"
 #include "AppPaths.h"
 #include "Broadcast.h"
 #include "ExternalToolManager.h"

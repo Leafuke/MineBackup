@@ -69,7 +69,6 @@ CloudHistoryAnalysisResult AnalyzeCloudHistory(const Config& config, int configI
 	operation.Finish(result);
 	return analysis;
 }
-
 CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, CloudSyncMode mode) {
 	unique_lock<mutex> lock(g_cloudMutex);
 	CloudOperationScope operation(configIndex, utf8_to_wstring(L("CLOUD_STATUS_SYNCING")));
@@ -413,4 +412,3 @@ CloudCommandResult ImportHistoryFromCloud(const Config& config, int configIndex,
 	operation.Finish(result);
 	return result;
 }
-

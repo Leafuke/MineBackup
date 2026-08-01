@@ -69,7 +69,25 @@
     <ClCompile Include="src\app\LaunchOptions.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\app\Application.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ApplicationActions.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ApplicationEventRouter.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\AppearanceRuntime.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
     <ClCompile Include="src\app\Globals.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ConfigSelection.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ImGuiRuntime.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
     <ClCompile Include="src\app\MineBackup.cpp">
@@ -305,10 +323,28 @@
     <ClInclude Include="src\app\AppState.h">
       <Filter>src\app</Filter>
     </ClInclude>
+    <ClInclude Include="src\app\Application.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\ApplicationActions.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\ApplicationEventRouter.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\AppearanceRuntime.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
     <ClInclude Include="src\app\DataModels.h">
       <Filter>src\app</Filter>
     </ClInclude>
+    <ClInclude Include="src\app\ConfigSelection.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
     <ClInclude Include="src\app\Globals.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\ImGuiRuntime.h">
       <Filter>src\app</Filter>
     </ClInclude>
     <ClInclude Include="src\app\LaunchOptions.h">

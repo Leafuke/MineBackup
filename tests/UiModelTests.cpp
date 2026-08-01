@@ -1,4 +1,5 @@
 #include "HistoryViewModel.h"
+#include "ConfigSelection.h"
 #include "WorldListModel.h"
 
 #include <chrono>
@@ -144,6 +145,23 @@ namespace {
 				oldSpecial[0].baseWorldIndex} == WorldSelectionKey{2, 0},
 			"legacy special tasks should produce the same stable world selection key");
 	}
+
+	void TestStableConfigSelection() {
+		Config normal;
+		normal.configId = L"normal-stable-id";
+		SpecialConfig special;
+		special.specialConfigId = L"special-stable-id";
+		const map<int, Config> configs{{42, normal}};
+		const map<int, SpecialConfig> specialConfigs{{73, special}};
+
+		Expect(FindConfigByStableId(configs, L"NORMAL-STABLE-ID") == 42,
+			"normal startup selection should resolve stable IDs case-insensitively");
+		Expect(FindSpecialConfigByStableId(specialConfigs, L"SPECIAL-STABLE-ID") == 73,
+			"special startup selection should not treat the map index as persisted identity");
+		Expect(FindConfigByStableId(configs, L"missing") == -1
+			&& FindSpecialConfigByStableId(specialConfigs, L"missing") == -1,
+			"unknown stable IDs should produce an explicit not-found result");
+	}
 }
 
 int main() {
@@ -152,6 +170,7 @@ int main() {
 	TestResponsiveLayouts();
 	TestHistorySnapshots(root);
 	TestWorldModels();
+	TestStableConfigSelection();
 	error_code ignored;
 	filesystem::remove_all(root, ignored);
 	if (failures == 0) {

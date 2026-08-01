@@ -96,9 +96,15 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\app\Application.cpp" />
+    <ClCompile Include="src\app\ApplicationActions.cpp" />
+    <ClCompile Include="src\app\ApplicationEventRouter.cpp" />
+    <ClCompile Include="src\app\AppearanceRuntime.cpp" />
     <ClCompile Include="src\app\AppState.cpp" />
+    <ClCompile Include="src\app\ConfigSelection.cpp" />
     <ClCompile Include="src\app\LaunchOptions.cpp" />
     <ClCompile Include="src\app\Globals.cpp" />
+    <ClCompile Include="src\app\ImGuiRuntime.cpp" />
     <ClCompile Include="src\app\MineBackup.cpp" />
     <ClCompile Include="src\core\ArchiveRunner.cpp" />
     <ClCompile Include="src\core\BackupChangeDetector.cpp" />
@@ -184,9 +190,15 @@
     <ClCompile Include="third_party\spdlog\src\stdout_sinks.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\app\Application.h" />
+    <ClInclude Include="src\app\ApplicationActions.h" />
+    <ClInclude Include="src\app\ApplicationEventRouter.h" />
+    <ClInclude Include="src\app\AppearanceRuntime.h" />
     <ClInclude Include="src\app\AppState.h" />
+    <ClInclude Include="src\app\ConfigSelection.h" />
     <ClInclude Include="src\app\DataModels.h" />
     <ClInclude Include="src\app\Globals.h" />
+    <ClInclude Include="src\app\ImGuiRuntime.h" />
     <ClInclude Include="src\app\LaunchOptions.h" />
     <ClInclude Include="src\app\MainUI.h" />
     <ClInclude Include="src\core\ArchiveRunner.h" />

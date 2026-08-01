@@ -1,4 +1,5 @@
 #include "SettingsUIPrivate.h"
+#include "AppearanceRuntime.h"
 #include "HistoryManager.h"
 #include "CloudSyncService.h"
 #include "AppPaths.h"
