@@ -306,6 +306,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_data_tests
         tests/TestMain.cpp
         tests/BackupPipelineTest.cpp
+        tests/CloudSyncTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
         tests/RuntimeInfrastructureTests.cpp)

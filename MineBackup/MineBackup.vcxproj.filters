@@ -93,6 +93,15 @@
     <ClCompile Include="src\core\BackupRetention.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\CloudHistoryAnalysis.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\CloudHistorySync.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\CloudPortableConfig.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\CloudSyncService.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -142,6 +151,9 @@
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\PortableConfigDocument.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\RcloneClient.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\SpecialConfigPolicy.cpp">

@@ -1,4 +1,5 @@
 #include "BackupPipelineTest.h"
+#include "CloudSyncTests.h"
 #include "ExternalToolManager.h"
 #include "ProcessRunner.h"
 #include "ProcessToolTests.h"
@@ -100,6 +101,7 @@ int main(int argc, char** argv) {
     RunProcessToolTests(test, executable, temporary.path);
     RunBackupPipelineTests(test, temporary.path);
     RunRuntimeInfrastructureTests(test, temporary.path);
+    RunCloudSyncTests(test);
 
     if (test.failures == 0) {
         std::cout << "[PASS] MineBackup data-core tests\n";
