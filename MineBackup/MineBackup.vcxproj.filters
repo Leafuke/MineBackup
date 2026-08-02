@@ -81,6 +81,12 @@
     <ClCompile Include="src\app\AppearanceRuntime.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\app\DesktopUiLifecycle.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\DesktopUiSession.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
     <ClCompile Include="src\app\Globals.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
@@ -202,6 +208,9 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\ProcessRunner.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\ReadOnlyMappedFile.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp">
@@ -335,6 +344,12 @@
     <ClInclude Include="src\app\AppearanceRuntime.h">
       <Filter>src\app</Filter>
     </ClInclude>
+    <ClInclude Include="src\app\DesktopUiLifecycle.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\DesktopUiSession.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
     <ClInclude Include="src\app\DataModels.h">
       <Filter>src\app</Filter>
     </ClInclude>
@@ -438,6 +453,9 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\ProcessRunner.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\ReadOnlyMappedFile.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\InterruptedTaskRecovery.h">

@@ -100,6 +100,8 @@
     <ClCompile Include="src\app\ApplicationActions.cpp" />
     <ClCompile Include="src\app\ApplicationEventRouter.cpp" />
     <ClCompile Include="src\app\AppearanceRuntime.cpp" />
+    <ClCompile Include="src\app\DesktopUiLifecycle.cpp" />
+    <ClCompile Include="src\app\DesktopUiSession.cpp" />
     <ClCompile Include="src\app\AppState.cpp" />
     <ClCompile Include="src\app\ConfigSelection.cpp" />
     <ClCompile Include="src\app\LaunchOptions.cpp" />
@@ -143,6 +145,7 @@
     <ClCompile Include="src\infra\LegacyLocationMigration.cpp" />
     <ClCompile Include="src\infra\Logging.cpp" />
     <ClCompile Include="src\infra\ProcessRunner.cpp" />
+    <ClCompile Include="src\infra\ReadOnlyMappedFile.cpp" />
     <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp" />
     <ClCompile Include="src\infra\NetworkService.cpp" />
     <ClCompile Include="src\infra\Sha256.cpp" />
