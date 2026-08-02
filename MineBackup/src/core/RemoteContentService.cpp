@@ -120,13 +120,46 @@ bool IsValidVersionTag(const string& tag) {
     return regex_match(tag, versionPattern);
 }
 
+string NormalizeVersionTag(const string& versionTag) {
+    if (!IsValidVersionTag(versionTag)) return {};
+    return versionTag.front() == 'v' || versionTag.front() == 'V'
+        ? "v" + versionTag.substr(1) : "v" + versionTag;
+}
+
+string CurrentPlatformAssetName(const string& version) {
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+    return "MineBackup-windows-x64.exe";
+#elif defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+    return "MineBackup-" + version + "-macos-arm64.dmg";
+#elif defined(__linux__) && defined(__x86_64__)
+    return "minebackup_" + version + "_amd64.deb";
+#else
+    (void)version;
+    return {};
+#endif
+}
+
 } // namespace
 
 string BuildMineBackupOfficialReleaseUrl(const string& versionTag) {
-    if (!IsValidVersionTag(versionTag)) return {};
-    const string normalized = versionTag.front() == 'v' || versionTag.front() == 'V'
-        ? "v" + versionTag.substr(1) : "v" + versionTag;
-    return "https://github.com/Leafuke/MineBackup/releases/tag/" + normalized;
+    return BuildMineBackupUpdateLinks(versionTag).changelogUrl;
+}
+
+MineBackupUpdateLinks BuildMineBackupUpdateLinks(const string& versionTag) {
+    MineBackupUpdateLinks output;
+    const string normalized = NormalizeVersionTag(versionTag);
+    if (normalized.empty()) return output;
+
+    output.changelogUrl = "https://github.com/Leafuke/MineBackup/releases/tag/" + normalized;
+    const string version = normalized.substr(1);
+    const string assetName = CurrentPlatformAssetName(version);
+    if (assetName.empty()) return output;
+
+    output.supported = true;
+    output.officialDownloadUrl =
+        "https://github.com/Leafuke/MineBackup/releases/download/" + normalized + "/" + assetName;
+    output.acceleratedDownloadUrl = "https://gh-proxy.org/" + output.officialDownloadUrl;
+    return output;
 }
 
 UpdateCheckResult CheckMineBackupUpdate(

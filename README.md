@@ -77,7 +77,7 @@ Gatekeeper or running `xattr` commands.
 MineBackup uses the same strict KnotLink v2 parameterized contract as
 FolderRewind. Payloads are `key=value;key2=value2`, values use RFC 3986
 percent-encoding, and old positional/free-text commands are rejected. The
-companion mod must be version **3.1.0 or newer**.
+companion mod must be version **3.0.0 or newer**.
 
 See the [MineBackup KnotLink v2 reference](docs/knotlink-v2.md) for commands,
 correlation metadata, lifecycle events, current-world requests, and examples.

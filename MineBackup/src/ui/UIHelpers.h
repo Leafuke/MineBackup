@@ -89,12 +89,6 @@ inline SettingsResponsiveLayout ComputeSettingsResponsiveLayout(
 	return result;
 }
 
-struct HistoryResponsiveLayout {
-	bool useSplitView = false;
-	float listWidth = 0.0f;
-	float detailsWidth = 0.0f;
-};
-
 struct UiScaleMigrationResult {
 	float scale = 1.0f;
 	bool migrated = false;
@@ -112,26 +106,6 @@ inline UiScaleMigrationResult MigrateUiScale(
 		if (std::abs(result.scale - safeDpi) <= 0.05f) result.scale = 1.0f;
 	}
 	result.scale = (std::clamp)(result.scale, 0.75f, 2.5f);
-	return result;
-}
-
-inline HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
-	float availableWidth,
-	float em,
-	float spacingX = 0.0f) {
-	const float safeEm = (std::max)(em, 1.0f);
-	const float gap = spacingX > 0.0f ? spacingX : safeEm * 0.5f;
-	const float safeWidth = (std::max)(availableWidth, 0.0f);
-	HistoryResponsiveLayout result;
-	result.useSplitView = safeWidth >= safeEm * 38.0f;
-	if (result.useSplitView) {
-		const float usable = (std::max)(safeWidth - gap, 0.0f);
-		result.listWidth = (std::clamp)(usable * 0.40f, safeEm * 18.0f, usable - safeEm * 22.0f);
-		result.detailsWidth = (std::max)(usable - result.listWidth, 0.0f);
-	}
-	else {
-		result.listWidth = safeWidth;
-	}
 	return result;
 }
 

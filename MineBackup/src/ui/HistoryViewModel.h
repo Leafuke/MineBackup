@@ -1,12 +1,11 @@
 #pragma once
 
 #include "DataModels.h"
-#include "text_to_text.h"
 
-#include <algorithm>
-#include <cctype>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
-#include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -36,84 +35,98 @@ struct HistoryEntryKey {
 };
 
 struct HistoryEntryView {
-	HistoryEntry* entry = nullptr;
+	std::size_t entryIndex = 0;
 	HistoryFileStatus status = HistoryFileStatus::Missing;
 	std::uintmax_t fileSize = 0;
-	std::error_code fileError;
 };
 
-inline HistoryEntryView BuildHistoryEntryView(
+struct HistoryResponsiveLayout {
+	bool useSplitView = false;
+	float listWidth = 0.0f;
+	float detailsWidth = 0.0f;
+};
+
+struct HistoryWindowController {
+	int lockedConfigIndex = -1;
+	bool wasOpen = false;
+	HistoryEntryKey selectedKey;
+	HistoryEntryKey restoreKey;
+	HistoryEntryKey deleteKey;
+	HistoryEntryKey commentKey;
+	std::wstring worldFilter;
+	char textFilter[256]{};
+	int statusFilterIndex = 0;
+	bool importantOnly = false;
+	bool narrowShowDetails = false;
+	bool requestRestorePopup = false;
+	bool requestDeletePopup = false;
+	bool requestCommentPopup = false;
+	char commentBuffer[1024]{};
+	int restoreMethod = 0;
+	char customRestoreItems[2048]{};
+	int deleteMode = 2;
+	bool useSafeDelete = true;
+	std::vector<HistoryEntryView> cachedViews;
+	std::vector<std::size_t> filteredViewIndices;
+	std::vector<std::wstring> cachedWorlds;
+	std::chrono::steady_clock::time_point nextStatusScan{};
+	std::uint64_t statusKeyFingerprint = 0;
+	std::uint64_t filterEntryFingerprint = 0;
+	std::uint64_t filterStatusGeneration = 0;
+	std::uint64_t statusGeneration = 0;
+	std::uint64_t worldKeyFingerprint = 0;
+	std::wstring statusBackupPath;
+	std::wstring cachedFilterWorld;
+	std::string cachedFilterText;
+	HistoryStatusFilter cachedStatusFilter = HistoryStatusFilter::All;
+	bool cachedImportantOnly = false;
+	bool statusCacheValid = false;
+	bool filterCacheValid = false;
+	bool worldCacheValid = false;
+
+	void Open(
+		int requestedConfigIndex,
+		const std::optional<std::wstring>& initialWorld,
+		const std::wstring& fallbackWorld);
+	void Close();
+	void ReleaseCaches();
+	void InvalidateFileStatusCache();
+	void InvalidateFilterCache();
+};
+
+HistoryEntryView ScanHistoryEntry(
 	const Config& config,
-	HistoryEntry& entry) {
-	HistoryEntryView view;
-	view.entry = &entry;
-	const std::filesystem::path path = std::filesystem::path(config.backupPath)
-		/ entry.worldName / entry.backupFile;
-	const bool exists = std::filesystem::exists(path, view.fileError);
-	if (view.fileError) {
-		view.status = HistoryFileStatus::Inaccessible;
-		return view;
-	}
-	if (!exists) {
-		view.status = entry.isCloudArchived && !entry.cloudArchiveRemotePath.empty()
-			? HistoryFileStatus::CloudOnly : HistoryFileStatus::Missing;
-		return view;
-	}
-	view.fileSize = std::filesystem::file_size(path, view.fileError);
-	if (view.fileError) {
-		view.status = HistoryFileStatus::Inaccessible;
-		return view;
-	}
-	view.status = view.fileSize < 10U * 1024U
-		? HistoryFileStatus::SmallFile : HistoryFileStatus::Normal;
-	return view;
-}
-
-inline bool MatchesHistoryStatus(HistoryFileStatus status, HistoryStatusFilter filter) {
-	switch (filter) {
-	case HistoryStatusFilter::All: return true;
-	case HistoryStatusFilter::Normal: return status == HistoryFileStatus::Normal;
-	case HistoryStatusFilter::CloudOnly: return status == HistoryFileStatus::CloudOnly;
-	case HistoryStatusFilter::Missing: return status == HistoryFileStatus::Missing
-		|| status == HistoryFileStatus::Inaccessible;
-	case HistoryStatusFilter::SmallFile: return status == HistoryFileStatus::SmallFile;
-	}
-	return true;
-}
-
-inline bool ContainsHistoryText(const HistoryEntry& entry, const std::string& needle) {
-	if (needle.empty()) return true;
-	auto contains = [&](const std::wstring& value) {
-		std::string haystack = wstring_to_utf8(value);
-		std::string loweredNeedle = needle;
-		auto lowerAscii = [](unsigned char character) {
-			return static_cast<char>(std::tolower(character));
-		};
-		std::transform(haystack.begin(), haystack.end(), haystack.begin(), lowerAscii);
-		std::transform(loweredNeedle.begin(), loweredNeedle.end(), loweredNeedle.begin(), lowerAscii);
-		return haystack.find(loweredNeedle) != std::string::npos;
-	};
-	return contains(entry.backupFile) || contains(entry.comment) || contains(entry.worldName);
-}
-
-inline std::vector<HistoryEntryView> BuildFilteredHistoryViews(
+	const HistoryEntry& entry,
+	std::size_t entryIndex);
+const std::vector<HistoryEntryView>& RefreshHistoryEntryViews(
+	HistoryWindowController& controller,
 	const Config& config,
-	std::vector<HistoryEntry>& entries,
+	const std::vector<HistoryEntry>& entries,
+	std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+const std::vector<std::size_t>& FilterHistoryEntryViews(
+	HistoryWindowController& controller,
+	const std::vector<HistoryEntry>& entries,
+	const std::vector<HistoryEntryView>& views,
 	const std::wstring& world,
 	const std::string& text,
 	HistoryStatusFilter status,
-	bool importantOnly) {
-	std::vector<HistoryEntryView> result;
-	for (HistoryEntry& entry : entries) {
-		if (!world.empty() && entry.worldName != world) continue;
-		if (importantOnly && !entry.isImportant) continue;
-		if (!ContainsHistoryText(entry, text)) continue;
-		HistoryEntryView view = BuildHistoryEntryView(config, entry);
-		if (MatchesHistoryStatus(view.status, status)) result.push_back(view);
-	}
-	std::sort(result.begin(), result.end(), [](const HistoryEntryView& left,
-		const HistoryEntryView& right) {
-		return left.entry->timestamp_str > right.entry->timestamp_str;
-	});
-	return result;
-}
+	bool importantOnly);
+const HistoryEntryView* FindHistoryEntryView(
+	const std::vector<HistoryEntryView>& views,
+	const std::vector<HistoryEntry>& entries,
+	const HistoryEntryKey& key);
+const std::vector<std::wstring>& RefreshHistoryWorlds(
+	HistoryWindowController& controller,
+	const std::vector<HistoryEntry>& entries);
+const HistoryEntry* ResolveHistoryEntryView(
+	const std::vector<HistoryEntry>& entries,
+	const HistoryEntryView& view);
+std::size_t RemoveUnavailableHistoryEntries(
+	std::vector<HistoryEntry>& entries,
+	const std::vector<HistoryEntryView>& views);
+bool MatchesHistoryStatus(HistoryFileStatus status, HistoryStatusFilter filter);
+bool ContainsHistoryText(const HistoryEntry& entry, const std::string& needle);
+HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
+	float availableWidth,
+	float em,
+	float spacing = 0.0f);

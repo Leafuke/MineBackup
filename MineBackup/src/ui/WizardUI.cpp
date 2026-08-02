@@ -8,15 +8,13 @@
 #include "ConfigManager.h"
 #include "KnotLinkServerManager.h"
 #include "MainUI.h"
+#include "ApplicationActions.h"
+#include "AppearanceRuntime.h"
 #include "text_to_text.h"
 #include "PlatformCompat.h"
 #include "DesktopServices.h"
 
 using namespace std;
-
-// 前向声明 MineBackup.cpp 中保留的函数
-void ApplyTheme();
-wstring GetDefaultUIFontPath();
 
 void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtracted, const wstring& g_7zTempPath) {
 	// 首次启动向导使用的静态变量

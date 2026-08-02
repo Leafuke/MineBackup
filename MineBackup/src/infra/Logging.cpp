@@ -28,7 +28,7 @@ namespace {
 
 constexpr std::size_t kSessionCapacity = 20'000;
 constexpr std::size_t kStartupCapacity = 256;
-constexpr std::size_t kAsyncQueueCapacity = 8'192;
+constexpr std::size_t kAsyncQueueCapacity = 2'048;
 constexpr std::size_t kMaximumLineBytes = 64 * 1024;
 constexpr std::size_t kRotatingFileBytes = 10 * 1024 * 1024;
 constexpr std::size_t kRotatingArchiveCount = 4;

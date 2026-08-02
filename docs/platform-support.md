@@ -44,7 +44,7 @@ wizard and Settings may download KnotLinkService 3.2.0.0 from the official
 release URL, retry through `gh-proxy.org`, and open the native system installer.
 The user completes installation there.
 
-The Minecraft companion mod must be version 3.1.0 or newer. Older or malformed
+The Minecraft companion mod must be version 3.0.0 or newer. Older or malformed
 versions do not participate in hot workflows: hot backup falls back to an
 ordinary live snapshot, while hot restore is rejected.
 

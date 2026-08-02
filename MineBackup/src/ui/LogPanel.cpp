@@ -7,6 +7,7 @@
 #include "DesktopServices.h"
 #include "Globals.h"
 #include "Logging.h"
+#include "UIHelpers.h"
 #include "i18n.h"
 #include "imgui.h"
 #include "text_to_text.h"
@@ -315,10 +316,35 @@ private:
     }
 
     void DrawExportDialog() {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const UiMetrics metrics = GetUiMetrics();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float maxWindowWidth = (std::max)(
+            1.0f, viewport->WorkSize.x * 0.90f);
+        const float maxWindowHeight = (std::max)(
+            1.0f, viewport->WorkSize.y * 0.90f);
+        const float minWindowWidth = (std::min)(
+            metrics.Em(24.0f), maxWindowWidth);
+        const float initialWindowWidth = (std::min)(
+            metrics.Em(32.0f), maxWindowWidth);
+        const float maxContentWidth = (std::max)(
+            1.0f, maxWindowWidth - style.WindowPadding.x * 2.0f);
+        const float wrapWidth = (std::min)(metrics.Em(30.0f), maxContentWidth);
+
+        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::SetNextWindowPos(
+            viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(
+            ImVec2(initialWindowWidth, 0.0f), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(minWindowWidth, 0.0f),
+            ImVec2(maxWindowWidth, maxWindowHeight));
         if (ImGui::BeginPopupModal(
                 "##diagnostic-export-confirm", nullptr,
                 ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
             ImGui::TextWrapped("%s", L("LOG_EXPORT_DIAGNOSTICS_WARNING"));
+            ImGui::PopTextWrapPos();
             ImGui::Separator();
             if (ImGui::Button(L("BUTTON_CONFIRM"))) {
                 const auto result =

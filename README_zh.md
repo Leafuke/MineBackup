@@ -71,7 +71,7 @@ Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 MineBackup 现已与 FolderRewind 使用完全相同的严格 KnotLink v2 参数化
 契约：载荷固定为 `key=value;key2=value2`，值使用 RFC 3986
 percent-encoding；旧式位置参数和自由文本命令会被直接拒绝。联动模组最低
-版本为 **3.1.0**。
+版本为 **3.0.0**。
 
 命令、关联元数据、生命周期事件、当前世界参数和完整示例见
 [MineBackup KnotLink v2 协议说明](docs/knotlink-v2.md)。

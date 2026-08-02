@@ -69,13 +69,61 @@
     <ClCompile Include="src\app\LaunchOptions.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\app\Application.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ApplicationActions.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ApplicationEventRouter.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\AppearanceRuntime.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\DesktopUiLifecycle.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\DesktopUiSession.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
     <ClCompile Include="src\app\Globals.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ConfigSelection.cpp">
+      <Filter>src\app</Filter>
+    </ClCompile>
+    <ClCompile Include="src\app\ImGuiRuntime.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
     <ClCompile Include="src\app\MineBackup.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\ArchiveRunner.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\BackupChangeDetector.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\BackupAuxiliary.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\BackupManager.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\BackupRestore.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\BackupRetention.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\CloudHistoryAnalysis.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\CloudHistorySync.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\CloudPortableConfig.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\CloudSyncService.cpp">
@@ -108,6 +156,9 @@
     <ClCompile Include="src\core\HistoryManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\PathRuleSet.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\SpecialMode.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -124,6 +175,9 @@
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\PortableConfigDocument.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\RcloneClient.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\SpecialConfigPolicy.cpp">
@@ -154,6 +208,9 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\ProcessRunner.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\ReadOnlyMappedFile.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp">
@@ -201,7 +258,16 @@
     <ClCompile Include="src\ui\HistoryUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\HistoryDialogs.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\HistoryViewModel.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\CommandConsole.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\MainUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\LogPanel.cpp">
@@ -222,10 +288,22 @@
     <ClCompile Include="src\ui\SettingsUISpecial.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\SettingsUIHotkeys.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\WizardUI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
-    <ClCompile Include="src\utils\basic_func.cpp">
+    <ClCompile Include="src\ui\WorldListController.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\WorldListModel.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\WorldListUI.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\FileName.cpp">
       <Filter>src\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\text_to_text.cpp">
@@ -254,10 +332,34 @@
     <ClInclude Include="src\app\AppState.h">
       <Filter>src\app</Filter>
     </ClInclude>
+    <ClInclude Include="src\app\Application.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\ApplicationActions.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\ApplicationEventRouter.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\AppearanceRuntime.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\DesktopUiLifecycle.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\DesktopUiSession.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
     <ClInclude Include="src\app\DataModels.h">
       <Filter>src\app</Filter>
     </ClInclude>
+    <ClInclude Include="src\app\ConfigSelection.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
     <ClInclude Include="src\app\Globals.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\ImGuiRuntime.h">
       <Filter>src\app</Filter>
     </ClInclude>
     <ClInclude Include="src\app\LaunchOptions.h">
@@ -266,13 +368,19 @@
     <ClInclude Include="src\app\MainUI.h">
       <Filter>src\app</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\ArchiveRunner.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\BackupChangeDetector.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\BackupManagerInternal.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\core\BackupManager.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\CloudSyncService.h">
-      <Filter>src\core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\core\BackupManagerRestore.inl">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\CoreValidation.h">
@@ -285,6 +393,12 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\FolderRewindMetadataStore.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\GameSessionManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\PathRuleSet.h">
       <Filter>src\core</Filter>
     </ClInclude>
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h">
@@ -341,6 +455,9 @@
     <ClInclude Include="src\infra\ProcessRunner.h">
       <Filter>src\infra</Filter>
     </ClInclude>
+    <ClInclude Include="src\infra\ReadOnlyMappedFile.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\InterruptedTaskRecovery.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -395,10 +512,22 @@
     <ClInclude Include="src\ui\IconsFontAwesome6.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\HistoryDialogs.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\HistoryViewModel.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\MainUiController.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\MigrationReportUI.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\SettingsUI.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\SettingsUIHotkeys.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\SettingsUIPrivate.h">
@@ -409,6 +538,15 @@
     </ClInclude>
     <ClInclude Include="src\ui\UIHelpers.h">
       <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\WorldListController.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\WorldListModel.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\utils\FileName.h">
+      <Filter>src\utils</Filter>
     </ClInclude>
     <ClInclude Include="src\utils\text_to_text.h">
       <Filter>src\utils</Filter>

@@ -96,11 +96,27 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\app\Application.cpp" />
+    <ClCompile Include="src\app\ApplicationActions.cpp" />
+    <ClCompile Include="src\app\ApplicationEventRouter.cpp" />
+    <ClCompile Include="src\app\AppearanceRuntime.cpp" />
+    <ClCompile Include="src\app\DesktopUiLifecycle.cpp" />
+    <ClCompile Include="src\app\DesktopUiSession.cpp" />
     <ClCompile Include="src\app\AppState.cpp" />
+    <ClCompile Include="src\app\ConfigSelection.cpp" />
     <ClCompile Include="src\app\LaunchOptions.cpp" />
     <ClCompile Include="src\app\Globals.cpp" />
+    <ClCompile Include="src\app\ImGuiRuntime.cpp" />
     <ClCompile Include="src\app\MineBackup.cpp" />
+    <ClCompile Include="src\core\ArchiveRunner.cpp" />
+    <ClCompile Include="src\core\BackupChangeDetector.cpp" />
+    <ClCompile Include="src\core\BackupAuxiliary.cpp" />
     <ClCompile Include="src\core\BackupManager.cpp" />
+    <ClCompile Include="src\core\BackupRestore.cpp" />
+    <ClCompile Include="src\core\BackupRetention.cpp" />
+    <ClCompile Include="src\core\CloudHistoryAnalysis.cpp" />
+    <ClCompile Include="src\core\CloudHistorySync.cpp" />
+    <ClCompile Include="src\core\CloudPortableConfig.cpp" />
     <ClCompile Include="src\core\CloudSyncService.cpp" />
     <ClCompile Include="src\core\CoreValidation.cpp" />
     <ClCompile Include="src\core\FolderRewindFormat.cpp" />
@@ -111,12 +127,14 @@
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
     <ClCompile Include="src\core\HistoryManager.cpp" />
+    <ClCompile Include="src\core\PathRuleSet.cpp" />
     <ClCompile Include="src\core\SpecialMode.cpp" />
     <ClCompile Include="src\core\TaskSystem.cpp" />
     <ClCompile Include="src\core\TaskCoordinator.cpp" />
     <ClCompile Include="src\core\RemoteContentService.cpp" />
     <ClCompile Include="src\core\ExternalToolManager.cpp" />
     <ClCompile Include="src\core\PortableConfigDocument.cpp" />
+    <ClCompile Include="src\core\RcloneClient.cpp" />
     <ClCompile Include="src\core\SpecialConfigPolicy.cpp" />
     <ClCompile Include="src\core\LegacyServicePolicy.cpp" />
     <ClCompile Include="src\infra\AtomicFileWriter.cpp" />
@@ -127,6 +145,7 @@
     <ClCompile Include="src\infra\LegacyLocationMigration.cpp" />
     <ClCompile Include="src\infra\Logging.cpp" />
     <ClCompile Include="src\infra\ProcessRunner.cpp" />
+    <ClCompile Include="src\infra\ReadOnlyMappedFile.cpp" />
     <ClCompile Include="src\infra\InterruptedTaskRecovery.cpp" />
     <ClCompile Include="src\infra\NetworkService.cpp" />
     <ClCompile Include="src\infra\Sha256.cpp" />
@@ -141,16 +160,23 @@
     <ClCompile Include="src\platform\Platform_win.cpp" />
     <ClCompile Include="src\platform\NativeDesktopServices.cpp" />
     <ClCompile Include="src\platform\NetworkBackend_win.cpp" />
-    <ClCompile Include="src\ui\HistoryUI.cpp" />
     <ClCompile Include="src\ui\CommandConsole.cpp" />
+    <ClCompile Include="src\ui\HistoryDialogs.cpp" />
+    <ClCompile Include="src\ui\HistoryUI.cpp" />
+    <ClCompile Include="src\ui\HistoryViewModel.cpp" />
     <ClCompile Include="src\ui\LogPanel.cpp" />
+    <ClCompile Include="src\ui\MainUI.cpp" />
     <ClCompile Include="src\ui\MigrationReportUI.cpp" />
     <ClCompile Include="src\ui\SettingsUIAppearance.cpp" />
     <ClCompile Include="src\ui\SettingsUIConfig.cpp" />
     <ClCompile Include="src\ui\SettingsUI.cpp" />
     <ClCompile Include="src\ui\SettingsUISpecial.cpp" />
+    <ClCompile Include="src\ui\SettingsUIHotkeys.cpp" />
     <ClCompile Include="src\ui\WizardUI.cpp" />
-    <ClCompile Include="src\utils\basic_func.cpp" />
+    <ClCompile Include="src\ui\WorldListController.cpp" />
+    <ClCompile Include="src\ui\WorldListModel.cpp" />
+    <ClCompile Include="src\ui\WorldListUI.cpp" />
+    <ClCompile Include="src\utils\FileName.cpp" />
     <ClCompile Include="src\utils\text_to_text.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp" />
     <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
@@ -167,18 +193,27 @@
     <ClCompile Include="third_party\spdlog\src\stdout_sinks.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\app\Application.h" />
+    <ClInclude Include="src\app\ApplicationActions.h" />
+    <ClInclude Include="src\app\ApplicationEventRouter.h" />
+    <ClInclude Include="src\app\AppearanceRuntime.h" />
     <ClInclude Include="src\app\AppState.h" />
+    <ClInclude Include="src\app\ConfigSelection.h" />
     <ClInclude Include="src\app\DataModels.h" />
     <ClInclude Include="src\app\Globals.h" />
+    <ClInclude Include="src\app\ImGuiRuntime.h" />
     <ClInclude Include="src\app\LaunchOptions.h" />
     <ClInclude Include="src\app\MainUI.h" />
+    <ClInclude Include="src\core\ArchiveRunner.h" />
+    <ClInclude Include="src\core\BackupChangeDetector.h" />
     <ClInclude Include="src\core\BackupManager.h" />
+    <ClInclude Include="src\core\BackupManagerInternal.h" />
     <ClInclude Include="src\core\CloudSyncService.h" />
-    <ClInclude Include="src\core\BackupManagerRestore.inl" />
     <ClInclude Include="src\core\CoreValidation.h" />
     <ClInclude Include="src\core\FolderRewindFormat.h" />
     <ClInclude Include="src\core\FolderRewindHistoryStore.h" />
     <ClInclude Include="src\core\FolderRewindMetadataStore.h" />
+    <ClInclude Include="src\core\GameSessionManager.h" />
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h" />
 	<ClInclude Include="src\core\MigrationCoordinator.h" />
 	<ClInclude Include="src\core\V15MigrationAdapter.h" />
@@ -187,6 +222,7 @@
     <ClInclude Include="src\core\TaskCoordinator.h" />
     <ClInclude Include="src\core\RemoteContentService.h" />
     <ClInclude Include="src\core\ExternalToolManager.h" />
+    <ClInclude Include="src\core\PathRuleSet.h" />
     <ClInclude Include="src\core\PortableConfigDocument.h" />
     <ClInclude Include="src\core\SpecialConfigPolicy.h" />
     <ClInclude Include="src\core\LegacyServicePolicy.h" />
@@ -217,12 +253,19 @@
     <ClInclude Include="src\platform\NetworkBackendFactory.h" />
     <ClInclude Include="src\ui\IconsFontAwesome6.h" />
     <ClInclude Include="src\ui\CommandConsole.h" />
+    <ClInclude Include="src\ui\HistoryDialogs.h" />
+    <ClInclude Include="src\ui\HistoryViewModel.h" />
     <ClInclude Include="src\ui\LogPanel.h" />
+    <ClInclude Include="src\ui\MainUiController.h" />
     <ClInclude Include="src\ui\MigrationReportUI.h" />
     <ClInclude Include="src\ui\SettingsUI.h" />
+    <ClInclude Include="src\ui\SettingsUIHotkeys.h" />
     <ClInclude Include="src\ui\SettingsUIPrivate.h" />
     <ClInclude Include="src\ui\imgui-all.h" />
     <ClInclude Include="src\ui\UIHelpers.h" />
+    <ClInclude Include="src\ui\WorldListController.h" />
+    <ClInclude Include="src\ui\WorldListModel.h" />
+    <ClInclude Include="src\utils\FileName.h" />
     <ClInclude Include="src\utils\text_to_text.h" />
     <ClInclude Include="third_party\imgui\imconfig.h" />
     <ClInclude Include="third_party\imgui\imgui.h" />

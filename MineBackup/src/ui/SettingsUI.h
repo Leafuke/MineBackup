@@ -3,5 +3,6 @@
 #define SETTINGS_UI_H
 
 void ShowSettingsWindowV2();
+void ResetSettingsWindowRuntimeState();
 
 #endif
