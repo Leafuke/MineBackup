@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $resolved = (Resolve-Path -LiteralPath $Executable).Path
 $version = (Get-Item -LiteralPath $resolved).VersionInfo
-if ($version.FileVersion -ne '1.16.0' -or $version.ProductVersion -ne '1.16.0') {
+if ($version.FileVersion -ne '1.16.1' -or $version.ProductVersion -ne '1.16.1') {
     throw "Unexpected version metadata: file=$($version.FileVersion), product=$($version.ProductVersion)"
 }
 

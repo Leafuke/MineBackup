@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "mineBackupVersion": "1.16.0",
+  "mineBackupVersion": "1.16.1",
   "dependencies": [
     {
       "name": "GLFW",
