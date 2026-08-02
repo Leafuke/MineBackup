@@ -479,8 +479,8 @@ if (ImGui::BeginMenuBar()) {
 			ImGui::Separator();
 			ImGui::TextWrapped("%s", L("UPDATE_POPUP_NOTES"));
 
-			const float footerReserve = updateMetrics.frameHeight
-				+ updateStyle.ItemSpacing.y * 2.0f + updateMetrics.spacingY + 2.0f;
+			const float footerReserve = updateMetrics.frameHeight * 2.0f
+				+ updateStyle.ItemSpacing.y * 3.0f + updateMetrics.spacingY + 2.0f;
 			const float releaseNotesHeight = (std::max)(
 				1.0f, (std::min)(updateMetrics.Em(24.0f),
 					ImGui::GetContentRegionAvail().y - footerReserve));
@@ -489,26 +489,37 @@ if (ImGui::BeginMenuBar()) {
 			ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
 			ImGui::EndChild();
 			ImGui::Separator();
-			const float actionWidth = ImGui::GetContentRegionAvail().x;
-			if (ImGui::Button(
-				L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(actionWidth, 0))) {
-				const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
-				if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
-				open_update_popup = false;
-				ImGui::CloseCurrentPopup();
-			}
+			const MineBackupUpdateLinks updateLinks = BuildMineBackupUpdateLinks(g_LatestVersionStr);
 			const float splitActionWidth = (std::max)(
 				1.0f, (ImGui::GetContentRegionAvail().x - updateStyle.ItemSpacing.x) * 0.5f);
-			if (ImGui::Button(
-				L("BUTTON_CANCEL"), ImVec2(splitActionWidth, 0))) {
+			auto openUpdateLink = [&](const string& url) {
+				if (url.empty()) return;
+				(void)desktopServices->OpenUri(utf8_to_wstring(url));
 				open_update_popup = false;
 				ImGui::CloseCurrentPopup();
+			};
+			ImGui::BeginDisabled(!updateLinks.supported);
+			if (ImGui::Button(
+				L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(splitActionWidth, 0))) {
+				openUpdateLink(updateLinks.officialDownloadUrl);
+			}
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::BeginDisabled(!updateLinks.supported);
+			if (ImGui::Button(
+				L("UPDATE_POPUP_ACCELERATED_DOWNLOAD_BUTTON"), ImVec2(-1.0f, 0))) {
+				openUpdateLink(updateLinks.acceleratedDownloadUrl);
+			}
+			ImGui::EndDisabled();
+			const float secondRowWidth = (std::max)(
+				1.0f, (ImGui::GetContentRegionAvail().x - updateStyle.ItemSpacing.x) * 0.5f);
+			if (ImGui::Button(
+				L("UPDATE_POPUP_CHANGELOG_BUTTON"), ImVec2(secondRowWidth, 0))) {
+				openUpdateLink(updateLinks.changelogUrl);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(
-				L("CHECK_FOR_UPDATES"), ImVec2(-1.0f, 0))) {
-				const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
-				if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
+				L("BUTTON_CANCEL"), ImVec2(-1.0f, 0))) {
 				open_update_popup = false;
 				ImGui::CloseCurrentPopup();
 			}

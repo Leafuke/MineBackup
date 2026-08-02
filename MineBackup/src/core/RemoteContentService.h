@@ -13,6 +13,13 @@ struct UpdateCheckResult {
     std::wstring error;
 };
 
+struct MineBackupUpdateLinks {
+    bool supported = false;
+    std::string officialDownloadUrl;
+    std::string acceleratedDownloadUrl;
+    std::string changelogUrl;
+};
+
 struct NoticeCheckResult {
     bool success = false;
     bool noticeAvailable = false;
@@ -22,6 +29,7 @@ struct NoticeCheckResult {
 };
 
 std::string BuildMineBackupOfficialReleaseUrl(const std::string& versionTag);
+MineBackupUpdateLinks BuildMineBackupUpdateLinks(const std::string& versionTag);
 
 UpdateCheckResult CheckMineBackupUpdate(
     NetworkService& network,

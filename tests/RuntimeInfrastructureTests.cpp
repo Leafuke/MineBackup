@@ -254,6 +254,36 @@ void TestNetworkService(TestContext& test, const std::filesystem::path& root) {
     test.Expect(BuildMineBackupOfficialReleaseUrl(update.latestTag)
         == "https://github.com/Leafuke/MineBackup/releases/tag/v9.8.7",
         "the update action should construct an exact official Release URL");
+    const auto links = BuildMineBackupUpdateLinks("9.8.7");
+    test.Expect(links.changelogUrl
+            == "https://github.com/Leafuke/MineBackup/releases/tag/v9.8.7",
+        "update links should normalize an unprefixed version tag");
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+    const std::string expectedAsset = "MineBackup-windows-x64.exe";
+#elif defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+    const std::string expectedAsset = "MineBackup-9.8.7-macos-arm64.dmg";
+#elif defined(__linux__) && defined(__x86_64__)
+    const std::string expectedAsset = "minebackup_9.8.7_amd64.deb";
+#else
+    const std::string expectedAsset;
+#endif
+    if (expectedAsset.empty()) {
+        test.Expect(!links.supported && links.officialDownloadUrl.empty()
+                && links.acceleratedDownloadUrl.empty(),
+            "unsupported platform builds should not expose a direct update asset");
+    }
+    else {
+        const std::string expectedOfficial =
+            "https://github.com/Leafuke/MineBackup/releases/download/v9.8.7/" + expectedAsset;
+        test.Expect(links.supported && links.officialDownloadUrl == expectedOfficial,
+            "update links should select the current platform asset");
+        test.Expect(links.acceleratedDownloadUrl == "https://gh-proxy.org/" + expectedOfficial,
+            "accelerated update links should prefix the official asset URL");
+    }
+    const auto invalidLinks = BuildMineBackupUpdateLinks("v9.8.7/../../payload");
+    test.Expect(!invalidLinks.supported && invalidLinks.officialDownloadUrl.empty()
+            && invalidLinks.acceleratedDownloadUrl.empty() && invalidLinks.changelogUrl.empty(),
+        "update link construction should reject path-altering version tags");
     backend->body = R"({"tag_name":"v9.8.7/../../payload","body":"notes"})";
     test.Expect(!CheckMineBackupUpdate(network, "1.16.0", "en_US").success,
         "update parsing should reject a tag that could alter the application-built Release URL");
