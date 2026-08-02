@@ -53,7 +53,8 @@ void DrawHistoryDialogs(
 	Config& config,
 	int lockedConfigIndex,
 	HistoryWindowController& controller,
-	const vector<HistoryEntryView>& frameViews) {
+	const vector<HistoryEntryView>& frameViews,
+	const vector<HistoryEntry>& entries) {
 	auto& requestCommentPopup = controller.requestCommentPopup;
 	auto& requestRestorePopup = controller.requestRestorePopup;
 	auto& requestDeletePopup = controller.requestDeletePopup;
@@ -176,6 +177,7 @@ void DrawHistoryDialogs(
 		else {
 			const HistoryEntryView* view = FindHistoryEntryView(
 				frameViews,
+				entries,
 				deleteKey);
 			const bool localFile = view
 				&& (view->status == HistoryFileStatus::Normal

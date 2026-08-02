@@ -2,6 +2,8 @@
 
 #include "DataModels.h"
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -32,13 +34,10 @@ struct HistoryEntryKey {
 	friend bool operator==(const HistoryEntryKey&, const HistoryEntryKey&) = default;
 };
 
-// 视图保存值快照；历史容器在删除、合并或云同步后重分配也不会悬垂。
 struct HistoryEntryView {
-	HistoryEntry entry;
-	HistoryEntryKey key;
+	std::size_t entryIndex = 0;
 	HistoryFileStatus status = HistoryFileStatus::Missing;
 	std::uintmax_t fileSize = 0;
-	std::error_code fileError;
 };
 
 struct HistoryResponsiveLayout {
@@ -67,21 +66,45 @@ struct HistoryWindowController {
 	char customRestoreItems[2048]{};
 	int deleteMode = 2;
 	bool useSafeDelete = true;
+	std::vector<HistoryEntryView> cachedViews;
+	std::vector<std::size_t> filteredViewIndices;
+	std::vector<std::wstring> cachedWorlds;
+	std::chrono::steady_clock::time_point nextStatusScan{};
+	std::uint64_t statusKeyFingerprint = 0;
+	std::uint64_t filterEntryFingerprint = 0;
+	std::uint64_t filterStatusGeneration = 0;
+	std::uint64_t statusGeneration = 0;
+	std::uint64_t worldKeyFingerprint = 0;
+	std::wstring statusBackupPath;
+	std::wstring cachedFilterWorld;
+	std::string cachedFilterText;
+	HistoryStatusFilter cachedStatusFilter = HistoryStatusFilter::All;
+	bool cachedImportantOnly = false;
+	bool statusCacheValid = false;
+	bool filterCacheValid = false;
+	bool worldCacheValid = false;
 
 	void Open(
 		int requestedConfigIndex,
 		const std::optional<std::wstring>& initialWorld,
 		const std::wstring& fallbackWorld);
 	void Close();
+	void InvalidateFileStatusCache();
+	void InvalidateFilterCache();
 };
 
-HistoryEntryView BuildHistoryEntryView(
+HistoryEntryView ScanHistoryEntry(
 	const Config& config,
-	const HistoryEntry& entry);
-std::vector<HistoryEntryView> BuildHistoryEntryViews(
+	const HistoryEntry& entry,
+	std::size_t entryIndex);
+const std::vector<HistoryEntryView>& RefreshHistoryEntryViews(
+	HistoryWindowController& controller,
 	const Config& config,
-	const std::vector<HistoryEntry>& entries);
-std::vector<HistoryEntryView> FilterHistoryEntryViews(
+	const std::vector<HistoryEntry>& entries,
+	std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+const std::vector<std::size_t>& FilterHistoryEntryViews(
+	HistoryWindowController& controller,
+	const std::vector<HistoryEntry>& entries,
 	const std::vector<HistoryEntryView>& views,
 	const std::wstring& world,
 	const std::string& text,
@@ -89,7 +112,17 @@ std::vector<HistoryEntryView> FilterHistoryEntryViews(
 	bool importantOnly);
 const HistoryEntryView* FindHistoryEntryView(
 	const std::vector<HistoryEntryView>& views,
+	const std::vector<HistoryEntry>& entries,
 	const HistoryEntryKey& key);
+const std::vector<std::wstring>& RefreshHistoryWorlds(
+	HistoryWindowController& controller,
+	const std::vector<HistoryEntry>& entries);
+const HistoryEntry* ResolveHistoryEntryView(
+	const std::vector<HistoryEntry>& entries,
+	const HistoryEntryView& view);
+std::size_t RemoveUnavailableHistoryEntries(
+	std::vector<HistoryEntry>& entries,
+	const std::vector<HistoryEntryView>& views);
 bool MatchesHistoryStatus(HistoryFileStatus status, HistoryStatusFilter filter);
 bool ContainsHistoryText(const HistoryEntry& entry, const std::string& needle);
 HistoryResponsiveLayout ComputeHistoryResponsiveLayout(

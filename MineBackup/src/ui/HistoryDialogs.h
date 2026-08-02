@@ -10,4 +10,5 @@ void DrawHistoryDialogs(
 	Config& config,
 	int configIndex,
 	HistoryWindowController& controller,
-	const std::vector<HistoryEntryView>& frameViews);
+	const std::vector<HistoryEntryView>& frameViews,
+	const std::vector<HistoryEntry>& entries);

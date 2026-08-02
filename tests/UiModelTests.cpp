@@ -69,32 +69,82 @@ namespace {
 		entries.back().isCloudArchived = true;
 		entries.back().cloudArchiveRemotePath = L"remote:missing.7z";
 
-		const auto views = BuildHistoryEntryViews(config, entries);
+		HistoryWindowController controller;
+		const auto start = chrono::steady_clock::now();
+		const auto& views = RefreshHistoryEntryViews(controller, config, entries, start);
 		Expect(views.size() == 3
 			&& views[0].status == HistoryFileStatus::SmallFile
 			&& views[1].status == HistoryFileStatus::Normal
 			&& views[2].status == HistoryFileStatus::CloudOnly,
 			"history frame snapshots should classify small, normal and cloud-only files");
-		const auto filtered = FilterHistoryEntryViews(
+		const auto& filtered = FilterHistoryEntryViews(
+			controller,
+			entries,
 			views,
 			L"World",
 			"",
 			HistoryStatusFilter::All,
 			false);
 		Expect(filtered.size() == 3
-			&& filtered[0].entry.backupFile == L"normal.7z"
-			&& filtered[2].entry.backupFile == L"missing.7z",
-			"history snapshots should sort newest first without retaining container pointers");
+			&& entries[views[filtered[0]].entryIndex].backupFile == L"normal.7z"
+			&& entries[views[filtered[2]].entryIndex].backupFile == L"missing.7z",
+			"history filters should sort lightweight indices newest first");
 		const HistoryEntryKey stable{L"World", L"normal.7z"};
-		Expect(FindHistoryEntryView(views, stable)
-				&& FindHistoryEntryView(views, stable)->entry.backupFile == L"normal.7z",
+		Expect(FindHistoryEntryView(views, entries, stable)
+				&& FindHistoryEntryView(views, entries, stable)->entryIndex == 1,
 			"history selection should resolve through a stable world/file value key");
+		const auto& important = FilterHistoryEntryViews(
+			controller, entries, views, L"World", "",
+			HistoryStatusFilter::All, true);
+		Expect(important.size() == 1,
+			"history filters should initially include only important entries");
+		entries[1].isImportant = true;
+		const auto& updatedImportant = FilterHistoryEntryViews(
+			controller, entries, views, L"World", "",
+			HistoryStatusFilter::All, true);
+		Expect(updatedImportant.size() == 2,
+			"history filter cache should invalidate when record fields change");
 
-		HistoryWindowController controller;
+		filesystem::remove(root / "backups" / "World" / "normal.7z");
+		const auto& warmViews = RefreshHistoryEntryViews(
+			controller, config, entries, start + chrono::milliseconds(900));
+		Expect(warmViews[1].status == HistoryFileStatus::Normal,
+			"history file status should remain cached for one second");
+		const auto& expiredViews = RefreshHistoryEntryViews(
+			controller, config, entries, start + chrono::seconds(1));
+		Expect(expiredViews[1].status == HistoryFileStatus::Missing,
+			"history file status should rescan when its cache expires");
+
+		ofstream(root / "backups" / "World" / "normal.7z", ios::binary)
+			<< string(12 * 1024, 'n');
+		controller.InvalidateFileStatusCache();
+		const auto& invalidatedViews = RefreshHistoryEntryViews(
+			controller, config, entries, start + chrono::milliseconds(1100));
+		Expect(invalidatedViews[1].status == HistoryFileStatus::Normal,
+			"explicit invalidation should bypass the status scan interval");
+
+		entries.push_back(Entry(L"Other", L"gone.7z", L"2026-01-04"));
+		const auto& keyChangedViews = RefreshHistoryEntryViews(
+			controller, config, entries, start + chrono::milliseconds(1200));
+		Expect(keyChangedViews.size() == 4
+			&& keyChangedViews[3].status == HistoryFileStatus::Missing,
+			"history key changes should rebuild indexed rows immediately");
+		const auto& worlds = RefreshHistoryWorlds(controller, entries);
+		Expect(worlds.size() == 2 && worlds[0] == L"Other" && worlds[1] == L"World",
+			"history world cache should rebuild and sort when record keys change");
+		Expect(RemoveUnavailableHistoryEntries(entries, keyChangedViews) == 1
+			&& entries.size() == 3 && entries[1].backupFile == L"normal.7z",
+			"history deletion should compact records safely from original indices");
+		controller.InvalidateFileStatusCache();
+
 		controller.Open(4, L"World", L"Fallback");
 		controller.selectedKey = stable;
 		controller.textFilter[0] = 'x';
 		controller.Close();
+		Expect(controller.cachedViews.capacity() == 0
+			&& controller.filteredViewIndices.capacity() == 0
+			&& controller.cachedWorlds.capacity() == 0,
+			"closing history should release row, filter and world cache capacity");
 		controller.Open(7, nullopt, L"Fallback");
 		Expect(controller.lockedConfigIndex == 7
 			&& controller.selectedKey.Empty()

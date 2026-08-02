@@ -111,21 +111,15 @@ void ShowHistoryWindow(int requestedConfigIndex,
 	}
 	Config& config = configIt->second;
 	auto& entries = g_appState.g_history[lockedConfigIndex];
-	// 文件状态在本帧只采集一次；计数、筛选、详情和弹窗都复用这个快照。
-	const vector<HistoryEntryView> frameViews =
-		BuildHistoryEntryViews(config, entries);
+	// 文件状态最多每秒扫描一次；筛选、详情和弹窗复用轻量索引行。
+	const vector<HistoryEntryView>& frameViews =
+		RefreshHistoryEntryViews(historyController, config, entries);
 
 	ImGui::Text("%s: [No.%d] %s", L("HISTORY_LOCKED_CONFIG"), lockedConfigIndex,
 		config.name.c_str());
 	ImGui::Separator();
 
-	vector<wstring> worlds;
-	for (const HistoryEntry& entry : entries) {
-		if (find(worlds.begin(), worlds.end(), entry.worldName) == worlds.end()) {
-			worlds.push_back(entry.worldName);
-		}
-	}
-		sort(worlds.begin(), worlds.end());
+	const vector<wstring>& worlds = RefreshHistoryWorlds(historyController, entries);
 
 	const bool wideToolbar = ImGui::GetContentRegionAvail().x >= metrics.Em(45.0f);
 	const float worldWidth = wideToolbar ? metrics.Em(13.0f) : -1.0f;
@@ -212,28 +206,31 @@ void ShowHistoryWindow(int requestedConfigIndex,
 	}
 	ImGui::EndDisabled();
 
+	bool historyEntriesChanged = false;
 	ConstrainHistoryPopup(metrics);
 	if (ImGui::BeginPopupModal(L("HISTORY_CONFIRM_CLEAN_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextWrapped("%s", L("HISTORY_CONFIRM_CLEAN_MSG"));
 		if (ImGui::Button(L("BUTTON_OK"))) {
-			entries.erase(remove_if(entries.begin(), entries.end(), [&](const HistoryEntry& entry) {
-				const HistoryEntryView* view = FindHistoryEntryView(
-					frameViews,
-					{entry.worldName, entry.backupFile});
-				return view && (view->status == HistoryFileStatus::Missing
-					|| view->status == HistoryFileStatus::Inaccessible);
-			}), entries.end());
+			RemoveUnavailableHistoryEntries(entries, frameViews);
 			SaveHistory();
+			historyController.InvalidateFileStatusCache();
 			if (!ResolveHistoryEntry(lockedConfigIndex, selectedKey)) {
 				selectedKey = {};
 				narrowShowDetails = false;
 			}
 			ImGui::CloseCurrentPopup();
+			historyEntriesChanged = true;
 		}
 		SameLineFits(L("BUTTON_CANCEL"));
 		if (ImGui::Button(L("BUTTON_CANCEL"))) ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
+	}
+	if (historyEntriesChanged) {
+		// The cached rows contain original-container indices. Stop immediately
+		// after a mutation and rebuild them on the next frame.
+		ImGui::End();
+		return;
 	}
 
 	{
@@ -251,7 +248,8 @@ void ShowHistoryWindow(int requestedConfigIndex,
 	}
 	ImGui::Separator();
 
-	const auto filtered = FilterHistoryEntryViews(frameViews, worldFilter,
+	const auto& filtered = FilterHistoryEntryViews(historyController, entries,
+		frameViews, worldFilter,
 		textFilter, static_cast<HistoryStatusFilter>(statusFilterIndex), importantOnly);
 	HistoryEntry* selectedEntry = ResolveHistoryEntry(lockedConfigIndex, selectedKey);
 	if (!selectedEntry) {
@@ -271,8 +269,18 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		else if (filtered.empty()) {
 			ImGui::TextWrapped("%s", L("HISTORY_FILTER_EMPTY"));
 		}
-		for (const HistoryEntryView& view : filtered) {
-			const HistoryEntry& entry = view.entry;
+		const float lineHeight = ImGui::GetTextLineHeight();
+		const float cardPadding = metrics.cardPadding;
+		const float lineSpacing = metrics.smallGap;
+		const float cardHeight = cardPadding * 2.0f + lineHeight * 2.0f + lineSpacing;
+		ImGuiListClipper clipper;
+		clipper.Begin(static_cast<int>(filtered.size()), cardHeight + metrics.smallGap);
+		while (clipper.Step()) for (int itemIndex = clipper.DisplayStart;
+			itemIndex < clipper.DisplayEnd; ++itemIndex) {
+			const HistoryEntryView& view = frameViews[filtered[itemIndex]];
+			const HistoryEntry* resolvedEntry = ResolveHistoryEntryView(entries, view);
+			if (!resolvedEntry) continue;
+			const HistoryEntry& entry = *resolvedEntry;
 			ImGui::PushID(wstring_to_utf8(entry.worldName + L"\n" + entry.backupFile).c_str());
 			const bool selected = selectedKey == HistoryEntryKey{entry.worldName, entry.backupFile};
 			const string filename = wstring_to_utf8(entry.backupFile);
@@ -309,12 +317,6 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			if (tPos != string::npos) {
 				formattedTimestamp[tPos] = ' ';
 			}
-
-			// 计算卡片高度：顶部padding + 第一行 + 行间距 + 第二行 + 底部padding
-			const float lineHeight = ImGui::GetTextLineHeight();
-			const float cardPadding = metrics.cardPadding;
-			const float lineSpacing = metrics.smallGap;
-			const float cardHeight = cardPadding * 2.0f + lineHeight * 2.0f + lineSpacing;
 
 			// 渲染卡片背景
 			const ImVec2 cursorPos = ImGui::GetCursorScreenPos();
@@ -431,7 +433,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		}
 		else {
 			const HistoryEntryView* selectedView =
-				FindHistoryEntryView(frameViews, selectedKey);
+				FindHistoryEntryView(frameViews, entries, selectedKey);
 			const filesystem::path backupPath = filesystem::path(config.backupPath)
 				/ selectedEntry->worldName / selectedEntry->backupFile;
 			const bool localFile = selectedView
@@ -560,7 +562,8 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		ImGui::EndChild();
 	}
 
-	DrawHistoryDialogs(metrics, config, lockedConfigIndex, historyController, frameViews);
+	DrawHistoryDialogs(metrics, config, lockedConfigIndex, historyController,
+		frameViews, entries);
 
 	ImGui::End();
 	if (!showHistoryWindow) {

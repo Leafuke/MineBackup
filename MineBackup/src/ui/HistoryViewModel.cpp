@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <limits>
 
 using namespace std;
 
@@ -41,23 +42,85 @@ void HistoryWindowController::Close() {
 	restoreKey = {};
 	deleteKey = {};
 	commentKey = {};
-	worldFilter.clear();
+	wstring().swap(worldFilter);
 	narrowShowDetails = false;
 	requestRestorePopup = false;
 	requestDeletePopup = false;
 	requestCommentPopup = false;
+	vector<HistoryEntryView>().swap(cachedViews);
+	vector<size_t>().swap(filteredViewIndices);
+	vector<wstring>().swap(cachedWorlds);
+	wstring().swap(statusBackupPath);
+	wstring().swap(cachedFilterWorld);
+	string().swap(cachedFilterText);
+	statusCacheValid = false;
+	filterCacheValid = false;
+	worldCacheValid = false;
 }
 
-HistoryEntryView BuildHistoryEntryView(
+void HistoryWindowController::InvalidateFileStatusCache() {
+	statusCacheValid = false;
+	filterCacheValid = false;
+}
+
+void HistoryWindowController::InvalidateFilterCache() {
+	filterCacheValid = false;
+}
+
+namespace {
+
+constexpr auto kHistoryStatusCacheDuration = chrono::seconds(1);
+constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr uint64_t kFnvPrime = 1099511628211ULL;
+
+void HashBytes(uint64_t& hash, const void* data, size_t size) {
+	const auto* bytes = static_cast<const unsigned char*>(data);
+	for (size_t index = 0; index < size; ++index) {
+		hash ^= bytes[index];
+		hash *= kFnvPrime;
+	}
+}
+
+void HashString(uint64_t& hash, const wstring& value) {
+	HashBytes(hash, value.data(), value.size() * sizeof(wchar_t));
+	const wchar_t separator = L'\0';
+	HashBytes(hash, &separator, sizeof(separator));
+}
+
+uint64_t HistoryKeyFingerprint(const vector<HistoryEntry>& entries) {
+	uint64_t hash = kFnvOffset;
+	for (const HistoryEntry& entry : entries) {
+		HashString(hash, entry.worldName);
+		HashString(hash, entry.backupFile);
+	}
+	const size_t entryCount = entries.size();
+	HashBytes(hash, &entryCount, sizeof(entryCount));
+	return hash;
+}
+
+uint64_t HistoryFilterFingerprint(const vector<HistoryEntry>& entries) {
+	uint64_t hash = HistoryKeyFingerprint(entries);
+	for (const HistoryEntry& entry : entries) {
+		HashString(hash, entry.timestamp_str);
+		HashString(hash, entry.comment);
+		HashBytes(hash, &entry.isImportant, sizeof(entry.isImportant));
+	}
+	return hash;
+}
+
+} // namespace
+
+HistoryEntryView ScanHistoryEntry(
 	const Config& config,
-	const HistoryEntry& entry) {
+	const HistoryEntry& entry,
+	size_t entryIndex) {
 	HistoryEntryView view;
-	view.entry = entry;
-	view.key = {entry.worldName, entry.backupFile};
+	view.entryIndex = entryIndex;
 	const filesystem::path path = filesystem::path(config.backupPath)
 		/ entry.worldName / entry.backupFile;
-	const bool exists = filesystem::exists(path, view.fileError);
-	if (view.fileError) {
+	error_code fileError;
+	const bool exists = filesystem::exists(path, fileError);
+	if (fileError) {
 		view.status = HistoryFileStatus::Inaccessible;
 		return view;
 	}
@@ -66,8 +129,8 @@ HistoryEntryView BuildHistoryEntryView(
 			? HistoryFileStatus::CloudOnly : HistoryFileStatus::Missing;
 		return view;
 	}
-	view.fileSize = filesystem::file_size(path, view.fileError);
-	if (view.fileError) {
+	view.fileSize = filesystem::file_size(path, fileError);
+	if (fileError) {
 		view.status = HistoryFileStatus::Inaccessible;
 		return view;
 	}
@@ -76,15 +139,30 @@ HistoryEntryView BuildHistoryEntryView(
 	return view;
 }
 
-vector<HistoryEntryView> BuildHistoryEntryViews(
+const vector<HistoryEntryView>& RefreshHistoryEntryViews(
+	HistoryWindowController& controller,
 	const Config& config,
-	const vector<HistoryEntry>& entries) {
-	vector<HistoryEntryView> views;
-	views.reserve(entries.size());
-	for (const HistoryEntry& entry : entries) {
-		views.push_back(BuildHistoryEntryView(config, entry));
+	const vector<HistoryEntry>& entries,
+	chrono::steady_clock::time_point now) {
+	const uint64_t keyFingerprint = HistoryKeyFingerprint(entries);
+	const bool keysChanged = !controller.statusCacheValid
+		|| controller.statusKeyFingerprint != keyFingerprint
+		|| controller.cachedViews.size() != entries.size();
+	const bool pathChanged = controller.statusBackupPath != config.backupPath;
+	if (keysChanged || pathChanged || now >= controller.nextStatusScan) {
+		controller.cachedViews.clear();
+		controller.cachedViews.reserve(entries.size());
+		for (size_t index = 0; index < entries.size(); ++index) {
+			controller.cachedViews.push_back(ScanHistoryEntry(config, entries[index], index));
+		}
+		controller.statusKeyFingerprint = keyFingerprint;
+		controller.statusBackupPath = config.backupPath;
+		controller.nextStatusScan = now + kHistoryStatusCacheDuration;
+		controller.statusCacheValid = true;
+		++controller.statusGeneration;
+		controller.filterCacheValid = false;
 	}
-	return views;
+	return controller.cachedViews;
 }
 
 bool MatchesHistoryStatus(HistoryFileStatus status, HistoryStatusFilter filter) {
@@ -121,33 +199,112 @@ bool ContainsHistoryText(const HistoryEntry& entry, const string& needle) {
 		|| contains(entry.worldName);
 }
 
-vector<HistoryEntryView> FilterHistoryEntryViews(
+const vector<size_t>& FilterHistoryEntryViews(
+	HistoryWindowController& controller,
+	const vector<HistoryEntry>& entries,
 	const vector<HistoryEntryView>& views,
 	const wstring& world,
 	const string& text,
 	HistoryStatusFilter status,
 	bool importantOnly) {
-	vector<HistoryEntryView> result;
-	for (const HistoryEntryView& view : views) {
-		if (!world.empty() && view.entry.worldName != world) continue;
-		if (importantOnly && !view.entry.isImportant) continue;
-		if (!ContainsHistoryText(view.entry, text)) continue;
-		if (!MatchesHistoryStatus(view.status, status)) continue;
-		result.push_back(view);
+	const uint64_t entryFingerprint = HistoryFilterFingerprint(entries);
+	if (controller.filterCacheValid
+		&& controller.filterEntryFingerprint == entryFingerprint
+		&& controller.filterStatusGeneration == controller.statusGeneration
+		&& controller.cachedFilterWorld == world
+		&& controller.cachedFilterText == text
+		&& controller.cachedStatusFilter == status
+		&& controller.cachedImportantOnly == importantOnly) {
+		return controller.filteredViewIndices;
 	}
-	sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
-		return left.entry.timestamp_str > right.entry.timestamp_str;
+
+	controller.filteredViewIndices.clear();
+	controller.filteredViewIndices.reserve(views.size());
+	for (size_t viewIndex = 0; viewIndex < views.size(); ++viewIndex) {
+		const HistoryEntryView& view = views[viewIndex];
+		const HistoryEntry* entry = ResolveHistoryEntryView(entries, view);
+		if (!entry) continue;
+		if (!world.empty() && entry->worldName != world) continue;
+		if (importantOnly && !entry->isImportant) continue;
+		if (!ContainsHistoryText(*entry, text)) continue;
+		if (!MatchesHistoryStatus(view.status, status)) continue;
+		controller.filteredViewIndices.push_back(viewIndex);
+	}
+	sort(controller.filteredViewIndices.begin(), controller.filteredViewIndices.end(),
+		[&](size_t left, size_t right) {
+			return entries[views[left].entryIndex].timestamp_str
+				> entries[views[right].entryIndex].timestamp_str;
 	});
-	return result;
+	controller.filterEntryFingerprint = entryFingerprint;
+	controller.filterStatusGeneration = controller.statusGeneration;
+	controller.cachedFilterWorld = world;
+	controller.cachedFilterText = text;
+	controller.cachedStatusFilter = status;
+	controller.cachedImportantOnly = importantOnly;
+	controller.filterCacheValid = true;
+	return controller.filteredViewIndices;
 }
 
 const HistoryEntryView* FindHistoryEntryView(
 	const vector<HistoryEntryView>& views,
+	const vector<HistoryEntry>& entries,
 	const HistoryEntryKey& key) {
 	const auto found = find_if(views.begin(), views.end(), [&](const auto& view) {
-		return view.key == key;
+		const HistoryEntry* entry = ResolveHistoryEntryView(entries, view);
+		return entry && entry->worldName == key.worldName
+			&& entry->backupFile == key.backupFile;
 	});
 	return found == views.end() ? nullptr : &*found;
+}
+
+const vector<wstring>& RefreshHistoryWorlds(
+	HistoryWindowController& controller,
+	const vector<HistoryEntry>& entries) {
+	const uint64_t keyFingerprint = HistoryKeyFingerprint(entries);
+	if (controller.worldCacheValid
+		&& controller.worldKeyFingerprint == keyFingerprint) {
+		return controller.cachedWorlds;
+	}
+	controller.cachedWorlds.clear();
+	controller.cachedWorlds.reserve(entries.size());
+	for (const HistoryEntry& entry : entries) {
+		controller.cachedWorlds.push_back(entry.worldName);
+	}
+	sort(controller.cachedWorlds.begin(), controller.cachedWorlds.end());
+	controller.cachedWorlds.erase(
+		unique(controller.cachedWorlds.begin(), controller.cachedWorlds.end()),
+		controller.cachedWorlds.end());
+	controller.worldKeyFingerprint = keyFingerprint;
+	controller.worldCacheValid = true;
+	return controller.cachedWorlds;
+}
+
+const HistoryEntry* ResolveHistoryEntryView(
+	const vector<HistoryEntry>& entries,
+	const HistoryEntryView& view) {
+	return view.entryIndex < entries.size() ? &entries[view.entryIndex] : nullptr;
+}
+
+size_t RemoveUnavailableHistoryEntries(
+	vector<HistoryEntry>& entries,
+	const vector<HistoryEntryView>& views) {
+	vector<unsigned char> remove(entries.size(), 0);
+	for (const HistoryEntryView& view : views) {
+		if (view.entryIndex >= remove.size()) continue;
+		if (view.status == HistoryFileStatus::Missing
+			|| view.status == HistoryFileStatus::Inaccessible) {
+			remove[view.entryIndex] = 1;
+		}
+	}
+	const size_t oldSize = entries.size();
+	size_t destination = 0;
+	for (size_t source = 0; source < oldSize; ++source) {
+		if (remove[source]) continue;
+		if (destination != source) entries[destination] = std::move(entries[source]);
+		++destination;
+	}
+	entries.resize(destination);
+	return oldSize - destination;
 }
 
 HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
