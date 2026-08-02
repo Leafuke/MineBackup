@@ -509,6 +509,13 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		return false;
 	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	if (IsWorldOccupied(destinationFolder)) {
+		RESTORE_WARNING(L("LOG_RESTORE_ACTIVE_WORLD_BLOCKED"),
+			wstring_to_utf8(worldName).c_str());
+		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId)
+			+ ";world=" + wstring_to_utf8(worldName) + ";error=world_occupied");
+		return false;
+	}
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
 		RESTORE_WARNING(
@@ -599,9 +606,12 @@ bool DoRestore(
 	const wstring& backupFile,
 	int restoreMethod,
 	const string& customRestoreList,
-	const vector<wstring>* restoreWhitelistOverride) {
+	const vector<wstring>* restoreWhitelistOverride,
+	const string& requestId) {
+	const string operationId = requestId.empty()
+		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
 	minebackup::logging::ScopedLogContext operationContext{{
-		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
+		"operation_id", operationId},
 		{"config_id", wstring_to_utf8(config.configId)},
 		{"world", wstring_to_utf8(worldName)}};
 	if (config.pendingLocalBinding) {
@@ -609,6 +619,13 @@ bool DoRestore(
 		return false;
 	}
 	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	if (IsWorldOccupied(destinationFolder)) {
+		RESTORE_WARNING(L("LOG_RESTORE_ACTIVE_WORLD_BLOCKED"),
+			wstring_to_utf8(worldName).c_str());
+		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId)
+			+ ";world=" + wstring_to_utf8(worldName) + ";error=world_occupied");
+		return false;
+	}
 	WorldOperationGuard opGuard(destinationFolder, FolderState::RESTORE);
 	if (!opGuard.Acquired()) {
 		RESTORE_WARNING(
@@ -624,7 +641,9 @@ bool DoRestore(
 		if (!message.empty()) {
 			RESTORE_ERROR("%s", message.c_str());
 		}
-		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";error=" + reason);
+		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId)
+			+ ";world=" + wstring_to_utf8(worldName) + ";error=" + reason
+			+ (requestId.empty() ? "" : ";request_id=" + requestId));
 		return false;
 	};
 	auto failRestore = [&](const string& reason) {
@@ -670,21 +689,6 @@ bool DoRestore(
 		RESTORE_ERROR(L("ERROR_FILE_NO_FOUND"), wstring_to_utf8(backupFile).c_str());
 		return failRestore("backup_not_found");
 	}
-
-#ifdef _WIN32
-	if (IsFileLocked(destinationFolder.wstring() + L"\\session.lock")) {
-		int msgboxID = MessageBoxW(
-			NULL,
-			utf8_to_wstring(L("RESTORE_OVER_RUNNING_WORLD_MSG")).c_str(),
-			utf8_to_wstring(L("RESTORE_OVER_RUNNING_WORLD_TITLE")).c_str(),
-			MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2
-		);
-		if (msgboxID == IDNO) {
-			RESTORE_INFO("Restore cancelled by user due to active game session.");
-			return failRestore("cancelled_active_world");
-		}
-	}
-#endif
 
 	const bool targetIsIncremental = FolderRewindFormat::IsSmartBackupType(backupFile);
 	const filesystem::path metadataDir = GetMetadataDirectory(config, worldName);
@@ -799,7 +803,9 @@ bool DoRestore(
 	}
 
 	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
-	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile));
+	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId)
+		+ ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile)
+		+ (requestId.empty() ? "" : ";request_id=" + requestId));
 	return true;
 }
 
@@ -808,26 +814,36 @@ bool DoHotRestore(
 	bool deleteBackup,
 	const wstring& backupFile,
 	int restoreMethod,
-	const vector<wstring>* restoreWhitelistOverride) {
+	const vector<wstring>* restoreWhitelistOverride,
+	const string& customRestoreList,
+	const string& requestId) {
 	(void)deleteBackup;
 	Config config = world.config;
 	auto& mod = g_appState.knotLinkMod;
+	const string operationId = requestId.empty()
+		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
 	minebackup::logging::ScopedLogContext operationContext{{
-		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
+		"operation_id", operationId},
 		{"config_id", wstring_to_utf8(world.config.configId)},
 		{"world", wstring_to_utf8(world.name)}};
+	auto broadcastLifecycle = [&](string_view eventName,
+		minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields = {}) {
+		if (!requestId.empty()) fields.emplace_back("request_id", requestId);
+		BroadcastEvent(eventName, fields);
+	};
 	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_START"), wstring_to_utf8(world.name).c_str());
 
 	mod.resetForOperation();
-	BroadcastEvent("event=pre_hot_restore;config=" + to_string(world.configIndex)
-		+ ";world=" + wstring_to_utf8(world.name));
+	broadcastLifecycle("pre_hot_restore", {
+		{"config", to_string(world.configIndex)}, {"world", wstring_to_utf8(world.name)}});
 	RESTORE_INFO(L("KNOTLINK_WAITING_WORLD_SAVE_EXIT"));
 	const bool exitComplete = mod.waitForFlag(
 		&KnotLinkModInfo::worldSaveAndExitComplete,
 		chrono::milliseconds(10000));
 	if (!exitComplete) {
 		RESTORE_WARNING(L("KNOTLINK_HOT_RESTORE_TIMEOUT"));
-		BroadcastEvent("event=restore_cancelled;reason=timeout;world=" + wstring_to_utf8(world.name));
+		broadcastLifecycle("restore_cancelled", {
+			{"reason", "timeout"}, {"world", wstring_to_utf8(world.name)}});
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
 		return false;
@@ -837,7 +853,7 @@ bool DoHotRestore(
 	const auto releaseDeadline = chrono::steady_clock::now() + chrono::seconds(15);
 	bool worldReleased = false;
 	while (chrono::steady_clock::now() < releaseDeadline) {
-		if (GetOccupiedWorld().name != world.name) {
+		if (!IsWorldOccupied(world.path)) {
 			worldReleased = true;
 			break;
 		}
@@ -845,7 +861,8 @@ bool DoHotRestore(
 	}
 	if (!worldReleased) {
 		RESTORE_WARNING(L("KNOTLINK_HOT_RESTORE_WORLD_OCCUPIED"));
-		BroadcastEvent("event=restore_cancelled;reason=world_occupied;world=" + wstring_to_utf8(world.name));
+		broadcastLifecycle("restore_cancelled", {
+			{"reason", "world_occupied"}, {"world", wstring_to_utf8(world.name)}});
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
 		return false;
@@ -869,19 +886,21 @@ bool DoHotRestore(
 	else if (filesystem::exists(backupDirectory)) {
 		auto latestTime = filesystem::file_time_type{};
 		for (const auto& entry : filesystem::directory_iterator(backupDirectory)) {
-			if (entry.is_regular_file() && entry.last_write_time() > latestTime) {
+			const wstring fileName = entry.path().filename().wstring();
+			if (entry.is_regular_file()
+				&& (FolderRewindFormat::IsSmartBackupType(fileName)
+					|| FolderRewindFormat::IsFullLikeBackupType(fileName))
+				&& entry.last_write_time() > latestTime) {
 				latestTime = entry.last_write_time();
 				targetBackup = entry.path();
 			}
 		}
 	}
 
-	if (targetBackup.empty()
-		|| !filesystem::exists(targetBackup)
-		|| !filesystem::is_regular_file(targetBackup)) {
+	if (targetBackup.empty()) {
 		RESTORE_WARNING(L("LOG_NO_BACKUP_FOUND"));
-		BroadcastEvent("event=restore_finished;status=failure;reason=no_backup_found;world="
-			+ wstring_to_utf8(world.name));
+		broadcastLifecycle("restore_finished", {{"status", "failure"},
+			{"reason", "no_backup_found"}, {"world", wstring_to_utf8(world.name)}});
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
 		return false;
@@ -895,22 +914,23 @@ bool DoHotRestore(
 		world.name,
 		targetBackup.filename().wstring(),
 		restoreMethod,
-		"",
-		restoreWhitelistOverride)) {
-		BroadcastEvent("event=restore_finished;status=failure;reason=restore_failed;world="
-			+ wstring_to_utf8(world.name));
+		customRestoreList,
+		restoreWhitelistOverride,
+		requestId)) {
+		broadcastLifecycle("restore_finished", {{"status", "failure"},
+			{"reason", "restore_failed"}, {"world", wstring_to_utf8(world.name)}});
 		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		g_appState.isRespond = false;
 		return false;
 	}
 
 	this_thread::sleep_for(chrono::milliseconds(100));
-	BroadcastEvent("event=restore_finished;status=success;config=" + to_string(world.configIndex)
-		+ ";world=" + wstring_to_utf8(world.name));
+	broadcastLifecycle("restore_finished", {{"status", "success"},
+		{"config", to_string(world.configIndex)}, {"world", wstring_to_utf8(world.name)}});
 	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_DONE"));
 	this_thread::sleep_for(chrono::milliseconds(3000));
 
-	BroadcastEvent("event=rejoin_world;world=" + wstring_to_utf8(world.name));
+	broadcastLifecycle("rejoin_world", {{"world", wstring_to_utf8(world.name)}});
 	RESTORE_INFO(L("KNOTLINK_REJOIN_SENT"));
 	const bool responseReceived = mod.waitForFlag(
 		&KnotLinkModInfo::rejoinResponseReceived,
@@ -923,19 +943,19 @@ bool DoHotRestore(
 		}
 		if (rejoinSucceeded) {
 			RESTORE_INFO(L("KNOTLINK_REJOIN_OK"));
-			BroadcastEvent("event=hot_restore_complete;status=full_success;world="
-				+ wstring_to_utf8(world.name));
+			broadcastLifecycle("hot_restore_complete", {{"status", "full_success"},
+				{"world", wstring_to_utf8(world.name)}});
 		}
 		else {
 			RESTORE_WARNING(L("KNOTLINK_REJOIN_FAIL"));
-			BroadcastEvent("event=hot_restore_complete;status=restore_ok_rejoin_failed;world="
-				+ wstring_to_utf8(world.name));
+			broadcastLifecycle("hot_restore_complete", {{"status", "restore_ok_rejoin_failed"},
+				{"world", wstring_to_utf8(world.name)}});
 		}
 	}
 	else {
 		RESTORE_WARNING(L("KNOTLINK_REJOIN_TIMEOUT"));
-		BroadcastEvent("event=hot_restore_complete;status=restore_ok_rejoin_timeout;world="
-			+ wstring_to_utf8(world.name));
+		broadcastLifecycle("hot_restore_complete", {{"status", "restore_ok_rejoin_timeout"},
+			{"world", wstring_to_utf8(world.name)}});
 	}
 
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;

@@ -1,6 +1,7 @@
 #include "Broadcast.h"
 #include "BackupManager.h"
 #include "GameSessionManager.h"
+#include "FolderRewindFormat.h"
 #include "Logging.h"
 #include "i18n.h"
 #include "Globals.h"
@@ -10,11 +11,73 @@
 #include <atomic>
 #include <filesystem>
 #include <mutex>
+#include <optional>
+#include <thread>
 using namespace std;
 
 #define TASK_INFO(...) MB_LOG_PRINTF_INFO(minebackup::logging::LogCategory::Task, "game_session.progress", __VA_ARGS__)
 #define TASK_WARNING(...) MB_LOG_PRINTF_WARNING(minebackup::logging::LogCategory::Task, "game_session.warning", __VA_ARGS__)
 map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
+
+namespace {
+	optional<wstring> ResolveLatestManagedBackup(const MyFolder& world) {
+		const filesystem::path backupDirectory = JoinPath(world.config.backupPath, world.name);
+		error_code ec;
+		if (!filesystem::is_directory(backupDirectory, ec) || ec) return nullopt;
+
+		filesystem::path latest;
+		filesystem::file_time_type latestTime{};
+		for (filesystem::directory_iterator it(
+			backupDirectory, filesystem::directory_options::skip_permission_denied, ec), end;
+			it != end && !ec; it.increment(ec)) {
+			const filesystem::path candidate = it->path();
+			if (!it->is_regular_file(ec) || ec) continue;
+			const wstring fileName = candidate.filename().wstring();
+			if (!FolderRewindFormat::IsSmartBackupType(fileName)
+				&& !FolderRewindFormat::IsFullLikeBackupType(fileName)) continue;
+			const auto writeTime = it->last_write_time(ec);
+			if (!ec && (latest.empty() || writeTime > latestTime)) {
+				latest = candidate;
+				latestTime = writeTime;
+			}
+		}
+		if (latest.empty()) return nullopt;
+		return latest.filename().wstring();
+	}
+
+	void ResetHotRestoreState() {
+		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
+		g_appState.isRespond = false;
+	}
+}
+
+bool IsWorldOccupied(const filesystem::path& worldPath) {
+	error_code ec;
+	if (!filesystem::is_directory(worldPath, ec) || ec) return false;
+
+	for (const filesystem::path& lockCandidate : {
+		worldPath / L"session.lock", worldPath / L"level.dat" }) {
+		ec.clear();
+		if (filesystem::exists(lockCandidate, ec) && !ec
+			&& IsFileLocked(lockCandidate.wstring())) return true;
+	}
+
+	const filesystem::path dbPath = worldPath / L"db";
+	const filesystem::path dbLockPath = dbPath / L"LOCK";
+	ec.clear();
+	if (filesystem::exists(dbLockPath, ec) && !ec
+		&& IsFileLocked(dbLockPath.wstring())) return true;
+
+	ec.clear();
+	if (!filesystem::is_directory(dbPath, ec) || ec) return false;
+	int scannedFiles = 0;
+	for (filesystem::directory_iterator it(
+		dbPath, filesystem::directory_options::skip_permission_denied, ec), end;
+		it != end && !ec && scannedFiles < 20; it.increment(ec), ++scannedFiles) {
+		if (IsFileLocked(it->path().wstring())) return true;
+	}
+	return false;
+}
 
 MyFolder GetOccupiedWorld() {
 	//lock_guard<mutex> lock(g_appState.configsMutex);
@@ -27,36 +90,7 @@ MyFolder GetOccupiedWorld() {
 			filesystem::path worldPath = JoinPath(cfg.saveRoot, world.first);
 			error_code ec;
 			if (!filesystem::exists(worldPath, ec) || ec) continue; // 跳过不存在的世界
-			wstring levelDatPath = (worldPath / L"session.lock").wstring();
-			if (!filesystem::exists(levelDatPath, ec)) { // 没有 session.lock 文件，可能是基岩版存档
-				// 基岩版：优先检查 db/LOCK 文件（LevelDB 的标准锁文件）
-				filesystem::path dbLockPath = worldPath / L"db" / L"LOCK";
-				if (filesystem::exists(dbLockPath, ec) && IsFileLocked(dbLockPath.wstring())) {
-					return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };
-				}
-				// 回退：遍历db文件夹（限制扫描数量避免性能问题）
-				filesystem::path dbPath = worldPath / L"db";
-				if (!filesystem::exists(dbPath, ec))
-					continue;
-				int scannedFiles = 0;
-				const int maxScanFiles = 20; // 限制扫描文件数量
-				bool foundLocked = false;
-				for (const auto& entry : filesystem::directory_iterator(dbPath, filesystem::directory_options::skip_permission_denied, ec)) {
-					if (ec) break;
-					if (++scannedFiles > maxScanFiles) break;
-					const auto entryPathW = entry.path().wstring();
-					if (IsFileLocked(entryPathW)) {
-						levelDatPath = entryPathW;
-						foundLocked = true;
-						break;
-					}
-				}
-				if (foundLocked) {
-					return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };
-				}
-				continue; // 没找到锁定文件
-			}
-			if (IsFileLocked(levelDatPath)) {
+			if (IsWorldOccupied(worldPath)) {
 				return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };
 			}
 		}
@@ -174,54 +208,112 @@ void TriggerHotkeyBackup(string comment) {
 }
 
 void TriggerHotkeyRestore(const string& backupFile) {
-
-	HotRestoreState expected_idle = HotRestoreState::IDLE;
-	// 使用CAS操作确保线程安全地从IDLE转换到WAITING_FOR_MOD
-	if (!g_appState.hotkeyRestoreState.compare_exchange_strong(expected_idle, HotRestoreState::WAITING_FOR_MOD)) {
-		TASK_WARNING(L("KNOTLINK_RESTORE_ALREADY_IN_PROGRESS"));
-		return;
-	}
-
-	g_appState.isRespond = false;
 	TASK_INFO(L("LOG_HOTKEY_RESTORE_TRIGGERED"));
 
 	MyFolder world = GetOccupiedWorld();
 	if (world.path.empty()) {
-		g_appState.isRespond = false;
 		TASK_INFO(L("LOG_NO_ACTIVE_WORLD_FOUND"));
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 		return;
 	}
 
 	TASK_INFO(L("LOG_ACTIVE_WORLD_FOUND"), wstring_to_utf8(world.name).c_str(), world.config.name.c_str());
+	SubmitUserRestore(world, utf8_to_wstring(backupFile), 0, "", world.config.backupBefore);
+}
 
-	bool modAvailable = PerformModHandshake("restore", wstring_to_utf8(world.name));
+bool SubmitUserRestore(
+	const MyFolder& world,
+	const wstring& backupFile,
+	int restoreMethod,
+	string customRestoreList,
+	bool backupBeforeRestore) {
+	return TaskCoordinator::Instance().Submit(L"user-restore",
+		{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
+		[world, backupFile, restoreMethod,
+			customRestoreList = std::move(customRestoreList), backupBeforeRestore](stop_token) {
+			wstring pinnedBackup = backupFile;
+			if (pinnedBackup.empty()) {
+				const optional<wstring> latest = ResolveLatestManagedBackup(world);
+				if (!latest) {
+					TASK_WARNING(L("LOG_NO_BACKUP_FOUND"));
+					return;
+				}
+				pinnedBackup = *latest;
+			}
 
-	// 握手和下一个广播之间必须有短暂延时
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			const bool initiallyOccupied = IsWorldOccupied(world.path);
+			bool successfulHotPreBackup = false;
+			if (!initiallyOccupied) {
+				BackupOutcome preBackupOutcome = BackupOutcome::Created;
+				if (backupBeforeRestore) {
+					preBackupOutcome = DoBackup(world, L"BeforeRestore");
+				}
+				if (!IsWorldOccupied(world.path)) {
+					DoRestore(world.config, world.name, pinnedBackup,
+						restoreMethod, customRestoreList);
+					return;
+				}
+				// The world became active while the request was queued or while
+				// the pre-restore backup ran. Continue only through hot restore.
+				if (backupBeforeRestore
+					&& preBackupOutcome != BackupOutcome::Created
+					&& preBackupOutcome != BackupOutcome::NoChanges) {
+					TASK_WARNING(L("KNOTLINK_PRE_RESTORE_BACKUP_FAILED"));
+					return;
+				}
+			}
 
-	if (!modAvailable) {
-		if (g_appState.knotLinkMod.modDetected.load() && !g_appState.knotLinkMod.versionCompatible.load()) {
-			// 检测到模组但版本不兼容
-			TASK_WARNING(L("KNOTLINK_RESTORE_MOD_VERSION_INCOMPATIBLE"),
-				g_appState.knotLinkMod.modVersion.c_str(),
-				KnotLinkModInfo::MIN_MOD_VERSION);
-		}
-		else {
-			// 没有检测到模组
-			TASK_WARNING(L("KNOTLINK_RESTORE_MOD_REQUIRED"));
-		}
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return;
-	}
+			HotRestoreState expectedIdle = HotRestoreState::IDLE;
+			if (!g_appState.hotkeyRestoreState.compare_exchange_strong(
+				expectedIdle, HotRestoreState::WAITING_FOR_MOD)) {
+				TASK_WARNING(L("KNOTLINK_RESTORE_ALREADY_IN_PROGRESS"));
+				return;
+			}
+			g_appState.isRespond = false;
 
-	TASK_INFO(L("KNOTLINK_RESTORE_MOD_OK"),
-		g_appState.knotLinkMod.modVersion.c_str());
+			if (initiallyOccupied && backupBeforeRestore) {
+				const BackupOutcome outcome = DoBackup(world, L"BeforeRestore");
+				if (outcome != BackupOutcome::Created && outcome != BackupOutcome::NoChanges) {
+					TASK_WARNING(L("KNOTLINK_PRE_RESTORE_BACKUP_FAILED"));
+					ResetHotRestoreState();
+					return;
+				}
+				successfulHotPreBackup = true;
+			}
 
-	// 联动模组就绪，在后台线程中执行热还原
-	TaskCoordinator::Instance().Submit(L"hotkey-restore",
-		{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)}, [world, backupFile](stop_token) {
-		DoHotRestore(world, false, utf8_to_wstring(backupFile));
-	});
+			const string requestId = wstring_to_utf8(FolderRewindFormat::GenerateGuidString());
+			if (successfulHotPreBackup) {
+				// The mod resumes autosave on the server thread after receiving
+				// the terminal backup event. Give that task a bounded head start.
+				this_thread::sleep_for(chrono::milliseconds(250));
+			}
+			bool modAvailable = PerformModHandshake(
+				"restore", wstring_to_utf8(world.name), 3000, requestId);
+			if (!modAvailable && successfulHotPreBackup
+				&& !(g_appState.knotLinkMod.modDetected.load()
+					&& !g_appState.knotLinkMod.versionCompatible.load())) {
+				this_thread::sleep_for(chrono::milliseconds(250));
+				modAvailable = PerformModHandshake(
+					"restore", wstring_to_utf8(world.name), 3000, requestId);
+			}
+			this_thread::sleep_for(chrono::milliseconds(100));
+
+			if (!modAvailable) {
+				if (g_appState.knotLinkMod.modDetected.load()
+					&& !g_appState.knotLinkMod.versionCompatible.load()) {
+					TASK_WARNING(L("KNOTLINK_RESTORE_MOD_VERSION_INCOMPATIBLE"),
+						g_appState.knotLinkMod.modVersion.c_str(),
+						KnotLinkModInfo::MIN_MOD_VERSION);
+				}
+				else {
+					TASK_WARNING(L("KNOTLINK_RESTORE_MOD_REQUIRED"));
+				}
+				ResetHotRestoreState();
+				return;
+			}
+
+			TASK_INFO(L("KNOTLINK_RESTORE_MOD_OK"),
+				g_appState.knotLinkMod.modVersion.c_str());
+			DoHotRestore(world, false, pinnedBackup, restoreMethod, nullptr,
+				customRestoreList, requestId);
+		});
 }

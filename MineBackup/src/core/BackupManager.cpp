@@ -44,6 +44,50 @@ using namespace std;
 #define RESTORE_ERROR(...) MB_LOG_PRINTF_ERROR(minebackup::logging::LogCategory::Restore, "restore.error", __VA_ARGS__)
 
 namespace BackupManagerInternal {
+	class HotBackupTerminalGuard {
+	public:
+		HotBackupTerminalGuard(int configIndex, const Config& config, wstring world)
+			: configIndex_(configIndex), configId_(wstring_to_utf8(config.configId)),
+			world_(wstring_to_utf8(world)) {}
+
+		void Activate() { active_ = true; }
+		bool Active() const { return active_; }
+
+		void Success(const wstring& file = L"", const string& status = "created") {
+			if (!active_ || sent_) return;
+			auto fields = BaseFields();
+			fields.emplace_back("status", status);
+			if (!file.empty()) fields.emplace_back("file", wstring_to_utf8(file));
+			BroadcastEvent("backup_success", fields);
+			sent_ = true;
+		}
+
+		void Failure(const string& error) {
+			if (!active_ || sent_) return;
+			auto fields = BaseFields();
+			fields.emplace_back("error", error);
+			BroadcastEvent("backup_failed", fields);
+			sent_ = true;
+		}
+
+		~HotBackupTerminalGuard() {
+			if (!active_ || sent_) return;
+			try { Failure("operation_aborted"); }
+			catch (...) {}
+		}
+
+	private:
+		minebackup::knotlink::KnotLinkProtocolFormatter::Fields BaseFields() const {
+			return {{"config", to_string(configIndex_)}, {"config_id", configId_},
+				{"world", world_}};
+		}
+
+		int configIndex_;
+		string configId_;
+		string world_;
+		bool active_ = false;
+		bool sent_ = false;
+	};
 
 ScopedRuntimeArtifact::ScopedRuntimeArtifact(filesystem::path path)
 	: path_(std::move(path)) {
@@ -422,6 +466,7 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
 	filesystem::path destinationFolder = storagePaths.backupSubDir;
 	filesystem::path metadataFolder = storagePaths.metadataDir;
 	const wstring storageFolderName = storagePaths.folderName;
+	HotBackupTerminalGuard hotBackupTerminal(folder.configIndex, config, storageFolderName);
 	ProcessSpec command;
 	wstring archivePath;
 	auto makeArchivePath = [&](const wstring& backupType) {
@@ -443,7 +488,7 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
         // 在热备份前，先检查联动模组是否存在
         bool modAvailable = PerformModHandshake("backup", wstring_to_utf8(folder.name));
 
-        if (modAvailable) {
+		if (modAvailable) {
             BACKUP_INFO(L("KNOTLINK_MOD_DETECTED_BACKUP"),
                 g_appState.knotLinkMod.modVersion.c_str());
         } else {
@@ -461,6 +506,7 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
             BACKUP_INFO(L("KNOTLINK_WAITING_WORLD_SAVE"));
 			std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 握手和下一个广播之间必须有短暂延时
 			// 通知模组准备热备份
+			hotBackupTerminal.Activate();
 			BroadcastEvent("event=pre_hot_backup;config=" + to_string(folder.configIndex) +
 				";world=" + wstring_to_utf8(folder.name));
 			bool saved = g_appState.knotLinkMod.waitForFlag(
@@ -535,6 +581,7 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
 	auto changeSet = std::move(scanResult.changes);
     if (scanResult.status == BackupScanStatus::NoChange && config.skipIfUnchanged) {
         BACKUP_INFO(L("LOG_NO_CHANGE_FOUND"));
+		hotBackupTerminal.Success(L"", "no_changes");
         return BackupOutcome::NoChanges;
     } else if (scanResult.status == BackupScanStatus::MetadataInvalid) {
         BACKUP_WARNING(L("LOG_METADATA_INVALID"));
@@ -596,12 +643,14 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
 
 	if (!forceFullBackup && !changeSet.HasChanges() && (config.skipIfUnchanged || config.backupMode == 2)) {
         BACKUP_INFO(L("LOG_NO_CHANGE_FOUND"));
+		hotBackupTerminal.Success(L"", "no_changes");
         return BackupOutcome::NoChanges;
-    }
+	}
 
 	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
 	if (files_to_backup.empty() && !(config.backupMode == 2 && deletionOnlyChange && !forceFullBackup)) {
 		BACKUP_INFO(L("LOG_NO_CHANGE_FOUND"));
+		hotBackupTerminal.Success(L"", "no_changes");
 		return BackupOutcome::NoChanges;
 	}
 
@@ -776,7 +825,7 @@ execute_backup:
 
 		if (!UpdateMetadataFiles(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet)) {
 			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
-			BroadcastEvent("event=backup_failed;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(storageFolderName) + ";error=metadata_write_failed");
+			hotBackupTerminal.Failure("metadata_write_failed");
 			return BackupOutcome::Failed;
 		}
 		AddHistoryEntry(folder.configIndex, storageFolderName, completedBackupFile, backupTypeStr, comment, folder.path);
@@ -787,8 +836,16 @@ execute_backup:
 			LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount);
 
 		// 广播一个成功事件
-		string payload = "event=backup_success;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(storageFolderName) + ";file=" + wstring_to_utf8(completedBackupFile);
-		BroadcastEvent(payload);
+		hotBackupTerminal.Success(completedBackupFile);
+		if (!hotBackupTerminal.Active()) {
+			// Preserve the ordinary backup notification when no hot-backup
+			// coordination was required.
+			string payload = "event=backup_success;config=" + to_string(folder.configIndex)
+				+ ";config_id=" + wstring_to_utf8(config.configId) + ";world="
+				+ wstring_to_utf8(storageFolderName) + ";file="
+				+ wstring_to_utf8(completedBackupFile);
+			BroadcastEvent(payload);
+		}
 
 
 		// 云存档统一交给 CloudSyncService 处理，避免 UI 和核心逻辑各自拼接 rclone 命令。
@@ -798,7 +855,12 @@ execute_backup:
 		return BackupOutcome::Created;
         }
         else {
-            BroadcastEvent("event=backup_failed;config=" + to_string(folder.configIndex) + ";config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(folder.name) + ";error=command_failed");
+			hotBackupTerminal.Failure("command_failed");
+			if (!hotBackupTerminal.Active()) {
+				BroadcastEvent("event=backup_failed;config=" + to_string(folder.configIndex)
+					+ ";config_id=" + wstring_to_utf8(config.configId) + ";world="
+					+ wstring_to_utf8(folder.name) + ";error=command_failed");
+			}
 			return BackupOutcome::Failed;
         }
     }

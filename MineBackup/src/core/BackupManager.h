@@ -20,13 +20,16 @@ bool DoRestore(
 	const std::wstring& backupFile,
 	int restoreMethod,
 	const std::string& customRestoreList = "",
-	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr);
+	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr,
+	const std::string& requestId = "");
 bool DoHotRestore(
 	const MyFolder& world,
 	bool deleteBackup,
 	const std::wstring& backupFile = L"",
 	int restoreMethod = 0,
-	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr);
+	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr,
+	const std::string& customRestoreList = "",
+	const std::string& requestId = "");
 void DoOthersBackup(const Config& config, std::filesystem::path backupWhat, const std::wstring& comment);
 void DoExportForSharing(
 	Config config,

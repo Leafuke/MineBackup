@@ -5,6 +5,7 @@
 #include "BackupManager.h"
 #include "DesktopServices.h"
 #include "Globals.h"
+#include "GameSessionManager.h"
 #include "HistoryManager.h"
 #include "TaskCoordinator.h"
 #include "i18n.h"
@@ -126,33 +127,33 @@ void DrawHistoryDialogs(
 				const int method = restoreMethod;
 				const string items = customItems;
 				const auto worldPath = JoinPath(copy.saveRoot, entryCopy.worldName);
-				TaskCoordinator::Instance().Submit(L"Restore backup",
-					{TaskCoordinator::WorldResourceKey(copy.configId, worldPath)},
-					[copy, entryCopy, index, method, items, worldPath](stop_token) {
-						if (copy.backupBefore) {
-							MyFolder world = {worldPath.wstring(), entryCopy.worldName,
-								L"", copy, index, -1};
-							DoBackup(world, L"BeforeRestore");
-						}
-						DoRestore(copy, entryCopy.worldName, entryCopy.backupFile,
-							method, items);
-					});
+				MyFolder world = {worldPath.wstring(), entryCopy.worldName,
+					L"", copy, index, -1};
+				SubmitUserRestore(world, entryCopy.backupFile, method, items,
+					copy.backupBefore);
 				ImGui::CloseCurrentPopup();
 			}
 			SameLineFits(L("BUTTON_SELECT_CUSTOM_FILE"));
 			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"))) {
-				const wstring selectedFile = GetDesktopServices()->SelectFile().path.wstring();
-				if (!selectedFile.empty()) {
-					const Config copy = config;
-					const wstring worldName = entry->worldName;
-					const int method = restoreMethod;
-					TaskCoordinator::Instance().Submit(L"Restore custom backup",
-						{TaskCoordinator::WorldResourceKey(copy.configId,
-							JoinPath(copy.saveRoot, worldName))},
-						[copy, worldName, selectedFile, method](stop_token) {
-							DoRestore2(copy, worldName, selectedFile, method);
-						});
-					ImGui::CloseCurrentPopup();
+				const filesystem::path worldPath = JoinPath(config.saveRoot, entry->worldName);
+				if (IsWorldOccupied(worldPath)) {
+					MessageBoxWin(L("RESTORE_OVER_RUNNING_WORLD_TITLE"),
+						L("RESTORE_EXTERNAL_ACTIVE_BLOCKED"), 1);
+				}
+				else {
+					const wstring selectedFile = GetDesktopServices()->SelectFile().path.wstring();
+					if (!selectedFile.empty()) {
+						const Config copy = config;
+						const wstring worldName = entry->worldName;
+						const int method = restoreMethod;
+						TaskCoordinator::Instance().Submit(L"Restore custom backup",
+							{TaskCoordinator::WorldResourceKey(copy.configId,
+								JoinPath(copy.saveRoot, worldName))},
+							[copy, worldName, selectedFile, method](stop_token) {
+								DoRestore2(copy, worldName, selectedFile, method);
+							});
+						ImGui::CloseCurrentPopup();
+					}
 				}
 			}
 			SameLineFits(L("BUTTON_CANCEL"));

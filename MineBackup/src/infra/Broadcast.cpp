@@ -39,18 +39,21 @@ void CleanupKnotLink() {
 bool PerformModHandshake(
     const std::string& action,
     const std::string& worldName,
-    int timeoutMs) {
+    int timeoutMs,
+    const std::string& requestId) {
     auto& mod = g_appState.knotLinkMod;
     mod.resetForOperation();
     mod.modDetected = false;
     mod.versionCompatible = false;
     mod.modVersion.clear();
 
-    BroadcastEvent("handshake", {
+    minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields{
         {"version", CURRENT_VERSION},
         {"action", action},
         {"world", worldName},
-        {"min_mod_version", KnotLinkModInfo::MIN_MOD_VERSION}});
+        {"min_mod_version", KnotLinkModInfo::MIN_MOD_VERSION}};
+    if (!requestId.empty()) fields.emplace_back("request_id", requestId);
+    BroadcastEvent("handshake", fields);
 
     const bool received = mod.waitForFlag(
         &KnotLinkModInfo::handshakeReceived,

@@ -15,4 +15,5 @@ void CleanupKnotLink();
 bool PerformModHandshake(
     const std::string& action,
     const std::string& worldName,
-    int timeoutMs = 3000);
+    int timeoutMs = 3000,
+    const std::string& requestId = {});
