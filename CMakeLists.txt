@@ -326,6 +326,16 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME minebackup.ui_models COMMAND minebackup_ui_model_tests)
 
+    add_executable(minebackup_font_mapping_tests tests/FontMappingTest.cpp)
+    target_link_libraries(minebackup_font_mapping_tests PRIVATE
+        minebackup_data_core minebackup_third_party_imgui)
+    target_compile_definitions(minebackup_font_mapping_tests PRIVATE
+        MINEBACKUP_TEST_FONT_PATH="${MINEBACKUP_SOURCE_DIR}/Assets/fontawesome-sp.otf")
+    if(MSVC)
+        target_compile_options(minebackup_font_mapping_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.font_mapping COMMAND minebackup_font_mapping_tests)
+
     add_executable(minebackup_i18n_tests
         tests/I18nTest.cpp
         ${MINEBACKUP_INFRA_DIR}/i18n.cpp

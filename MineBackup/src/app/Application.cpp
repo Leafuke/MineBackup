@@ -48,6 +48,7 @@
 #include "Logging.h"
 #include "Sha256.h"
 #include "SpecialConfigPolicy.h"
+#include "ReadOnlyMappedFile.h"
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 #include "V15MigrationAdapter.h"
 #endif
@@ -60,6 +61,7 @@
 inline int _getch() { return std::getchar(); }
 #endif
 #include <fstream>
+#include <limits>
 #include <system_error>
 #ifdef __APPLE__
 #include "MacDesktopBridge.h"
@@ -733,7 +735,38 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			fontCfg.GlyphExcludeRanges = icon_ranges;
 		}
 		ImFont* mainFont = nullptr;
-		mainFont = io.Fonts->AddFontFromFileTTF(wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg);
+		minebackup::infra::ReadOnlyMappedFile mappedFont;
+		error_code mappingError;
+		const bool mapped = mappedFont.Open(Fontss, mappingError);
+		if (mapped && mappedFont.Size() > 100
+			&& mappedFont.Size() <= static_cast<size_t>((numeric_limits<int>::max)())) {
+			fontCfg.FontDataOwnedByAtlas = false;
+			mainFont = io.Fonts->AddFontFromMemoryTTF(
+				const_cast<void*>(mappedFont.Data()),
+				static_cast<int>(mappedFont.Size()), 20.0f, &fontCfg);
+			if (mainFont) {
+				imguiRuntime.RetainFontSourceMapping(std::move(mappedFont));
+				APP_PRINTF_INFO("font.source.mapped",
+					"Mapped font source without a private heap copy: %zu bytes",
+					imguiRuntime.MappedFontBytes());
+			}
+		}
+		else if (!mapped) {
+			APP_PRINTF_WARNING("font.source.mapping_failed",
+				"Could not map the font source; using the file loader: %s",
+				mappingError.message().c_str());
+		}
+		else {
+			APP_PRINTF_WARNING("font.source.mapping_unsupported_size",
+				"Font source size cannot be mapped into ImGui: %zu bytes",
+				mappedFont.Size());
+		}
+
+		if (!mainFont) {
+			fontCfg.FontDataOwnedByAtlas = true;
+			mainFont = io.Fonts->AddFontFromFileTTF(
+				wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg);
+		}
 
 		if (!mainFont) {
 			io.Fonts->AddFontDefaultVector();

@@ -40,6 +40,19 @@ void ImGuiRuntime::SetUiResourceReleaser(std::function<void()> releaser)
 	uiResourceReleaser_ = std::move(releaser);
 }
 
+void ImGuiRuntime::RetainFontSourceMapping(
+	minebackup::infra::ReadOnlyMappedFile mapping)
+{
+	fontSourceMappings_.push_back(std::move(mapping));
+}
+
+std::size_t ImGuiRuntime::MappedFontBytes() const noexcept
+{
+	std::size_t total = 0;
+	for (const auto& mapping : fontSourceMappings_) total += mapping.Size();
+	return total;
+}
+
 void ImGuiRuntime::Shutdown() noexcept
 {
 	// ImGui 控制器持有的纹理必须在 OpenGL 后端和 Context 之前释放。
@@ -64,6 +77,9 @@ void ImGuiRuntime::Shutdown() noexcept
 		ImGui::DestroyContext();
 		imguiContextCreated_ = false;
 	}
+	// ImGui 1.92 rasterizes glyphs from source data on demand. The context and
+	// its font atlas must be gone before mapped font files are closed.
+	fontSourceMappings_.clear();
 	if (window_ != nullptr) {
 		glfwDestroyWindow(window_);
 		window_ = nullptr;
