@@ -5,7 +5,7 @@
 #include "ApplicationEventRouter.h"
 #include "AppearanceRuntime.h"
 #include "ConfigSelection.h"
-#include "ImGuiRuntime.h"
+#include "DesktopUiSession.h"
 #include "Broadcast.h"
 #include "Globals.h"
 #include "SettingsUI.h"
@@ -48,7 +48,6 @@
 #include "Logging.h"
 #include "Sha256.h"
 #include "SpecialConfigPolicy.h"
-#include "ReadOnlyMappedFile.h"
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 #include "V15MigrationAdapter.h"
 #endif
@@ -61,7 +60,6 @@
 inline int _getch() { return std::getchar(); }
 #endif
 #include <fstream>
-#include <limits>
 #include <system_error>
 #ifdef __APPLE__
 #include "MacDesktopBridge.h"
@@ -92,6 +90,19 @@ using namespace std;
 static void glfw_error_callback(int error, const char* description)
 {
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+}
+
+namespace {
+	class GlfwProcessLifetime {
+	public:
+		~GlfwProcessLifetime() {
+			if (initialized_) glfwTerminate();
+		}
+		void MarkInitialized() noexcept { initialized_ = true; }
+		[[nodiscard]] bool IsInitialized() const noexcept { return initialized_; }
+	private:
+		bool initialized_ = false;
+	};
 }
 
 int RunApplication(const ApplicationEntryContext& entryContext)
@@ -362,8 +373,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		}
 	}
 
-	ImGuiRuntime imguiRuntime;
-	bool glfwInitialized = false;
+	GlfwProcessLifetime glfwLifetime;
 	#ifdef __APPLE__
 	// The login-item marker is delivered while GLFW pumps Cocoa's launch event.
 	// Probe only when a previously selected explicit/special launch does not need
@@ -374,8 +384,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
 			return 1;
 		}
-		glfwInitialized = true;
-		imguiRuntime.MarkGlfwInitialized();
+		glfwLifetime.MarkInitialized();
 		if (!hasExplicitLaunchTarget && MacWasLaunchedAsLoginItem()) {
 			launchOptions.autostart = true;
 			launchSilentStartup = true;
@@ -455,7 +464,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		return result;
 	}
 
-	if (!glfwInitialized) {
+	if (!glfwLifetime.IsInitialized()) {
 		glfwSetErrorCallback(glfw_error_callback);
 		#ifdef __linux__
 		// GLFW 3.4 chooses Wayland or X11 from the current desktop environment.
@@ -466,40 +475,8 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
 			return 1;
 		}
-		glfwInitialized = true;
-		imguiRuntime.MarkGlfwInitialized();
+		glfwLifetime.MarkInitialized();
 	}
-
-#if defined(IMGUI_IMPL_OPENGL_ES2)
-	const char* glsl_version = "#version 100";
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-#elif defined(IMGUI_IMPL_OPENGL_ES3)
-	const char* glsl_version = "#version 300 es";
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-#elif defined(__APPLE__)
-	const char* glsl_version = "#version 150";
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
-	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // Required on Mac
-#else
-	const char* glsl_version = "#version 130";
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-#endif
-
-	auto applyLinuxWindowIdentity = []() {
-#ifdef __linux__
-		glfwWindowHintString(GLFW_WAYLAND_APP_ID, "io.github.leafuke.MineBackup");
-		glfwWindowHintString(GLFW_X11_CLASS_NAME, "MineBackup");
-		glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "minebackup");
-#endif
-	};
-	applyLinuxWindowIdentity();
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
 	FinalizeUiScaleMigration(main_scale);
@@ -534,72 +511,29 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		// scaling. Keep the persisted value as a user preference only.
 		g_uiScale = 1.0f;
 	}
-	if (shouldStartHiddenToTray) {
-		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-	}
-
-#ifndef _WIN32
-	if (isFirstRun) {
-#ifdef GLFW_FOCUS_ON_SHOW
-		glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
+	DesktopUiSession uiSession;
+	DesktopUiSessionOptions uiOptions;
+	uiOptions.paths = &paths;
+	uiOptions.width = g_windowWidth;
+	uiOptions.height = g_windowHeight;
+	uiOptions.initiallyVisible = !shouldStartHiddenToTray;
+	uiOptions.firstRun = isFirstRun;
+	uiOptions.iconFontAvailable = fontExtracted;
+	uiOptions.bundledIconFontData = bundledIconFontData;
+	uiOptions.bundledIconFontSize = bundledIconFontSize;
+	uiOptions.extractedIconFontPath = g_FontTempPath;
+#ifdef _WIN32
+	uiOptions.nativeInstance = hInstance;
 #endif
-	}
-#endif
-
-	wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
-
-#if !defined(IMGUI_IMPL_OPENGL_ES2) && !defined(IMGUI_IMPL_OPENGL_ES3) && !defined(__APPLE__)
-	if (wc == nullptr) {
-		fprintf(stderr, "OpenGL 3.0 context creation failed, trying OpenGL 2.1 fallback...\n");
-		glfwDefaultWindowHints();
-		glfwSetErrorCallback(glfw_error_callback);
-		applyLinuxWindowIdentity();
-		glsl_version = "#version 120";
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
-	}
-	if (wc == nullptr) {
-		fprintf(stderr, "OpenGL 2.1 context creation failed, trying OpenGL 2.0 fallback...\n");
-		glfwDefaultWindowHints();
-		glfwSetErrorCallback(glfw_error_callback);
-		applyLinuxWindowIdentity();
-		glsl_version = "#version 110";
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
-	}
-	if (wc == nullptr) {
-		fprintf(stderr, "OpenGL 2.0 context creation failed, trying default version...\n");
-		glfwDefaultWindowHints();
-		glfwSetErrorCallback(glfw_error_callback);
-		applyLinuxWindowIdentity();
-		glsl_version = "#version 110";
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-		wc = glfwCreateWindow(g_windowWidth, g_windowHeight, "MineBackup", nullptr, nullptr);
-	}
-#endif
-
-	if (wc == nullptr) {
+	wstring uiCreateError;
+	if (!uiSession.Create(uiOptions, uiCreateError)) {
+		PLATFORM_PRINTF_ERROR("ui.session.create_failed", "Desktop UI session creation failed: %s",
+			wstring_to_utf8(uiCreateError).c_str());
 		MessageBoxWin(L("FATAL_ERROR_TITLE"), L("WINDOW_CREATE_ERROR"), 2);
 		return 1;
-
 	}
-	imguiRuntime.AdoptWindow(wc);
-	glfwMakeContextCurrent(wc);
-	glfwSwapInterval(1); // Enable vsync
-
+	wc = uiSession.Window();
 	desktopServices->SetNativeWindow(wc);
-#ifdef __linux__
-	const int selectedGlfwPlatform = glfwGetPlatform();
-	const char* selectedGlfwPlatformName = selectedGlfwPlatform == GLFW_PLATFORM_WAYLAND ? "Wayland"
-		: selectedGlfwPlatform == GLFW_PLATFORM_X11 ? "X11" : "Other";
-	fprintf(stderr, "[Desktop] GLFW selected platform: %s\n", selectedGlfwPlatformName);
-	PLATFORM_PRINTF_INFO("platform.glfw.selected",
-
-		"GLFW selected platform: %s", selectedGlfwPlatformName);
-#endif
 	const auto traySetup = desktopServices->SetTrayVisible(true);
 	if (!traySetup.IsAvailable() && !traySetup.diagnostic.empty()) {
 		PLATFORM_PRINTF_WARNING("platform.tray.unavailable",
@@ -642,153 +576,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			g_showCloseConfirmDialog = true;
 		}
 	});
-
-#ifndef _WIN32
-	if (isFirstRun) {
-		glfwShowWindow(wc);
-		glfwFocusWindow(wc);
-	}
-#endif
-
-#ifdef _WIN32
-	int width, height, channels;
-	HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(102), (LPCWSTR)RT_GROUP_ICON);
-	HGLOBAL hMem = LoadResource(hInstance, hRes);
-	void* pMem = LockResource(hMem);
-	int nId = LookupIconIdFromDirectoryEx((PBYTE)pMem, TRUE, 0, 0, LR_DEFAULTCOLOR);
-	hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(nId), (LPCWSTR)RT_ICON);
-	hMem = LoadResource(hInstance, hRes);;
-	pMem = LockResource(hMem);
-
-	unsigned char* pixels = stbi_load_from_memory((const stbi_uc*)pMem, SizeofResource(hInstance, hRes), &width, &height, &channels, 4);
-
-	if (pixels) {
-		GLFWimage images[1];
-		images[0].width = width;
-		images[0].height = height;
-		images[0].pixels = pixels;
-		glfwSetWindowIcon(wc, 1, images);
-		stbi_image_free(pixels);
-	}
-#endif
-
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
-	imguiRuntime.MarkImGuiContextCreated();
-
-	ImGuiIO& io = ImGui::GetIO();
-	const string imguiIniPath = wstring_to_utf8((paths.stateRoot / L"imgui.ini").wstring());
-	const string imguiLogPath = wstring_to_utf8((paths.logsRoot / L"imgui_log.txt").wstring());
-	io.IniFilename = imguiIniPath.c_str();
-	io.LogFilename = imguiLogPath.c_str();
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
-	bool enableMultiViewport = true;
-#ifdef __linux__
-	// GLFW intentionally does not expose ImGui platform-window handlers on
-	// Wayland. Keeping ViewportsEnable set would make the application call
-	// UpdatePlatformWindows with an unavailable backend and can crash on the
-	// first frame (notably with a headless Weston compositor).
-	enableMultiViewport = selectedGlfwPlatform != GLFW_PLATFORM_WAYLAND;
-#endif
-	if (enableMultiViewport) {
-		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Enable Multi-Viewports
-		io.ConfigViewportsNoAutoMerge = false;
-	}
-
-	io.ConfigErrorRecoveryEnableAssert = true;
-	io.ConfigErrorRecoveryEnableDebugLog = true;
-	io.ConfigErrorRecoveryEnableTooltip = true;
-
-	// Let the platform backend update per-monitor font density. The user scale
-	// is applied together with the selected theme by ApplyTheme().
-	io.ConfigDpiScaleFonts = true;
-
-	ImGui_ImplGlfw_InitForOpenGL(wc, true);
-	imguiRuntime.MarkPlatformBackendInitialized();
-#ifdef __EMSCRIPTEN__
-	ImGui_ImplGlfw_InstallEmscriptenCallbacks(wc, "#canvas");
-#endif
-	ImGui_ImplOpenGL3_Init(glsl_version);
-	imguiRuntime.MarkRendererBackendInitialized();
-	imguiRuntime.SetUiResourceReleaser(ReleaseMainUiResources);
-
-	// Load font sources. The 1.92 renderer texture protocol rasterizes glyphs
-	// incrementally, so glyph ranges and an eager atlas Build() are unnecessary.
-
-	ApplyTheme();
-
-	if (isFirstRun) {
-		GetUserDefaultUILanguageWin();
-		Fontss = GetDefaultUIFontPath();
-	}
-
-	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
-
-	if (!Fontss.empty() && filesystem::exists(Fontss)) {
-		ImFontConfig fontCfg;
-		fontCfg.PixelSnapH = true;
-		if (fontExtracted) {
-			// The 1.92 dynamic font system queries merged sources in order.
-			// Reserve Font Awesome's private-use range for the icon source.
-			fontCfg.GlyphExcludeRanges = icon_ranges;
-		}
-		ImFont* mainFont = nullptr;
-		minebackup::infra::ReadOnlyMappedFile mappedFont;
-		error_code mappingError;
-		const bool mapped = mappedFont.Open(Fontss, mappingError);
-		if (mapped && mappedFont.Size() > 100
-			&& mappedFont.Size() <= static_cast<size_t>((numeric_limits<int>::max)())) {
-			fontCfg.FontDataOwnedByAtlas = false;
-			mainFont = io.Fonts->AddFontFromMemoryTTF(
-				const_cast<void*>(mappedFont.Data()),
-				static_cast<int>(mappedFont.Size()), 20.0f, &fontCfg);
-			if (mainFont) {
-				imguiRuntime.RetainFontSourceMapping(std::move(mappedFont));
-				APP_PRINTF_INFO("font.source.mapped",
-					"Mapped font source without a private heap copy: %zu bytes",
-					imguiRuntime.MappedFontBytes());
-			}
-		}
-		else if (!mapped) {
-			APP_PRINTF_WARNING("font.source.mapping_failed",
-				"Could not map the font source; using the file loader: %s",
-				mappingError.message().c_str());
-		}
-		else {
-			APP_PRINTF_WARNING("font.source.mapping_unsupported_size",
-				"Font source size cannot be mapped into ImGui: %zu bytes",
-				mappedFont.Size());
-		}
-
-		if (!mainFont) {
-			fontCfg.FontDataOwnedByAtlas = true;
-			mainFont = io.Fonts->AddFontFromFileTTF(
-				wstring_to_utf8(Fontss).c_str(), 20.0f, &fontCfg);
-		}
-
-		if (!mainFont) {
-			io.Fonts->AddFontDefaultVector();
-		}
-	} else {
-		io.Fonts->AddFontDefaultVector();
-	}
-
-	if (fontExtracted) {
-		ImFontConfig config2;
-		config2.MergeMode = true;
-		config2.PixelSnapH = true;
-		config2.GlyphMinAdvanceX = 20.0f; // 图标的宽度
-
-#ifdef _WIN32
-		config2.FontDataOwnedByAtlas = false;
-		io.Fonts->AddFontFromMemoryTTF(
-			const_cast<void*>(bundledIconFontData), static_cast<int>(bundledIconFontSize), 20.0f, &config2);
-#else
-		io.Fonts->AddFontFromFileTTF(wstring_to_utf8(g_FontTempPath).c_str(), 20.0f, &config2);
-#endif
-	}
 
 	APP_PRINTF_INFO("application.welcome", L("CONSOLE_WELCOME"));
 
@@ -973,7 +760,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		glClear(GL_COLOR_BUFFER_BIT);
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+		if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
 		{
 			GLFWwindow* backup_current_context = glfwGetCurrentContext();
 			ImGui::UpdatePlatformWindows();
@@ -998,11 +785,14 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	(void)desktopServices->ConfigureGlobalHotkeys({});
 	(void)desktopServices->SetTrayVisible(false);
+	desktopServices->SetNativeWindow(nullptr);
+	uiSession.Shutdown();
+	wc = nullptr;
+	ReleaseMainUiResources();
 	ResetDesktopServices();
 #ifdef _WIN32
 	DestroyWindow(hwnd_hidden);
 #endif
-	imguiRuntime.Shutdown();
 
 	CleanupKnotLink();
 

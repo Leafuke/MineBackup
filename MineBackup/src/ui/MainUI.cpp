@@ -79,8 +79,13 @@ void ReleaseMainUiResources()
 	if (!controller) {
 		return;
 	}
-	ReleaseWorldListUiResources();
+	ReleaseMainUiGraphicsResources();
 	controller.reset();
+}
+
+void ReleaseMainUiGraphicsResources()
+{
+	if (controller) ReleaseWorldListUiResources();
 }
 
 void DrawMainUiFrame(const MainUiFrameContext& context)

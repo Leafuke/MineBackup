@@ -10,11 +10,6 @@ ImGuiRuntime::~ImGuiRuntime()
 	Shutdown();
 }
 
-void ImGuiRuntime::MarkGlfwInitialized() noexcept
-{
-	glfwInitialized_ = true;
-}
-
 void ImGuiRuntime::AdoptWindow(GLFWwindow* window) noexcept
 {
 	window_ = window;
@@ -83,10 +78,6 @@ void ImGuiRuntime::Shutdown() noexcept
 	if (window_ != nullptr) {
 		glfwDestroyWindow(window_);
 		window_ = nullptr;
-	}
-	if (glfwInitialized_) {
-		glfwTerminate();
-		glfwInitialized_ = false;
 	}
 }
 

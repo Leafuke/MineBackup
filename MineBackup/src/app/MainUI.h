@@ -28,6 +28,7 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 void DrawMainUiFrame(const MainUiFrameContext& context);
 void DrawWorldListUiFrame(const MainUiFrameContext& context);
 void ReleaseMainUiResources();
+void ReleaseMainUiGraphicsResources();
 void ReleaseWorldListUiResources();
 
 // WorldListUI.cpp — 世界列表模型
