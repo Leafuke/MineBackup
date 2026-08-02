@@ -668,7 +668,6 @@ ImGui::End();
 
 
 if (showSettings) {
-	ImGui::SetNextWindowViewport(viewport->ID);
 	ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 }
 if (showHistoryWindow) {

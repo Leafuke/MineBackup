@@ -36,6 +36,7 @@ std::vector<DisplayWorld> BuildDisplayWorldsForSelection();
 // HistoryUI.cpp — 历史窗口
 void ShowHistoryWindow(int configIndex,
 	const std::optional<std::wstring>& initialWorld = std::nullopt);
+void ResetHistoryWindowRuntimeState();
 
 // SpecialMode.cpp — 特殊模式执行
 void RunSpecialMode(int configId);

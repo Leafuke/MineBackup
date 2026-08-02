@@ -694,7 +694,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #endif
 	if (enableMultiViewport) {
 		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Enable Multi-Viewports
-		io.ConfigViewportsNoAutoMerge = true;                 // 不自动合并视口
+		io.ConfigViewportsNoAutoMerge = false;
 	}
 
 	io.ConfigErrorRecoveryEnableAssert = true;

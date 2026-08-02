@@ -27,6 +27,7 @@ using namespace std;
 
 namespace {
 HistoryWindowController historyController;
+bool historyNeedsInitialViewport = true;
 
 const char* HistoryStatusKey(HistoryFileStatus status) {
 	switch (status) {
@@ -70,6 +71,10 @@ bool SameLineFits(const char* nextLabel) {
 
 } // namespace
 
+void ResetHistoryWindowRuntimeState() {
+	historyNeedsInitialViewport = true;
+}
+
 void ShowHistoryWindow(int requestedConfigIndex,
 	const optional<wstring>& initialWorld) {
 	historyController.Open(
@@ -94,12 +99,19 @@ void ShowHistoryWindow(int requestedConfigIndex,
 	const UiMetrics metrics = GetUiMetrics();
 	SetNextWindowSizeFromMetrics(metrics, 64.0f, 42.0f);
 	SetNextWindowConstraintsFromMetrics(metrics, 32.0f, 24.0f);
+	if (historyNeedsInitialViewport) {
+		ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+		historyNeedsInitialViewport = false;
+	}
 	const bool visible = ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow,
 		ImGuiWindowFlags_NoDocking);
 	historyController.wasOpen = showHistoryWindow;
 	if (!visible) {
 		ImGui::End();
-		if (!showHistoryWindow) historyController.Close();
+		if (!showHistoryWindow) {
+			historyNeedsInitialViewport = true;
+			historyController.Close();
+		}
 		return;
 	}
 
@@ -567,6 +579,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 
 	ImGui::End();
 	if (!showHistoryWindow) {
+		historyNeedsInitialViewport = true;
 		historyController.Close();
 	}
 }

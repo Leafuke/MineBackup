@@ -50,6 +50,7 @@ constexpr CategoryItem kSpecialCategories[] = {
 
 SettingsAutoSaveController g_settingsAutoSave;
 SettingsCategory g_selectedCategory = SettingsCategory::Appearance;
+bool g_settingsNeedsInitialViewport = true;
 
 const char* CapabilityStateLabel(CapabilityState state) {
 	switch (state) {
@@ -299,6 +300,10 @@ bool CanSaveSettings() {
 
 } // namespace
 
+void ResetSettingsWindowRuntimeState() {
+	g_settingsNeedsInitialViewport = true;
+}
+
 void ShowSettingsWindowV2() {
 	if (g_appState.configs.empty()) {
 		const int index = CreateNewNormalConfig();
@@ -316,10 +321,17 @@ void ShowSettingsWindowV2() {
 	const UiMetrics metrics = GetUiMetrics();
 	SetNextWindowSizeFromMetrics(metrics, 56.0f, 38.0f);
 	SetNextWindowConstraintsFromMetrics(metrics, 30.0f, 22.0f);
+	if (g_settingsNeedsInitialViewport) {
+		ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+		g_settingsNeedsInitialViewport = false;
+	}
 	const bool visible = ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_NoDocking);
 	if (!visible) {
 		ImGui::End();
-		if (!showSettings) g_settingsAutoSave.Flush([] { return SaveConfigs(); });
+		if (!showSettings) {
+			g_settingsNeedsInitialViewport = true;
+			g_settingsAutoSave.Flush([] { return SaveConfigs(); });
+		}
 		return;
 	}
 
@@ -371,6 +383,7 @@ void ShowSettingsWindowV2() {
 
 	ImGui::End();
 	if (!showSettings) {
+		g_settingsNeedsInitialViewport = true;
 		g_settingsAutoSave.Flush([] {
 			return CanSaveSettings() && SaveConfigs();
 		});
