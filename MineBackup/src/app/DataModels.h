@@ -266,7 +266,7 @@ struct KnotLinkModInfo {
 	std::atomic<bool> versionCompatible{false}; // 模组版本是否兼容
 
 	// 最低要求的模组版本号
-	static constexpr const char* MIN_MOD_VERSION = "3.1.0";
+	static constexpr const char* MIN_MOD_VERSION = "3.0.0";
 
 	// 异步响应同步机制
 	std::mutex mtx;

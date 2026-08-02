@@ -31,7 +31,9 @@ namespace {
 	}
 
 	void ConstrainHistoryPopup(const UiMetrics& metrics) {
-		const ImVec2 work = ImGui::GetMainViewport()->WorkSize;
+		const ImGuiViewport* viewport = ImGui::GetWindowViewport();
+		ImGui::SetNextWindowViewport(viewport->ID);
+		const ImVec2 work = viewport->WorkSize;
 		ImGui::SetNextWindowSizeConstraints(
 			ImVec2((min)(metrics.Em(20.0f), work.x * 0.9f),
 				(min)(metrics.Em(10.0f), work.y * 0.9f)),

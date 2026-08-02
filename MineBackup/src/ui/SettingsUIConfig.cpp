@@ -103,6 +103,7 @@ void DrawConfigManagementPanel() {
 	}
 
 	if (pendingCreateType >= 0) ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+	ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID);
 	if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextWrapped("%s", pendingCreateType == 0
@@ -131,6 +132,7 @@ void DrawConfigManagementPanel() {
 	}
 
 	if (requestDelete) ImGui::OpenPopup(L("CONFIRM_DELETE_TITLE"));
+	ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID);
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
 		requestDelete = false;
@@ -597,6 +599,7 @@ void DrawBlacklistSettings(Config& cfg) {
 	ImGui::EndTable();
 	}
 
+	ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID);
 	if (ImGui::BeginPopupModal(L("ADD_REGEX_RULE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		static char regex_buf[256] = "regex:";
 		ImGui::InputText(L("REGEX_PATTERN_LABEL"), regex_buf, IM_ARRAYSIZE(regex_buf));

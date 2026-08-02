@@ -783,12 +783,14 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		ImGui::NewFrame();
 
 		const string migrationPopupTitle = string(L("MIGRATION_STARTUP_TITLE")) + "###MigrationSummary";
-		if (MigrationCoordinator::ShouldShowStartupSummary()) {
-			ImGui::OpenPopup(migrationPopupTitle.c_str());
-		}
-		if (ImGui::BeginPopupModal(migrationPopupTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
-			ImGui::TextWrapped("%s", L("MIGRATION_SUMMARY"));
+        if (MigrationCoordinator::ShouldShowStartupSummary()) {
+            ImGui::OpenPopup(migrationPopupTitle.c_str());
+        }
+        ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+        if (ImGui::BeginPopupModal(migrationPopupTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushTextWrapPos(
+                ImGui::GetCursorPosX() + GetUiMetrics().Em(30.0f));
+            ImGui::TextWrapped("%s", L("MIGRATION_SUMMARY"));
 			const auto migrationReport = MigrationCoordinator::GetMigrationReport();
 			for (const auto& unit : migrationReport.units) {
 				ImGui::BulletText("%s: %s", MigrationReportUI::UnitLabel(unit.unitId).c_str(),

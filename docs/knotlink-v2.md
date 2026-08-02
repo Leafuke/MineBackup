@@ -134,7 +134,7 @@ MineBackup.
 
 ## Versions and server lifecycle
 
-The companion mod minimum is 3.1.0. Handshake waits up to three seconds.
+The companion mod minimum is 3.0.0. Handshake waits up to three seconds.
 World save, save-and-exit, file release, and rejoin retain the FolderRewind
 10/15/30-second workflow timeouts.
 
@@ -185,7 +185,7 @@ FolderRewind 的命令专属内部格式：`LIST_CONFIGS` 为
 `RESTORE` 不提供 `file` 时选择最新备份。一次性备份模式、压缩设置、黑名单
 和还原白名单只作用于当前任务，不写回配置。
 
-联动模组最低版本为 3.1.0。KnotLinkService 推荐最低版本为 3.2.0.0。
+联动模组最低版本为 3.0.0。KnotLinkService 推荐最低版本为 3.2.0.0。
 Windows 读取注册表和文件版本，Linux 读取 dpkg 包信息，macOS 读取 Installer
 收据；已安装的未知或旧版本会被阻止，并在每次启动时显示可关闭提醒。首次
 向导和设置页可以从

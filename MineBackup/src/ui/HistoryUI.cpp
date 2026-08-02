@@ -53,8 +53,10 @@ HistoryEntry* ResolveHistoryEntry(int configIndex, const HistoryEntryKey& key) {
 }
 
 void ConstrainHistoryPopup(const UiMetrics& metrics) {
-	const ImVec2 work = ImGui::GetMainViewport()->WorkSize;
-	ImGui::SetNextWindowSizeConstraints(
+    const ImGuiViewport* viewport = ImGui::GetWindowViewport();
+    ImGui::SetNextWindowViewport(viewport->ID);
+    const ImVec2 work = viewport->WorkSize;
+    ImGui::SetNextWindowSizeConstraints(
 		ImVec2((std::min)(metrics.Em(20.0f), work.x * 0.9f),
 			(std::min)(metrics.Em(10.0f), work.y * 0.9f)),
 		ImVec2(work.x * 0.9f, work.y * 0.9f));
