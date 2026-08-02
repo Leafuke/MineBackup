@@ -454,27 +454,59 @@ if (ImGui::BeginMenuBar()) {
 		}
 		ImGui::PopStyleColor(3);
 		ImGui::SetNextWindowViewport(viewport->ID);
-		if (ImGui::BeginPopupModal(L("UPDATE_POPUP_TITLE"), &open_update_popup, ImGuiWindowFlags_AlwaysAutoResize)) {
-			ImGui::Text(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
+		const UiMetrics updateMetrics = GetUiMetrics();
+		const ImGuiStyle& updateStyle = ImGui::GetStyle();
+		const float maxUpdateWidth = (std::max)(
+			1.0f, viewport->WorkSize.x * 0.90f);
+		const float maxUpdateHeight = (std::max)(
+			1.0f, viewport->WorkSize.y * 0.90f);
+		ImGui::SetNextWindowPos(
+			viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowSize(
+			ImVec2(
+				(std::min)(updateMetrics.Em(40.0f), maxUpdateWidth),
+				(std::min)(updateMetrics.Em(34.0f), maxUpdateHeight)),
+			ImGuiCond_Appearing);
+		ImGui::SetNextWindowSizeConstraints(
+			ImVec2(
+				(std::min)(updateMetrics.Em(28.0f), maxUpdateWidth),
+				(std::min)(updateMetrics.Em(22.0f), maxUpdateHeight)),
+			ImVec2(maxUpdateWidth, maxUpdateHeight));
+		if (ImGui::BeginPopupModal(
+			L("UPDATE_POPUP_TITLE"), &open_update_popup,
+			ImGuiWindowFlags_NoResize)) {
+			ImGui::TextWrapped(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
 			ImGui::Separator();
 			ImGui::TextWrapped("%s", L("UPDATE_POPUP_NOTES"));
 
-			ImGui::BeginChild("ReleaseNotes", ImVec2(ImGui::GetContentRegionAvail().x, 450), true);
+			const float footerReserve = updateMetrics.frameHeight
+				+ updateStyle.ItemSpacing.y * 2.0f + updateMetrics.spacingY + 2.0f;
+			const float releaseNotesHeight = (std::max)(
+				1.0f, (std::min)(updateMetrics.Em(24.0f),
+					ImGui::GetContentRegionAvail().y - footerReserve));
+			ImGui::BeginChild(
+				"ReleaseNotes", ImVec2(0.0f, releaseNotesHeight), true);
 			ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
 			ImGui::EndChild();
 			ImGui::Separator();
-			if (ImGui::Button(L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(180, 0))) {
+			const float actionWidth = ImGui::GetContentRegionAvail().x;
+			if (ImGui::Button(
+				L("UPDATE_POPUP_DOWNLOAD_BUTTON"), ImVec2(actionWidth, 0))) {
 				const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
 				if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
 				open_update_popup = false;
 				ImGui::CloseCurrentPopup();
 			}
-			if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(ImGui::GetContentRegionAvail().x / 2, 0))) {
+			const float splitActionWidth = (std::max)(
+				1.0f, (ImGui::GetContentRegionAvail().x - updateStyle.ItemSpacing.x) * 0.5f);
+			if (ImGui::Button(
+				L("BUTTON_CANCEL"), ImVec2(splitActionWidth, 0))) {
 				open_update_popup = false;
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(L("CHECK_FOR_UPDATES"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+			if (ImGui::Button(
+				L("CHECK_FOR_UPDATES"), ImVec2(-1.0f, 0))) {
 				const string releaseUrl = BuildMineBackupOfficialReleaseUrl(g_LatestVersionStr);
 				if (!releaseUrl.empty()) (void)desktopServices->OpenUri(utf8_to_wstring(releaseUrl));
 				open_update_popup = false;
