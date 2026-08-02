@@ -89,6 +89,7 @@ struct HistoryWindowController {
 		const std::optional<std::wstring>& initialWorld,
 		const std::wstring& fallbackWorld);
 	void Close();
+	void ReleaseCaches();
 	void InvalidateFileStatusCache();
 	void InvalidateFilterCache();
 };

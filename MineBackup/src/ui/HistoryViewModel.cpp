@@ -47,6 +47,10 @@ void HistoryWindowController::Close() {
 	requestRestorePopup = false;
 	requestDeletePopup = false;
 	requestCommentPopup = false;
+	ReleaseCaches();
+}
+
+void HistoryWindowController::ReleaseCaches() {
 	vector<HistoryEntryView>().swap(cachedViews);
 	vector<size_t>().swap(filteredViewIndices);
 	vector<wstring>().swap(cachedWorlds);

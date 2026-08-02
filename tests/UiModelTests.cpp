@@ -1,5 +1,6 @@
 #include "HistoryViewModel.h"
 #include "ConfigSelection.h"
+#include "DesktopUiLifecycle.h"
 #include "WorldListModel.h"
 
 #include <chrono>
@@ -51,6 +52,41 @@ namespace {
 				&& !IsNarrowWorldListLayout(38.0f * em, em),
 				"world list responsive threshold should use em instead of physical pixels");
 		}
+	}
+
+	void TestDesktopUiLifecycle() {
+		using namespace chrono;
+		const auto start = DesktopUiLifecycle::Clock::time_point{};
+		DesktopUiLifecycle lifecycle;
+		Expect(lifecycle.HideToTray(start) == DesktopUiAction::HideWarm
+			&& lifecycle.State() == DesktopUiState::HiddenWarm,
+			"hiding to tray should enter the warm state");
+		Expect(lifecycle.Tick(start + milliseconds(9900)) == DesktopUiAction::None
+			&& lifecycle.HasLiveSession(),
+			"a tray restore before ten seconds should keep the live session");
+		Expect(lifecycle.RequestShow() == DesktopUiAction::ShowExisting
+			&& lifecycle.State() == DesktopUiState::Visible,
+			"warm restore should reuse the existing session");
+
+		lifecycle.HideToTray(start + seconds(20));
+		Expect(lifecycle.Tick(start + seconds(30)) == DesktopUiAction::UnloadSession
+			&& lifecycle.State() == DesktopUiState::HiddenCold,
+			"ten seconds hidden should unload the UI session");
+		Expect(lifecycle.RequestShow() == DesktopUiAction::CreateAndShow,
+			"cold restore should request a new UI session");
+		lifecycle.CompleteColdRestore(true);
+		Expect(lifecycle.State() == DesktopUiState::Visible,
+			"a successful cold restore should become visible");
+
+		DesktopUiLifecycle silent(DesktopUiState::HiddenCold);
+		Expect(!silent.HasLiveSession()
+			&& silent.RequestExit() == DesktopUiAction::None,
+			"silent startup and exit should not require a UI session");
+		Expect(silent.RequestShow() == DesktopUiAction::CreateAndShow,
+			"silent cold startup should create the UI only when activated");
+		silent.CompleteColdRestore(false);
+		Expect(silent.State() == DesktopUiState::HiddenCold,
+			"a failed cold restore should remain in the cold state");
 	}
 
 	void TestHistorySnapshots(const filesystem::path& root) {
@@ -218,6 +254,7 @@ int main() {
 	const filesystem::path root = TemporaryRoot();
 	filesystem::create_directories(root);
 	TestResponsiveLayouts();
+	TestDesktopUiLifecycle();
 	TestHistorySnapshots(root);
 	TestWorldModels();
 	TestStableConfigSelection();

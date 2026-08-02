@@ -230,6 +230,9 @@ bool DesktopUiSession::Create(
 		return false;
 	}
 	runtime_.AdoptWindow(window);
+	// Appearance hooks on Windows resolve the native HWND through the process
+	// main-window handle, so publish it as soon as this session owns the window.
+	wc = window;
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
 #ifdef _WIN32
@@ -306,13 +309,28 @@ bool DesktopUiSession::Create(
 	return true;
 }
 
-void DesktopUiSession::Shutdown() noexcept {
-	if (runtime_.Window() != nullptr) glfwMakeContextCurrent(runtime_.Window());
-	if (active_ && ImGui::GetCurrentContext() != nullptr
-		&& (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)) {
+void DesktopUiSession::DestroySecondaryPlatformWindows() noexcept {
+	if (!active_ || ImGui::GetCurrentContext() == nullptr) return;
+	glfwMakeContextCurrent(runtime_.Window());
+	if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
 		ImGui::DestroyPlatformWindows();
 	}
+}
+
+void DesktopUiSession::SaveWindowState(int& width, int& height) noexcept {
+	if (!active_ || runtime_.Window() == nullptr) return;
+	glfwGetWindowSize(runtime_.Window(), &width, &height);
+	if (ImGui::GetCurrentContext() != nullptr && !iniPath_.empty()) {
+		ImGui::SaveIniSettingsToDisk(iniPath_.c_str());
+	}
+}
+
+void DesktopUiSession::Shutdown() noexcept {
+	GLFWwindow* window = runtime_.Window();
+	if (window != nullptr) glfwMakeContextCurrent(window);
+	DestroySecondaryPlatformWindows();
 	runtime_.Shutdown();
+	if (wc == window) wc = nullptr;
 	active_ = false;
 	iniPath_.clear();
 	logPath_.clear();

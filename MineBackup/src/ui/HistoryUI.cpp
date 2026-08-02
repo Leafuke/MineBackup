@@ -75,6 +75,10 @@ void ResetHistoryWindowRuntimeState() {
 	historyNeedsInitialViewport = true;
 }
 
+void ReleaseHistoryWindowCaches() {
+	historyController.ReleaseCaches();
+}
+
 void ShowHistoryWindow(int requestedConfigIndex,
 	const optional<wstring>& initialWorld) {
 	historyController.Open(

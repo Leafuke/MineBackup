@@ -31,6 +31,8 @@ public:
 	DesktopUiSession& operator=(const DesktopUiSession&) = delete;
 
 	bool Create(const DesktopUiSessionOptions& options, std::wstring& error);
+	void DestroySecondaryPlatformWindows() noexcept;
+	void SaveWindowState(int& width, int& height) noexcept;
 	void Shutdown() noexcept;
 
 	[[nodiscard]] bool IsActive() const noexcept { return active_; }

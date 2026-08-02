@@ -6,6 +6,7 @@
 #include "AppearanceRuntime.h"
 #include "ConfigSelection.h"
 #include "DesktopUiSession.h"
+#include "DesktopUiLifecycle.h"
 #include "Broadcast.h"
 #include "Globals.h"
 #include "SettingsUI.h"
@@ -90,6 +91,30 @@ using namespace std;
 static void glfw_error_callback(int error, const char* description)
 {
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+}
+
+static void main_window_close_callback(GLFWwindow* window)
+{
+	if (g_closeAction == 1) {
+		glfwSetWindowShouldClose(window, GLFW_FALSE);
+		auto services = GetDesktopServices();
+		if (CanHideToTray(services->Capabilities())) {
+			(void)services->SetTrayVisible(true);
+			g_appState.showMainApp = false;
+			glfwHideWindow(window);
+		}
+		else {
+			glfwIconifyWindow(window);
+		}
+	}
+	else if (g_closeAction == 2) {
+		SaveConfigs();
+		g_appState.done = true;
+	}
+	else {
+		glfwSetWindowShouldClose(window, GLFW_FALSE);
+		g_showCloseConfirmDialog = true;
+	}
 }
 
 namespace {
@@ -516,8 +541,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	uiOptions.paths = &paths;
 	uiOptions.width = g_windowWidth;
 	uiOptions.height = g_windowHeight;
-	uiOptions.initiallyVisible = !shouldStartHiddenToTray;
-	uiOptions.firstRun = isFirstRun;
 	uiOptions.iconFontAvailable = fontExtracted;
 	uiOptions.bundledIconFontData = bundledIconFontData;
 	uiOptions.bundledIconFontSize = bundledIconFontSize;
@@ -525,15 +548,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #ifdef _WIN32
 	uiOptions.nativeInstance = hInstance;
 #endif
-	wstring uiCreateError;
-	if (!uiSession.Create(uiOptions, uiCreateError)) {
-		PLATFORM_PRINTF_ERROR("ui.session.create_failed", "Desktop UI session creation failed: %s",
-			wstring_to_utf8(uiCreateError).c_str());
-		MessageBoxWin(L("FATAL_ERROR_TITLE"), L("WINDOW_CREATE_ERROR"), 2);
-		return 1;
-	}
-	wc = uiSession.Window();
-	desktopServices->SetNativeWindow(wc);
 	const auto traySetup = desktopServices->SetTrayVisible(true);
 	if (!traySetup.IsAvailable() && !traySetup.diagnostic.empty()) {
 		PLATFORM_PRINTF_WARNING("platform.tray.unavailable",
@@ -554,34 +568,48 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			wstring_to_utf8(hotkeySetup.diagnostic).c_str());
 	}
 
-	glfwSetWindowCloseCallback(wc, [](GLFWwindow* window) {
-		if (g_closeAction == 1) {
-			glfwSetWindowShouldClose(window, GLFW_FALSE);
-			auto services = GetDesktopServices();
-			if (CanHideToTray(services->Capabilities())) {
-				(void)services->SetTrayVisible(true);
-				g_appState.showMainApp = false;
-				glfwHideWindow(window);
-			}
-			else {
-				// Preserve the user's preference, but do not make the window unreachable
-				// in a session without a tray host.
-				glfwIconifyWindow(window);
-			}
-		} else if (g_closeAction == 2) {
-			SaveConfigs();
-			g_appState.done = true;
-		} else {
-			glfwSetWindowShouldClose(window, GLFW_FALSE);
-			g_showCloseConfirmDialog = true;
+	bool uiSessionCreatedOnce = false;
+	auto createUiSession = [&](bool initiallyVisible) {
+		uiOptions.width = g_windowWidth;
+		uiOptions.height = g_windowHeight;
+		uiOptions.initiallyVisible = initiallyVisible;
+		uiOptions.firstRun = isFirstRun && !uiSessionCreatedOnce;
+		wstring uiCreateError;
+		if (!uiSession.Create(uiOptions, uiCreateError)) {
+			PLATFORM_PRINTF_ERROR("ui.session.create_failed",
+				"Desktop UI session creation failed: %s",
+				wstring_to_utf8(uiCreateError).c_str());
+			return false;
 		}
-	});
+		uiSessionCreatedOnce = true;
+		wc = uiSession.Window();
+		desktopServices->SetNativeWindow(wc);
+		glfwSetWindowCloseCallback(wc, main_window_close_callback);
+		return true;
+	};
+
+	bool startUiCold = false;
+#ifdef _WIN32
+	startUiCold = shouldStartHiddenToTray;
+#endif
+	if (!startUiCold && !createUiSession(!shouldStartHiddenToTray)) {
+		MessageBoxWin(L("FATAL_ERROR_TITLE"), L("WINDOW_CREATE_ERROR"), 2);
+		return 1;
+	}
+	DesktopUiLifecycle uiLifecycle(startUiCold
+		? DesktopUiState::HiddenCold : DesktopUiState::Visible);
+	const bool canUnloadForTray =
+#ifdef _WIN32
+		traySetup.IsAvailable() && CanHideToTray(desktopServices->Capabilities());
+#else
+		false;
+#endif
 
 	APP_PRINTF_INFO("application.welcome", L("CONSOLE_WELCOME"));
 
 	AutoDiscoverWorldConfigurations();
 
-	if (isFirstRun)
+	if (isFirstRun && uiSession.IsActive())
 	{
 		ImGuiTheme::ApplyNord(false);
 	}
@@ -605,21 +633,47 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	fpsIdling.lastActivityTime = ClockSeconds();
 
 	ApplicationEventRouter eventRouter;
+	auto activateUiWindow = [&]() {
+		if (wc == nullptr) return;
+		glfwShowWindow(wc);
+		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0) glfwRestoreWindow(wc);
+		glfwFocusWindow(wc);
+		const auto activation = desktopServices->ActivateWindow();
+		if (!activation.IsAvailable() && !activation.diagnostic.empty()) {
+			PLATFORM_PRINTF_WARNING("platform.window.activation_failed",
+				"Window activation failed: %s",
+				wstring_to_utf8(activation.diagnostic).c_str());
+		}
+	};
+	auto unloadUiSession = [&]() {
+		if (!uiSession.IsActive()) return;
+		uiSession.SaveWindowState(g_windowWidth, g_windowHeight);
+		const ImGuiPlatformIO& platformIo = ImGui::GetPlatformIO();
+		const ImTextureData* atlasTexture = ImGui::GetIO().Fonts->TexData;
+		APP_PRINTF_INFO("ui.session.unloading",
+			"Unloading desktop UI session: mapped_font_bytes=%zu atlas=%dx%d "
+			"atlas_format=%d viewports=%d",
+			uiSession.MappedFontBytes(),
+			atlasTexture ? atlasTexture->Width : 0,
+			atlasTexture ? atlasTexture->Height : 0,
+			atlasTexture ? static_cast<int>(atlasTexture->Format) : -1,
+			platformIo.Viewports.Size);
+		desktopServices->SetNativeWindow(nullptr);
+		uiSession.Shutdown();
+		ReleaseHistoryWindowCaches();
+		wc = nullptr;
+	};
 
-	while (!g_appState.done && !glfwWindowShouldClose(wc))
+	while (!g_appState.done)
 	{
 #ifdef __linux__
 		PumpLinuxDesktopEvents();
 #endif
 		wstring instanceError;
+		bool activationRequested = false;
 		for (const auto& request : singleInstance.PollRequests(instanceError)) {
 			g_appState.showMainApp = true;
-			const auto activation = desktopServices->ActivateWindow();
-			if (!activation.IsAvailable() && !activation.diagnostic.empty()) {
-				PLATFORM_PRINTF_WARNING("platform.window.activation_failed",
-					"Window activation failed: %s",
-					wstring_to_utf8(activation.diagnostic).c_str());
-			}
+			activationRequested = true;
 			if (request.type == InstanceRequestType::SelectConfig) {
 				const int index = FindConfigByStableId(
 					g_appState.configs,
@@ -645,7 +699,60 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 				wstring_to_utf8(instanceError).c_str());
 		}
 		eventRouter.Dispatch(TaskCoordinator::Instance().PollEvents());
-		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0 || (!g_appState.showMainApp && !showConfigWizard)) {
+
+#ifdef _WIN32
+		if (canUnloadForTray && !showConfigWizard) {
+			if (!g_appState.showMainApp
+				&& uiLifecycle.State() == DesktopUiState::Visible) {
+				if (uiLifecycle.HideToTray(DesktopUiLifecycle::Clock::now())
+					== DesktopUiAction::HideWarm) {
+					uiSession.DestroySecondaryPlatformWindows();
+					APP_PRINTF_INFO("ui.session.hidden_warm",
+						"Desktop UI hidden to tray; cold unload scheduled in 10 seconds");
+				}
+			}
+			if (g_appState.showMainApp
+				&& uiLifecycle.State() != DesktopUiState::Visible) {
+				const DesktopUiAction showAction = uiLifecycle.RequestShow();
+				if (showAction == DesktopUiAction::ShowExisting) {
+					activateUiWindow();
+				}
+				else if (showAction == DesktopUiAction::CreateAndShow) {
+					const bool restored = createUiSession(false);
+					uiLifecycle.CompleteColdRestore(restored);
+					if (!restored) {
+						MessageBoxWin(L("FATAL_ERROR_TITLE"), L("WINDOW_CREATE_ERROR"), 2);
+						g_appState.done = true;
+						break;
+					}
+					knotLinkUpdateReminderOpened = false;
+					APP_PRINTF_INFO("ui.session.cold_restored",
+						"Desktop UI session restored in %.2f ms",
+						uiSession.LastCreateMilliseconds());
+					activateUiWindow();
+				}
+			}
+			if (!g_appState.showMainApp
+				&& uiLifecycle.Tick(DesktopUiLifecycle::Clock::now())
+					== DesktopUiAction::UnloadSession) {
+				unloadUiSession();
+			}
+		}
+#endif
+		if (activationRequested && uiSession.IsActive()
+			&& g_appState.showMainApp) {
+			activateUiWindow();
+		}
+		if (!uiSession.IsActive()) {
+			glfwWaitEventsTimeout(0.25);
+			continue;
+		}
+		if (glfwWindowShouldClose(wc)) {
+			g_appState.done = true;
+			break;
+		}
+		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0
+			|| (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(1.0);
 			continue;
 		}
@@ -778,16 +885,12 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		lock_guard<mutex> lock(g_appState.task_mutex);
 		g_appState.g_active_auto_backups.clear();
 	}
-	glfwGetWindowSize(wc, &g_windowWidth, &g_windowHeight);
-
 	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
 
 	(void)desktopServices->ConfigureGlobalHotkeys({});
 	(void)desktopServices->SetTrayVisible(false);
-	desktopServices->SetNativeWindow(nullptr);
-	uiSession.Shutdown();
-	wc = nullptr;
+	unloadUiSession();
 	ReleaseMainUiResources();
 	ResetDesktopServices();
 #ifdef _WIN32
