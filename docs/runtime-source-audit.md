@@ -44,6 +44,7 @@
 | `MineBackup/src/app/legacy/LegacyServiceCleanup.h` | legacy-desktop | 不向 runtime 暴露服务控制 API |
 | `MineBackup/src/app/MainUI.h` | desktop | 保留桌面生命周期或 UI 状态 |
 | `MineBackup/src/app/MineBackup.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
+| `MineBackup/src/cli/CliMain.cpp` | runtime | CLI console 入口；不进入 GUI MSBuild 工程 |
 | `MineBackup/src/core/ArchiveRunner.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/ArchiveRunner.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/BackupAuxiliary.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |

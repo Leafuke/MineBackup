@@ -19,6 +19,18 @@
       "cacheVariables": { "MINEBACKUP_ENABLE_V15_MIGRATION": "OFF" }
     },
     {
+      "name": "windows-msvc-x64-cli-only",
+      "displayName": "Windows MSVC x64 CLI only",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-cli-only",
+      "cacheVariables": {
+        "MINEBACKUP_BUILD_GUI": "OFF",
+        "MINEBACKUP_BUILD_CLI": "ON",
+        "MINEBACKUP_ENABLE_V15_MIGRATION": "OFF"
+      }
+    },
+    {
       "name": "linux-x64",
       "displayName": "Linux x86_64",
       "generator": "Ninja",
@@ -26,6 +38,18 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "MINEBACKUP_ENABLE_V15_MIGRATION": "ON"
+      }
+    },
+    {
+      "name": "linux-x64-cli-only",
+      "displayName": "Linux x86_64 CLI only",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-x64-cli-only",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MINEBACKUP_BUILD_GUI": "OFF",
+        "MINEBACKUP_BUILD_CLI": "ON",
+        "MINEBACKUP_ENABLE_V15_MIGRATION": "OFF"
       }
     },
     {
@@ -39,6 +63,20 @@
         "CMAKE_OSX_DEPLOYMENT_TARGET": "15.0",
         "MINEBACKUP_ENABLE_V15_MIGRATION": "ON"
       }
+    },
+    {
+      "name": "macos-arm64-cli-only",
+      "displayName": "macOS arm64 CLI only",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/macos-arm64-cli-only",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "15.0",
+        "MINEBACKUP_BUILD_GUI": "OFF",
+        "MINEBACKUP_BUILD_CLI": "ON",
+        "MINEBACKUP_ENABLE_V15_MIGRATION": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -50,6 +88,11 @@
     {
       "name": "windows-msvc-x64-no-v15-release",
       "configurePreset": "windows-msvc-x64-no-v15",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-x64-cli-only-release",
+      "configurePreset": "windows-msvc-x64-cli-only",
       "configuration": "Release"
     }
   ],
@@ -67,13 +110,30 @@
       "output": { "outputOnFailure": true }
     },
     {
+      "name": "windows-msvc-x64-cli-only-release",
+      "configurePreset": "windows-msvc-x64-cli-only",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
       "name": "linux-x64",
       "configurePreset": "linux-x64",
       "output": { "outputOnFailure": true }
     },
     {
+      "name": "linux-x64-cli-only",
+      "configurePreset": "linux-x64-cli-only",
+      "output": { "outputOnFailure": true }
+    },
+    {
       "name": "macos-arm64",
       "configurePreset": "macos-arm64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-arm64-cli-only",
+      "configurePreset": "macos-arm64-cli-only",
       "configuration": "Release",
       "output": { "outputOnFailure": true }
     }

@@ -1,42 +1,46 @@
 # Authoritative explicit source manifest. Keep paths grouped by architectural role.
 set(MINEBACKUP_MAIN_SOURCES ${MINEBACKUP_APP_DIR}/MineBackup.cpp)
+set(MINEBACKUP_CLI_SOURCES ${MINEBACKUP_SRC_DIR}/cli/CliMain.cpp)
 
 set(MINEBACKUP_DATA_CORE_SOURCES
-    ${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
     ${MINEBACKUP_INFRA_DIR}/AppPaths.cpp
     ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.cpp
     ${MINEBACKUP_INFRA_DIR}/DiagnosticLogExporter.cpp
-    ${MINEBACKUP_INFRA_DIR}/SingleInstanceService.cpp
     ${MINEBACKUP_INFRA_DIR}/LegacyLocationDiscovery.cpp
     ${MINEBACKUP_INFRA_DIR}/LegacyLocationMigration.cpp
-    ${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.cpp
     ${MINEBACKUP_INFRA_DIR}/Logging.cpp
     ${MINEBACKUP_INFRA_DIR}/ProcessRunner.cpp
     ${MINEBACKUP_INFRA_DIR}/ReadOnlyMappedFile.cpp
-    ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.cpp
     ${MINEBACKUP_INFRA_DIR}/KnotLinkPackageManager.cpp
     ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.cpp
     ${MINEBACKUP_INFRA_DIR}/NetworkService.cpp
     ${MINEBACKUP_INFRA_DIR}/Sha256.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.cpp
-    ${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.cpp
     ${MINEBACKUP_CORE_DIR}/ArchiveRunner.cpp
     ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.cpp
     ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.cpp
     ${MINEBACKUP_CORE_DIR}/PathRuleSet.cpp
     ${MINEBACKUP_CORE_DIR}/RcloneClient.cpp
-    ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.cpp
-    ${MINEBACKUP_CORE_DIR}/TaskCoordinator.cpp
     ${MINEBACKUP_CORE_DIR}/RemoteContentService.cpp
     ${MINEBACKUP_CORE_DIR}/ExternalToolManager.cpp
     ${MINEBACKUP_CORE_DIR}/PortableConfigDocument.cpp
     ${MINEBACKUP_CORE_DIR}/SpecialConfigPolicy.cpp
-	${MINEBACKUP_CORE_DIR}/SpecialTaskDocument.cpp
     ${MINEBACKUP_CORE_DIR}/LegacyServicePolicy.cpp
     ${MINEBACKUP_UTILS_DIR}/FileName.cpp
     ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp
+)
+
+set(MINEBACKUP_RUNTIME_SOURCES
+	${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
+	${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
+	${MINEBACKUP_CORE_DIR}/MigrationCoordinator.cpp
+	${MINEBACKUP_CORE_DIR}/SpecialTaskDocument.cpp
+	${MINEBACKUP_CORE_DIR}/TaskCoordinator.cpp
+	${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.cpp
+	${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.cpp
+	${MINEBACKUP_INFRA_DIR}/SingleInstanceService.cpp
 )
 
 set(MINEBACKUP_V15_DATA_SOURCES
