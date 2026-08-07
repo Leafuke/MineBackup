@@ -3,7 +3,7 @@
 #define _BACKUP_MANAGER_H
 #include <filesystem>
 #include <atomic>
-#include "AppState.h"
+#include "DataModels.h"
 
 enum class BackupOutcome {
 	Created,

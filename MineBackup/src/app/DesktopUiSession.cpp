@@ -5,6 +5,7 @@
 #include "IconsFontAwesome6.h"
 #include "Logging.h"
 #include "MainUI.h"
+#include "PlatformCompat.h"
 #include "SettingsUI.h"
 #include "i18n.h"
 #include "imgui-all.h"

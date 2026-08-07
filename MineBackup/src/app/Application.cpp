@@ -171,7 +171,9 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		return 6;
 	}
 	AppPaths appPaths;
-	if (!ResolveAppPaths(launchOptions, GetExecutablePath(), appPaths, launchError)) {
+	if (!ResolveAppPaths(
+			AppPathRequest{launchOptions.dataDirectory},
+			GetExecutablePath(), appPaths, launchError)) {
 		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
 		return 2;
 	}

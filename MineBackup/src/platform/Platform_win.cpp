@@ -1,6 +1,7 @@
 ﻿#define GLFW_EXPOSE_NATIVE_WIN32
 #include <dwmapi.h>
 #include "Platform_win.h"
+#include "PlatformCompat.h"
 #include "text_to_text.h"
 #include "AppState.h"
 #include "AppPaths.h"

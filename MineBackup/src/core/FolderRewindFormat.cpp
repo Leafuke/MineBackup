@@ -1,4 +1,5 @@
 #include "FolderRewindFormat.h"
+#include "PlatformCompat.h"
 
 #include "text_to_text.h"
 

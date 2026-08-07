@@ -1,6 +1,7 @@
 #include "V15MigrationAdapter.h"
 
 #include "AtomicFileWriter.h"
+#include "AppState.h"
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"

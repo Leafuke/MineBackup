@@ -1,8 +1,7 @@
 #pragma once
 
-#include "LaunchOptions.h"
-
 #include <filesystem>
+#include <optional>
 #include <string>
 
 enum class AppPathMode {
@@ -28,9 +27,13 @@ struct AppPaths {
     std::filesystem::path HistoryFile() const { return dataRoot / L"history.json"; }
 };
 
+struct AppPathRequest {
+    std::optional<std::filesystem::path> dataDirectory;
+};
+
 std::filesystem::path GetExecutablePath();
 bool ResolveAppPaths(
-    const LaunchOptions& options,
+	const AppPathRequest& request,
     const std::filesystem::path& executablePath,
     AppPaths& paths,
     std::wstring& error);

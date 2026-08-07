@@ -10,6 +10,7 @@
 #include "Globals.h"
 #include "Logging.h"
 #include "PathRuleSet.h"
+#include "PlatformCompat.h"
 #include "TaskCoordinator.h"
 #include "text_to_text.h"
 #include "i18n.h"

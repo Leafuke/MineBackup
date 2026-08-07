@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "GameSessionManager.h"
 #include "HistoryManager.h"
+#include "PlatformCompat.h"
 #include "TaskCoordinator.h"
 #include "i18n.h"
 #include "imgui-all.h"

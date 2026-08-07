@@ -26,6 +26,7 @@
 #include "LogPanel.h"
 #include "Logging.h"
 #include "RemoteContentService.h"
+#include "PlatformCompat.h"
 #include "SpecialConfigPolicy.h"
 #include "TaskCoordinator.h"
 

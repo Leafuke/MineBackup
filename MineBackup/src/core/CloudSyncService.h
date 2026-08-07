@@ -2,7 +2,7 @@
 #ifndef _CLOUD_SYNC_SERVICE_H
 #define _CLOUD_SYNC_SERVICE_H
 
-#include "AppState.h"
+#include "DataModels.h"
 #include "PortableConfigDocument.h"
 
 #include <map>

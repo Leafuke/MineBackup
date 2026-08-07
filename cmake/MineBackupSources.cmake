@@ -2,9 +2,7 @@
 set(MINEBACKUP_MAIN_SOURCES ${MINEBACKUP_APP_DIR}/MineBackup.cpp)
 
 set(MINEBACKUP_DATA_CORE_SOURCES
-    ${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
     ${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
-	${MINEBACKUP_APP_DIR}/DesktopUiLifecycle.cpp
     ${MINEBACKUP_INFRA_DIR}/AppPaths.cpp
     ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.cpp
     ${MINEBACKUP_INFRA_DIR}/DiagnosticLogExporter.cpp
@@ -20,7 +18,6 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.cpp
     ${MINEBACKUP_INFRA_DIR}/NetworkService.cpp
     ${MINEBACKUP_INFRA_DIR}/Sha256.cpp
-    ${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.cpp
     ${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
@@ -38,8 +35,6 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_CORE_DIR}/SpecialConfigPolicy.cpp
 	${MINEBACKUP_CORE_DIR}/SpecialTaskDocument.cpp
     ${MINEBACKUP_CORE_DIR}/LegacyServicePolicy.cpp
-    ${MINEBACKUP_UI_DIR}/HistoryViewModel.cpp
-    ${MINEBACKUP_UI_DIR}/WorldListModel.cpp
     ${MINEBACKUP_UTILS_DIR}/FileName.cpp
     ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp
 )
@@ -58,9 +53,11 @@ set(MINEBACKUP_APPLICATION_SOURCES
     ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.cpp
     ${MINEBACKUP_APP_DIR}/AppearanceRuntime.cpp
 	${MINEBACKUP_APP_DIR}/DesktopUiSession.cpp
+	${MINEBACKUP_APP_DIR}/DesktopUiLifecycle.cpp
     ${MINEBACKUP_APP_DIR}/AppState.cpp
     ${MINEBACKUP_APP_DIR}/Globals.cpp
     ${MINEBACKUP_APP_DIR}/ImGuiRuntime.cpp
+	${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
 	${MINEBACKUP_APP_DIR}/legacy/LegacyServiceCleanup.cpp
     ${MINEBACKUP_CORE_DIR}/BackupManager.cpp
     ${MINEBACKUP_CORE_DIR}/BackupAuxiliary.cpp
@@ -78,12 +75,14 @@ set(MINEBACKUP_APPLICATION_SOURCES
     ${MINEBACKUP_INFRA_DIR}/KnotLinkServerManager.cpp
     ${MINEBACKUP_INFRA_DIR}/KnotLinkService.cpp
     ${MINEBACKUP_INFRA_DIR}/i18n.cpp
+	${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
 )
 
 set(MINEBACKUP_UI_SOURCES
     ${MINEBACKUP_UI_DIR}/CommandConsole.cpp
     ${MINEBACKUP_UI_DIR}/HistoryDialogs.cpp
     ${MINEBACKUP_UI_DIR}/HistoryUI.cpp
+	${MINEBACKUP_UI_DIR}/HistoryViewModel.cpp
     ${MINEBACKUP_UI_DIR}/LogPanel.cpp
     ${MINEBACKUP_UI_DIR}/MigrationReportUI.cpp
     ${MINEBACKUP_UI_DIR}/SettingsUI.cpp
@@ -94,6 +93,7 @@ set(MINEBACKUP_UI_SOURCES
     ${MINEBACKUP_UI_DIR}/WizardUI.cpp
     ${MINEBACKUP_UI_DIR}/MainUI.cpp
     ${MINEBACKUP_UI_DIR}/WorldListController.cpp
+	${MINEBACKUP_UI_DIR}/WorldListModel.cpp
     ${MINEBACKUP_UI_DIR}/WorldListUI.cpp
 )
 

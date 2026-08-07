@@ -5,8 +5,9 @@
 // 核心数据模型定义：Config, SpecialConfig, HistoryEntry, DisplayWorld 等
 // 所有业务数据结构集中定义在此处
 
-#include "PlatformCompat.h"
 #include "SpecialTaskModels.h"
+#include <chrono>
+#include <cstdio>
 #include <vector>
 #include <string>
 #include <map>
@@ -16,6 +17,7 @@
 #include <condition_variable>
 #include <memory>
 #include <ctime>
+#include <tuple>
 
 // 结构体们
 struct Config {

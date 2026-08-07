@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "Logging.h"
 #include "PortableConfigDocument.h"
+#include "PlatformCompat.h"
 #include "Sha256.h"
 #include "i18n.h"
 #include "text_to_text.h"

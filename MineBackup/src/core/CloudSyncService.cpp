@@ -1,6 +1,7 @@
 
 #include "CloudSyncService.h"
 #include "CloudSyncInternal.h"
+#include "AppState.h"
 
 #include "ConfigManager.h"
 #include "AppPaths.h"

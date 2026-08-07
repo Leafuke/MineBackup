@@ -305,6 +305,8 @@ if(BUILD_TESTING)
 
     add_executable(minebackup_data_tests
         tests/TestMain.cpp
+		${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
+		${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
         tests/BackupPipelineTest.cpp
         tests/CloudSyncTests.cpp
         tests/HistoryRepositoryTests.cpp
@@ -323,7 +325,7 @@ if(BUILD_TESTING)
     add_test(NAME minebackup.data_core COMMAND minebackup_data_tests)
 
     add_executable(minebackup_ui_model_tests tests/UiModelTests.cpp)
-    target_link_libraries(minebackup_ui_model_tests PRIVATE minebackup_data_core)
+    target_link_libraries(minebackup_ui_model_tests PRIVATE minebackup_desktop)
     if(MSVC)
         target_compile_options(minebackup_ui_model_tests PRIVATE /utf-8 /FS)
     endif()

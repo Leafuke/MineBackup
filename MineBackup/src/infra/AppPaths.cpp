@@ -214,7 +214,7 @@ filesystem::path GetExecutablePath() {
 #endif
 }
 
-bool ResolveAppPaths(const LaunchOptions& options, const filesystem::path& requestedExecutablePath,
+bool ResolveAppPaths(const AppPathRequest& request, const filesystem::path& requestedExecutablePath,
     AppPaths& paths, wstring& error) {
     paths = {};
     error.clear();
@@ -226,12 +226,12 @@ bool ResolveAppPaths(const LaunchOptions& options, const filesystem::path& reque
     }
     paths.resourcesRoot = ResourcesRootFor(executablePath);
 
-    if (options.dataDirectory) {
-        if (!options.dataDirectory->is_absolute()) {
+    if (request.dataDirectory) {
+        if (!request.dataDirectory->is_absolute()) {
             error = L"--data-dir must be an absolute profile directory.";
             return false;
         }
-        const auto root = NormalizeAbsolute(*options.dataDirectory, fileError);
+        const auto root = NormalizeAbsolute(*request.dataDirectory, fileError);
         if (fileError || root.empty()) {
             error = L"--data-dir could not be resolved.";
             return false;
