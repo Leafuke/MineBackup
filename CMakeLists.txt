@@ -308,6 +308,7 @@ if(BUILD_TESTING)
         tests/BackupPipelineTest.cpp
         tests/CloudSyncTests.cpp
         tests/HistoryRepositoryTests.cpp
+        tests/LegacyIniConfigCodecTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
         tests/RuntimeInfrastructureTests.cpp)

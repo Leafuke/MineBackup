@@ -1,4 +1,5 @@
 #include "ConfigManager.h"
+#include "AppState.h"
 #include "Globals.h"
 
 #include <chrono>
@@ -91,6 +92,34 @@ int main() {
 		&& std::filesystem::path(Fontss) == font && g_uiScale == 1.0f
 		&& !g_uiScaleMigrationPending,
 		"global appearance round-trips without a second migration");
+
+	const std::filesystem::path malformed = root / "malformed.ini";
+	{
+		std::ofstream output(malformed, std::ios::binary);
+		output << "[General]\n"
+			<< "Language=x\n"
+			<< "WindowWidth=not-a-number\n"
+			<< "[Config2]\n"
+			<< "ConfigName=Broken\n"
+			<< "ConfigId=11111111-1111-1111-1111-111111111111\n"
+			<< "ZipLevel=invalid\n"
+			<< "[SpCfg3]\n"
+			<< "Name=Broken task\n"
+			<< "SpecialConfigId=22222222-2222-2222-2222-222222222222\n"
+			<< "UnifiedTask=1,name,with,comma,0,0,0,1,2,0,0,15,0,0,0,0\n";
+	}
+	bool malformedThrew = false;
+	try {
+		LoadConfigs(malformed);
+	}
+	catch (...) {
+		malformedThrew = true;
+	}
+	Check(!malformedThrew, "malformed INI values do not escape as exceptions");
+	Check(LastConfigLoadHasFatalDiagnostics(),
+		"malformed operational INI values produce fatal diagnostics");
+	Check(!GetLastConfigLoadDiagnostics().empty(),
+		"malformed INI diagnostics retain source context");
 
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {

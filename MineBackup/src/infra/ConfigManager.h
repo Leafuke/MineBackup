@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "LegacyIniConfigCodec.h"
 void LoadConfigs();
 void LoadConfigs(const std::filesystem::path& filename);
 bool SaveConfigs();
@@ -22,4 +23,6 @@ void EnsureDefaultBackupBlacklist(std::vector<std::wstring>& blacklist);
 void EnsureDefaultRestoreWhitelist();
 void FinalizeUiScaleMigration(float primaryDpiScale);
 void CheckForConfigConflicts();
+const std::vector<LegacyIniConfigCodec::Diagnostic>& GetLastConfigLoadDiagnostics();
+bool LastConfigLoadHasFatalDiagnostics();
 #endif // CONFIG_MANAGER_H

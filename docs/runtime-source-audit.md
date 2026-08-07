@@ -121,6 +121,8 @@
 | `MineBackup/src/infra/KnotLinkServerManager.h` | split | 监听/握手进 runtime，桌面状态适配留 desktop |
 | `MineBackup/src/infra/KnotLinkService.cpp` | split | 监听/握手进 runtime，桌面状态适配留 desktop |
 | `MineBackup/src/infra/KnotLinkService.h` | split | 监听/握手进 runtime，桌面状态适配留 desktop |
+| `MineBackup/src/infra/LegacyIniConfigCodec.cpp` | data_core | 安全解析旧 INI 标量并生成结构化诊断 |
+| `MineBackup/src/infra/LegacyIniConfigCodec.h` | data_core | 安全解析旧 INI 标量并生成结构化诊断 |
 | `MineBackup/src/infra/LegacyLocationDiscovery.cpp` | legacy-desktop | 仅 GUI 启动兼容路径使用 |
 | `MineBackup/src/infra/LegacyLocationDiscovery.h` | legacy-desktop | 仅 GUI 启动兼容路径使用 |
 | `MineBackup/src/infra/LegacyLocationMigration.cpp` | legacy-desktop | 仅 GUI 启动兼容路径使用 |

@@ -8,6 +8,7 @@
 #include "SpecialConfigPolicy.h"
 #include "Globals.h"
 #include "Logging.h"
+#include "LegacyIniConfigCodec.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "PlatformCompat.h"
@@ -19,7 +20,46 @@
 #include <cmath>
 #include <set>
 #include <optional>
+#include <limits>
 using namespace std;
+
+namespace {
+
+vector<LegacyIniConfigCodec::Diagnostic> g_configLoadDiagnostics;
+
+void RecordConfigDiagnostic(
+	LegacyIniConfigCodec::DiagnosticSeverity severity,
+	size_t line,
+	const wstring& section,
+	const wstring& key,
+	const string& detail) {
+	const char* eventId = severity == LegacyIniConfigCodec::DiagnosticSeverity::Fatal
+		? "config.parse.invalid_operational_value"
+		: "config.parse.invalid_optional_value";
+	g_configLoadDiagnostics.push_back({severity, line, section, key, eventId, detail});
+	const string sectionUtf8 = wstring_to_utf8(section);
+	const string keyUtf8 = wstring_to_utf8(key);
+	if (severity == LegacyIniConfigCodec::DiagnosticSeverity::Fatal) {
+		MB_LOG_ERROR(minebackup::logging::LogCategory::Migration, eventId,
+			"Invalid configuration value at line {} [{}] {}: {}",
+			line, sectionUtf8, keyUtf8, detail);
+	}
+	else {
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Migration, eventId,
+			"Invalid optional configuration value at line {} [{}] {}: {}",
+			line, sectionUtf8, keyUtf8, detail);
+	}
+}
+
+} // namespace
+
+const vector<LegacyIniConfigCodec::Diagnostic>& GetLastConfigLoadDiagnostics() {
+	return g_configLoadDiagnostics;
+}
+
+bool LastConfigLoadHasFatalDiagnostics() {
+	return LegacyIniConfigCodec::HasFatalDiagnostics(g_configLoadDiagnostics);
+}
 
 static wstring GetDefaultFontPath() {
 #ifdef _WIN32
@@ -190,6 +230,7 @@ void LoadConfigs() {
 
 void LoadConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
+	g_configLoadDiagnostics.clear();
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
 	g_appState.specialConfigMode = false;
@@ -225,8 +266,10 @@ void LoadConfigs(const filesystem::path& filename) {
 	// cur作为一个指针，指向 g_appState.configs 这个全局 map<int, Config> 中的元素 Config
 	Config* cur = nullptr;
 	SpecialConfig* spCur = nullptr;
+	size_t lineNumber = 0;
 
 	while (getline(in, line1)) {
+		++lineNumber;
 		line = utf8_to_wstring(line1);
 		if (line.empty() || line.front() == L'#') continue;
 		if (line.front() == L'[' && line.back() == L']') {
@@ -234,12 +277,28 @@ void LoadConfigs(const filesystem::path& filename) {
 			spCur = nullptr;
 			cur = nullptr;
 			if (section.find(L"Config", 0) == 0) {
-				int idx = stoi(section.substr(6));
+				int idx = 0;
+				if (!LegacyIniConfigCodec::TryParseInt(
+						section.substr(6), 1, (numeric_limits<int>::max)(), idx)) {
+					RecordConfigDiagnostic(
+						LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+						lineNumber, section, L"section", "invalid Config section index");
+					section.clear();
+					continue;
+				}
 				g_appState.configs[idx] = Config();
 				cur = &g_appState.configs[idx];
 			}
 			else if (section.find(L"SpCfg", 0) == 0) {
-				int idx = stoi(section.substr(5));
+				int idx = 0;
+				if (!LegacyIniConfigCodec::TryParseInt(
+						section.substr(5), 1, (numeric_limits<int>::max)(), idx)) {
+					RecordConfigDiagnostic(
+						LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+						lineNumber, section, L"section", "invalid SpCfg section index");
+					section.clear();
+					continue;
+				}
 				g_appState.specialConfigs[idx] = SpecialConfig();
 				spCur = &g_appState.specialConfigs[idx];
 			}
@@ -249,6 +308,32 @@ void LoadConfigs(const filesystem::path& filename) {
 			if (pos == wstring::npos) continue;
 			wstring key = line.substr(0, pos);
 			wstring val = line.substr(pos + 1);
+			auto readInt = [&](int& target, int minimum, int maximum, bool fatal) {
+				int parsed = 0;
+				if (LegacyIniConfigCodec::TryParseInt(val, minimum, maximum, parsed)) {
+					target = parsed;
+					return true;
+				}
+				RecordConfigDiagnostic(
+					fatal ? LegacyIniConfigCodec::DiagnosticSeverity::Fatal
+						: LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+					lineNumber, section, key,
+					"expected an integer in the supported range");
+				return false;
+			};
+			auto readFloat = [&](float& target, float minimum, float maximum, bool fatal) {
+				float parsed = 0.0f;
+				if (LegacyIniConfigCodec::TryParseFloat(val, minimum, maximum, parsed)) {
+					target = parsed;
+					return true;
+				}
+				RecordConfigDiagnostic(
+					fatal ? LegacyIniConfigCodec::DiagnosticSeverity::Fatal
+						: LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+					lineNumber, section, key,
+					"expected a finite number in the supported range");
+				return false;
+			};
 
 			if (cur) { // Inside a [ConfigN] section
 				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
@@ -259,53 +344,74 @@ void LoadConfigs(const filesystem::path& filename) {
 				}
 				else if (key == L"WorldData") {
 					while (getline(in, line1) && line1 != "*") {
+						++lineNumber;
 						line = utf8_to_wstring(line1);
 						wstring name = line;
-						if (!getline(in, line1) || line1 == "*") break;
+						if (!getline(in, line1)) {
+							RecordConfigDiagnostic(
+								LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+								lineNumber, section, key, "truncated WorldData entry");
+							break;
+						}
+						++lineNumber;
+						if (line1 == "*") {
+							RecordConfigDiagnostic(
+								LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+								lineNumber, section, key, "world description is missing");
+							break;
+						}
 						line = utf8_to_wstring(line1);
 						wstring desc = line;
 						cur->worlds.push_back({ name, desc });
 					}
 					if (filesystem::exists(cur->saveRoot)) {
-						for (auto& entry : filesystem::directory_iterator(cur->saveRoot)) {
+						error_code scanError;
+						for (filesystem::directory_iterator it(cur->saveRoot, scanError), end;
+							!scanError && it != end; it.increment(scanError)) {
+							const auto& entry = *it;
 							if (entry.is_directory() && IsWorldNameAvailable(entry.path().filename().wstring(), cur->worlds))
 								cur->worlds.push_back({ entry.path().filename().wstring(), L"" });
+						}
+						if (scanError) {
+							RecordConfigDiagnostic(
+								LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+								lineNumber, section, key, "world directory scan failed");
 						}
 					}
 				}
 				else if (key == L"BackupPath") cur->backupPath = val;
 				else if (key == L"ZipProgram") cur->zipPath = val;
 				else if (key == L"ZipFormat") cur->zipFormat = val;
-				else if (key == L"ZipLevel") cur->zipLevel = stoi(val);
+				else if (key == L"ZipLevel") readInt(cur->zipLevel, 0, 22, true);
 				else if (key == L"ZipMethod") cur->zipMethod = val;
-				else if (key == L"KeepCount") cur->keepCount = stoi(val);
-				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
+				else if (key == L"KeepCount") readInt(cur->keepCount, 0, 100000, true);
+				else if (key == L"SmartBackup") readInt(cur->backupMode, 0, 2, true);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
 				else if (key == L"SilenceMode") { /* ignored legacy setting */ }
-				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
+				else if (key == L"CpuThreads") readInt(cur->cpuThreads, 0, 1024, true);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
-				else if (key == L"MaxSmartBackups") cur->maxSmartBackupsPerFull = stoi(val);
+				else if (key == L"MaxSmartBackups") readInt(cur->maxSmartBackupsPerFull, 0, 100000, true);
 				else if (key == L"BackupOnStart") cur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") cur->blacklist.push_back(val);
 				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
 				else if (key == L"RclonePath") cur->rclonePath = val;
 				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
-				else if (key == L"CloudSyncMode") cur->cloudSyncMode = stoi(val);
+				else if (key == L"CloudSyncMode") readInt(cur->cloudSyncMode, 0, 1, true);
 				else if (key == L"CloudWorkingDirectory") cur->cloudWorkingDirectory = val;
-				else if (key == L"CloudTimeoutSeconds") cur->cloudTimeoutSeconds = stoi(val);
-				else if (key == L"CloudRetryCount") cur->cloudRetryCount = stoi(val);
+				else if (key == L"CloudTimeoutSeconds") readInt(cur->cloudTimeoutSeconds, 1, 86400, true);
+				else if (key == L"CloudRetryCount") readInt(cur->cloudRetryCount, 0, 100, true);
 				else if (key == L"CloudSyncHistoryAfterUpload") cur->cloudSyncHistoryAfterUpload = (val != L"0");
 				else if (key == L"CloudAutoDownloadBeforeRestore") cur->cloudAutoDownloadBeforeRestore = (val != L"0");
 				else if (key == L"CloudLastRunUtc") cur->cloudLastRunUtc = val;
-				else if (key == L"CloudLastExitCode") cur->cloudLastExitCode = stoi(val);
+				else if (key == L"CloudLastExitCode") readInt(cur->cloudLastExitCode, (numeric_limits<int>::min)(), (numeric_limits<int>::max)(), false);
 				else if (key == L"CloudLastErrorMessage") cur->cloudLastErrorMessage = val;
 				else if (key == L"SnapshotPath") cur->snapshotPath = val;
 				else if (key == L"OtherPath") cur->othersPath = val;
 				else if (key == L"EnableWEIntegration") cur->enableWEIntegration = (val != L"0");
 				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
 				else if (key == L"Theme") {
-					cur->theme = stoi(val);
+					readInt(cur->theme, -1, 32, false);
 				}
 				else if (key == L"Font") {
 					cur->fontPath = val;
@@ -318,49 +424,86 @@ void LoadConfigs(const filesystem::path& filename) {
 					spCur->autoExecute = (val != L"0");
 				}
 				else if (key == L"ExitAfter") spCur->exitAfterExecution = (val != L"0");
-				else if (key == L"Theme") spCur->theme = stoi(val);
+				else if (key == L"Theme") readInt(spCur->theme, -1, 32, false);
 				else if (key == L"HideWindow") spCur->hideWindow = (val != L"0");
 				else if (key == L"RunOnStartup") spCur->runOnStartup = (val != L"0");
 				else if (key == L"Command") spCur->commands.push_back(val);
 				else if (key == L"AutoBackupTask") {
-					wstringstream ss(val);
-					AutomatedTask task;
-					wchar_t delim;
-					ss >> task.configIndex >> delim >> task.worldIndex >> delim >> task.backupType >> delim >> task.intervalMinutes >> delim >> task.schedMonth >> delim >> task.schedDay >> delim >> task.schedHour >> delim >> task.schedMinute;
-					spCur->tasks.push_back(task);
+					const auto tokens = LegacyIniConfigCodec::Split(val, L',');
+					int values[8]{};
+					const pair<int, int> ranges[8] = {
+						{-1, (numeric_limits<int>::max)()}, {-1, (numeric_limits<int>::max)()},
+						{0, 2}, {1, 525600}, {0, 12}, {0, 31}, {0, 23}, {0, 59}};
+					bool valid = tokens.size() == 8;
+					for (size_t index = 0; valid && index < tokens.size(); ++index) {
+						valid = LegacyIniConfigCodec::TryParseInt(
+							tokens[index], ranges[index].first, ranges[index].second, values[index]);
+					}
+					if (!valid) {
+						RecordConfigDiagnostic(
+							LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+							lineNumber, section, key,
+							"expected exactly 8 valid comma-separated task fields");
+					}
+					else {
+						AutomatedTask task;
+						task.configIndex = values[0];
+						task.worldIndex = values[1];
+						task.backupType = values[2];
+						task.intervalMinutes = values[3];
+						task.schedMonth = values[4];
+						task.schedDay = values[5];
+						task.schedHour = values[6];
+						task.schedMinute = values[7];
+						spCur->tasks.push_back(std::move(task));
+					}
 				}
-				else if (key == L"ZipLevel") spCur->zipLevel = stoi(val);
-				else if (key == L"KeepCount") spCur->keepCount = stoi(val);
-				else if (key == L"CpuThreads") spCur->cpuThreads = stoi(val);
+				else if (key == L"ZipLevel") readInt(spCur->zipLevel, 0, 22, true);
+				else if (key == L"KeepCount") readInt(spCur->keepCount, 0, 100000, true);
+				else if (key == L"CpuThreads") readInt(spCur->cpuThreads, 0, 1024, true);
 				else if (key == L"UseLowPriority") spCur->useLowPriority = (val != L"0");
 				else if (key == L"BackupOnStart") spCur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
 				// 新版统一任务系统
 				else if (key == L"UnifiedTask") {
-					wstringstream ss(val);
-					wstring token;
-					UnifiedTaskV2 task;
-					int idx = 0;
-					while (getline(ss, token, L',')) {
-						switch (idx++) {
-							case 0: task.id = stoi(token); break;
-							case 1: task.name = wstring_to_utf8(token); break;
-							case 2: task.type = static_cast<TaskTypeV2>(stoi(token)); break;
-							case 3: task.executionMode = static_cast<TaskExecMode>(stoi(token)); break;
-							case 4: task.triggerMode = static_cast<TaskTrigger>(stoi(token)); break;
-							case 5: task.enabled = (stoi(token) != 0); break;
-							case 6: task.configIndex = stoi(token); break;
-							case 7: task.worldIndex = stoi(token); break;
-							case 8: task.command = token; break;
-							case 9: task.workingDirectory = token; break;
-							case 10: task.intervalMinutes = stoi(token); break;
-							case 11: task.schedMonth = stoi(token); break;
-							case 12: task.schedDay = stoi(token); break;
-							case 13: task.schedHour = stoi(token); break;
-							case 14: task.schedMinute = stoi(token); break;
-						}
+					const auto tokens = LegacyIniConfigCodec::Split(val, L',');
+					int values[12]{};
+					const size_t numericIndices[12] = {0, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14};
+					const pair<int, int> ranges[12] = {
+						{0, (numeric_limits<int>::max)()}, {0, 2}, {0, 1}, {0, 2},
+						{0, 1}, {-1, (numeric_limits<int>::max)()}, {-1, (numeric_limits<int>::max)()},
+						{1, 525600}, {0, 12}, {0, 31}, {0, 23}, {0, 59}};
+					bool valid = tokens.size() == 15;
+					for (size_t index = 0; valid && index < 12; ++index) {
+						valid = LegacyIniConfigCodec::TryParseInt(
+							tokens[numericIndices[index]], ranges[index].first,
+							ranges[index].second, values[index]);
 					}
-					spCur->unifiedTasks.push_back(task);
+					if (!valid) {
+						RecordConfigDiagnostic(
+							LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+							lineNumber, section, key,
+							"expected exactly 15 valid comma-separated task fields");
+					}
+					else {
+						UnifiedTaskV2 task;
+						task.id = values[0];
+						task.name = wstring_to_utf8(tokens[1]);
+						task.type = static_cast<TaskTypeV2>(values[1]);
+						task.executionMode = static_cast<TaskExecMode>(values[2]);
+						task.triggerMode = static_cast<TaskTrigger>(values[3]);
+						task.enabled = values[4] != 0;
+						task.configIndex = values[5];
+						task.worldIndex = values[6];
+						task.command = tokens[8];
+						task.workingDirectory = tokens[9];
+						task.intervalMinutes = values[7];
+						task.schedMonth = values[8];
+						task.schedDay = values[9];
+						task.schedHour = values[10];
+						task.schedMinute = values[11];
+						spCur->unifiedTasks.push_back(std::move(task));
+					}
 				}
 				// 服务模式配置
 				else if (key == L"UseServiceMode") spCur->useServiceMode = (val != L"0");
@@ -371,19 +514,26 @@ void LoadConfigs(const filesystem::path& filename) {
 			}
 			else if (section == L"General") { // Inside [General] section
 				if (key == L"CurrentConfig") {
-					g_appState.currentConfigIndex = stoi(val);
+					readInt(g_appState.currentConfigIndex, 1, (numeric_limits<int>::max)(), false);
 				}
 				else if (key == L"NextConfigId") {
-					nextConfigId = stoi(val);
+					readInt(nextConfigId, 2, (numeric_limits<int>::max)(), false);
 					int maxId = 0;
 					for (auto& kv : g_appState.configs) if (kv.first > maxId) maxId = kv.first;
 					for (auto& kv : g_appState.specialConfigs) if (kv.first > maxId) maxId = kv.first;
 					if (nextConfigId <= maxId) nextConfigId = maxId + 1;
 				}
 				else if (key == L"Language") {
-					if (val[2] == L'-')
+					if (val.size() >= 3 && val[2] == L'-')
 						val[2] = L'_';
-					SetLanguage(wstring_to_utf8(val));
+					if (val.size() >= 2) {
+						SetLanguage(wstring_to_utf8(val));
+					}
+					else {
+						RecordConfigDiagnostic(
+							LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+							lineNumber, section, key, "language identifier is too short");
+					}
 				}
 				else if (key == L"CheckForUpdates") {
 					g_CheckForUpdates = (val != L"0");
@@ -407,7 +557,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					isSafeDelete = (val != L"0");
 				}
 				else if (key == L"AutoBackupInterval") {
-					last_interval = stoi(val);
+					readInt(last_interval, 1, 525600, true);
 				}
 				else if (key == L"StopAutoBackupOnExit") {
 					g_StopAutoBackupOnExit = (val != L"0");
@@ -419,30 +569,28 @@ void LoadConfigs(const filesystem::path& filename) {
 					restoreWhitelist.push_back(val);
 				}
 				else if (key == L"WindowWidth") {
-					if (stoi(val) > 10) {
-						g_windowWidth = stoi(val);
-					}
+					readInt(g_windowWidth, 11, 32768, false);
 				}
 				else if (key == L"WindowHeight") {
-					if (stoi(val) > 10) {
-						g_windowHeight = stoi(val);
-					}
+					readInt(g_windowHeight, 11, 32768, false);
 				}
 				else if (key == L"UIScale") {
-					g_uiScale = stof(val);
-					configuredUiScaleFound = true;
+					configuredUiScaleFound = readFloat(g_uiScale, 0.25f, 4.0f, false);
 				}
 				else if (key == L"UIScaleMode") {
 					configuredUiScaleV2 = (val == L"UserMultiplierV2");
 				}
 				else if (key == L"AppearanceSchema") {
-					configuredAppearanceSchema = stoi(val);
+					int parsed = 1;
+					if (readInt(parsed, 1, 100, false)) configuredAppearanceSchema = parsed;
 				}
 				else if (key == L"Theme") {
-					configuredGlobalTheme = stoi(val);
+					int parsed = 0;
+					if (readInt(parsed, -1, 32, false)) configuredGlobalTheme = parsed;
 				}
 				else if (key == L"ThemeFallback") {
-					configuredThemeFallback = stoi(val);
+					int parsed = 0;
+					if (readInt(parsed, -1, 32, false)) configuredThemeFallback = parsed;
 				}
 				else if (key == L"Font") {
 					configuredGlobalFont = val;
@@ -451,10 +599,10 @@ void LoadConfigs(const filesystem::path& filename) {
 					g_AutoScanForWorlds = (val != L"0");
 				}
 				else if (key == L"HotkeyBackup") {
-					g_hotKeyBackupId = stoi(val);
+					readInt(g_hotKeyBackupId, 0, 100000, false);
 				}
 				else if (key == L"HotkeyRestore") {
-					g_hotKeyRestoreId = stoi(val);
+					readInt(g_hotKeyRestoreId, 0, 100000, false);
 				}
 				else if (key == L"LogFileLevel") {
 					configuredLogFileLevel = val;
@@ -481,7 +629,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					g_CoreValidationPassed.store(val != L"0");
 				}
 				else if (key == L"CloseAction") {
-					g_closeAction = stoi(val);
+					readInt(g_closeAction, 0, 2, false);
 				}
 				else if (key == L"RememberCloseAction") {
 					g_rememberCloseAction = (val != L"0");

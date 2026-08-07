@@ -210,6 +210,9 @@
     <ClCompile Include="src\infra\LegacyLocationMigration.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\LegacyIniConfigCodec.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\ProcessRunner.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -456,6 +459,9 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\LegacyLocationMigration.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\LegacyIniConfigCodec.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\ProcessRunner.h">
