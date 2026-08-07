@@ -28,7 +28,6 @@
 #include "RemoteContentService.h"
 #include "SpecialConfigPolicy.h"
 #include "TaskCoordinator.h"
-#include "TaskSystem.h"
 
 #include <algorithm>
 #include <chrono>

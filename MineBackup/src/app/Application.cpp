@@ -21,7 +21,7 @@
 #include "AppState.h"
 #include "AppPaths.h"
 #include "LaunchOptions.h"
-#include "TaskSystem.h"
+#include "legacy/LegacyServiceCleanup.h"
 #include "TaskCoordinator.h"
 #include "InterruptedTaskRecovery.h"
 #include "KnotLinkPackageManager.h"
@@ -153,7 +153,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	}
 	if (!launchOptions.legacyServiceCleanup.empty()) {
 		wstring cleanupError;
-		if (!TaskSystem::RemoveLegacyServiceAfterValidation(
+		if (!LegacyServiceCleanup::RemoveAfterValidation(
 				launchOptions.legacyServiceCleanup, cleanupError)) {
 			MessageBoxWin(L("LEGACY_SERVICE_CLEANUP_TITLE"),
 				wstring_to_utf8(cleanupError), 2);

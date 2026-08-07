@@ -40,6 +40,8 @@
 | `MineBackup/src/app/ImGuiRuntime.h` | desktop | 保留桌面生命周期或 UI 状态 |
 | `MineBackup/src/app/LaunchOptions.cpp` | desktop | 保留 GUI 参数；CLI 使用独立解析器 |
 | `MineBackup/src/app/LaunchOptions.h` | desktop | 保留 GUI 参数；CLI 使用独立解析器 |
+| `MineBackup/src/app/legacy/LegacyServiceCleanup.cpp` | legacy-desktop | 仅检查和卸载已验证的旧 Windows Service |
+| `MineBackup/src/app/legacy/LegacyServiceCleanup.h` | legacy-desktop | 不向 runtime 暴露服务控制 API |
 | `MineBackup/src/app/MainUI.h` | desktop | 保留桌面生命周期或 UI 状态 |
 | `MineBackup/src/app/MineBackup.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
 | `MineBackup/src/core/ArchiveRunner.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
@@ -97,8 +99,6 @@
 | `MineBackup/src/core/SpecialMode.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
 | `MineBackup/src/core/TaskCoordinator.cpp` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/TaskCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/TaskSystem.cpp` | delete/legacy | 删除重复任务模型；服务清理另建模块 |
-| `MineBackup/src/core/TaskSystem.h` | delete/legacy | 删除重复任务模型；服务清理另建模块 |
 | `MineBackup/src/core/V15MigrationAdapter.cpp` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
 | `MineBackup/src/core/V15MigrationAdapter.h` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
 | `MineBackup/src/infra/AppPaths.cpp` | data_core | 解耦 LaunchOptions 后保留 |

@@ -107,6 +107,7 @@
     <ClCompile Include="src\app\LaunchOptions.cpp" />
     <ClCompile Include="src\app\Globals.cpp" />
     <ClCompile Include="src\app\ImGuiRuntime.cpp" />
+	<ClCompile Include="src\app\legacy\LegacyServiceCleanup.cpp" />
     <ClCompile Include="src\app\MineBackup.cpp" />
     <ClCompile Include="src\core\ArchiveRunner.cpp" />
     <ClCompile Include="src\core\BackupChangeDetector.cpp" />
@@ -131,7 +132,6 @@
     <ClCompile Include="src\core\PathRuleSet.cpp" />
     <ClCompile Include="src\core\SpecialMode.cpp" />
 	<ClCompile Include="src\core\SpecialTaskDocument.cpp" />
-    <ClCompile Include="src\core\TaskSystem.cpp" />
     <ClCompile Include="src\core\TaskCoordinator.cpp" />
     <ClCompile Include="src\core\RemoteContentService.cpp" />
     <ClCompile Include="src\core\ExternalToolManager.cpp" />
@@ -207,6 +207,7 @@
     <ClInclude Include="src\app\ImGuiRuntime.h" />
     <ClInclude Include="src\app\LaunchOptions.h" />
     <ClInclude Include="src\app\MainUI.h" />
+	<ClInclude Include="src\app\legacy\LegacyServiceCleanup.h" />
     <ClInclude Include="src\core\ArchiveRunner.h" />
     <ClInclude Include="src\core\BackupChangeDetector.h" />
     <ClInclude Include="src\core\BackupManager.h" />
@@ -224,7 +225,6 @@
 	<ClInclude Include="src\core\V15MigrationAdapter.h" />
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\HistoryRepository.h" />
-    <ClInclude Include="src\core\TaskSystem.h" />
     <ClInclude Include="src\core\TaskCoordinator.h" />
     <ClInclude Include="src\core\RemoteContentService.h" />
     <ClInclude Include="src\core\ExternalToolManager.h" />

@@ -282,13 +282,13 @@ void DrawServiceSettings(SpecialConfig& spCfg) {
 	ImGui::Text("%s: %s", L("SERVICE_CONFIGURED_NAME"),
 		wstring_to_utf8(spCfg.serviceConfig.serviceName).c_str());
 	static wstring cachedServiceName;
-	static TaskSystem::LegacyServiceInspection cachedInspection;
+	static LegacyServiceCleanup::Inspection cachedInspection;
 	static auto inspectedAt = chrono::steady_clock::time_point{};
 	const auto now = chrono::steady_clock::now();
 	if (cachedServiceName != spCfg.serviceConfig.serviceName
 		|| now - inspectedAt >= chrono::seconds(2)) {
 		cachedServiceName = spCfg.serviceConfig.serviceName;
-		cachedInspection = TaskSystem::InspectLegacyService(cachedServiceName);
+		cachedInspection = LegacyServiceCleanup::Inspect(cachedServiceName);
 		inspectedAt = now;
 	}
 	const auto& inspection = cachedInspection;
@@ -296,7 +296,7 @@ void DrawServiceSettings(SpecialConfig& spCfg) {
 		ImGui::TextWrapped("%s: %s", L("SERVICE_IMAGE_PATH"),
 			wstring_to_utf8(inspection.imagePath).c_str());
 	}
-	if (inspection.state == TaskSystem::LegacyServiceState::NotInstalled) {
+	if (inspection.state == LegacyServiceCleanup::State::NotInstalled) {
 		ImGui::TextDisabled("%s", L("SERVICE_STATUS_NOT_INSTALLED"));
 	}
 	else if (inspection.CanRemove()) {
@@ -307,7 +307,7 @@ void DrawServiceSettings(SpecialConfig& spCfg) {
 				+ wstring_to_utf8(inspection.imagePath);
 			if (ConfirmMessageBox("MineBackup", prompt)) {
 				wstring error;
-				if (!TaskSystem::RequestElevatedLegacyServiceRemoval(
+				if (!LegacyServiceCleanup::RequestElevatedRemoval(
 						spCfg.serviceConfig.serviceName, error)) {
 					MessageBoxWin("MineBackup", wstring_to_utf8(error), 2);
 				}

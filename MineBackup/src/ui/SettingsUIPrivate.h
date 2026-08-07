@@ -3,7 +3,7 @@
 #include "Globals.h"
 #include "MainUI.h"
 #include "ConfigManager.h"
-#include "TaskSystem.h"
+#include "legacy/LegacyServiceCleanup.h"
 #include "i18n.h"
 #include "imgui-all.h"
 #include "text_to_text.h"
