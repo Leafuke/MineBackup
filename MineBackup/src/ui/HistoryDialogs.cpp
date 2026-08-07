@@ -15,19 +15,19 @@
 #include <algorithm>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 
 using namespace std;
 
 namespace {
-	HistoryEntry* ResolveHistoryEntry(int configIndex, const HistoryEntryKey& key) {
-		if (key.Empty()) return nullptr;
-		const auto history = g_appState.g_history.find(configIndex);
-		if (history == g_appState.g_history.end()) return nullptr;
-		for (HistoryEntry& entry : history->second) {
-			if (entry.worldName == key.worldName && entry.backupFile == key.backupFile) return &entry;
+	optional<HistoryEntry> ResolveHistoryEntry(int configIndex, const HistoryEntryKey& key) {
+		if (key.Empty()) return nullopt;
+		HistoryEntry entry;
+		if (!TryGetHistoryEntry(configIndex, key.worldName, key.backupFile, entry)) {
+			return nullopt;
 		}
-		return nullptr;
+		return entry;
 	}
 
 	void ConstrainHistoryPopup(const UiMetrics& metrics) {
@@ -80,7 +80,7 @@ void DrawHistoryDialogs(
 	ConstrainHistoryPopup(metrics);
 	if (ImGui::BeginPopupModal("##HistoryComment", nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
-		HistoryEntry* entry = ResolveHistoryEntry(lockedConfigIndex, commentKey);
+		auto entry = ResolveHistoryEntry(lockedConfigIndex, commentKey);
 		if (!entry) {
 			ImGui::TextWrapped("%s", L("HISTORY_ENTRY_DISAPPEARED"));
 			if (ImGui::Button(L("BUTTON_OK"))) ImGui::CloseCurrentPopup();
@@ -91,8 +91,12 @@ void DrawHistoryDialogs(
 			ImGui::InputTextMultiline("##Comment", commentBuffer,
 				IM_ARRAYSIZE(commentBuffer), ImVec2(0.0f, metrics.Em(8.0f)));
 			if (ImGui::Button(L("HISTORY_BUTTON_SAVE_COMMENT"))) {
-				entry->comment = utf8_to_wstring(commentBuffer);
-				SaveHistory();
+				const wstring comment = utf8_to_wstring(commentBuffer);
+				(void)UpdateHistoryEntry(
+					lockedConfigIndex,
+					entry->worldName,
+					entry->backupFile,
+					[comment](HistoryEntry& value) { value.comment = comment; });
 				ImGui::CloseCurrentPopup();
 			}
 			SameLineFits(L("BUTTON_CANCEL"));
@@ -104,7 +108,7 @@ void DrawHistoryDialogs(
 	ConstrainHistoryPopup(metrics);
 	if (ImGui::BeginPopupModal("##HistoryRestore", nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
-		HistoryEntry* entry = ResolveHistoryEntry(lockedConfigIndex, restoreKey);
+		auto entry = ResolveHistoryEntry(lockedConfigIndex, restoreKey);
 
 		auto& restoreMethod = controller.restoreMethod;
 		char (&customItems)[2048] = controller.customRestoreItems;
@@ -168,7 +172,7 @@ void DrawHistoryDialogs(
 	ConstrainHistoryPopup(metrics);
 	if (ImGui::BeginPopupModal(L("HISTORY_DELETE_POPUP_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
-		HistoryEntry* entry = ResolveHistoryEntry(lockedConfigIndex, deleteKey);
+		auto entry = ResolveHistoryEntry(lockedConfigIndex, deleteKey);
 		auto& deleteMode = controller.deleteMode;
 		auto& useSafeDelete = controller.useSafeDelete;
 		if (!entry) {

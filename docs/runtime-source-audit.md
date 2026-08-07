@@ -73,6 +73,8 @@
 | `MineBackup/src/core/GameSessionManager.h` | desktop | 保留桌面 watcher，调用 runtime 服务 |
 | `MineBackup/src/core/HistoryManager.cpp` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/HistoryManager.h` | runtime | 迁移为显式依赖的运行时服务 |
+| `MineBackup/src/core/HistoryRepository.cpp` | runtime | 线程安全历史存储与不可变快照 |
+| `MineBackup/src/core/HistoryRepository.h` | runtime | 线程安全历史存储与不可变快照 |
 | `MineBackup/src/core/LegacyMineBackup15Reader.cpp` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
 | `MineBackup/src/core/LegacyMineBackup15Reader.h` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
 | `MineBackup/src/core/LegacyServicePolicy.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
@@ -189,4 +191,3 @@
 | `MineBackup/src/utils/FileName.h` | data_core | 保留为纯工具 |
 | `MineBackup/src/utils/text_to_text.cpp` | data_core | 保留为纯工具 |
 | `MineBackup/src/utils/text_to_text.h` | data_core | 保留为纯工具 |
-

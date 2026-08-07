@@ -40,11 +40,11 @@ const char* HistoryStatusKey(HistoryFileStatus status) {
 	return "HISTORY_STATUS_MISSING";
 }
 
-HistoryEntry* ResolveHistoryEntry(int configIndex, const HistoryEntryKey& key) {
+const HistoryEntry* ResolveHistoryEntry(
+	const vector<HistoryEntry>& entries,
+	const HistoryEntryKey& key) {
 	if (key.Empty()) return nullptr;
-	const auto history = g_appState.g_history.find(configIndex);
-	if (history == g_appState.g_history.end()) return nullptr;
-	for (HistoryEntry& entry : history->second) {
+	for (const HistoryEntry& entry : entries) {
 		if (entry.worldName == key.worldName && entry.backupFile == key.backupFile) {
 			return &entry;
 		}
@@ -128,7 +128,8 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		return;
 	}
 	Config& config = configIt->second;
-	auto& entries = g_appState.g_history[lockedConfigIndex];
+	const auto entriesView = GetHistoryEntriesViewForConfig(lockedConfigIndex);
+	const auto& entries = *entriesView;
 	// 文件状态最多每秒扫描一次；筛选、详情和弹窗复用轻量索引行。
 	const vector<HistoryEntryView>& frameViews =
 		RefreshHistoryEntryViews(historyController, config, entries);
@@ -230,10 +231,17 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::TextWrapped("%s", L("HISTORY_CONFIRM_CLEAN_MSG"));
 		if (ImGui::Button(L("BUTTON_OK"))) {
-			RemoveUnavailableHistoryEntries(entries, frameViews);
-			SaveHistory();
+			vector<HistoryEntry> updatedEntries = entries;
+			RemoveUnavailableHistoryEntries(updatedEntries, frameViews);
+			(void)ReplaceHistoryEntriesForConfig(
+				lockedConfigIndex, std::move(updatedEntries));
 			historyController.InvalidateFileStatusCache();
-			if (!ResolveHistoryEntry(lockedConfigIndex, selectedKey)) {
+			HistoryEntry remainingSelection;
+			if (!TryGetHistoryEntry(
+					lockedConfigIndex,
+					selectedKey.worldName,
+					selectedKey.backupFile,
+					remainingSelection)) {
 				selectedKey = {};
 				narrowShowDetails = false;
 			}
@@ -269,7 +277,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 	const auto& filtered = FilterHistoryEntryViews(historyController, entries,
 		frameViews, worldFilter,
 		textFilter, static_cast<HistoryStatusFilter>(statusFilterIndex), importantOnly);
-	HistoryEntry* selectedEntry = ResolveHistoryEntry(lockedConfigIndex, selectedKey);
+	const HistoryEntry* selectedEntry = ResolveHistoryEntry(entries, selectedKey);
 	if (!selectedEntry) {
 		selectedKey = {};
 		narrowShowDetails = false;
@@ -445,7 +453,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		if (!layout.useSplitView && ImGui::Button(L("HISTORY_BACK_TO_LIST"))) {
 			narrowShowDetails = false;
 		}
-		selectedEntry = ResolveHistoryEntry(lockedConfigIndex, selectedKey);
+		selectedEntry = ResolveHistoryEntry(entries, selectedKey);
 		if (!selectedEntry) {
 			ImGui::TextWrapped("%s", L("HISTORY_SELECT_PROMPT"));
 		}
@@ -507,8 +515,12 @@ void ShowHistoryWindow(int requestedConfigIndex,
 				? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"));
 			if (ImGui::Button(selectedEntry->isImportant
 				? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
-				selectedEntry->isImportant = !selectedEntry->isImportant;
-				SaveHistory();
+				const bool important = !selectedEntry->isImportant;
+				(void)UpdateHistoryEntry(
+					lockedConfigIndex,
+					selectedEntry->worldName,
+					selectedEntry->backupFile,
+					[important](HistoryEntry& entry) { entry.isImportant = important; });
 			}
 			SameLineFits(L("HISTORY_EDIT_COMMENT"));
 			if (ImGui::Button(L("HISTORY_EDIT_COMMENT"))) {

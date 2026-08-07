@@ -22,6 +22,7 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.cpp
+    ${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.cpp
     ${MINEBACKUP_CORE_DIR}/ArchiveRunner.cpp
     ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.cpp
@@ -134,7 +135,7 @@ set(MINEBACKUP_SPDLOG_SOURCES
 set(MINEBACKUP_PUBLIC_HEADERS
     ${MINEBACKUP_APP_DIR}/Application.h ${MINEBACKUP_APP_DIR}/ApplicationActions.h ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.h ${MINEBACKUP_APP_DIR}/AppearanceRuntime.h ${MINEBACKUP_APP_DIR}/DesktopUiLifecycle.h ${MINEBACKUP_APP_DIR}/DesktopUiSession.h ${MINEBACKUP_APP_DIR}/AppState.h ${MINEBACKUP_APP_DIR}/ConfigSelection.h ${MINEBACKUP_APP_DIR}/DataModels.h ${MINEBACKUP_APP_DIR}/Globals.h ${MINEBACKUP_APP_DIR}/ImGuiRuntime.h ${MINEBACKUP_APP_DIR}/LaunchOptions.h ${MINEBACKUP_APP_DIR}/MainUI.h
     ${MINEBACKUP_CORE_DIR}/ArchiveRunner.h ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.h ${MINEBACKUP_CORE_DIR}/BackupManager.h ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.h ${MINEBACKUP_CORE_DIR}/CloudSyncInternal.h ${MINEBACKUP_CORE_DIR}/CloudSyncService.h
-    ${MINEBACKUP_CORE_DIR}/CoreValidation.h ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.h ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.h
+    ${MINEBACKUP_CORE_DIR}/CoreValidation.h ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.h ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.h ${MINEBACKUP_CORE_DIR}/HistoryRepository.h
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.h ${MINEBACKUP_CORE_DIR}/GameSessionManager.h ${MINEBACKUP_CORE_DIR}/HistoryManager.h ${MINEBACKUP_CORE_DIR}/LegacyMineBackup15Reader.h ${MINEBACKUP_CORE_DIR}/PathRuleSet.h
     ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.h ${MINEBACKUP_CORE_DIR}/V15MigrationAdapter.h ${MINEBACKUP_CORE_DIR}/TaskSystem.h ${MINEBACKUP_CORE_DIR}/TaskCoordinator.h ${MINEBACKUP_CORE_DIR}/RemoteContentService.h ${MINEBACKUP_CORE_DIR}/ExternalToolManager.h ${MINEBACKUP_CORE_DIR}/PortableConfigDocument.h ${MINEBACKUP_CORE_DIR}/RcloneClient.h ${MINEBACKUP_CORE_DIR}/SpecialConfigPolicy.h ${MINEBACKUP_CORE_DIR}/LegacyServicePolicy.h
     ${MINEBACKUP_INFRA_DIR}/AppPaths.h ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.h ${MINEBACKUP_INFRA_DIR}/DiagnosticLogExporter.h ${MINEBACKUP_INFRA_DIR}/Logging.h ${MINEBACKUP_INFRA_DIR}/SingleInstanceService.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationDiscovery.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationMigration.h ${MINEBACKUP_INFRA_DIR}/ProcessRunner.h ${MINEBACKUP_INFRA_DIR}/ReadOnlyMappedFile.h ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.h ${MINEBACKUP_INFRA_DIR}/KnotLinkPackageManager.h ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.h ${MINEBACKUP_INFRA_DIR}/KnotLinkServerManager.h ${MINEBACKUP_INFRA_DIR}/KnotLinkService.h ${MINEBACKUP_INFRA_DIR}/NetworkService.h ${MINEBACKUP_INFRA_DIR}/Sha256.h ${MINEBACKUP_INFRA_DIR}/Broadcast.h ${MINEBACKUP_INFRA_DIR}/ConfigManager.h ${MINEBACKUP_INFRA_DIR}/i18n.h

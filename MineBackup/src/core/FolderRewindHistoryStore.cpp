@@ -139,13 +139,28 @@ int ResolveConfigIndexByConfigId(const map<int, Config>& configs, const wstring&
 }
 
 bool LoadHistoryFile(const filesystem::path& path, const map<int, Config>& configs, map<int, vector<HistoryEntry>>& outHistory) {
+    HistoryByConfigId byConfigId;
+    if (!LoadHistoryFileByConfigId(path, configs, byConfigId)) return false;
+
+    map<int, vector<HistoryEntry>> loadedHistory;
+    for (auto& historyPair : byConfigId) {
+        const int configIndex = ResolveConfigIndexByConfigId(configs, historyPair.first);
+        if (configIndex >= 0) {
+            loadedHistory.emplace(configIndex, std::move(historyPair.second));
+        }
+    }
+    outHistory = std::move(loadedHistory);
+    return true;
+}
+
+bool LoadHistoryFileByConfigId(const filesystem::path& path, const map<int, Config>& configs, HistoryByConfigId& outHistory) {
     ifstream in(path, ios::binary);
     if (!in.is_open()) return false;
 
     const nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
     if (root.is_discarded() || !root.is_array()) return false;
 
-    map<int, vector<HistoryEntry>> loadedHistory;
+    HistoryByConfigId loadedHistory;
     const int inputItemCount = static_cast<int>(root.size());
     int parseableItemCount = 0;
     int mappedEntryCount = 0;
@@ -179,7 +194,8 @@ bool LoadHistoryFile(const filesystem::path& path, const map<int, Config>& confi
         else {
             entry.configId = configId;
         }
-        loadedHistory[configIndex].push_back(std::move(entry));
+        if (entry.configId.empty()) continue;
+        loadedHistory[entry.configId].push_back(std::move(entry));
         ++mappedEntryCount;
     }
 
@@ -195,16 +211,32 @@ bool LoadHistoryFile(const filesystem::path& path, const map<int, Config>& confi
 }
 
 bool SaveHistoryFile(const filesystem::path& path, const map<int, Config>& configs, const map<int, vector<HistoryEntry>>& history) {
+    HistoryByConfigId byConfigId;
+    for (const auto& historyPair : history) {
+        const auto configIt = configs.find(historyPair.first);
+        if (configIt == configs.end() || configIt->second.configId.empty()) continue;
+        byConfigId[configIt->second.configId] = historyPair.second;
+    }
+    return SaveHistoryFileByConfigId(path, configs, byConfigId);
+}
+
+bool SaveHistoryFileByConfigId(const filesystem::path& path, const map<int, Config>& configs, const HistoryByConfigId& history) {
     nlohmann::json root = nlohmann::json::array();
 
     for (const auto& historyPair : history) {
-        const auto configIt = configs.find(historyPair.first);
-        if (configIt == configs.end()) {
-            continue;
+        const Config* config = nullptr;
+        for (const auto& pair : configs) {
+            if (IsSameTextIgnoreCase(pair.second.configId, historyPair.first)) {
+                config = &pair.second;
+                break;
+            }
         }
+        Config fallbackConfig;
+        fallbackConfig.configId = historyPair.first;
+        if (!config) config = &fallbackConfig;
 
         for (const auto& entry : historyPair.second) {
-            root.push_back(SerializeHistoryItem(configIt->second, entry));
+            root.push_back(SerializeHistoryItem(*config, entry));
         }
     }
 

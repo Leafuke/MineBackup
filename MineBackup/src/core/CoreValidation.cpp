@@ -125,13 +125,7 @@ namespace {
 		ec.clear();
 		filesystem::remove_all(backupRoot / L"_metadata" / worldName, ec);
 
-		auto it = g_appState.g_history.find(kValidationConfigIndex);
-		if (it != g_appState.g_history.end()) {
-			auto& history = it->second;
-			history.erase(remove_if(history.begin(), history.end(), [&](const HistoryEntry& entry) {
-				return entry.worldName == worldName;
-			}), history.end());
-		}
+		(void)ClearHistoryEntriesForWorld(kValidationConfigIndex, worldName);
 	}
 
 	static string MakeNumericPayload(const string& label, int lineCount) {
@@ -148,15 +142,7 @@ namespace {
 	}
 
 	static vector<HistoryEntry> GetHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
-		vector<HistoryEntry> out;
-		auto it = g_appState.g_history.find(configIndex);
-		if (it == g_appState.g_history.end()) return out;
-		for (const auto& entry : it->second) {
-			if (entry.worldName == worldName) {
-				out.push_back(entry);
-			}
-		}
-		return out;
+		return ::GetHistoryEntriesForWorld(configIndex, worldName);
 	}
 
 	static vector<filesystem::path> GetBackupFilesForWorld(const Config& config, const wstring& worldName) {
@@ -333,22 +319,19 @@ namespace {
 
 		~ValidationCleanupGuard() {
 			isSafeDelete = previousSafeDelete;
-			if (hadHistorySnapshot) {
-				g_appState.g_history[kValidationConfigIndex] = historySnapshot;
-			}
-			else {
-				g_appState.g_history.erase(kValidationConfigIndex);
-			}
 			{
 				lock_guard<mutex> lock(g_appState.configsMutex);
 				if (hadConfigSnapshot) {
 					g_appState.configs[kValidationConfigIndex] = configSnapshot;
 				}
-				else {
-					g_appState.configs.erase(kValidationConfigIndex);
-				}
 			}
-			SaveHistory();
+			(void)ReplaceHistoryEntriesForConfig(
+				kValidationConfigIndex,
+				hadHistorySnapshot ? historySnapshot : vector<HistoryEntry>{});
+			if (!hadConfigSnapshot) {
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				g_appState.configs.erase(kValidationConfigIndex);
+			}
 			error_code ec;
 			filesystem::remove_all(sandboxRoot, ec);
 		}
@@ -449,7 +432,6 @@ namespace {
 		}
 		MyFolder world{ worldPath.wstring(), kSmartWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 0 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
-		SaveHistory();
 
 		WorldState state1 = {
 			{ L"notes.txt", MakeNumericPayload("base-notes", 260) },
@@ -580,7 +562,6 @@ namespace {
 		}
 		MyFolder world{ worldPath.wstring(), kLimitWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 1 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
-		SaveHistory();
 
 		TemporarySafeDeleteMode noSafeDelete(false);
 
@@ -703,11 +684,8 @@ namespace {
 		ValidationCleanupGuard cleanup;
 		cleanup.sandboxRoot = sandboxRoot;
 		cleanup.previousSafeDelete = isSafeDelete;
-		auto historyIt = g_appState.g_history.find(kValidationConfigIndex);
-		if (historyIt != g_appState.g_history.end()) {
-			cleanup.hadHistorySnapshot = true;
-			cleanup.historySnapshot = historyIt->second;
-		}
+		cleanup.historySnapshot = GetHistoryEntriesForConfig(kValidationConfigIndex);
+		cleanup.hadHistorySnapshot = !cleanup.historySnapshot.empty();
 		{
 			lock_guard<mutex> lock(g_appState.configsMutex);
 			auto configIt = g_appState.configs.find(kValidationConfigIndex);

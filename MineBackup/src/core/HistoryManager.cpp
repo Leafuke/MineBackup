@@ -1,379 +1,478 @@
-#include <map>
-#include <vector>
-#include <fstream>
-#include <sstream>
 #include "HistoryManager.h"
-#include "AppState.h"
+
 #include "AppPaths.h"
+#include "AppState.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
-#include "MigrationCoordinator.h"
 #include "Logging.h"
+#include "MigrationCoordinator.h"
+#include "PlatformCompat.h"
 #include "json.hpp"
 #include "text_to_text.h"
-#include "PlatformCompat.h"
+
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <map>
+#include <sstream>
+#include <utility>
 
 using namespace std;
 
 namespace {
-	bool IsSameHistoryEntry(const HistoryEntry& lhs, const HistoryEntry& rhs) {
-		return lhs.worldName == rhs.worldName
-			&& lhs.backupFile == rhs.backupFile;
-	}
 
-	bool IsSameHistoryEntry(const HistoryEntry& lhs, const wstring& worldName, const wstring& backupFile) {
-		return lhs.worldName == worldName
-			&& lhs.backupFile == backupFile;
-	}
+HistoryRepository g_historyRepository;
 
-	vector<HistoryEntry>* TryGetHistoryVector(int configIndex) {
-		auto it = g_appState.g_history.find(configIndex);
-		if (it == g_appState.g_history.end()) return nullptr;
-		return &it->second;
-	}
+bool IsSameHistoryEntry(
+    const HistoryEntry& entry,
+    const wstring& worldName,
+    const wstring& backupFile) {
+    return entry.worldName == worldName && entry.backupFile == backupFile;
 }
 
-static bool LoadLegacyHistoryFile(const filesystem::path& filename) {
-	g_appState.g_history.clear();
-	ifstream in(filename, ios::binary);
-	if (!in.is_open()) return false;
-
-	string line_utf8;
-	int current_config_id = -1;
-
-	while (getline(in, line_utf8)) {
-		wstring line = utf8_to_wstring(line_utf8);
-		if (line.empty() || line.front() == L'#') continue;
-
-		if (line.front() == L'[' && line.back() == L']') {
-			wstring section = line.substr(1, line.size() - 2);
-			if (section.find(L"Config") == 0) {
-				current_config_id = stoi(section.substr(6));
-			}
-		}
-		else if (current_config_id != -1) {
-			auto pos = line.find(L'=');
-			if (pos == wstring::npos) continue;
-
-			wstring key = line.substr(0, pos);
-			wstring val = line.substr(pos + 1);
-			if (key != L"Entry") continue;
-
-			wstringstream ss(val);
-			wstring segment;
-			vector<wstring> segments;
-			while (getline(ss, segment, L'|')) {
-				segments.push_back(segment);
-			}
-
-			if (segments.size() >= 4) {
-				HistoryEntry entry;
-				entry.timestamp_str = segments[0];
-				entry.worldName = segments[1];
-				entry.backupFile = segments[2];
-				entry.backupType = segments[3];
-				entry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(entry.backupType);
-				entry.comment = segments.size() >= 5 ? segments[4] : L"";
-				entry.isImportant = (segments.size() >= 6 && segments[5] == L"important");
-				g_appState.g_history[current_config_id].push_back(entry);
-			}
-		}
-	}
-
-	return true;
+map<int, Config> SnapshotConfigs() {
+    lock_guard<mutex> lock(g_appState.configsMutex);
+    return g_appState.configs;
 }
 
-void SaveHistory() {
-	if (MigrationCoordinator::IsHistoryPersistenceBlocked()) return;
-	const filesystem::path filename = GetAppPaths().HistoryFile();
+wstring ResolveConfigId(int configIndex) {
+    lock_guard<mutex> lock(g_appState.configsMutex);
+    const auto it = g_appState.configs.find(configIndex);
+    if (it == g_appState.configs.end()) return {};
+    it->second.configId = FolderRewindFormat::EnsureConfigId(it->second.configId);
+    return it->second.configId;
+}
+
+bool PersistenceBlocked() {
+    return MigrationCoordinator::IsHistoryPersistenceBlocked();
+}
+
+void PrepareHistoryFileForWrite(bool persist) {
 #ifdef _WIN32
-	SetFileAttributesWin(filename.wstring(), 0);
+    if (persist) SetFileAttributesWin(GetAppPaths().HistoryFile().wstring(), 0);
+#else
+    (void)persist;
 #endif
-	const bool saved = FolderRewindHistoryStore::SaveHistoryFile(filename, g_appState.configs, g_appState.g_history);
-	if (!saved) {
-		MB_LOG_ERROR(minebackup::logging::LogCategory::History,
-			"history.save.failed", "Failed to persist the history store.");
-	}
+}
+
+void FinishHistoryFileWrite(bool persist, bool saved) {
 #ifdef _WIN32
-	if (saved) SetFileAttributesWin(filename.wstring(), 1);
+    if (persist && saved) {
+        SetFileAttributesWin(GetAppPaths().HistoryFile().wstring(), 1);
+    }
+#else
+    (void)persist;
+    (void)saved;
 #endif
+}
+
+HistoryMutationResult MutateHistory(
+    int configIndex,
+    const HistoryRepository::Mutator& mutator) {
+    const wstring configId = ResolveConfigId(configIndex);
+    if (configId.empty()) return {};
+    const map<int, Config> configs = SnapshotConfigs();
+    const bool persist = !PersistenceBlocked();
+    PrepareHistoryFileForWrite(persist);
+    const HistoryMutationResult result = g_historyRepository.Mutate(
+        configId,
+        GetAppPaths().HistoryFile(),
+        configs,
+        persist,
+        mutator);
+    FinishHistoryFileWrite(persist, result.persisted);
+    if (result.changed && !result.persisted) {
+        MB_LOG_ERROR(
+            minebackup::logging::LogCategory::History,
+            "history.save.failed",
+            "Failed to persist the history store; the in-memory snapshot was not published.");
+    }
+    return result;
+}
+
+FolderRewindHistoryStore::HistoryByConfigId LoadLegacyHistoryFile(
+    const filesystem::path& filename,
+    const map<int, Config>& configs,
+    bool& loaded) {
+    loaded = false;
+    FolderRewindHistoryStore::HistoryByConfigId history;
+    ifstream in(filename, ios::binary);
+    if (!in.is_open()) return history;
+
+    string lineUtf8;
+    int currentConfigIndex = -1;
+    while (getline(in, lineUtf8)) {
+        const wstring line = utf8_to_wstring(lineUtf8);
+        if (line.empty() || line.front() == L'#') continue;
+
+        if (line.front() == L'[' && line.back() == L']') {
+            const wstring section = line.substr(1, line.size() - 2);
+            if (section.rfind(L"Config", 0) == 0) {
+                try {
+                    currentConfigIndex = stoi(section.substr(6));
+                }
+                catch (...) {
+                    currentConfigIndex = -1;
+                }
+            }
+            continue;
+        }
+        if (currentConfigIndex < 0) continue;
+
+        const auto configIt = configs.find(currentConfigIndex);
+        if (configIt == configs.end() || configIt->second.configId.empty()) continue;
+        const auto separator = line.find(L'=');
+        if (separator == wstring::npos || line.substr(0, separator) != L"Entry") continue;
+
+        wstringstream stream(line.substr(separator + 1));
+        vector<wstring> segments;
+        for (wstring segment; getline(stream, segment, L'|');) {
+            segments.push_back(std::move(segment));
+        }
+        if (segments.size() < 4) continue;
+
+        HistoryEntry entry;
+        entry.configId = configIt->second.configId;
+        entry.timestamp_str = segments[0];
+        entry.worldName = segments[1];
+        entry.backupFile = segments[2];
+        entry.backupType = segments[3];
+        entry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(entry.backupType);
+        entry.comment = segments.size() >= 5 ? segments[4] : L"";
+        entry.isImportant = segments.size() >= 6 && segments[5] == L"important";
+        history[entry.configId].push_back(std::move(entry));
+    }
+    loaded = true;
+    return history;
+}
+
+} // namespace
+
+HistoryRepository& GetHistoryRepository() {
+    return g_historyRepository;
 }
 
 void LoadHistory() {
-	const filesystem::path jsonFilename = GetAppPaths().HistoryFile();
-	const filesystem::path legacyFilename = GetAppPaths().dataRoot / L"history.dat";
-	g_appState.g_history.clear();
-	if (filesystem::exists(jsonFilename)) {
-		map<int, vector<HistoryEntry>> loadedHistory;
-		if (FolderRewindHistoryStore::LoadHistoryFile(jsonFilename, g_appState.configs, loadedHistory)) {
-			g_appState.g_history = std::move(loadedHistory);
-			MB_LOG_DEBUG(minebackup::logging::LogCategory::History,
-				"history.load.completed", "Loaded {} configuration history groups.",
-				g_appState.g_history.size());
-			return;
-		}
-		MB_LOG_WARNING(minebackup::logging::LogCategory::History,
-			"history.load.invalid", "The history store could not be parsed; trying legacy recovery.");
-		g_appState.g_history.clear();
-	}
+    const filesystem::path jsonFilename = GetAppPaths().HistoryFile();
+    const filesystem::path legacyFilename = GetAppPaths().dataRoot / L"history.dat";
+    const map<int, Config> configs = SnapshotConfigs();
 
-	if (filesystem::exists(legacyFilename) && LoadLegacyHistoryFile(legacyFilename)) {
-		MB_LOG_INFO(minebackup::logging::LogCategory::Migration,
-			"history.migration.completed", "Migrated the legacy history store.");
-		SaveHistory();
-	}
+    if (filesystem::exists(jsonFilename)) {
+        if (g_historyRepository.Load(jsonFilename, configs)) {
+            MB_LOG_DEBUG(
+                minebackup::logging::LogCategory::History,
+                "history.load.completed",
+                "Loaded {} configuration history groups.",
+                g_historyRepository.Snapshot()->byConfigId.size());
+            return;
+        }
+        MB_LOG_WARNING(
+            minebackup::logging::LogCategory::History,
+            "history.load.invalid",
+            "The history store could not be parsed; trying legacy recovery.");
+    }
+
+    bool legacyLoaded = false;
+    auto legacy = LoadLegacyHistoryFile(legacyFilename, configs, legacyLoaded);
+    if (legacyLoaded) {
+        const bool persist = !PersistenceBlocked();
+        PrepareHistoryFileForWrite(persist);
+        const bool replaced = g_historyRepository.ReplaceAll(
+            std::move(legacy), jsonFilename, configs, persist);
+        FinishHistoryFileWrite(persist, replaced);
+        if (replaced) {
+            MB_LOG_INFO(
+                minebackup::logging::LogCategory::Migration,
+                "history.migration.completed",
+                "Migrated the legacy history store.");
+            return;
+        }
+    }
+
+    (void)g_historyRepository.ReplaceAll({}, jsonFilename, configs, false);
 }
 
-void AddHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, const wstring& backupType, const wstring& comment, const wstring& worldPath) {
-	HistoryEntry entry;
-	auto configIt = g_appState.configs.find(configIndex);
-	if (configIt != g_appState.configs.end()) {
-		configIt->second.configId = FolderRewindFormat::EnsureConfigId(configIt->second.configId);
-		entry.configId = configIt->second.configId;
-	}
-	entry.timestamp_str = FolderRewindFormat::MakeLocalHistoryTimestampString();
-	entry.worldPath = worldPath;
-	entry.worldName = worldName;
-	entry.backupFile = backupFile;
-	entry.backupType = backupType;
-	entry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(backupType);
-	entry.comment = comment;
+void AddHistoryEntry(
+    int configIndex,
+    const wstring& worldName,
+    const wstring& backupFile,
+    const wstring& backupType,
+    const wstring& comment,
+    const wstring& worldPath) {
+    const wstring configId = ResolveConfigId(configIndex);
+    if (configId.empty()) return;
 
-	g_appState.g_history[configIndex].push_back(entry);
-	SaveHistory();
+    HistoryEntry entry;
+    entry.configId = configId;
+    entry.timestamp_str = FolderRewindFormat::MakeLocalHistoryTimestampString();
+    entry.worldPath = worldPath;
+    entry.worldName = worldName;
+    entry.backupFile = backupFile;
+    entry.backupType = backupType;
+    entry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(backupType);
+    entry.comment = comment;
+    (void)MutateHistory(configIndex, [&](vector<HistoryEntry>& entries) {
+        entries.push_back(entry);
+        return true;
+    });
 }
 
 void RemoveHistoryEntry(int configIndex, const wstring& backupFileToRemove) {
-	if (g_appState.g_history.count(configIndex)) {
-		auto& history_vec = g_appState.g_history[configIndex];
-		history_vec.erase(
-			remove_if(history_vec.begin(), history_vec.end(),
-				[&](const HistoryEntry& entry) {
-					return entry.backupFile == backupFileToRemove;
-				}),
-			history_vec.end()
-		);
-	}
+    (void)MutateHistory(configIndex, [&](vector<HistoryEntry>& entries) {
+        const auto oldSize = entries.size();
+        erase_if(entries, [&](const HistoryEntry& entry) {
+            return entry.backupFile == backupFileToRemove;
+        });
+        return entries.size() != oldSize;
+    });
 }
 
-void RemoveHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFileToRemove) {
-	if (g_appState.g_history.count(configIndex)) {
-		auto& history_vec = g_appState.g_history[configIndex];
-		history_vec.erase(
-			remove_if(history_vec.begin(), history_vec.end(),
-				[&](const HistoryEntry& entry) {
-					return entry.worldName == worldName && entry.backupFile == backupFileToRemove;
-				}),
-			history_vec.end()
-		);
-	}
+void RemoveHistoryEntry(
+    int configIndex,
+    const wstring& worldName,
+    const wstring& backupFileToRemove) {
+    (void)MutateHistory(configIndex, [&](vector<HistoryEntry>& entries) {
+        const auto oldSize = entries.size();
+        erase_if(entries, [&](const HistoryEntry& entry) {
+            return IsSameHistoryEntry(entry, worldName, backupFileToRemove);
+        });
+        return entries.size() != oldSize;
+    });
 }
 
 bool ExportHistoryToFile(const wstring& destinationPath, int configIndex) {
-	if (configIndex < 0) {
-		return FolderRewindHistoryStore::SaveHistoryFile(filesystem::path(destinationPath), g_appState.configs, g_appState.g_history);
-	}
-
-	map<int, Config> selectedConfigs;
-	auto configIt = g_appState.configs.find(configIndex);
-	if (configIt != g_appState.configs.end()) {
-		selectedConfigs.emplace(configIndex, configIt->second);
-	}
-
-	map<int, vector<HistoryEntry>> selectedHistory;
-	auto historyIt = g_appState.g_history.find(configIndex);
-	if (historyIt != g_appState.g_history.end()) {
-		selectedHistory.emplace(configIndex, historyIt->second);
-	}
-
-	return FolderRewindHistoryStore::SaveHistoryFile(filesystem::path(destinationPath), selectedConfigs, selectedHistory);
+    const map<int, Config> configs = SnapshotConfigs();
+    const auto snapshot = g_historyRepository.Snapshot();
+    FolderRewindHistoryStore::HistoryByConfigId history;
+    if (configIndex < 0) {
+        for (const auto& pair : snapshot->byConfigId) history[pair.first] = *pair.second;
+    }
+    else {
+        const auto configIt = configs.find(configIndex);
+        if (configIt == configs.end()) return false;
+        const auto historyIt = snapshot->byConfigId.find(configIt->second.configId);
+        if (historyIt != snapshot->byConfigId.end()) {
+            history[configIt->second.configId] = *historyIt->second;
+        }
+    }
+    return FolderRewindHistoryStore::SaveHistoryFileByConfigId(
+        filesystem::path(destinationPath), configs, history);
 }
 
-bool ImportHistoryFromFile(const wstring& sourcePath, int configIndex, bool mergeExisting) {
-	auto configIt = g_appState.configs.find(configIndex);
-	if (configIt == g_appState.configs.end()) return false;
-	configIt->second.configId = FolderRewindFormat::EnsureConfigId(configIt->second.configId);
-	const wstring targetConfigId = configIt->second.configId;
+bool ImportHistoryFromFile(
+    const wstring& sourcePath,
+    int configIndex,
+    bool mergeExisting) {
+    const wstring targetConfigId = ResolveConfigId(configIndex);
+    if (targetConfigId.empty()) return false;
 
-	ifstream in{ filesystem::path(sourcePath), ios::binary };
-	if (!in.is_open()) return false;
+    ifstream in{filesystem::path(sourcePath), ios::binary};
+    if (!in.is_open()) return false;
+    const nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
+    if (root.is_discarded() || !root.is_array()) return false;
 
-	nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
-	if (root.is_discarded() || !root.is_array()) return false;
+    vector<HistoryEntry> parsedEntries;
+    for (const auto& item : root) {
+        HistoryEntry entry;
+        wstring importedConfigId;
+        int importedConfigIndex = -1;
+        if (!FolderRewindHistoryStore::TryParseHistoryItem(
+                item, entry, importedConfigId)
+            && !FolderRewindHistoryStore::TryParseLegacyHistoryItem(
+                item, entry, importedConfigIndex)) {
+            continue;
+        }
+        entry.configId = targetConfigId;
+        parsedEntries.push_back(std::move(entry));
+    }
+    if (!root.empty() && parsedEntries.empty()) return false;
 
-	vector<HistoryEntry> parsedEntries;
-	for (const auto& item : root) {
-		HistoryEntry entry;
-		wstring importedConfigId;
-		int importedConfigIndex = -1;
-		if (!FolderRewindHistoryStore::TryParseHistoryItem(item, entry, importedConfigId)
-			&& !FolderRewindHistoryStore::TryParseLegacyHistoryItem(item, entry, importedConfigIndex)) {
-			continue;
-		}
-		entry.configId = targetConfigId;
-		parsedEntries.push_back(std::move(entry));
-	}
+    const HistoryMutationResult result = MutateHistory(
+        configIndex,
+        [&](vector<HistoryEntry>& entries) {
+            bool changed = !mergeExisting && !entries.empty();
+            if (!mergeExisting) entries.clear();
+            for (const auto& entry : parsedEntries) {
+                auto existing = find_if(entries.begin(), entries.end(), [&](const auto& value) {
+                    return IsSameHistoryEntry(value, entry.worldName, entry.backupFile);
+                });
+                if (existing == entries.end()) {
+                    entries.push_back(entry);
+                    changed = true;
+                }
+            }
+            return changed || (!mergeExisting && parsedEntries.empty());
+        });
+    return !result.changed || result.persisted || PersistenceBlocked();
+}
 
-	if (!root.empty() && parsedEntries.empty()) {
-		return false;
-	}
+HistoryRepository::EntriesView GetHistoryEntriesViewForConfig(int configIndex) {
+    return g_historyRepository.EntriesForConfig(ResolveConfigId(configIndex));
+}
 
-	if (!mergeExisting) {
-		g_appState.g_history[configIndex].clear();
-	}
-
-	bool changed = false;
-	for (const auto& entry : parsedEntries) {
-		changed = UpsertHistoryEntry(configIndex, entry, false) || changed;
-	}
-
-	if (changed || !mergeExisting) {
-		SaveHistory();
-	}
-	return true;
+shared_ptr<const HistorySnapshot> GetHistorySnapshot() {
+    return g_historyRepository.Snapshot();
 }
 
 vector<HistoryEntry> GetHistoryEntriesForConfig(int configIndex) {
-	auto* vec = TryGetHistoryVector(configIndex);
-	return vec ? *vec : vector<HistoryEntry>{};
+    return *GetHistoryEntriesViewForConfig(configIndex);
 }
 
-vector<HistoryEntry> GetHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
-	vector<HistoryEntry> result;
-	auto* vec = TryGetHistoryVector(configIndex);
-	if (!vec) return result;
-
-	for (const auto& entry : *vec) {
-		if (entry.worldName == worldName) {
-			result.push_back(entry);
-		}
-	}
-	sort(result.begin(), result.end(), [](const HistoryEntry& lhs, const HistoryEntry& rhs) {
-		return lhs.timestamp_str < rhs.timestamp_str;
-	});
-	return result;
+vector<HistoryEntry> GetHistoryEntriesForWorld(
+    int configIndex,
+    const wstring& worldName) {
+    vector<HistoryEntry> result;
+    for (const auto& entry : *GetHistoryEntriesViewForConfig(configIndex)) {
+        if (entry.worldName == worldName) result.push_back(entry);
+    }
+    sort(result.begin(), result.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.timestamp_str < rhs.timestamp_str;
+    });
+    return result;
 }
 
-HistoryEntry* FindHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile) {
-	auto* vec = TryGetHistoryVector(configIndex);
-	if (!vec) return nullptr;
-
-	for (auto& entry : *vec) {
-		if (IsSameHistoryEntry(entry, worldName, backupFile)) {
-			return &entry;
-		}
-	}
-	return nullptr;
+bool TryGetHistoryEntry(
+    int configIndex,
+    const wstring& worldName,
+    const wstring& backupFile,
+    HistoryEntry& outEntry) {
+    for (const auto& entry : *GetHistoryEntriesViewForConfig(configIndex)) {
+        if (IsSameHistoryEntry(entry, worldName, backupFile)) {
+            outEntry = entry;
+            return true;
+        }
+    }
+    return false;
 }
 
-bool TryGetHistoryEntry(int configIndex, const wstring& worldName, const wstring& backupFile, HistoryEntry& outEntry) {
-	HistoryEntry* found = FindHistoryEntry(configIndex, worldName, backupFile);
-	if (!found) return false;
-	outEntry = *found;
-	return true;
+bool UpsertHistoryEntry(
+    int configIndex,
+    const HistoryEntry& entry,
+    bool overwriteExisting) {
+    if (entry.worldName.empty() || entry.backupFile.empty()) return false;
+    const HistoryMutationResult result = MutateHistory(
+        configIndex,
+        [&](vector<HistoryEntry>& entries) {
+            for (auto& existing : entries) {
+                if (!IsSameHistoryEntry(existing, entry.worldName, entry.backupFile)) continue;
+                if (overwriteExisting) {
+                    existing = entry;
+                    existing.configId = ResolveConfigId(configIndex);
+                    return true;
+                }
+                bool changed = false;
+                auto fill = [&](wstring& target, const wstring& value) {
+                    if (target.empty() && !value.empty()) {
+                        target = value;
+                        changed = true;
+                    }
+                };
+                fill(existing.configId, entry.configId);
+                fill(existing.timestamp_str, entry.timestamp_str);
+                fill(existing.worldPath, entry.worldPath);
+                fill(existing.comment, entry.comment);
+                fill(existing.backupType, entry.backupType);
+                if (!existing.isPartialBackup && entry.isPartialBackup) {
+                    existing.isPartialBackup = true;
+                    changed = true;
+                }
+                if (!existing.isImportant && entry.isImportant) {
+                    existing.isImportant = true;
+                    changed = true;
+                }
+                if (!existing.isCloudArchived && entry.isCloudArchived) {
+                    existing.isCloudArchived = true;
+                    changed = true;
+                }
+                fill(existing.cloudArchivedAtUtc, entry.cloudArchivedAtUtc);
+                fill(existing.cloudArchiveRemotePath, entry.cloudArchiveRemotePath);
+                fill(existing.cloudMetadataRecordRemotePath, entry.cloudMetadataRecordRemotePath);
+                fill(existing.cloudMetadataStateRemotePath, entry.cloudMetadataStateRemotePath);
+                return changed;
+            }
+            HistoryEntry copy = entry;
+            copy.configId = ResolveConfigId(configIndex);
+            entries.push_back(std::move(copy));
+            return true;
+        });
+    return result.changed && (result.persisted || PersistenceBlocked());
 }
 
-bool UpsertHistoryEntry(int configIndex, const HistoryEntry& entry, bool overwriteExisting) {
-	if (entry.worldName.empty() || entry.backupFile.empty()) return false;
+bool UpdateHistoryEntry(
+    int configIndex,
+    const wstring& worldName,
+    const wstring& backupFile,
+    const function<void(HistoryEntry&)>& update) {
+    if (!update) return false;
+    const HistoryMutationResult result = MutateHistory(
+        configIndex,
+        [&](vector<HistoryEntry>& entries) {
+            for (auto& entry : entries) {
+                if (!IsSameHistoryEntry(entry, worldName, backupFile)) continue;
+                update(entry);
+                return true;
+            }
+            return false;
+        });
+    return result.changed && (result.persisted || PersistenceBlocked());
+}
 
-	auto& entries = g_appState.g_history[configIndex];
-	for (auto& existing : entries) {
-		if (!IsSameHistoryEntry(existing, entry)) {
-			continue;
-		}
+bool ReplaceHistoryEntriesForConfig(int configIndex, vector<HistoryEntry> entries) {
+    const wstring configId = ResolveConfigId(configIndex);
+    if (configId.empty()) return false;
+    for (auto& entry : entries) entry.configId = configId;
+    const HistoryMutationResult result = MutateHistory(
+        configIndex,
+        [entries = std::move(entries)](vector<HistoryEntry>& target) mutable {
+            target = std::move(entries);
+            return true;
+        });
+    return result.persisted || PersistenceBlocked();
+}
 
-		bool changed = false;
-		if (overwriteExisting) {
-			existing = entry;
-			changed = true;
-		}
-		else {
-			if (existing.configId.empty() && !entry.configId.empty()) {
-				existing.configId = entry.configId;
-				changed = true;
-			}
-			if (existing.timestamp_str.empty() && !entry.timestamp_str.empty()) {
-				existing.timestamp_str = entry.timestamp_str;
-				changed = true;
-			}
-			if (existing.worldPath.empty() && !entry.worldPath.empty()) {
-				existing.worldPath = entry.worldPath;
-				changed = true;
-			}
-			if (existing.comment.empty() && !entry.comment.empty()) {
-				existing.comment = entry.comment;
-				changed = true;
-			}
-			if (existing.backupType.empty() && !entry.backupType.empty()) {
-				existing.backupType = entry.backupType;
-				changed = true;
-			}
-			if (!existing.isPartialBackup && entry.isPartialBackup) {
-				existing.isPartialBackup = true;
-				changed = true;
-			}
-			if (!existing.isImportant && entry.isImportant) {
-				existing.isImportant = true;
-				changed = true;
-			}
-			if (!existing.isCloudArchived && entry.isCloudArchived) {
-				existing.isCloudArchived = true;
-				changed = true;
-			}
-			if (existing.cloudArchivedAtUtc.empty() && !entry.cloudArchivedAtUtc.empty()) {
-				existing.cloudArchivedAtUtc = entry.cloudArchivedAtUtc;
-				changed = true;
-			}
-			if (existing.cloudArchiveRemotePath.empty() && !entry.cloudArchiveRemotePath.empty()) {
-				existing.cloudArchiveRemotePath = entry.cloudArchiveRemotePath;
-				changed = true;
-			}
-			if (existing.cloudMetadataRecordRemotePath.empty() && !entry.cloudMetadataRecordRemotePath.empty()) {
-				existing.cloudMetadataRecordRemotePath = entry.cloudMetadataRecordRemotePath;
-				changed = true;
-			}
-			if (existing.cloudMetadataStateRemotePath.empty() && !entry.cloudMetadataStateRemotePath.empty()) {
-				existing.cloudMetadataStateRemotePath = entry.cloudMetadataStateRemotePath;
-				changed = true;
-			}
-		}
-		return changed;
-	}
-
-	entries.push_back(entry);
-	return true;
+bool ClearHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
+    const HistoryMutationResult result = MutateHistory(
+        configIndex,
+        [&](vector<HistoryEntry>& entries) {
+            const auto oldSize = entries.size();
+            erase_if(entries, [&](const HistoryEntry& entry) {
+                return entry.worldName == worldName;
+            });
+            return entries.size() != oldSize;
+        });
+    return !result.changed || result.persisted || PersistenceBlocked();
 }
 
 bool UpdateHistoryCloudState(
-	int configIndex,
-	const wstring& worldName,
-	const wstring& backupFile,
-	bool isCloudArchived,
-	const wstring& archivedAtUtc,
-	const wstring& archiveRemotePath,
-	const wstring& metadataRecordRemotePath,
-	const wstring& metadataStateRemotePath) {
-	HistoryEntry* entry = FindHistoryEntry(configIndex, worldName, backupFile);
-	if (!entry) {
-		return false;
-	}
-
-	entry->isCloudArchived = isCloudArchived;
-	if (isCloudArchived) {
-		if (!archivedAtUtc.empty()) entry->cloudArchivedAtUtc = archivedAtUtc;
-		if (!archiveRemotePath.empty()) entry->cloudArchiveRemotePath = archiveRemotePath;
-		if (!metadataRecordRemotePath.empty()) entry->cloudMetadataRecordRemotePath = metadataRecordRemotePath;
-		if (!metadataStateRemotePath.empty()) entry->cloudMetadataStateRemotePath = metadataStateRemotePath;
-	}
-	else {
-		// 取消云归档时同步清空远端路径，避免 UI 继续显示“可从云下载”。
-		entry->cloudArchivedAtUtc.clear();
-		entry->cloudArchiveRemotePath.clear();
-		entry->cloudMetadataRecordRemotePath.clear();
-		entry->cloudMetadataStateRemotePath.clear();
-	}
-	SaveHistory();
-	return true;
+    int configIndex,
+    const wstring& worldName,
+    const wstring& backupFile,
+    bool isCloudArchived,
+    const wstring& archivedAtUtc,
+    const wstring& archiveRemotePath,
+    const wstring& metadataRecordRemotePath,
+    const wstring& metadataStateRemotePath) {
+    return UpdateHistoryEntry(
+        configIndex,
+        worldName,
+        backupFile,
+        [&](HistoryEntry& entry) {
+            entry.isCloudArchived = isCloudArchived;
+            if (isCloudArchived) {
+                if (!archivedAtUtc.empty()) entry.cloudArchivedAtUtc = archivedAtUtc;
+                if (!archiveRemotePath.empty()) entry.cloudArchiveRemotePath = archiveRemotePath;
+                if (!metadataRecordRemotePath.empty()) {
+                    entry.cloudMetadataRecordRemotePath = metadataRecordRemotePath;
+                }
+                if (!metadataStateRemotePath.empty()) {
+                    entry.cloudMetadataStateRemotePath = metadataStateRemotePath;
+                }
+            }
+            else {
+                entry.cloudArchivedAtUtc.clear();
+                entry.cloudArchiveRemotePath.clear();
+                entry.cloudMetadataRecordRemotePath.clear();
+                entry.cloudMetadataStateRemotePath.clear();
+            }
+        });
 }

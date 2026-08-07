@@ -156,6 +156,9 @@
     <ClCompile Include="src\core\HistoryManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\HistoryRepository.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\PathRuleSet.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -411,6 +414,9 @@
 	  <Filter>src\core</Filter>
 	</ClInclude>
     <ClInclude Include="src\core\HistoryManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\HistoryRepository.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\TaskSystem.h">

@@ -5,6 +5,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
+#include "HistoryManager.h"
 #include "LegacyMineBackup15Reader.h"
 #include "MigrationCoordinator.h"
 #include "PlatformCompat.h"
@@ -250,9 +251,9 @@ wstring InferLastBackupTime(const Config& config, int configIndex, const wstring
 		const auto archiveTime = filesystem::last_write_time(archive, ec);
 		if (!ec) return FolderRewindFormat::FormatFileTimeUtc(archiveTime);
 	}
-	auto historyIt = g_appState.g_history.find(configIndex);
-	if (historyIt != g_appState.g_history.end()) {
-		for (auto it = historyIt->second.rbegin(); it != historyIt->second.rend(); ++it) {
+	const vector<HistoryEntry> history = GetHistoryEntriesForConfig(configIndex);
+	if (!history.empty()) {
+		for (auto it = history.rbegin(); it != history.rend(); ++it) {
 			if (it->worldName == folderName && it->backupFile == summary.lastBackupFileName && !it->timestamp_str.empty())
 				return NormalizeHistoryTimestamp(it->timestamp_str);
 		}

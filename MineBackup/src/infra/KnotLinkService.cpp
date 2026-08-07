@@ -798,9 +798,10 @@ std::string KnotLinkService::HandleRequest(
             return error("mode must be overwrite or clean.");
         }
         if (mode == "clean") {
-            if (HistoryEntry* entry = FindHistoryEntry(
-                    folder->configIndex, folder->folderName, backupFile);
-                entry != nullptr && entry->isPartialBackup) {
+            HistoryEntry entry;
+            if (TryGetHistoryEntry(
+                    folder->configIndex, folder->folderName, backupFile, entry)
+                && entry.isPartialBackup) {
                 const auto confirmed = ParseBoolean(
                     request.Get("confirm_partial_clean", "false"));
                 if (!confirmed.has_value() || !*confirmed) {
@@ -949,13 +950,16 @@ std::string KnotLinkService::HandleRequest(
         if (file.empty() || !important.has_value()) {
             return error("file and important=true|false are required.");
         }
-        HistoryEntry* entry = FindHistoryEntry(
-            folder->configIndex, folder->folderName, file);
-        if (entry == nullptr) {
+        HistoryEntry entry;
+        if (!TryGetHistoryEntry(
+                folder->configIndex, folder->folderName, file, entry)) {
             return error("Backup history entry was not found.");
         }
-        entry->isImportant = *important;
-        SaveHistory();
+        (void)UpdateHistoryEntry(
+            folder->configIndex,
+            folder->folderName,
+            file,
+            [important](HistoryEntry& value) { value.isImportant = *important; });
         auto fields = EventTargetFields(*folder);
         fields.emplace_back("file", wstring_to_utf8(file));
         fields.emplace_back("important", *important ? "true" : "false");

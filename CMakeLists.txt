@@ -307,6 +307,7 @@ if(BUILD_TESTING)
         tests/TestMain.cpp
         tests/BackupPipelineTest.cpp
         tests/CloudSyncTests.cpp
+        tests/HistoryRepositoryTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
         tests/RuntimeInfrastructureTests.cpp)

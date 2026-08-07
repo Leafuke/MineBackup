@@ -231,8 +231,8 @@ void BackupManagerInternal::LimitBackupFiles(
 	}
 	if (static_cast<int>(files.size()) <= limit) return;
 
-	const auto history = g_appState.g_history.find(configIndex);
-	const bool historyAvailable = history != g_appState.g_history.end();
+	const vector<HistoryEntry> history = GetHistoryEntriesForConfig(configIndex);
+	const bool historyAvailable = !history.empty();
 	sort(files.begin(), files.end(), [](const auto& left, const auto& right) {
 		return left.last_write_time() < right.last_write_time();
 	});
@@ -241,7 +241,7 @@ void BackupManagerInternal::LimitBackupFiles(
 	for (const auto& file : files) {
 		bool important = false;
 		if (historyAvailable) {
-			for (const auto& entry : history->second) {
+			for (const auto& entry : history) {
 				if (entry.worldName == file.path().parent_path().filename().wstring()
 					&& entry.backupFile == file.path().filename().wstring()) {
 					important = entry.isImportant;
@@ -276,7 +276,7 @@ void BackupManagerInternal::LimitBackupFiles(
 
 			bool handledThroughHistory = false;
 			if (historyAvailable) {
-				for (const auto& entry : history->second) {
+				for (const auto& entry : history) {
 					if (entry.worldName == file.path().parent_path().filename().wstring()
 						&& entry.backupFile == file.path().filename().wstring()) {
 						if (isSafeDelete) {
@@ -298,7 +298,6 @@ void BackupManagerInternal::LimitBackupFiles(
 					file.path().parent_path().filename().wstring(),
 					file.path().filename().wstring());
 				RemoveHistoryEntry(configIndex, file.path().filename().wstring());
-				SaveHistory();
 			}
 			BACKUP_INFO(
 				L("LOG_DELETE_OLD_BACKUP"),
@@ -326,7 +325,6 @@ void DeleteBackupWithMode(
 	}
 	if (mode == BackupDeleteMode::HistoryOnly) {
 		RemoveHistoryEntry(configIndex, entry.worldName, entry.backupFile);
-		SaveHistory();
 		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "history deletion");
 		return;
 	}
@@ -380,7 +378,6 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entry, int& config
 			wstring_to_utf8(archive.filename().wstring()).c_str(),
 			error.what());
 	}
-	SaveHistory();
 	QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "backup deletion");
 }
 
@@ -407,9 +404,10 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entry, int con
 
 	const filesystem::path backupDirectory = JoinPath(config.backupPath, entry.worldName);
 	const filesystem::path archiveToDelete = backupDirectory / entry.backupFile;
+	vector<HistoryEntry> historyEntries = GetHistoryEntriesForConfig(configIndex);
 	const HistoryEntry* nextRaw = nullptr;
 	vector<const HistoryEntry*> worldHistory;
-	for (const auto& value : g_appState.g_history[configIndex]) {
+	for (const auto& value : historyEntries) {
 		if (value.worldName == entry.worldName) worldHistory.push_back(&value);
 	}
 	sort(worldHistory.begin(), worldHistory.end(), [](const auto* left, const auto* right) {
@@ -551,15 +549,18 @@ void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entry, int con
 		}
 		BACKUP_INFO(L("LOG_SAFE_DELETE_STEP_4"));
 		filesystem::remove(archiveToDelete);
-		RemoveHistoryEntry(configIndex, entry.worldName, entry.backupFile);
-		for (auto& value : g_appState.g_history[configIndex]) {
+		erase_if(historyEntries, [&](const HistoryEntry& value) {
+			return value.worldName == entry.worldName
+				&& value.backupFile == entry.backupFile;
+		});
+		for (auto& value : historyEntries) {
 			if (value.worldName == next.worldName && value.backupFile == next.backupFile) {
 				value.backupFile = finalName;
 				value.backupType = finalType;
 				break;
 			}
 		}
-		SaveHistory();
+		(void)ReplaceHistoryEntriesForConfig(configIndex, std::move(historyEntries));
 		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "safe delete");
 
 		string metadataError;

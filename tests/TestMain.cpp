@@ -1,6 +1,7 @@
 #include "BackupPipelineTest.h"
 #include "CloudSyncTests.h"
 #include "ExternalToolManager.h"
+#include "HistoryRepositoryTests.h"
 #include "ProcessRunner.h"
 #include "ProcessToolTests.h"
 #include "RuntimeInfrastructureTests.h"
@@ -100,6 +101,7 @@ int main(int argc, char** argv) {
     RunStorageMigrationTests(test, temporary.path);
     RunProcessToolTests(test, executable, temporary.path);
     RunBackupPipelineTests(test, temporary.path);
+    RunHistoryRepositoryTests(test, temporary.path);
     RunRuntimeInfrastructureTests(test, temporary.path);
     RunCloudSyncTests(test);
 

@@ -127,6 +127,7 @@
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
     <ClCompile Include="src\core\HistoryManager.cpp" />
+    <ClCompile Include="src\core\HistoryRepository.cpp" />
     <ClCompile Include="src\core\PathRuleSet.cpp" />
     <ClCompile Include="src\core\SpecialMode.cpp" />
     <ClCompile Include="src\core\TaskSystem.cpp" />
@@ -218,6 +219,7 @@
 	<ClInclude Include="src\core\MigrationCoordinator.h" />
 	<ClInclude Include="src\core\V15MigrationAdapter.h" />
     <ClInclude Include="src\core\HistoryManager.h" />
+    <ClInclude Include="src\core\HistoryRepository.h" />
     <ClInclude Include="src\core\TaskSystem.h" />
     <ClInclude Include="src\core\TaskCoordinator.h" />
     <ClInclude Include="src\core\RemoteContentService.h" />
