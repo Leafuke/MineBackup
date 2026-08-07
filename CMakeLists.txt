@@ -364,6 +364,16 @@ if(BUILD_TESTING)
     add_test(NAME minebackup.appearance_config
         COMMAND minebackup_appearance_config_tests)
     set_tests_properties(minebackup.appearance_config PROPERTIES TIMEOUT 30)
+
+    if(NOT WIN32)
+        add_executable(minebackup_console_input_tests tests/ConsoleInputTest.cpp)
+        target_include_directories(minebackup_console_input_tests PRIVATE
+            ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+        if(NOT APPLE)
+            target_link_libraries(minebackup_console_input_tests PRIVATE Iconv::Iconv)
+        endif()
+        add_test(NAME minebackup.console_input COMMAND minebackup_console_input_tests)
+    endif()
 endif()
 
 add_custom_target(check_msbuild_source_parity
