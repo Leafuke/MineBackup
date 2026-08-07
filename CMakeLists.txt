@@ -358,6 +358,7 @@ if(BUILD_TESTING)
         tests/CloudSyncTests.cpp
         tests/HistoryRepositoryTests.cpp
         tests/LegacyIniConfigCodecTests.cpp
+		tests/OperationResultTests.cpp
 		tests/SpecialTaskDocumentTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp

@@ -4,13 +4,7 @@
 #include <filesystem>
 #include <atomic>
 #include "DataModels.h"
-
-enum class BackupOutcome {
-	Created,
-	NoChanges,
-	Failed,
-	Rejected
-};
+#include "OperationResult.h"
 
 BackupOutcome DoBackup(const MyFolder& folder, const std::wstring& comment = L"");
 bool DoRestore2(const Config& config, const std::wstring& worldName, const std::filesystem::path& fullBackupPath, int restoreMethod);

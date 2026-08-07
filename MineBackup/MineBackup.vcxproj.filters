@@ -147,7 +147,10 @@
 	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
-	<ClCompile Include="src\core\MigrationCoordinator.cpp">
+    <ClCompile Include="src\core\MigrationCoordinator.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+	<ClCompile Include="src\core\OperationResult.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp">
@@ -416,7 +419,10 @@
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
-	<ClInclude Include="src\core\MigrationCoordinator.h">
+    <ClInclude Include="src\core\MigrationCoordinator.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+	<ClInclude Include="src\core\OperationResult.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\V15MigrationAdapter.h">

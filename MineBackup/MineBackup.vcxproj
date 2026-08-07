@@ -124,7 +124,8 @@
     <ClCompile Include="src\core\FolderRewindHistoryStore.cpp" />
     <ClCompile Include="src\core\FolderRewindMetadataStore.cpp" />
 	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
-	<ClCompile Include="src\core\MigrationCoordinator.cpp" />
+    <ClCompile Include="src\core\MigrationCoordinator.cpp" />
+	<ClCompile Include="src\core\OperationResult.cpp" />
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
     <ClCompile Include="src\core\HistoryManager.cpp" />
@@ -222,6 +223,7 @@
     <ClInclude Include="src\core\GameSessionManager.h" />
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h" />
 	<ClInclude Include="src\core\MigrationCoordinator.h" />
+	<ClInclude Include="src\core\OperationResult.h" />
 	<ClInclude Include="src\core\V15MigrationAdapter.h" />
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\HistoryRepository.h" />

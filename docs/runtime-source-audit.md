@@ -84,6 +84,8 @@
 | `MineBackup/src/core/LegacyServicePolicy.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/MigrationCoordinator.cpp` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/MigrationCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |
+| `MineBackup/src/core/OperationResult.cpp` | runtime | 固定操作码、聚合规则与进程退出码映射 |
+| `MineBackup/src/core/OperationResult.h` | runtime | 纯运行时结果、诊断和任务结果契约 |
 | `MineBackup/src/core/PathRuleSet.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/PathRuleSet.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/PortableConfigDocument.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
