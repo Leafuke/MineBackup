@@ -6,6 +6,7 @@
 #include "FolderRewindFormat.h"
 #include "MigrationCoordinator.h"
 #include "SpecialConfigPolicy.h"
+#include "SpecialTaskDocument.h"
 #include "Globals.h"
 #include "Logging.h"
 #include "LegacyIniConfigCodec.h"
@@ -26,6 +27,10 @@ using namespace std;
 namespace {
 
 vector<LegacyIniConfigCodec::Diagnostic> g_configLoadDiagnostics;
+
+filesystem::path SpecialTasksPathForConfig(const filesystem::path& configFile) {
+	return configFile.parent_path() / L"special-tasks.json";
+}
 
 void RecordConfigDiagnostic(
 	LegacyIniConfigCodec::DiagnosticSeverity severity,
@@ -48,6 +53,32 @@ void RecordConfigDiagnostic(
 		MB_LOG_WARNING(minebackup::logging::LogCategory::Migration, eventId,
 			"Invalid optional configuration value at line {} [{}] {}: {}",
 			line, sectionUtf8, keyUtf8, detail);
+	}
+}
+
+void RecordSpecialTaskDiagnostic(const SpecialTaskStorage::Diagnostic& diagnostic) {
+	const bool fatal = diagnostic.severity == SpecialTaskStorage::DiagnosticSeverity::Fatal;
+	g_configLoadDiagnostics.push_back({
+		fatal ? LegacyIniConfigCodec::DiagnosticSeverity::Fatal
+			: LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+		0,
+		L"SpecialTasks",
+		diagnostic.taskId,
+		diagnostic.eventId,
+		diagnostic.detail});
+	if (fatal) {
+		MB_LOG_ERROR(minebackup::logging::LogCategory::Migration,
+			diagnostic.eventId,
+			"Special task document error (special_config_id={}, task_id={}): {}",
+			wstring_to_utf8(diagnostic.specialConfigId),
+			wstring_to_utf8(diagnostic.taskId), diagnostic.detail);
+	}
+	else {
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
+			diagnostic.eventId,
+			"Special task migration warning (special_config_id={}, task_id={}): {}",
+			wstring_to_utf8(diagnostic.specialConfigId),
+			wstring_to_utf8(diagnostic.taskId), diagnostic.detail);
 	}
 }
 
@@ -249,6 +280,10 @@ void LoadConfigs(const filesystem::path& filename) {
 	optional<wstring> configuredLogFileLevel;
 	optional<wstring> configuredLogViewLevel;
 	optional<bool> legacyAutoLog;
+	const filesystem::path specialTasksPath = SpecialTasksPathForConfig(filename);
+	error_code specialTasksExistsError;
+	const bool hasAuthoritativeSpecialTasks = filesystem::exists(
+		specialTasksPath, specialTasksExistsError);
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) {
 		Fontss = GetDefaultFontPath();
@@ -427,8 +462,11 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"Theme") readInt(spCur->theme, -1, 32, false);
 				else if (key == L"HideWindow") spCur->hideWindow = (val != L"0");
 				else if (key == L"RunOnStartup") spCur->runOnStartup = (val != L"0");
-				else if (key == L"Command") spCur->commands.push_back(val);
+				else if (key == L"Command") {
+					if (!hasAuthoritativeSpecialTasks) spCur->commands.push_back(val);
+				}
 				else if (key == L"AutoBackupTask") {
+					if (hasAuthoritativeSpecialTasks) continue;
 					const auto tokens = LegacyIniConfigCodec::Split(val, L',');
 					int values[8]{};
 					const pair<int, int> ranges[8] = {
@@ -466,6 +504,7 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
 				// 新版统一任务系统
 				else if (key == L"UnifiedTask") {
+					if (hasAuthoritativeSpecialTasks) continue;
 					const auto tokens = LegacyIniConfigCodec::Split(val, L',');
 					int values[12]{};
 					const size_t numericIndices[12] = {0, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14};
@@ -724,6 +763,52 @@ void LoadConfigs(const filesystem::path& filename) {
 		if (spCfg.zipLevel > 22) spCfg.zipLevel = 22;
 	}
 
+	if (specialTasksExistsError) {
+		RecordSpecialTaskDiagnostic({
+			SpecialTaskStorage::DiagnosticSeverity::Fatal,
+			"tasks.io.stat_failed", {}, {}, specialTasksExistsError.message()});
+	}
+	else {
+		auto taskLoad = SpecialTaskStorage::Load(specialTasksPath);
+		for (const auto& diagnostic : taskLoad.diagnostics) {
+			RecordSpecialTaskDiagnostic(diagnostic);
+		}
+		if (taskLoad.status == SpecialTaskStorage::LoadStatus::Loaded) {
+			vector<SpecialTaskStorage::Diagnostic> diagnostics;
+			SpecialTaskStorage::ApplyAndValidate(
+				taskLoad.document, g_appState.configs, g_appState.specialConfigs, diagnostics);
+			for (const auto& diagnostic : diagnostics) RecordSpecialTaskDiagnostic(diagnostic);
+		}
+		else if (taskLoad.status == SpecialTaskStorage::LoadStatus::Missing
+			&& !LastConfigLoadHasFatalDiagnostics()) {
+			auto migration = SpecialTaskStorage::MigrateLegacy(
+				g_appState.configs, g_appState.specialConfigs);
+			for (const auto& diagnostic : migration.diagnostics) {
+				RecordSpecialTaskDiagnostic(diagnostic);
+			}
+			if (migration.success) {
+				wstring writeError;
+				if (!SpecialTaskStorage::Save(specialTasksPath, migration.document, writeError)) {
+					RecordSpecialTaskDiagnostic({
+						SpecialTaskStorage::DiagnosticSeverity::Fatal,
+						"tasks.migration.write_failed", {}, {},
+						wstring_to_utf8(writeError)});
+				}
+				else {
+					vector<SpecialTaskStorage::Diagnostic> diagnostics;
+					SpecialTaskStorage::ApplyAndValidate(
+						migration.document, g_appState.configs,
+						g_appState.specialConfigs, diagnostics);
+					for (const auto& diagnostic : diagnostics) RecordSpecialTaskDiagnostic(diagnostic);
+					MB_LOG_INFO(minebackup::logging::LogCategory::Migration,
+						"tasks.migration.completed",
+						"Migrated legacy special tasks to schema version {}.",
+						SpecialTaskDocument::SchemaVersion);
+				}
+			}
+		}
+	}
+
 	const auto executionPolicy = NormalizeSpecialConfigExecutionPolicy(g_appState.specialConfigs);
 	if (executionPolicy.autoExecuteIndex) {
 		g_appState.specialConfigMode = true;
@@ -813,6 +898,21 @@ bool SaveConfigs() {
 bool SaveConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	const filesystem::path target(filename);
+	for (auto& [index, config] : g_appState.configs) {
+		(void)index;
+		config.configId = FolderRewindFormat::EnsureConfigId(config.configId);
+	}
+	for (auto& [index, special] : g_appState.specialConfigs) {
+		(void)index;
+		special.specialConfigId = FolderRewindFormat::EnsureConfigId(special.specialConfigId);
+	}
+	const auto taskDocument = SpecialTaskStorage::BuildDocument(g_appState.specialConfigs);
+	wstring taskWriteError;
+	if (!SpecialTaskStorage::Save(
+			SpecialTasksPathForConfig(target), taskDocument, taskWriteError)) {
+		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
+		return false;
+	}
 
 	std::wostringstream buffer;
 	buffer << L"[General]\n";
@@ -913,30 +1013,6 @@ bool SaveConfigs(const filesystem::path& filename) {
 		sc.specialConfigId = FolderRewindFormat::EnsureConfigId(sc.specialConfigId);
 		buffer << L"SpecialConfigId=" << sc.specialConfigId << L"\n";
 		buffer << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
-		for (const auto& cmd : sc.commands) buffer << L"Command=" << cmd << L"\n";
-		for (const auto& task : sc.tasks) {
-			buffer << L"AutoBackupTask=" << task.configIndex << L"," << task.worldIndex << L"," << task.backupType
-				<< L"," << task.intervalMinutes << L"," << task.schedMonth << L"," << task.schedDay
-				<< L"," << task.schedHour << L"," << task.schedMinute << L"\n";
-		}
-		// 新版统一任务系统
-		for (const auto& task : sc.unifiedTasks) {
-			buffer << L"UnifiedTask=" << task.id << L"," 
-				<< utf8_to_wstring(task.name) << L","
-				<< static_cast<int>(task.type) << L","
-				<< static_cast<int>(task.executionMode) << L","
-				<< static_cast<int>(task.triggerMode) << L","
-				<< (task.enabled ? 1 : 0) << L","
-				<< task.configIndex << L","
-				<< task.worldIndex << L","
-				<< task.command << L","
-				<< task.workingDirectory << L","
-				<< task.intervalMinutes << L","
-				<< task.schedMonth << L","
-				<< task.schedDay << L","
-				<< task.schedHour << L","
-				<< task.schedMinute << L"\n";
-		}
 		buffer << L"ExitAfter=" << (sc.exitAfterExecution ? 1 : 0) << L"\n";
 		buffer << L"HideWindow=" << (sc.hideWindow ? 1 : 0) << L"\n";
 		buffer << L"RunOnStartup=" << (sc.runOnStartup ? 1 : 0) << L"\n";

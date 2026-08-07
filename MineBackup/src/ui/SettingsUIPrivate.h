@@ -9,6 +9,8 @@
 #include "text_to_text.h"
 #include "DesktopServices.h"
 #include "SpecialConfigPolicy.h"
+#include "SpecialTaskDocument.h"
+#include "FolderRewindFormat.h"
 #include "UIHelpers.h"
 
 #include <algorithm>
@@ -43,8 +45,9 @@ inline void GetSpecialConfigCompressionLevelRange(const SpecialConfig& spCfg, in
 	minLevel = 1;
 	maxLevel = 9;
 
-	auto widenByConfigMethod = [&](int configIndex) {
-		auto it = g_appState.configs.find(configIndex);
+	auto widenByConfigMethod = [&](const std::wstring& configId) {
+		auto it = std::find_if(g_appState.configs.begin(), g_appState.configs.end(),
+			[&](const auto& item) { return item.second.configId == configId; });
 		if (it == g_appState.configs.end()) return;
 		int methodMin = 1;
 		int methodMax = 9;
@@ -54,16 +57,9 @@ inline void GetSpecialConfigCompressionLevelRange(const SpecialConfig& spCfg, in
 		}
 	};
 
-	if (!spCfg.unifiedTasks.empty()) {
-		for (const auto& task : spCfg.unifiedTasks) {
-			if (task.type != TaskTypeV2::Backup || !task.enabled) continue;
-			widenByConfigMethod(task.configIndex);
-		}
-		return;
-	}
-
-	for (const auto& task : spCfg.tasks) {
-		widenByConfigMethod(task.configIndex);
+	for (const auto& task : spCfg.specialTasks) {
+		if (task.type != SpecialTaskType::Backup || !task.enabled) continue;
+		widenByConfigMethod(task.target.configId);
 	}
 }
 

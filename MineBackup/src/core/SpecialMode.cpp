@@ -13,6 +13,7 @@
 #include "DesktopServices.h"
 #include "ProcessRunner.h"
 #include "TaskCoordinator.h"
+#include "SpecialTaskDocument.h"
 
 #ifdef _WIN32
 #include <conio.h>
@@ -87,6 +88,30 @@ void RunUserShellTask(
 			taskName, result.exitCode, elapsedMs);
 	}
 }
+
+bool ResolveSpecialTaskWorld(
+	const SpecialTaskTarget& target,
+	int& configIndex,
+	int& worldIndex,
+	Config& config) {
+	for (const auto& [candidateIndex, candidate] : g_appState.configs) {
+		if (candidate.configId != target.configId) continue;
+		for (int candidateWorld = 0;
+			candidateWorld < static_cast<int>(candidate.worlds.size());
+			++candidateWorld) {
+			wstring normalized;
+			if (SpecialTaskStorage::TryNormalizeWorldPath(
+					candidate.worlds[candidateWorld].first, normalized)
+				&& normalized == target.worldPath) {
+				configIndex = candidateIndex;
+				worldIndex = candidateWorld;
+				config = candidate;
+				return true;
+			}
+		}
+	}
+	return false;
+}
 }
 
 void RunSpecialMode(int configId) {
@@ -131,268 +156,119 @@ void RunSpecialMode(int configId) {
 	atomic<bool> shouldExit = false;
 	vector<jthread> taskThreads;
 
-	// --- 1. 执行旧版一次性命令（向后兼容）---
-	for (size_t commandIndex = 0; commandIndex < spCfg.commands.size(); ++commandIndex) {
-		const string taskName = "legacy-command-" + to_string(commandIndex + 1);
-		minebackup::logging::ScopedLogContext taskContext({{"task", taskName}});
-		MB_LOG_INFO(minebackup::logging::LogCategory::Task,
-			"task.command.started",
-			"Executing legacy shell task '{}' (working_directory=default)", taskName);
-		RunUserShellTask(spCfg.commands[commandIndex], {}, taskName);
-	}
+	SPECIAL_INFO(L("UNIFIED_TASK_SYSTEM_START"), static_cast<int>(spCfg.specialTasks.size()));
+	vector<jthread> parallelThreads;
+	for (const SpecialTask& task : spCfg.specialTasks) {
+		if (shouldExit) break;
+		if (!task.enabled) {
+			SPECIAL_INFO(L("TASK_SKIPPED_DISABLED"), task.name.c_str());
+			continue;
+		}
 
-	// --- 2. 如果有新版统一任务，使用新版系统 ---
-	if (!spCfg.unifiedTasks.empty()) {
-		SPECIAL_INFO(L("UNIFIED_TASK_SYSTEM_START"), static_cast<int>(spCfg.unifiedTasks.size()));
-		
-		// 按 ID 排序任务
-		vector<UnifiedTaskV2> sortedTasks = spCfg.unifiedTasks;
-		sort(sortedTasks.begin(), sortedTasks.end(), 
-			[](const UnifiedTaskV2& a, const UnifiedTaskV2& b) { return a.id < b.id; });
-
-		// 跟踪并行任务
-		vector<jthread> parallelThreads;
-
-		for (size_t i = 0; i < sortedTasks.size() && !shouldExit; ++i) {
-			const UnifiedTaskV2& task = sortedTasks[i];
-			
-			if (!task.enabled) {
-				SPECIAL_INFO(L("TASK_SKIPPED_DISABLED"), task.name.c_str());
-				continue;
+		auto executeTask = [&spCfg, &shouldExit](const SpecialTask& task, stop_token stopToken = {}) {
+			minebackup::logging::ScopedLogContext taskContext({
+				{"task", task.name}, {"task_id", wstring_to_utf8(task.taskId)}});
+			SPECIAL_INFO(L("TASK_EXECUTING"), task.name.c_str());
+			if (task.type == SpecialTaskType::Command) {
+				MB_LOG_INFO(minebackup::logging::LogCategory::Task,
+					"task.command.started",
+					"Executing shell task '{}' (working_directory={})", task.name,
+					task.workingDirectory.empty() ? "default" : "configured");
+				RunUserShellTask(task.command, task.workingDirectory, task.name);
+				return;
+			}
+			if (task.type == SpecialTaskType::Script) {
+				SPECIAL_WARNING(L("TASK_SCRIPT_NOT_IMPLEMENTED"));
+				return;
 			}
 
-			// 创建任务执行函数
-			auto executeTask = [&spCfg, &shouldExit](const UnifiedTaskV2& task, stop_token stopToken = {}) {
-				minebackup::logging::ScopedLogContext taskContext({
-					{"task", task.name},
-					{"config_index", to_string(task.configIndex)}
-				});
-				SPECIAL_INFO(L("TASK_EXECUTING"), task.name.c_str());
-
-				switch (task.type) {
-					case TaskTypeV2::Backup: {
-						// 验证配置和世界索引
-						if (!g_appState.configs.count(task.configIndex)) {
-							SPECIAL_ERROR(L("ERROR_INVALID_CONFIG_IN_TASK"), task.configIndex);
-							return;
-						}
-
-						Config taskConfig = g_appState.configs[task.configIndex];
-						if (task.worldIndex < 0 || task.worldIndex >= static_cast<int>(taskConfig.worlds.size())) {
-							SPECIAL_ERROR(L("ERROR_INVALID_WORLD_IN_TASK"), task.configIndex, task.worldIndex);
-							return;
-						}
-
-						// 合并特殊配置的参数
-						taskConfig.zipLevel = spCfg.zipLevel;
-						if (spCfg.keepCount > 0) taskConfig.keepCount = spCfg.keepCount;
-						if (spCfg.cpuThreads > 0) taskConfig.cpuThreads = spCfg.cpuThreads;
-						taskConfig.useLowPriority = spCfg.useLowPriority;
-
-						const auto& worldData = taskConfig.worlds[task.worldIndex];
-						MyFolder world = { JoinPath(taskConfig.saveRoot, worldData.first).wstring(), worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
-
-						// 根据触发模式执行
-						if (task.triggerMode == TaskTrigger::Once) {
-							SPECIAL_INFO(L("TASK_QUEUE_ONETIME_BACKUP"), wstring_to_utf8(worldData.first).c_str());
-							g_appState.realConfigIndex = task.configIndex;
-							RunSpecialBackup(world);
-							SPECIAL_INFO(L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(worldData.first).c_str());
-						}
-						else if (task.triggerMode == TaskTrigger::Interval) {
-							// 间隔备份：在循环中执行
-							SPECIAL_INFO(L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-							while (!shouldExit && !stopToken.stop_requested()) {
-								if (WaitForSpecialTask(stopToken, shouldExit, chrono::minutes(task.intervalMinutes))) break;
-								SPECIAL_INFO(L("BACKUP_PERFORMING_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-								g_appState.realConfigIndex = task.configIndex;
-								RunSpecialBackup(world);
-								SPECIAL_INFO(L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(world.name).c_str());
-							}
-							SPECIAL_INFO(L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-						}
-						else if (task.triggerMode == TaskTrigger::Scheduled) {
-							// 计划备份
-							SPECIAL_INFO(L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-							while (!shouldExit && !stopToken.stop_requested()) {
-								time_t now_t = time(nullptr);
-								tm local_tm;
-								localtime_s(&local_tm, &now_t);
-
-								tm target_tm = local_tm;
-								target_tm.tm_hour = task.schedHour;
-								target_tm.tm_min = task.schedMinute;
-								target_tm.tm_sec = 0;
-
-								if (task.schedDay != 0) target_tm.tm_mday = task.schedDay;
-								if (task.schedMonth != 0) target_tm.tm_mon = task.schedMonth - 1;
-
-								time_t next_run_t = mktime(&target_tm);
-
-								if (next_run_t <= now_t) {
-									if (task.schedDay == 0) target_tm.tm_mday++;
-									else if (task.schedMonth == 0) target_tm.tm_mon++;
-									else target_tm.tm_year++;
-									next_run_t = mktime(&target_tm);
-								}
-
-								char time_buf2[26];
-								ctime_s(time_buf2, sizeof(time_buf2), &next_run_t);
-								time_buf2[strlen(time_buf2) - 1] = '\0';
-								SPECIAL_INFO(L("SCHEDULE_NEXT_BACKUP_AT"), wstring_to_utf8(world.name).c_str(), time_buf2);
-
-								while (time(nullptr) < next_run_t && !shouldExit && !stopToken.stop_requested()) {
-									this_thread::sleep_for(chrono::seconds(1));
-								}
-
-								if (shouldExit || stopToken.stop_requested()) break;
-
-								SPECIAL_INFO(L("BACKUP_PERFORMING_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-								g_appState.realConfigIndex = task.configIndex;
-								RunSpecialBackup(world);
-								SPECIAL_INFO(L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(world.name).c_str());
-							}
-							SPECIAL_INFO(L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-						}
-						break;
-					}
-
-					case TaskTypeV2::Command: {
-						MB_LOG_INFO(minebackup::logging::LogCategory::Task,
-							"task.command.started",
-							"Executing shell task '{}' (working_directory={})",
-							task.name,
-							task.workingDirectory.empty() ? "default" : "configured");
-						RunUserShellTask(task.command, task.workingDirectory, task.name);
-						break;
-					}
-
-					case TaskTypeV2::Script: {
-						SPECIAL_WARNING(L("TASK_SCRIPT_NOT_IMPLEMENTED"));
-						break;
-					}
-				}
+			int configIndex = -1;
+			int worldIndex = -1;
+			Config taskConfig;
+			if (!ResolveSpecialTaskWorld(
+					task.target, configIndex, worldIndex, taskConfig)) {
+				SPECIAL_ERROR(L("ERROR_INVALID_WORLD_IN_TASK"), -1, -1);
+				return;
+			}
+			taskConfig.zipLevel = spCfg.zipLevel;
+			if (spCfg.keepCount > 0) taskConfig.keepCount = spCfg.keepCount;
+			if (spCfg.cpuThreads > 0) taskConfig.cpuThreads = spCfg.cpuThreads;
+			taskConfig.useLowPriority = spCfg.useLowPriority;
+			const auto& worldData = taskConfig.worlds[worldIndex];
+			MyFolder world = {
+				JoinPath(taskConfig.saveRoot, worldData.first).wstring(),
+				worldData.first, worldData.second, taskConfig, configIndex, worldIndex};
+			auto runBackup = [&]() {
+				g_appState.realConfigIndex = configIndex;
+				RunSpecialBackup(world);
+				SPECIAL_INFO(L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(world.name).c_str());
 			};
 
-			// 根据执行模式决定是并行还是顺序执行
-			bool needsBackgroundThread = (task.type == TaskTypeV2::Backup && 
-				(task.triggerMode == TaskTrigger::Interval || task.triggerMode == TaskTrigger::Scheduled));
-
-			if (needsBackgroundThread) {
-				// 周期和计划任务必须保持在可取消的后台线程中。
-				taskThreads.emplace_back([task, executeTask](stop_token stopToken) {
-					executeTask(task, stopToken);
-				});
+			if (task.trigger.type == SpecialTaskTriggerType::Once) {
+				SPECIAL_INFO(L("TASK_QUEUE_ONETIME_BACKUP"), wstring_to_utf8(world.name).c_str());
+				runBackup();
+				return;
 			}
-			else if (task.executionMode == TaskExecMode::Parallel) {
-				parallelThreads.emplace_back([task, executeTask](stop_token stopToken) {
-					executeTask(task, stopToken);
-				});
-			} else {
-				// 顺序执行：等待之前的并行任务完成
-				for (auto& t : parallelThreads) {
-					if (t.joinable()) t.join();
+			SPECIAL_INFO(L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
+			while (!shouldExit && !stopToken.stop_requested()) {
+				if (task.trigger.type == SpecialTaskTriggerType::Interval) {
+					if (WaitForSpecialTask(
+							stopToken, shouldExit,
+							chrono::minutes(task.trigger.intervalMinutes))) break;
 				}
-				parallelThreads.clear();
-				
-				// 执行当前任务
-				executeTask(task);
-			}
-		}
-
-		// 等待所有一次性并行任务完成
-		for (auto& t : parallelThreads) {
-			if (t.joinable()) t.join();
-		}
-	}
-	// --- 3. 如果没有新版任务但有旧版任务，使用旧版系统（向后兼容）---
-	else if (!spCfg.tasks.empty()) {
-		SPECIAL_INFO(L("LEGACY_TASK_SYSTEM_START"));
-		
-		for (const auto& task : spCfg.tasks) {
-			if (!g_appState.configs.count(task.configIndex) ||
-				task.worldIndex < 0 ||
-				task.worldIndex >= static_cast<int>(g_appState.configs[task.configIndex].worlds.size()))
-			{
-				SPECIAL_ERROR(L("ERROR_INVALID_WORLD_IN_TASK"), task.configIndex, task.worldIndex);
-				continue;
-			}
-
-			// 创建任务专用配置（合并基础配置和特殊设置）
-			Config taskConfig = g_appState.configs[task.configIndex];
-			const auto& worldData = taskConfig.worlds[task.worldIndex];
-			taskConfig.zipLevel = spCfg.zipLevel;
-			taskConfig.keepCount = spCfg.keepCount;
-			taskConfig.cpuThreads = spCfg.cpuThreads;
-			taskConfig.useLowPriority = spCfg.useLowPriority;
-
-			MyFolder world = { JoinPath(taskConfig.saveRoot, worldData.first).wstring(), worldData.first, worldData.second, taskConfig, task.configIndex, task.worldIndex };
-
-			if (task.backupType == 0) { // 类型 0: 一次性备份
-				SPECIAL_INFO(L("TASK_QUEUE_ONETIME_BACKUP"), wstring_to_utf8(worldData.first).c_str());
-				g_appState.realConfigIndex = task.configIndex;
-				RunSpecialBackup(world);
-				SPECIAL_INFO(L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(worldData.first).c_str());
-			}
-			else { // 类型 1 (间隔) 和 2 (计划) 在后台线程运行
-				taskThreads.emplace_back([task, world, &shouldExit](stop_token stopToken) {
-					SPECIAL_INFO(L("THREAD_STARTED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-
-					while (!shouldExit && !stopToken.stop_requested()) {
-						time_t next_run_t = 0;
-						if (task.backupType == 1) { // 间隔备份
-							if (WaitForSpecialTask(stopToken, shouldExit, chrono::minutes(task.intervalMinutes))) break;
-						}
-						else { // 计划备份
-							while (!stopToken.stop_requested() && !shouldExit) {
-								time_t now_t = time(nullptr);
-								tm local_tm;
-								localtime_s(&local_tm, &now_t);
-
-								tm target_tm = local_tm;
-								target_tm.tm_hour = task.schedHour;
-								target_tm.tm_min = task.schedMinute;
-								target_tm.tm_sec = 0;
-
-								if (task.schedDay != 0) target_tm.tm_mday = task.schedDay;
-								if (task.schedMonth != 0) target_tm.tm_mon = task.schedMonth - 1;
-
-								next_run_t = mktime(&target_tm);
-
-								if (next_run_t <= now_t) {
-									if (task.schedDay == 0) target_tm.tm_mday++;
-									else if (task.schedMonth == 0) target_tm.tm_mon++;
-									else target_tm.tm_year++;
-									next_run_t = mktime(&target_tm);
-								}
-
-								if (next_run_t > now_t) break;
-								this_thread::sleep_for(chrono::milliseconds(100));
-							}
-							if (stopToken.stop_requested() || shouldExit) break;
-
-							char time_buf2[26];
-							ctime_s(time_buf2, sizeof(time_buf2), &next_run_t);
-							time_buf2[strlen(time_buf2) - 1] = '\0';
-							SPECIAL_INFO(L("SCHEDULE_NEXT_BACKUP_AT"), wstring_to_utf8(world.name).c_str(), time_buf2);
-
-							while (time(nullptr) < next_run_t && !shouldExit && !stopToken.stop_requested()) {
-								this_thread::sleep_for(chrono::seconds(1));
-							}
-						}
-
-						if (shouldExit || stopToken.stop_requested()) break;
-
-						SPECIAL_INFO(L("BACKUP_PERFORMING_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-						g_appState.realConfigIndex = task.configIndex;
-						RunSpecialBackup(world);
-						SPECIAL_INFO(L("TASK_SPECIAL_BACKUP_DONE"), wstring_to_utf8(world.name).c_str());
+				else {
+					time_t nowTime = time(nullptr);
+					tm target{};
+					localtime_s(&target, &nowTime);
+					target.tm_hour = task.trigger.hour;
+					target.tm_min = task.trigger.minute;
+					target.tm_sec = 0;
+					if (task.trigger.day != 0) target.tm_mday = task.trigger.day;
+					if (task.trigger.month != 0) target.tm_mon = task.trigger.month - 1;
+					time_t nextRun = mktime(&target);
+					if (nextRun <= nowTime) {
+						if (task.trigger.day == 0) target.tm_mday++;
+						else if (task.trigger.month == 0) target.tm_mon++;
+						else target.tm_year++;
+						nextRun = mktime(&target);
 					}
-					SPECIAL_INFO(L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
-				});
+					char nextRunText[26]{};
+					ctime_s(nextRunText, sizeof(nextRunText), &nextRun);
+					if (strlen(nextRunText) > 0) nextRunText[strlen(nextRunText) - 1] = '\0';
+					SPECIAL_INFO(L("SCHEDULE_NEXT_BACKUP_AT"),
+						wstring_to_utf8(world.name).c_str(), nextRunText);
+					while (time(nullptr) < nextRun
+						&& !shouldExit && !stopToken.stop_requested()) {
+						this_thread::sleep_for(chrono::seconds(1));
+					}
+				}
+				if (shouldExit || stopToken.stop_requested()) break;
+				SPECIAL_INFO(L("BACKUP_PERFORMING_FOR_WORLD"),
+					wstring_to_utf8(world.name).c_str());
+				runBackup();
 			}
+			SPECIAL_INFO(L("THREAD_STOPPED_FOR_WORLD"), wstring_to_utf8(world.name).c_str());
+		};
+
+		const bool recurring = task.type == SpecialTaskType::Backup
+			&& task.trigger.type != SpecialTaskTriggerType::Once;
+		if (recurring) {
+			taskThreads.emplace_back([task, executeTask](stop_token stopToken) {
+				executeTask(task, stopToken);
+			});
+		}
+		else if (task.executionMode == SpecialTaskExecutionMode::Parallel) {
+			parallelThreads.emplace_back([task, executeTask](stop_token stopToken) {
+				executeTask(task, stopToken);
+			});
+		}
+		else {
+			for (auto& thread : parallelThreads) if (thread.joinable()) thread.join();
+			parallelThreads.clear();
+			executeTask(task);
 		}
 	}
+	for (auto& thread : parallelThreads) if (thread.joinable()) thread.join();
 
 	SPECIAL_INFO(L("INFO_TASKS_INITIATED"));
 

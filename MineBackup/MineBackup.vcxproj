@@ -130,6 +130,7 @@
     <ClCompile Include="src\core\HistoryRepository.cpp" />
     <ClCompile Include="src\core\PathRuleSet.cpp" />
     <ClCompile Include="src\core\SpecialMode.cpp" />
+	<ClCompile Include="src\core\SpecialTaskDocument.cpp" />
     <ClCompile Include="src\core\TaskSystem.cpp" />
     <ClCompile Include="src\core\TaskCoordinator.cpp" />
     <ClCompile Include="src\core\RemoteContentService.cpp" />
@@ -215,6 +216,8 @@
     <ClInclude Include="src\core\FolderRewindFormat.h" />
     <ClInclude Include="src\core\FolderRewindHistoryStore.h" />
     <ClInclude Include="src\core\FolderRewindMetadataStore.h" />
+	<ClInclude Include="src\core\SpecialTaskDocument.h" />
+	<ClInclude Include="src\core\SpecialTaskModels.h" />
     <ClInclude Include="src\core\GameSessionManager.h" />
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h" />
 	<ClInclude Include="src\core\MigrationCoordinator.h" />

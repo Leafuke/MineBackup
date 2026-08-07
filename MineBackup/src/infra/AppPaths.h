@@ -24,6 +24,7 @@ struct AppPaths {
     AppPathMode mode = AppPathMode::Installed;
 
     std::filesystem::path ConfigFile() const { return configRoot / L"config.ini"; }
+    std::filesystem::path SpecialTasksFile() const { return configRoot / L"special-tasks.json"; }
     std::filesystem::path HistoryFile() const { return dataRoot / L"history.json"; }
 };
 

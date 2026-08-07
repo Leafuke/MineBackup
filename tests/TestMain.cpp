@@ -7,6 +7,7 @@
 #include "ProcessToolTests.h"
 #include "RuntimeInfrastructureTests.h"
 #include "StorageMigrationTests.h"
+#include "SpecialTaskDocumentTests.h"
 #include "TestSupport.h"
 #include "text_to_text.h"
 
@@ -104,6 +105,7 @@ int main(int argc, char** argv) {
     RunBackupPipelineTests(test, temporary.path);
     RunHistoryRepositoryTests(test, temporary.path);
     RunLegacyIniConfigCodecTests(test);
+	RunSpecialTaskDocumentTests(test, temporary.path);
     RunRuntimeInfrastructureTests(test, temporary.path);
     RunCloudSyncTests(test);
 

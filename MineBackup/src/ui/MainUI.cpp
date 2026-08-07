@@ -725,8 +725,17 @@ if (showHistoryWindow) {
 				displayWorlds[selectedWorldIndex].name);
 		else {
 			auto spIt = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
-			if (spIt != g_appState.specialConfigs.end() && !spIt->second.tasks.empty())
-				ShowHistoryWindow(spIt->second.tasks[0].configIndex);
+			if (spIt != g_appState.specialConfigs.end()) {
+				auto task = find_if(spIt->second.specialTasks.begin(), spIt->second.specialTasks.end(),
+					[](const SpecialTask& item) {
+						return item.type == SpecialTaskType::Backup && item.enabled;
+					});
+				if (task != spIt->second.specialTasks.end()) {
+					auto config = find_if(g_appState.configs.begin(), g_appState.configs.end(),
+						[&](const auto& item) { return item.second.configId == task->target.configId; });
+					if (config != g_appState.configs.end()) ShowHistoryWindow(config->first);
+				}
+			}
 		}
 	}
 	else {

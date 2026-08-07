@@ -109,7 +109,7 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
     }
     for (const auto& [index, special] : g_appState.specialConfigs) {
         (void)index;
-        for (const auto& task : special.unifiedTasks) {
+        for (const auto& task : special.specialTasks) {
             AddRedaction(
                 options, task.workingDirectory, "<working-directory>");
         }

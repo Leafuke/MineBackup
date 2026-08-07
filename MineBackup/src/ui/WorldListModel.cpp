@@ -1,4 +1,5 @@
 #include "WorldListModel.h"
+#include "SpecialTaskDocument.h"
 
 using namespace std;
 
@@ -37,6 +38,26 @@ namespace {
 		result.push_back(std::move(world));
 		return true;
 	}
+
+	bool TryAppendWorldByStableRef(
+		vector<DisplayWorld>& result,
+		const map<int, Config>& configs,
+		const SpecialTaskTarget& target,
+		const SpecialConfig* special,
+		bool hideMarked) {
+		for (const auto& [configIndex, config] : configs) {
+			if (config.configId != target.configId) continue;
+			for (int worldIndex = 0; worldIndex < static_cast<int>(config.worlds.size()); ++worldIndex) {
+				wstring normalized;
+				if (SpecialTaskStorage::TryNormalizeWorldPath(
+						config.worlds[worldIndex].first, normalized)
+					&& normalized == target.worldPath) {
+					return TryAppendWorld(result, configs, configIndex, worldIndex, special, hideMarked);
+				}
+			}
+		}
+		return false;
+	}
 }
 
 vector<DisplayWorld> BuildDisplayWorlds(
@@ -64,29 +85,10 @@ vector<DisplayWorld> BuildDisplayWorlds(
 
 	const auto special = specialConfigs.find(selectedConfigIndex);
 	if (special == specialConfigs.end()) return result;
-	if (!special->second.unifiedTasks.empty()) {
-		for (const UnifiedTaskV2& task : special->second.unifiedTasks) {
-			if (task.type != TaskTypeV2::Backup || !task.enabled) continue;
-			TryAppendWorld(
-				result,
-				configs,
-				task.configIndex,
-				task.worldIndex,
-				&special->second,
-				false);
-		}
-		return result;
-	}
-
-	// 旧任务只读兼容：构造结果与统一任务走同一个合并入口。
-	for (const AutomatedTask& task : special->second.tasks) {
-		TryAppendWorld(
-			result,
-			configs,
-			task.configIndex,
-			task.worldIndex,
-			&special->second,
-			false);
+	for (const SpecialTask& task : special->second.specialTasks) {
+		if (task.type != SpecialTaskType::Backup || !task.enabled) continue;
+		TryAppendWorldByStableRef(
+			result, configs, task.target, &special->second, false);
 	}
 	return result;
 }

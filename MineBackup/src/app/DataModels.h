@@ -6,6 +6,7 @@
 // 所有业务数据结构集中定义在此处
 
 #include "PlatformCompat.h"
+#include "SpecialTaskModels.h"
 #include <vector>
 #include <string>
 #include <map>
@@ -144,7 +145,8 @@ struct SpecialConfig {
 	bool autoExecute = false;
 	std::vector<std::wstring> commands;              // 旧版兼容：命令列表
 	std::vector<AutomatedTask> tasks;                // 旧版兼容：任务列表
-	std::vector<UnifiedTaskV2> unifiedTasks;         // 新版统一任务系统
+	std::vector<UnifiedTaskV2> unifiedTasks;         // 旧版 INI 迁移输入，JSON 成功后不再执行
+	std::vector<SpecialTask> specialTasks;           // special-tasks.json 中的权威任务序列
 	bool exitAfterExecution = false;
 	std::string name;
 	int zipLevel = 5;

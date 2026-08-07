@@ -91,6 +91,9 @@
 | `MineBackup/src/core/RemoteContentService.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/SpecialConfigPolicy.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/SpecialConfigPolicy.h` | data_core | 保留纯格式、策略或工具逻辑 |
+| `MineBackup/src/core/SpecialTaskDocument.cpp` | runtime | 版本化特殊任务 codec、迁移与原子存储 |
+| `MineBackup/src/core/SpecialTaskDocument.h` | runtime | 暴露无桌面任务文档契约 |
+| `MineBackup/src/core/SpecialTaskModels.h` | data_core | 保留纯特殊任务领域 DTO |
 | `MineBackup/src/core/SpecialMode.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
 | `MineBackup/src/core/TaskCoordinator.cpp` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/TaskCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |

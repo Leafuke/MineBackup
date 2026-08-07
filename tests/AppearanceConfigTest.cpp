@@ -121,6 +121,47 @@ int main() {
 	Check(!GetLastConfigLoadDiagnostics().empty(),
 		"malformed INI diagnostics retain source context");
 
+	const std::filesystem::path taskRoot = root / "task-migration";
+	std::filesystem::create_directories(taskRoot);
+	const std::filesystem::path legacyTasks = taskRoot / "config.ini";
+	{
+		std::ofstream output(legacyTasks, std::ios::binary);
+		output << "[General]\nCurrentConfig=3\n"
+			<< "[Config2]\n"
+			<< "ConfigName=Worlds\n"
+			<< "ConfigId=11111111-1111-4111-8111-111111111111\n"
+			<< "SavePath=" << (taskRoot / "saves").string() << "\n"
+			<< "WorldData=\nworld/subdirectory\ndescription\n*\n"
+			<< "BackupPath=" << (taskRoot / "backups").string() << "\n"
+			<< "[SpCfg3]\n"
+			<< "Name=Automation\n"
+			<< "SpecialConfigId=22222222-2222-4222-8222-222222222222\n"
+			<< "Command=echo A,B\n"
+			<< "UnifiedTask=7,Backup,0,0,0,1,2,0,,,15,0,0,0,0\n";
+	}
+	LoadConfigs(legacyTasks);
+	const std::filesystem::path migratedTasks = taskRoot / "special-tasks.json";
+	Check(!LastConfigLoadHasFatalDiagnostics()
+			&& std::filesystem::exists(migratedTasks)
+			&& g_appState.specialConfigs.at(3).specialTasks.size() == 2
+			&& g_appState.specialConfigs.at(3).specialTasks[0].command == L"echo A,B",
+		"GUI load migrates legacy commands and tasks to authoritative JSON");
+	Check(SaveConfigs(legacyTasks), "migrated task configuration saves");
+	const std::string cleanedTasksIni = ReadFile(legacyTasks);
+	Check(cleanedTasksIni.find("Command=") == std::string::npos
+			&& cleanedTasksIni.find("UnifiedTask=") == std::string::npos
+			&& cleanedTasksIni.find("AutoBackupTask=") == std::string::npos,
+		"next GUI save removes legacy task lines after JSON migration");
+
+	{
+		std::ofstream output(migratedTasks, std::ios::binary | std::ios::trunc);
+		output << R"({"schemaVersion":2,"specialConfigs":[]})";
+	}
+	LoadConfigs(legacyTasks);
+	Check(LastConfigLoadHasFatalDiagnostics()
+			&& g_appState.specialConfigs.at(3).specialTasks.empty(),
+		"future task schema is fatal and does not fall back to legacy INI");
+
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {
 		std::cerr << failures << " appearance configuration test(s) failed\n";
