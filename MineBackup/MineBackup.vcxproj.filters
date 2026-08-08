@@ -183,6 +183,9 @@
 	<ClCompile Include="src\core\SpecialTaskDocument.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
+	<ClCompile Include="src\core\SpecialTaskRunner.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
     <ClCompile Include="src\core\TaskCoordinator.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -468,6 +471,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
 	<ClInclude Include="src\core\SpecialTaskDocument.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\SpecialTaskRunner.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\SpecialTaskModels.h">

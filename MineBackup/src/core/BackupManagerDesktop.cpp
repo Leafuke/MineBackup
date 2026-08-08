@@ -70,7 +70,10 @@ HotBackupPreparation PrepareDesktopHotBackup(
 
 } // namespace
 
-BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
+BackupResult RunDesktopBackup(
+	const MyFolder& folder,
+	const wstring& comment,
+	stop_token stopToken) {
 	const int configIndex = ResolveLegacyConfigIndex(folder);
 	BackupRequest request;
 	request.config = folder.config;
@@ -154,7 +157,12 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
 	});
 
 	BackupService service(std::move(dependencies));
-	return service.Run(
-		request,
+	return service.Run(request, stopToken);
+}
+
+BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
+	return RunDesktopBackup(
+		folder,
+		comment,
 		TaskCoordinator::CurrentStopToken()).outcome;
 }
