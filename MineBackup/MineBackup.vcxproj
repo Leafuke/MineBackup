@@ -130,6 +130,8 @@
 	<ClCompile Include="src\core\ProfileConfigCatalog.cpp" />
 	<ClCompile Include="src\core\RuntimeIntegration.cpp" />
 	<ClCompile Include="src\core\RuntimeCloudPostHook.cpp" />
+	<ClCompile Include="src\core\RuntimeFileLock.cpp" />
+	<ClCompile Include="src\core\RuntimeRetentionService.cpp" />
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
     <ClCompile Include="src\core\GameSessionManager.cpp" />
     <ClCompile Include="src\core\HistoryManager.cpp" />
@@ -234,6 +236,8 @@
 	<ClInclude Include="src\core\ProfileConfigCatalog.h" />
 	<ClInclude Include="src\core\RuntimeIntegration.h" />
 	<ClInclude Include="src\core\RuntimeCloudPostHook.h" />
+	<ClInclude Include="src\core\RuntimeFileLock.h" />
+	<ClInclude Include="src\core\RuntimeRetentionService.h" />
 	<ClInclude Include="src\core\V15MigrationAdapter.h" />
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\HistoryRepository.h" />

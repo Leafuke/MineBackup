@@ -165,6 +165,12 @@
 	<ClCompile Include="src\core\RuntimeCloudPostHook.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
+	<ClCompile Include="src\core\RuntimeFileLock.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RuntimeRetentionService.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
@@ -450,6 +456,12 @@
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\RuntimeCloudPostHook.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RuntimeFileLock.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RuntimeRetentionService.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\V15MigrationAdapter.h">

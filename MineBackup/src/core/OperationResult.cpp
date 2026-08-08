@@ -82,9 +82,15 @@ OperationCode AggregateSpecialTaskCodes(
 	if (tasks.empty()) return OperationCode::Success;
 	bool hasSuccess = false;
 	bool hasFailure = false;
+	bool hasPartialSuccess = false;
 	bool allNoChanges = true;
 	for (const auto& task : tasks) {
 		if (task.code == OperationCode::Cancelled) return OperationCode::Cancelled;
+		if (task.code == OperationCode::PartialSuccess) {
+			hasPartialSuccess = true;
+			allNoChanges = false;
+			continue;
+		}
 		if (IsSuccessful(task.code)) {
 			hasSuccess = true;
 			if (task.code != OperationCode::NoChanges) allNoChanges = false;
@@ -93,6 +99,7 @@ OperationCode AggregateSpecialTaskCodes(
 			hasFailure = true;
 		}
 	}
+	if (hasPartialSuccess) return OperationCode::PartialSuccess;
 	if (hasSuccess && hasFailure) return OperationCode::PartialSuccess;
 	if (hasFailure) return OperationCode::TaskFailed;
 	return allNoChanges ? OperationCode::NoChanges : OperationCode::Success;

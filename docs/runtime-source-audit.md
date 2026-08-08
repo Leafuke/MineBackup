@@ -47,6 +47,10 @@
 | `MineBackup/src/cli/CliMain.cpp` | runtime | CLI console 入口；不进入 GUI MSBuild 工程 |
 | `MineBackup/src/cli/CliApplication.cpp` | runtime | CLI 参数、锁、查询命令、doctor 与统一输出编排 |
 | `MineBackup/src/cli/CliApplication.h` | runtime | CLI 可测试入口；不进入 GUI MSBuild 工程 |
+| `MineBackup/src/cli/CliSignalHandler.cpp` | runtime | CLI 信号转 stop token；第二次信号立即退出 |
+| `MineBackup/src/cli/CliSignalHandler.h` | runtime | CLI-only 信号生命周期，不进入 GUI 工程 |
+| `MineBackup/src/cli/CliToolBootstrap.cpp` | runtime | 从 CLI 独立资源安装受校验的 Windows 7-Zip |
+| `MineBackup/src/cli/CliToolBootstrap.h` | runtime | CLI-only 工具预检入口，不进入 GUI 工程 |
 | `MineBackup/src/core/ArchiveRunner.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/ArchiveRunner.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/BackupAuxiliary.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
@@ -58,7 +62,7 @@
 | `MineBackup/src/core/BackupManagerInternal.h` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
 | `MineBackup/src/core/BackupService.h` | runtime | 显式备份请求、端口依赖与可取消运行时服务 |
 | `MineBackup/src/core/BackupRestore.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/BackupRetention.cpp` | runtime | 迁移为显式依赖的运行时服务 |
+| `MineBackup/src/core/BackupRetention.cpp` | desktop | 保留 GUI 安全合并删除与旧设置映射；CLI 使用 RuntimeRetentionService |
 | `MineBackup/src/core/CloudHistoryAnalysis.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/CloudHistoryAnalysis.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/CloudHistorySync.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
@@ -96,6 +100,10 @@
 | `MineBackup/src/core/RuntimeIntegration.h` | runtime | 定义集成端口及 NetworkDisabled/no-op 实现 |
 | `MineBackup/src/core/RuntimeCloudPostHook.cpp` | runtime | 同步上传归档、元数据、历史与 manifest，并提交云状态 |
 | `MineBackup/src/core/RuntimeCloudPostHook.h` | runtime | 无桌面 rclone 云后处理适配器 |
+| `MineBackup/src/core/RuntimeFileLock.cpp` | runtime | 无桌面依赖的 Windows/POSIX 世界锁探测 |
+| `MineBackup/src/core/RuntimeFileLock.h` | runtime | 运行时文件锁探测契约 |
+| `MineBackup/src/core/RuntimeRetentionService.cpp` | runtime | 显式 HistoryRepository 依赖的普通备份保留策略 |
+| `MineBackup/src/core/RuntimeRetentionService.h` | runtime | CLI 运行时保留策略服务契约 |
 | `MineBackup/src/core/PathRuleSet.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/PathRuleSet.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/PortableConfigDocument.cpp` | data_core | 保留纯格式、策略或工具逻辑 |

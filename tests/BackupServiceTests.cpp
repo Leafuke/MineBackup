@@ -6,7 +6,9 @@
 #include "FolderRewindHistoryStore.h"
 #include "RuntimeIntegration.h"
 #include "RuntimeCloudPostHook.h"
+#include "RuntimeRetentionService.h"
 
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <stop_token>
@@ -212,4 +214,44 @@ void RunBackupServiceTests(
 			&& cloudEntries->front().isCloudArchived
 			&& !cloudEntries->front().cloudArchiveRemotePath.empty(),
 		"Synchronous cloud hook should atomically commit cloud history state");
+
+	const filesystem::path retentionRoot = temporaryRoot / "runtime-retention";
+	Config retentionConfig = config;
+	retentionConfig.backupPath = (retentionRoot / "backups").wstring();
+	retentionConfig.keepCount = 1;
+	retentionConfig.backupMode = 1;
+	map<int, Config> retentionConfigs{{1, retentionConfig}};
+	FolderRewindFormat::StoragePaths retentionStorage;
+	test.Expect(FolderRewindFormat::TryResolveStoragePaths(
+		retentionConfig.backupPath, L"world", world.wstring(), retentionStorage),
+		"Retention fixture should resolve FolderRewind paths");
+	const filesystem::path oldArchive = retentionStorage.backupSubDir / L"old.7z";
+	const filesystem::path newArchive = retentionStorage.backupSubDir / L"new.7z";
+	WriteFixture(oldArchive, "old");
+	WriteFixture(newArchive, "new");
+	filesystem::last_write_time(
+		oldArchive, filesystem::file_time_type::clock::now() - chrono::hours(1));
+	HistoryEntry oldEntry = cloudEntry;
+	oldEntry.configId = retentionConfig.configId;
+	oldEntry.worldName = retentionStorage.folderName;
+	oldEntry.worldPath = world.wstring();
+	oldEntry.backupFile = L"old.7z";
+	HistoryEntry newEntry = oldEntry;
+	newEntry.backupFile = L"new.7z";
+	HistoryRepository retentionHistory;
+	FolderRewindHistoryStore::HistoryByConfigId retentionItems;
+	retentionItems[retentionConfig.configId] = {oldEntry, newEntry};
+	const filesystem::path retentionHistoryFile = retentionRoot / "history.json";
+	test.Expect(retentionHistory.ReplaceAll(
+		std::move(retentionItems), retentionHistoryFile, retentionConfigs, true),
+		"Retention fixture history should persist");
+	RuntimeRetentionService retention(
+		retentionHistory, retentionHistoryFile, retentionConfigs);
+	BackupRequest retentionRequest = request;
+	retentionRequest.config = retentionConfig;
+	retentionRequest.world.configId = retentionConfig.configId;
+	retention.Enforce(retentionRequest, newEntry);
+	test.Expect(!filesystem::exists(oldArchive) && filesystem::exists(newArchive)
+			&& retentionHistory.EntriesForConfig(retentionConfig.configId)->size() == 1,
+		"Runtime retention should atomically remove the oldest ordinary archive and history entry");
 }

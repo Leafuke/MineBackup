@@ -212,6 +212,10 @@ if(WIN32)
         target_include_directories(MineBackup PRIVATE ${MINEBACKUP_GENERATED_DIR})
         target_link_libraries(minebackup_desktop PUBLIC ws2_32 winhttp dwmapi version)
     endif()
+    if(MINEBACKUP_BUILD_CLI)
+        target_sources(minebackup-cli PRIVATE ${MINEBACKUP_GENERATED_DIR}/MineBackupCli.rc)
+        target_include_directories(minebackup-cli PRIVATE ${MINEBACKUP_GENERATED_DIR})
+    endif()
 endif()
 
 if(UNIX AND NOT APPLE)
@@ -432,6 +436,11 @@ if(BUILD_TESTING)
                 -DCLI=$<TARGET_FILE:minebackup-cli>
                 -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliReadOnlyTest.cmake)
+        add_test(NAME minebackup.cli.execution
+            COMMAND ${CMAKE_COMMAND}
+                -DCLI=$<TARGET_FILE:minebackup-cli>
+                -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliExecutionTest.cmake)
     endif()
 
     if(NOT WIN32)

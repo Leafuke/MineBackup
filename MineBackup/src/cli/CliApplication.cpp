@@ -1,6 +1,9 @@
 #include "CliApplication.h"
 
 #include "AppPaths.h"
+#include "BackupService.h"
+#include "CliSignalHandler.h"
+#include "CliToolBootstrap.h"
 #include "ExternalToolManager.h"
 #include "HistoryRepository.h"
 #include "Logging.h"
@@ -8,8 +11,12 @@
 #include "OperationResult.h"
 #include "ProfileConfigCatalog.h"
 #include "RuntimeIntegration.h"
+#include "RuntimeCloudPostHook.h"
+#include "RuntimeFileLock.h"
+#include "RuntimeRetentionService.h"
 #include "SingleInstanceService.h"
 #include "SpecialTaskDocument.h"
+#include "SpecialTaskRunner.h"
 #include "json.hpp"
 #include "text_to_text.h"
 
@@ -18,6 +25,7 @@
 #include <iostream>
 #include <optional>
 #include <set>
+#include <utility>
 
 using namespace std;
 
@@ -316,6 +324,315 @@ CliResult HistoryList(
 	return result;
 }
 
+void AppendTaskDiagnostics(
+	vector<Diagnostic>& destination,
+	const vector<SpecialTaskStorage::Diagnostic>& source) {
+	for (const auto& diagnostic : source) {
+		destination.push_back({
+			diagnostic.eventId,
+			diagnostic.severity == SpecialTaskStorage::DiagnosticSeverity::Fatal
+				? DiagnosticSeverity::Error : DiagnosticSeverity::Warning,
+			diagnostic.detail});
+	}
+}
+
+class CliBackupRuntime {
+public:
+	CliBackupRuntime(
+		const AppPaths& paths,
+		const ProfileConfigCatalog& catalog,
+		bool noNetwork,
+		stop_token stopToken)
+		: paths_(paths), catalog_(catalog), noNetwork_(noNetwork), stopToken_(stopToken) {
+	}
+
+	OperationCode Initialize(vector<Diagnostic>& diagnostics) {
+		if (filesystem::exists(paths_.HistoryFile())
+			&& !history_.Load(paths_.HistoryFile(), catalog_.configs)) {
+			diagnostics.push_back({
+				"history.load.invalid", DiagnosticSeverity::Error,
+				wstring_to_utf8(paths_.HistoryFile().wstring())});
+			return OperationCode::InvalidProfile;
+		}
+		retention_ = make_unique<RuntimeRetentionService>(
+			history_, paths_.HistoryFile(), catalog_.configs);
+		if (noNetwork_) {
+			hotBackup_ = make_shared<NetworkDisabledKnotLinkBridge>();
+			eventSink_ = make_shared<NoopRuntimeEventSink>();
+			cloudPost_ = make_shared<NetworkDisabledCloudPostHook>();
+		}
+		else {
+			auto bridge = make_shared<HeadlessKnotLinkBridge>();
+			if (!bridge->Start()) {
+				diagnostics.push_back({
+					"knotlink.listener.unavailable", DiagnosticSeverity::Warning,
+					"The local KnotLink ports are unavailable; locked worlds use the live-file fallback."});
+			}
+			hotBackup_ = bridge;
+			eventSink_ = bridge;
+			cloudPost_ = make_shared<SynchronousRcloneCloudPostHook>(
+				paths_, history_, [this] { return catalog_.ConfigSnapshot(); });
+		}
+
+		BackupServiceDependencies dependencies;
+		dependencies.paths = paths_;
+		dependencies.ensureMigration = [](const BackupRequest&) {
+			MigrationUnitResult result;
+			result.status = MigrationStatus::NotNeeded;
+			return result;
+		};
+		dependencies.isFileLocked = IsRuntimeFileLocked;
+		dependencies.hotBackup = hotBackup_;
+		dependencies.eventSink = eventSink_;
+		dependencies.cloudPost = cloudPost_;
+		dependencies.addHistory = [this](const HistoryEntry& entry) {
+			const auto mutation = history_.Mutate(
+				entry.configId,
+				paths_.HistoryFile(),
+				catalog_.configs,
+				true,
+				[&](vector<HistoryEntry>& entries) {
+					for (auto& current : entries) {
+						if (current.worldName == entry.worldName
+							&& current.backupFile == entry.backupFile) {
+							current = entry;
+							return true;
+						}
+					}
+					entries.push_back(entry);
+					return true;
+				});
+			return mutation.changed && mutation.persisted;
+		};
+		dependencies.removeHistory = [this](
+			const wstring& worldName,
+			const wstring& backupFile) {
+			bool persisted = true;
+			for (const auto& [index, config] : catalog_.configs) {
+				(void)index;
+				const auto mutation = history_.Mutate(
+					config.configId,
+					paths_.HistoryFile(),
+					catalog_.configs,
+					true,
+					[&](vector<HistoryEntry>& entries) {
+						const auto before = entries.size();
+						erase_if(entries, [&](const HistoryEntry& entry) {
+							return entry.worldName == worldName
+								&& entry.backupFile == backupFile;
+						});
+						return entries.size() != before;
+					});
+				persisted = mutation.persisted && persisted;
+			}
+			return persisted;
+		};
+		dependencies.enforceRetention = [this](
+			const BackupRequest& request,
+			const HistoryEntry& entry) {
+			retention_->Enforce(request, entry);
+		};
+		service_ = make_unique<BackupService>(std::move(dependencies));
+		return OperationCode::Success;
+	}
+
+	optional<BackupRequest> Resolve(const SpecialTaskTarget& target) const {
+		const Config* config = catalog_.FindConfig(target.configId);
+		wstring normalized;
+		if (!config
+			|| !SpecialTaskStorage::TryNormalizeWorldPath(target.worldPath, normalized)) {
+			return nullopt;
+		}
+		const auto world = find_if(config->worlds.begin(), config->worlds.end(),
+			[&](const auto& candidate) { return candidate.first == normalized; });
+		if (world == config->worlds.end()) return nullopt;
+		BackupRequest request;
+		request.config = *config;
+		request.world = {config->configId, normalized};
+		request.sourcePath = filesystem::path(config->saveRoot) / normalized;
+		request.displayName = world->second.empty() ? normalized : world->second;
+		return request;
+	}
+
+	SpecialTaskPreflightResult Preflight(const BackupRequest& request) const {
+		SpecialTaskPreflightResult result;
+		if (!filesystem::is_directory(request.sourcePath)) {
+			result.code = OperationCode::TargetNotFound;
+			result.diagnostics.push_back({
+				"world.path.missing", DiagnosticSeverity::Error,
+				wstring_to_utf8(request.sourcePath.wstring())});
+			return result;
+		}
+		if (request.config.pendingLocalBinding) {
+			result.code = OperationCode::MigrationRequired;
+			result.diagnostics.push_back({
+				"backup.profile.binding_required", DiagnosticSeverity::Error, {}});
+			return result;
+		}
+		const auto resolution = ExternalToolManager::ResolveSevenZip(
+			request.config.zipPath, paths_, stopToken_);
+		if (!resolution.available) {
+			wstring bootstrapError;
+			if (!EnsureCliSevenZip(paths_, stopToken_, bootstrapError)
+				|| !ExternalToolManager::ResolveSevenZip(
+					request.config.zipPath, paths_, stopToken_).available) {
+				result.code = stopToken_.stop_requested()
+					? OperationCode::Cancelled : OperationCode::ToolUnavailable;
+				result.diagnostics.push_back({
+					stopToken_.stop_requested() ? "backup.cancelled" : "backup.tool.unavailable",
+					stopToken_.stop_requested() ? DiagnosticSeverity::Warning : DiagnosticSeverity::Error,
+					wstring_to_utf8(bootstrapError.empty()
+						? resolution.diagnostic : bootstrapError)});
+			}
+		}
+		return result;
+	}
+
+	BackupResult Run(const BackupRequest& request) const {
+		return service_->Run(request, stopToken_);
+	}
+
+private:
+	AppPaths paths_;
+	const ProfileConfigCatalog& catalog_;
+	bool noNetwork_ = false;
+	stop_token stopToken_;
+	HistoryRepository history_;
+	unique_ptr<RuntimeRetentionService> retention_;
+	shared_ptr<IHotBackupBridge> hotBackup_;
+	shared_ptr<IRuntimeEventSink> eventSink_;
+	shared_ptr<ICloudPostHook> cloudPost_;
+	unique_ptr<BackupService> service_;
+};
+
+CliResult RenderBackupResult(BackupResult backup) {
+	CliResult result{"backup", backup.code};
+	result.diagnostics = std::move(backup.diagnostics);
+	result.data["outcome"] = ToString(backup.outcome);
+	result.data["archivePath"] = wstring_to_utf8(backup.archivePath.wstring());
+	result.data["cloud"] = ToString(backup.cloud.status);
+	if (backup.historyEntry) {
+		result.data["history"] = {
+			{"configId", wstring_to_utf8(backup.historyEntry->configId)},
+			{"world", wstring_to_utf8(backup.historyEntry->worldName)},
+			{"backupFile", wstring_to_utf8(backup.historyEntry->backupFile)},
+			{"backupType", wstring_to_utf8(backup.historyEntry->backupType)},
+			{"timestamp", wstring_to_utf8(backup.historyEntry->timestamp_str)}};
+	}
+	return result;
+}
+
+CliResult BackupCommand(
+	const ProfileConfigCatalog& catalog,
+	const AppPaths& paths,
+	const CliOptions& options,
+	stop_token stopToken) {
+	vector<Diagnostic> initialization;
+	CliBackupRuntime runtime(paths, catalog, options.noNetwork, stopToken);
+	const OperationCode initialized = runtime.Initialize(initialization);
+	if (!IsSuccessful(initialized)) {
+		return {"backup", initialized, nlohmann::json::object(), std::move(initialization)};
+	}
+	SpecialTaskTarget target{options.configId, options.worldPath};
+	auto request = runtime.Resolve(target);
+	if (!request) {
+		initialization.push_back({
+			"world.not_found", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.worldPath)});
+		return {"backup", OperationCode::TargetNotFound,
+			nlohmann::json::object(), std::move(initialization)};
+	}
+	const auto preflight = runtime.Preflight(*request);
+	if (!IsSuccessful(preflight.code)) {
+		initialization.insert(initialization.end(),
+			preflight.diagnostics.begin(), preflight.diagnostics.end());
+		return {"backup", preflight.code,
+			nlohmann::json::object(), std::move(initialization)};
+	}
+	CliResult result = RenderBackupResult(runtime.Run(*request));
+	result.diagnostics.insert(result.diagnostics.begin(),
+		initialization.begin(), initialization.end());
+	return result;
+}
+
+CliResult RunSpecialCommand(
+	ProfileConfigCatalog& catalog,
+	const AppPaths& paths,
+	const CliOptions& options,
+	stop_token stopToken) {
+	CliResult result{"run-special", OperationCode::Success};
+	if (catalog.specialTaskMigrationPending) {
+		auto migration = SpecialTaskStorage::MigrateLegacy(
+			catalog.configs, catalog.specialConfigs);
+		AppendTaskDiagnostics(result.diagnostics, migration.diagnostics);
+		if (!migration.success) {
+			result.code = OperationCode::InvalidProfile;
+			return result;
+		}
+		wstring saveError;
+		if (!SpecialTaskStorage::Save(paths.SpecialTasksFile(), migration.document, saveError)) {
+			result.code = OperationCode::InvalidProfile;
+			result.diagnostics.push_back({
+				"special.migration.write_failed", DiagnosticSeverity::Error,
+				wstring_to_utf8(saveError)});
+			return result;
+		}
+		vector<SpecialTaskStorage::Diagnostic> validation;
+		if (!SpecialTaskStorage::ApplyAndValidate(
+				migration.document, catalog.configs, catalog.specialConfigs, validation)) {
+			result.code = OperationCode::InvalidProfile;
+			AppendTaskDiagnostics(result.diagnostics, validation);
+			return result;
+		}
+		AppendTaskDiagnostics(result.diagnostics, validation);
+		catalog.specialTaskMigrationPending = false;
+	}
+	const SpecialConfig* special = catalog.FindSpecialConfig(options.specialConfigId);
+	if (!special) {
+		result.code = OperationCode::TargetNotFound;
+		result.diagnostics.push_back({
+			"special.config.not_found", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.specialConfigId)});
+		return result;
+	}
+
+	vector<Diagnostic> initialization;
+	CliBackupRuntime runtime(paths, catalog, options.noNetwork, stopToken);
+	const OperationCode initialized = runtime.Initialize(initialization);
+	result.diagnostics.insert(result.diagnostics.end(),
+		initialization.begin(), initialization.end());
+	if (!IsSuccessful(initialized)) {
+		result.code = initialized;
+		return result;
+	}
+	SpecialTaskRunner runner({
+		[&](const SpecialTaskTarget& target) { return runtime.Resolve(target); },
+		[&](const BackupRequest& request) { return runtime.Preflight(request); },
+		[&](const BackupRequest& request, stop_token) { return runtime.Run(request); },
+		[](const ShellTaskSpec& spec, stop_token token) {
+			return ProcessRunner::RunShellTask(spec, token);
+		}});
+	SpecialRunResult run = runner.Run(*special, stopToken);
+	result.code = run.code;
+	result.diagnostics.insert(result.diagnostics.end(),
+		run.diagnostics.begin(), run.diagnostics.end());
+	result.data["tasks"] = nlohmann::json::array();
+	for (const auto& task : run.tasks) {
+		nlohmann::json diagnostics = nlohmann::json::array();
+		for (const auto& diagnostic : task.diagnostics) {
+			diagnostics.push_back({
+				{"eventId", diagnostic.eventId},
+				{"severity", ToString(diagnostic.severity)},
+				{"detail", diagnostic.detail}});
+		}
+		result.data["tasks"].push_back({
+			{"taskId", wstring_to_utf8(task.taskId)},
+			{"code", ToString(task.code)},
+			{"diagnostics", diagnostics}});
+	}
+	return result;
+}
+
 CliResult Doctor(
 	const ProfileCatalogLoadResult& loaded,
 	const AppPaths& paths,
@@ -450,7 +767,7 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		return ToExitCode(error.code);
 	}
 
-	const auto loaded = ProfileConfigCatalogLoader::Load(
+	auto loaded = ProfileConfigCatalogLoader::Load(
 		paths.ConfigFile(), paths.SpecialTasksFile());
 	CliResult result;
 	if (parsed.options.command == CliCommand::Doctor) {
@@ -474,6 +791,22 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		result = HistoryList(loaded.catalog, paths, parsed.options);
 		result.diagnostics.insert(result.diagnostics.begin(),
 			loaded.diagnostics.begin(), loaded.diagnostics.end());
+	}
+	else if (parsed.options.command == CliCommand::Backup) {
+		CliSignalHandler signals;
+		result = BackupCommand(
+			loaded.catalog, paths, parsed.options, signals.Token());
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+		if (signals.WasInterrupted()) result.code = OperationCode::Cancelled;
+	}
+	else if (parsed.options.command == CliCommand::RunSpecial) {
+		CliSignalHandler signals;
+		result = RunSpecialCommand(
+			loaded.catalog, paths, parsed.options, signals.Token());
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+		if (signals.WasInterrupted()) result.code = OperationCode::Cancelled;
 	}
 	else {
 		result.command = CommandName(parsed.options.command);

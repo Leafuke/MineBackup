@@ -47,6 +47,9 @@ void RunOperationResultTests(TestContext& test) {
 			{L"two", OperationCode::TaskFailed, {}}}) == OperationCode::PartialSuccess,
 		"mixed task success and failure should aggregate to partial_success");
 	test.Expect(AggregateSpecialTaskCodes({
+			{L"cloud", OperationCode::PartialSuccess, {}}}) == OperationCode::PartialSuccess,
+		"a local backup with failed cloud post-processing should remain partial_success");
+	test.Expect(AggregateSpecialTaskCodes({
 			{L"one", OperationCode::BackupFailed, {}},
 			{L"two", OperationCode::ToolUnavailable, {}}}) == OperationCode::TaskFailed,
 		"all failed tasks should aggregate to task_failed");

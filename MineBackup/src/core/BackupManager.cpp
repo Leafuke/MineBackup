@@ -404,6 +404,7 @@ BackupResult BackupService::Run(const BackupRequest& request, stop_token stopTok
 	auto cancelled = [&]() {
 		return stopToken.stop_requested();
 	};
+	vector<Diagnostic> deferredDiagnostics;
 	if (cancelled()) {
 		return MakeBackupFailure(
 			OperationCode::Cancelled, BackupOutcome::Rejected,
@@ -539,6 +540,9 @@ BackupResult BackupService::Run(const BackupRequest& request, stop_token stopTok
 				rejected.diagnostics.end(), preparation.diagnostics.begin(), preparation.diagnostics.end());
 			return rejected;
 		}
+		deferredDiagnostics.insert(
+			deferredDiagnostics.end(),
+			preparation.diagnostics.begin(), preparation.diagnostics.end());
 		BACKUP_INFO("Using 7-Zip -ssw to back up live world files.");
 	}
 
@@ -604,6 +608,8 @@ BackupResult BackupService::Run(const BackupRequest& request, stop_token stopTok
 		result.code = OperationCode::NoChanges;
 		result.outcome = BackupOutcome::NoChanges;
 		result.diagnostics.push_back(MakeDiagnostic("backup.no_changes", DiagnosticSeverity::Info));
+		result.diagnostics.insert(result.diagnostics.end(),
+			deferredDiagnostics.begin(), deferredDiagnostics.end());
 		return result;
     } else if (scanResult.status == BackupScanStatus::MetadataInvalid) {
 		publish("backup.metadata.invalid");
@@ -674,6 +680,8 @@ BackupResult BackupService::Run(const BackupRequest& request, stop_token stopTok
 		result.code = OperationCode::NoChanges;
 		result.outcome = BackupOutcome::NoChanges;
 		result.diagnostics.push_back(MakeDiagnostic("backup.no_changes", DiagnosticSeverity::Info));
+		result.diagnostics.insert(result.diagnostics.end(),
+			deferredDiagnostics.begin(), deferredDiagnostics.end());
 		return result;
 	}
 
@@ -685,6 +693,8 @@ BackupResult BackupService::Run(const BackupRequest& request, stop_token stopTok
 		result.code = OperationCode::NoChanges;
 		result.outcome = BackupOutcome::NoChanges;
 		result.diagnostics.push_back(MakeDiagnostic("backup.no_changes", DiagnosticSeverity::Info));
+		result.diagnostics.insert(result.diagnostics.end(),
+			deferredDiagnostics.begin(), deferredDiagnostics.end());
 		return result;
 	}
 
@@ -910,6 +920,8 @@ execute_backup:
 		result.archivePath = filesystem::path(archivePath);
 		result.historyEntry = historyEntry;
 		result.diagnostics.push_back(MakeDiagnostic("backup.completed", DiagnosticSeverity::Info));
+		result.diagnostics.insert(result.diagnostics.end(),
+			deferredDiagnostics.begin(), deferredDiagnostics.end());
 		if (dependencies_.cloudPost && !cancelled()) {
 			result.cloud = dependencies_.cloudPost->Run(request, historyEntry, stopToken);
 			result.diagnostics.insert(

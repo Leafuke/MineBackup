@@ -254,6 +254,13 @@ SpecialRunResult SpecialTaskRunner::Run(
 	}
 	for (auto& thread : parallelOnce) if (thread.joinable()) thread.join();
 	for (auto& thread : recurring) if (thread.joinable()) thread.join();
+	map<wstring, size_t> taskOrder;
+	for (size_t index = 0; index < enabled.size(); ++index) {
+		taskOrder.emplace(enabled[index]->taskId, index);
+	}
+	stable_sort(run.tasks.begin(), run.tasks.end(), [&](const auto& left, const auto& right) {
+		return taskOrder[left.taskId] < taskOrder[right.taskId];
+	});
 
 	if (stopToken.stop_requested() && !recurring.empty()) {
 		run.code = OperationCode::Cancelled;

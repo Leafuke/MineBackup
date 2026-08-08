@@ -3,7 +3,9 @@
 #include "SpecialTaskRunner.h"
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
+#include <thread>
 
 using namespace std;
 
@@ -78,6 +80,37 @@ void RunSpecialTaskRunnerTests(TestContext& test) {
 			&& backupRuns == 1,
 		"SpecialTaskRunner should aggregate mixed one-shot outcomes as partial success");
 
+	SpecialConfig parallel;
+	auto slower = BackupTask(L"first", SpecialTaskTriggerType::Once);
+	slower.executionMode = SpecialTaskExecutionMode::Parallel;
+	slower.target.worldPath = L"slow";
+	auto faster = BackupTask(L"second", SpecialTaskTriggerType::Once);
+	faster.executionMode = SpecialTaskExecutionMode::Parallel;
+	faster.target.worldPath = L"fast";
+	parallel.specialTasks = {slower, faster};
+	SpecialTaskRunnerDependencies parallelDependencies = dependencies;
+	parallelDependencies.resolveBackup = [](const SpecialTaskTarget& target) {
+		BackupRequest request;
+		request.config.configId = target.configId;
+		request.world = {target.configId, target.worldPath};
+		request.sourcePath = target.worldPath;
+		return optional<BackupRequest>(std::move(request));
+	};
+	parallelDependencies.runBackup = [](const BackupRequest& request, stop_token) {
+		if (request.world.relativePath == L"slow") {
+			this_thread::sleep_for(chrono::milliseconds(20));
+		}
+		BackupResult result;
+		result.code = OperationCode::Success;
+		return result;
+	};
+	const SpecialRunResult parallelResult =
+		SpecialTaskRunner(parallelDependencies).Run(parallel);
+	test.Expect(parallelResult.tasks.size() == 2
+			&& parallelResult.tasks[0].taskId == L"first"
+			&& parallelResult.tasks[1].taskId == L"second",
+		"Parallel task results should retain document order regardless of completion order");
+
 	SpecialConfig scripted;
 	SpecialTask script;
 	script.taskId = L"script";
@@ -128,4 +161,3 @@ void RunSpecialTaskRunnerTests(TestContext& test) {
 			&& *next - fixedNow <= chrono::hours(24),
 		"Wildcard scheduled tasks should select the next matching local time");
 }
-
