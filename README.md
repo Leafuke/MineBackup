@@ -111,6 +111,15 @@ switch Off/Info/Debug at runtime, and the Log panel can export a diagnostic copy
 with known paths redacted. See [logging and diagnostics](docs/logging-and-diagnostics.md)
 for locations, retention, privacy boundaries and troubleshooting.
 
+### Headless CLI developer preview
+
+The repository now has a desktop-free `minebackup-cli` build for diagnostics,
+queries, backup automation and special-task execution. It is not included in
+official release assets yet. The old desktop `--run-special`, `-specialcfg`
+and `--autostart` execution paths are disabled; source-build users should use
+the CLI replacement. See the [headless CLI contract](docs/headless-cli.md) for
+commands, exit codes, JSON, signals, network behavior and migration limits.
+
 ---
 
 ## Sponsor

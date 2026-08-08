@@ -2,10 +2,10 @@
 
 | Platform | Supported releases | Release asset | Desktop integration |
 |---|---|---|---|
-| Windows x64 | Windows 10 22H2, Windows 11 | `MineBackup-windows-x64.exe` | Native dialogs, tray, notifications, global hotkeys and current-user autostart |
+| Windows x64 | Windows 10 22H2, Windows 11 | `MineBackup-windows-x64.exe` | Native dialogs, tray, notifications and global hotkeys |
 | Ubuntu x86_64 | 24.04 and later | `minebackup_1.16.0_amd64.deb` or AppImage | X11/Wayland automatic selection; portals and tray degrade by session capability |
 | Debian x86_64 | 13 and later | `MineBackup-1.16.0-x86_64.AppImage` | Same capability-based Linux behavior |
-| macOS arm64 | macOS 15 and later | `MineBackup-1.16.0-macos-arm64.dmg` | Native dialogs, menu bar, notifications, hotkeys and login item |
+| macOS arm64 | macOS 15 and later | `MineBackup-1.16.0-macos-arm64.dmg` | Native dialogs, menu bar, notifications and hotkeys |
 
 Backup, restore, history, FolderRewind metadata, rclone cloud workflows and
 automatic tasks share the same data contracts on all three platforms. Linux
@@ -13,6 +13,10 @@ desktop features are environment-dependent: the UI reports `Available`,
 `Unavailable`, `PermissionRequired` or `Failed` and explains the active reason.
 Missing portals, a missing StatusNotifier host or a rejected shortcut must not
 disable backup and restore or make the main window unreachable.
+
+Desktop special-task execution and its Windows/macOS login startup integration
+are disabled. The source tree provides a desktop-free CLI replacement, but it
+is not included in the release assets yet; see [Headless CLI](headless-cli.md).
 
 ## Logging verification
 
