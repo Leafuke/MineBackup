@@ -45,6 +45,8 @@
 | `MineBackup/src/app/MainUI.h` | desktop | 保留桌面生命周期或 UI 状态 |
 | `MineBackup/src/app/MineBackup.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
 | `MineBackup/src/cli/CliMain.cpp` | runtime | CLI console 入口；不进入 GUI MSBuild 工程 |
+| `MineBackup/src/cli/CliApplication.cpp` | runtime | CLI 参数、锁、查询命令、doctor 与统一输出编排 |
+| `MineBackup/src/cli/CliApplication.h` | runtime | CLI 可测试入口；不进入 GUI MSBuild 工程 |
 | `MineBackup/src/core/ArchiveRunner.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/ArchiveRunner.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/BackupAuxiliary.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
@@ -88,6 +90,8 @@
 | `MineBackup/src/core/MigrationCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/OperationResult.cpp` | runtime | 固定操作码、聚合规则与进程退出码映射 |
 | `MineBackup/src/core/OperationResult.h` | runtime | 纯运行时结果、诊断和任务结果契约 |
+| `MineBackup/src/core/ProfileConfigCatalog.cpp` | runtime | 只读安全解析普通配置、特殊配置和任务文档 |
+| `MineBackup/src/core/ProfileConfigCatalog.h` | runtime | 稳定 ID 配置目录与加载诊断契约 |
 | `MineBackup/src/core/RuntimeIntegration.cpp` | runtime | 云后处理、热备份桥接与事件输出的无桌面适配器 |
 | `MineBackup/src/core/RuntimeIntegration.h` | runtime | 定义集成端口及 NetworkDisabled/no-op 实现 |
 | `MineBackup/src/core/RuntimeCloudPostHook.cpp` | runtime | 同步上传归档、元数据、历史与 manifest，并提交云状态 |

@@ -156,6 +156,9 @@
 	<ClCompile Include="src\core\OperationResult.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
+	<ClCompile Include="src\core\ProfileConfigCatalog.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
 	<ClCompile Include="src\core\RuntimeIntegration.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
@@ -438,6 +441,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
 	<ClInclude Include="src\core\OperationResult.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileConfigCatalog.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\RuntimeIntegration.h">

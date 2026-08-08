@@ -1,45 +1,22 @@
-#include "MineBackupVersion.h"
+#include "CliApplication.h"
 
-#include <iostream>
-#include <string_view>
+#include "text_to_text.h"
 
-namespace {
+#include <string>
+#include <vector>
 
-void PrintHelp() {
-	std::cout
-		<< "MineBackup headless command line interface\n\n"
-		<< "Usage:\n"
-		<< "  minebackup-cli [global options] <command>\n\n"
-		<< "Commands:\n"
-		<< "  doctor\n"
-		<< "  config list\n"
-		<< "  world list --config <ConfigId>\n"
-		<< "  backup --config <ConfigId> --world <relative-path>\n"
-		<< "  history list --config <ConfigId> --world <relative-path>\n"
-		<< "  run-special <SpecialConfigId>\n\n"
-		<< "Global options:\n"
-		<< "  --data-dir <path>  --json  --log-level <off|info|debug>\n"
-		<< "  --no-network  --non-interactive  --help  --version\n";
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+	std::vector<std::wstring> arguments;
+	for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
+	return RunMineBackupCli(arguments);
 }
-
-} // namespace
-
+#else
 int main(int argc, char** argv) {
+	std::vector<std::wstring> arguments;
 	for (int index = 1; index < argc; ++index) {
-		const std::string_view argument(argv[index]);
-		if (argument == "--version") {
-			std::cout << "minebackup-cli " MINEBACKUP_VERSION_STRING "\n";
-			return 0;
-		}
-		if (argument == "--help" || argument == "-h") {
-			PrintHelp();
-			return 0;
-		}
+		arguments.push_back(utf8_to_wstring(argv[index]));
 	}
-	if (argc == 1) {
-		PrintHelp();
-		return 0;
-	}
-	std::cerr << "minebackup-cli: business commands are not available in this build stage\n";
-	return 2;
+	return RunMineBackupCli(arguments);
 }
+#endif

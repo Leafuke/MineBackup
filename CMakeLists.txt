@@ -365,6 +365,7 @@ if(BUILD_TESTING)
         tests/SpecialTaskRunnerTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
+        tests/ProfileConfigCatalogTests.cpp
         tests/RuntimeInfrastructureTests.cpp)
     target_link_libraries(minebackup_data_tests PRIVATE minebackup_runtime)
     if(MSVC)
@@ -426,6 +427,11 @@ if(BUILD_TESTING)
     if(MINEBACKUP_BUILD_CLI)
         add_test(NAME minebackup.cli.help COMMAND minebackup-cli --help)
         add_test(NAME minebackup.cli.version COMMAND minebackup-cli --version)
+        add_test(NAME minebackup.cli.read_only
+            COMMAND ${CMAKE_COMMAND}
+                -DCLI=$<TARGET_FILE:minebackup-cli>
+                -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliReadOnlyTest.cmake)
     endif()
 
     if(NOT WIN32)

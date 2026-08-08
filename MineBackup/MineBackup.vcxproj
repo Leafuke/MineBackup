@@ -127,6 +127,7 @@
 	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
     <ClCompile Include="src\core\MigrationCoordinator.cpp" />
 	<ClCompile Include="src\core\OperationResult.cpp" />
+	<ClCompile Include="src\core\ProfileConfigCatalog.cpp" />
 	<ClCompile Include="src\core\RuntimeIntegration.cpp" />
 	<ClCompile Include="src\core\RuntimeCloudPostHook.cpp" />
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
@@ -230,6 +231,7 @@
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h" />
 	<ClInclude Include="src\core\MigrationCoordinator.h" />
 	<ClInclude Include="src\core\OperationResult.h" />
+	<ClInclude Include="src\core\ProfileConfigCatalog.h" />
 	<ClInclude Include="src\core\RuntimeIntegration.h" />
 	<ClInclude Include="src\core\RuntimeCloudPostHook.h" />
 	<ClInclude Include="src\core\V15MigrationAdapter.h" />
