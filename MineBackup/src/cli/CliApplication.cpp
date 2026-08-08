@@ -651,6 +651,19 @@ CliResult Doctor(
 
 	bool missingTool = false;
 	result.data["tools"] = nlohmann::json::array();
+	result.data["unsupportedScriptTaskCount"] = 0;
+	for (const auto& [index, special] : loaded.catalog.specialConfigs) {
+		(void)index;
+		for (const auto& task : special.specialTasks) {
+			if (task.type != SpecialTaskType::Script) continue;
+			result.code = OperationCode::InvalidProfile;
+			result.data["unsupportedScriptTaskCount"] =
+				result.data["unsupportedScriptTaskCount"].get<size_t>() + 1;
+			result.diagnostics.push_back({
+				"special.script.unsupported", DiagnosticSeverity::Error,
+				wstring_to_utf8(special.specialConfigId + L":" + task.taskId)});
+		}
+	}
 	for (const auto& [index, config] : loaded.catalog.configs) {
 		(void)index;
 		const filesystem::path saveRoot(config.saveRoot);
@@ -721,11 +734,25 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		return ToExitCode(error.code);
 	}
 	if (parsed.options.command == CliCommand::Help) {
-		PrintHelp();
+		if (parsed.options.json) {
+			CliResult help{"help", OperationCode::Success};
+			help.data["usage"] = "minebackup-cli --help";
+			Render(help, true);
+		}
+		else {
+			PrintHelp();
+		}
 		return 0;
 	}
 	if (parsed.options.command == CliCommand::Version) {
-		cout << "minebackup-cli " MINEBACKUP_VERSION_STRING "\n";
+		if (parsed.options.json) {
+			CliResult version{"version", OperationCode::Success};
+			version.data["version"] = MINEBACKUP_VERSION_STRING;
+			Render(version, true);
+		}
+		else {
+			cout << "minebackup-cli " MINEBACKUP_VERSION_STRING "\n";
+		}
 		return 0;
 	}
 

@@ -441,11 +441,33 @@ if(BUILD_TESTING)
                 -DCLI=$<TARGET_FILE:minebackup-cli>
                 -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliReadOnlyTest.cmake)
-        add_test(NAME minebackup.cli.execution
-            COMMAND ${CMAKE_COMMAND}
-                -DCLI=$<TARGET_FILE:minebackup-cli>
-                -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliExecutionTest.cmake)
+        set(MINEBACKUP_CLI_ARCHIVE_TEST_AVAILABLE ${WIN32})
+        if(NOT WIN32)
+            find_program(MINEBACKUP_CLI_TEST_7ZIP NAMES 7zz 7z)
+            if(MINEBACKUP_CLI_TEST_7ZIP)
+                set(MINEBACKUP_CLI_ARCHIVE_TEST_AVAILABLE TRUE)
+            endif()
+        endif()
+        if(MINEBACKUP_CLI_ARCHIVE_TEST_AVAILABLE)
+            add_test(NAME minebackup.cli.execution
+                COMMAND ${CMAKE_COMMAND}
+                    -DCLI=$<TARGET_FILE:minebackup-cli>
+                    -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliExecutionTest.cmake)
+            find_package(Python3 COMPONENTS Interpreter QUIET)
+            if(Python3_Interpreter_FOUND)
+                add_test(NAME minebackup.cli.process_contract
+                    COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_process_contract.py
+                        --cli $<TARGET_FILE:minebackup-cli>
+                        --work-root ${CMAKE_CURRENT_BINARY_DIR}/test-work/cli-process-contract)
+                set_tests_properties(minebackup.cli.process_contract PROPERTIES TIMEOUT 30)
+            else()
+                message(STATUS "Python 3 not found; skipping CLI process contract test")
+            endif()
+        else()
+            message(STATUS "7zz/7z not found; skipping real CLI archive and process tests")
+        endif()
     endif()
 
     if(NOT WIN32)
@@ -462,5 +484,11 @@ endif()
 add_custom_target(check_msbuild_source_parity
     COMMAND ${CMAKE_COMMAND} -DMINEBACKUP_REPOSITORY_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckSourceParity.cmake
+    VERBATIM
+)
+
+add_custom_target(check_runtime_boundaries
+    COMMAND ${CMAKE_COMMAND} -DMINEBACKUP_REPOSITORY_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckRuntimeBoundaries.cmake
     VERBATIM
 )

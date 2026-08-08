@@ -1,0 +1,130 @@
+name: Headless CLI Validation
+
+on:
+  pull_request:
+  push:
+    branches: [develop, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-cli-only:
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install CLI-only build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-13 g++-13 cmake ninja-build python3 unzip curl
+
+      - name: Install pinned headless 7-Zip runtime
+        run: |
+          mkdir -p build/headless-inputs
+          curl --fail --location --retry 3 \
+            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.02-v1.5.7-R2/linux-gcc-x64.zip \
+            --output build/headless-inputs/linux-gcc-x64.zip
+          echo 'be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3  build/headless-inputs/linux-gcc-x64.zip' \
+            | sha256sum --check --status
+          unzip -p build/headless-inputs/linux-gcc-x64.zip 7zz >build/headless-inputs/7zz
+          chmod 0755 build/headless-inputs/7zz
+          sudo install -m 0755 build/headless-inputs/7zz /usr/local/bin/7zz
+
+      - name: Configure and build without desktop development packages
+        run: |
+          cmake --preset linux-x64-cli-only -DBUILD_TESTING=ON
+          cmake --build build/linux-x64-cli-only --parallel
+          cmake --build build/linux-x64-cli-only --target check_runtime_boundaries
+
+      - name: Test without display or terminal input
+        run: |
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            build/linux-x64-cli-only/bin/minebackup-cli --version </dev/null
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            ctest --preset linux-x64-cli-only --output-on-failure
+
+      - name: Reject desktop dynamic dependencies
+        run: |
+          cmake -DCLI="$PWD/build/linux-x64-cli-only/bin/minebackup-cli" \
+            -P cmake/VerifyHeadlessCliDependencies.cmake
+
+  macos-cli-only:
+    runs-on: macos-15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Build pinned headless 7-Zip runtime
+        run: |
+          test "$(uname -m)" = arm64
+          git init build/7zip-zstd
+          git -C build/7zip-zstd remote add origin https://github.com/mcmilk/7-Zip-zstd.git
+          git -C build/7zip-zstd fetch --depth 1 origin 2dcb6815c0e6877988171c47e1824b86172ff3b2
+          git -C build/7zip-zstd checkout --detach FETCH_HEAD
+          bash packaging/macos/build-sevenzip.sh \
+            build/7zip-zstd build/headless-inputs/7zz
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 0755 build/headless-inputs/7zz /usr/local/bin/7zz
+
+      - name: Configure and build without desktop dependencies
+        run: |
+          cmake --preset macos-arm64-cli-only -DBUILD_TESTING=ON
+          cmake --build build/macos-arm64-cli-only --parallel
+          cmake --build build/macos-arm64-cli-only --target check_runtime_boundaries
+
+      - name: Test without display or terminal input
+        run: |
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            build/macos-arm64-cli-only/bin/minebackup-cli --version </dev/null
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            ctest --preset macos-arm64-cli-only --output-on-failure
+
+      - name: Reject desktop framework dependencies
+        run: |
+          cmake -DCLI="$PWD/build/macos-arm64-cli-only/bin/minebackup-cli" \
+            -P cmake/VerifyHeadlessCliDependencies.cmake
+
+  windows-cli-only:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Verify tracked Windows 7-Zip resource
+        shell: pwsh
+        run: .\cmake\VerifyWindowsSevenZip.ps1
+
+      - name: Configure and build console-only candidate
+        shell: pwsh
+        run: |
+          cmake -S . -B build/headless-windows -A x64 `
+            -DMINEBACKUP_BUILD_GUI=OFF `
+            -DMINEBACKUP_BUILD_CLI=ON `
+            -DMINEBACKUP_ENABLE_V15_MIGRATION=OFF `
+            -DBUILD_TESTING=ON
+          cmake --build build/headless-windows --config Release --parallel
+
+      - name: Run CLI and process-contract tests
+        shell: pwsh
+        run: |
+          ctest --test-dir build/headless-windows -C Release --output-on-failure
+          cmake --build build/headless-windows --config Release `
+            --target check_msbuild_source_parity
+          cmake --build build/headless-windows --config Release `
+            --target check_runtime_boundaries
+
+      - name: Reject GUI subsystem and desktop imports
+        shell: pwsh
+        run: |
+          .\cmake\VerifyWindowsCliBinary.ps1 `
+            -Executable .\build\headless-windows\bin\Release\minebackup-cli.exe

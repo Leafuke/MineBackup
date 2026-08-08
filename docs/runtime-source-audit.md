@@ -13,6 +13,8 @@
 
 `minebackup_runtime` 的传递闭包不得包含 `Globals.h`、`AppState.h`、`DesktopServices.h`、`imgui.h`、GLFW、OpenGL、X11、Wayland、GTK、GIO 或 AppIndicator。GUI 允许依赖 runtime；runtime 不允许反向依赖 GUI。
 
+CI 通过 `check_runtime_boundaries` 检查 runtime 源文件与公共头的禁止 include，并在 CLI-only 构建后审计最终二进制的动态依赖。新增 runtime 文件时必须同步加入 `MINEBACKUP_RUNTIME_SOURCES` 和本清单；新增无对应 `.cpp` 的公共头时还必须加入 `cmake/CheckRuntimeBoundaries.cmake`。
+
 ## 逐文件清单
 
 | 文件 | 目标 | 动作 |
