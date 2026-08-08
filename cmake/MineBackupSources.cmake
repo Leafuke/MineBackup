@@ -85,7 +85,6 @@ set(MINEBACKUP_APPLICATION_SOURCES
     ${MINEBACKUP_CORE_DIR}/CoreValidation.cpp
     ${MINEBACKUP_CORE_DIR}/GameSessionManager.cpp
     ${MINEBACKUP_CORE_DIR}/HistoryManager.cpp
-    ${MINEBACKUP_CORE_DIR}/SpecialMode.cpp
     ${MINEBACKUP_INFRA_DIR}/Broadcast.cpp
     ${MINEBACKUP_INFRA_DIR}/ConfigManager.cpp
     ${MINEBACKUP_INFRA_DIR}/KnotLinkServerManager.cpp

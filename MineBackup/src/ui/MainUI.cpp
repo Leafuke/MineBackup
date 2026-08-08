@@ -27,7 +27,6 @@
 #include "Logging.h"
 #include "RemoteContentService.h"
 #include "PlatformCompat.h"
-#include "SpecialConfigPolicy.h"
 #include "TaskCoordinator.h"
 
 #include <algorithm>
@@ -278,33 +277,13 @@ if (ImGui::BeginMenuBar()) {
 	}
 
 	if (ImGui::BeginMenu(L("SETTINGS"))) {
-
 		const auto desktopCapabilities = desktopServices->Capabilities();
-		ImGui::BeginDisabled(!desktopCapabilities.autostart.IsAvailable());
-		if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup)) {
-			const bool previous = !g_RunOnStartup;
-			const bool anySpecialStartup = FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
-			const auto status = desktopServices->SetAutostart(g_RunOnStartup || anySpecialStartup);
-			if (!status.IsAvailable()) {
-				g_RunOnStartup = previous;
-				PLATFORM_PRINTF_ERROR("platform.autostart.update_failed",
-					"Autostart update failed: %s",
-					wstring_to_utf8(status.diagnostic).c_str());
-				MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
-			}
-			else if (!g_RunOnStartup && !anySpecialStartup) {
-				g_SilentStartupToTray = false;
-			}
-		}
-		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
-		if (!desktopCapabilities.autostart.IsAvailable() && !desktopCapabilities.autostart.diagnostic.empty()) {
-			ImGui::TextDisabled("%s", wstring_to_utf8(desktopCapabilities.autostart.diagnostic).c_str());
-		}
-		ImGui::BeginDisabled(!g_RunOnStartup);
+
+		ImGui::BeginDisabled();
+		ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup);
 		ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray);
 		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
+		ImGui::TextDisabled("%s", L("AUTOSTART_CLI_ONLY_NOTICE"));
 		if (ImGui::BeginMenu(L("LOG_FILE_LEVEL"))) {
 			const struct {
 				minebackup::logging::LogFileLevel value;

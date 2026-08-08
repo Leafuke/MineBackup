@@ -8,7 +8,6 @@
 #include "imgui-all.h"
 #include "text_to_text.h"
 #include "DesktopServices.h"
-#include "SpecialConfigPolicy.h"
 #include "SpecialTaskDocument.h"
 #include "FolderRewindFormat.h"
 #include "UIHelpers.h"

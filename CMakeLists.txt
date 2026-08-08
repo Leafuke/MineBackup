@@ -397,6 +397,11 @@ if(BUILD_TESTING)
             target_compile_options(minebackup_font_mapping_tests PRIVATE /utf-8 /FS)
         endif()
         add_test(NAME minebackup.font_mapping COMMAND minebackup_font_mapping_tests)
+
+		add_test(NAME minebackup.desktop.special_disabled
+			COMMAND ${CMAKE_COMMAND}
+				-DGUI=$<TARGET_FILE:MineBackup>
+				-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunDeprecatedDesktopLaunchTest.cmake)
     endif()
 
     add_executable(minebackup_i18n_tests

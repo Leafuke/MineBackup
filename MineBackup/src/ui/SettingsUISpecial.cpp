@@ -1,5 +1,7 @@
 ﻿#include "SettingsUIPrivate.h"
 
+#include "AppPaths.h"
+
 using namespace std;
 
 void DrawUnifiedTaskManager(SpecialConfig& spCfg) {
@@ -345,8 +347,12 @@ void DrawSpecialConfigSettings(SpecialConfig& spCfg, SpecialSettingsPage page) {
 		return;
 	}
 	if (page == SpecialSettingsPage::Backup) {
+		ImGui::BeginDisabled();
 		ImGui::Checkbox(L("BACKUP_ON_START"), &spCfg.backupOnGameStart);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BACKUP_ON_START"));
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+			ImGui::SetTooltip("%s", L("SPECIAL_CLI_ONLY_NOTICE"));
+		}
 		ImGui::Checkbox(L("USE_LOW_PRIORITY"), &spCfg.useLowPriority);
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_LOW_PRIORITY"));
 
@@ -368,51 +374,22 @@ void DrawSpecialConfigSettings(SpecialConfig& spCfg, SpecialSettingsPage page) {
 		return;
 	}
 
-	if (ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute)) {
-		SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
-			g_appState.currentConfigIndex, spCfg.autoExecute);
-	}
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_EXECUTE_ON_STARTUP"));
+	ImGui::BeginDisabled();
+	ImGui::Checkbox(L("EXECUTE_ON_STARTUP"), &spCfg.autoExecute);
 	ImGui::Checkbox(L("EXIT_WHEN_FINISHED"), &spCfg.exitAfterExecution);
-
-	const auto services = GetDesktopServices();
-	const auto autostartCapability = services->Capabilities().autostart;
-	map<int, bool> previousStartupSelections;
-	for (const auto& [index, config] : g_appState.specialConfigs) {
-		previousStartupSelections[index] = config.runOnStartup;
-	}
-	ImGui::BeginDisabled(!autostartCapability.IsAvailable());
-	if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup)) {
-		SetExclusiveSpecialRunOnStartup(g_appState.specialConfigs,
-			g_appState.currentConfigIndex, spCfg.runOnStartup);
-		const bool enabled = g_RunOnStartup
-			|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
-		const auto status = services->SetAutostart(enabled);
-		if (!status.IsAvailable()) {
-			for (const auto& [index, selected] : previousStartupSelections) {
-				g_appState.specialConfigs[index].runOnStartup = selected;
-			}
-			MessageBoxWin("MineBackup", L("AUTOSTART_OPERATION_FAILED"), 2);
-		}
-	}
-	ImGui::EndDisabled();
-	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
-		&& !autostartCapability.IsAvailable()) {
-		ImGui::SetTooltip("%s", wstring_to_utf8(autostartCapability.diagnostic).c_str());
-	}
-
+	ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &spCfg.runOnStartup);
 	ImGui::Checkbox(L("HIDE_CONSOLE_WINDOW"), &spCfg.hideWindow);
+	ImGui::EndDisabled();
+	ImGui::TextWrapped("%s", L("SPECIAL_CLI_ONLY_NOTICE"));
 	ImGui::Spacing();
 	if (ImGui::Button(L("SPECIAL_COPY_CLI_COMMAND"))) {
-		const string command = "minebackup-cli run-special "
-			+ wstring_to_utf8(spCfg.specialConfigId);
+		string command = "minebackup-cli ";
+		const AppPaths& paths = GetAppPaths();
+		if (paths.mode == AppPathMode::Explicit) {
+			command += "--data-dir \""
+				+ wstring_to_utf8(paths.configRoot.parent_path().wstring()) + "\" ";
+		}
+		command += "run-special " + wstring_to_utf8(spCfg.specialConfigId);
 		ImGui::SetClipboardText(command.c_str());
-	}
-	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_SWITCH_TO_SP_MODE"))) {
-		SetExclusiveSpecialAutoExecute(g_appState.specialConfigs,
-			g_appState.currentConfigIndex, true);
-		SaveConfigs();
-		if (services->RestartApplication().IsAvailable()) g_appState.done = true;
 	}
 }

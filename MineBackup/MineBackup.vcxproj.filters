@@ -186,9 +186,6 @@
     <ClCompile Include="src\core\PathRuleSet.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="src\core\SpecialMode.cpp">
-      <Filter>src\core</Filter>
-    </ClCompile>
 	<ClCompile Include="src\core\SpecialTaskDocument.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>

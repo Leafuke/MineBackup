@@ -22,11 +22,5 @@
 [[nodiscard]] CapabilityStatus MacOpenAutostartSettings();
 [[nodiscard]] CapabilityStatus MacActivateApplication();
 
-// SMAppService.mainAppService launches the application through LaunchServices
-// without command-line arguments. Observe the launch Apple Event before GLFW
-// starts its Cocoa event loop so it can be mapped to LaunchOptions::autostart.
-void MacBeginLaunchObservation();
-[[nodiscard]] bool MacWasLaunchedAsLoginItem() noexcept;
-
 void MacShowAlert(const std::string& title, const std::string& message, int iconType);
 [[nodiscard]] bool MacConfirmAlert(const std::string& title, const std::string& message);

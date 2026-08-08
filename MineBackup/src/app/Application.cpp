@@ -48,22 +48,15 @@
 #include "LegacyLocationMigration.h"
 #include "Logging.h"
 #include "Sha256.h"
-#include "SpecialConfigPolicy.h"
 #if MINEBACKUP_ENABLE_V15_MIGRATION
 #include "V15MigrationAdapter.h"
 #endif
 
-#ifdef _WIN32
-#include <conio.h>
-#else
 #include <cstdio>
-#include <unistd.h>
-inline int _getch() { return std::getchar(); }
-#endif
+#include <algorithm>
 #include <fstream>
 #include <system_error>
 #ifdef __APPLE__
-#include "MacDesktopBridge.h"
 #include <mach-o/dyld.h>
 #include <limits.h>
 #include <CoreText/CoreText.h>
@@ -118,6 +111,20 @@ static void main_window_close_callback(GLFWwindow* window)
 }
 
 namespace {
+	void WriteEarlyLaunchError(const wstring& message) {
+		const string utf8 = wstring_to_utf8(message);
+	#ifdef _WIN32
+		HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
+		if (output != nullptr && output != INVALID_HANDLE_VALUE) {
+			DWORD written = 0;
+			(void)WriteFile(output, utf8.data(),
+				static_cast<DWORD>(utf8.size()), &written, nullptr);
+		}
+	#else
+		fputs(utf8.c_str(), stderr);
+	#endif
+	}
+
 	class GlfwProcessLifetime {
 	public:
 		~GlfwProcessLifetime() {
@@ -136,21 +143,48 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #ifdef _WIN32
 	HINSTANCE hInstance = reinterpret_cast<HINSTANCE>(entryContext.nativeInstance);
 #endif
-	#ifdef __APPLE__
-	// Install before migration prompts or GLFW can pump the Cocoa launch event.
-	MacBeginLaunchObservation();
-	#endif
-	// Use the host language for any pre-configuration native prompts. Loading an
-	// existing profile below will still restore the user's explicit app language.
-	GetUserDefaultUILanguageWin();
 	const filesystem::path originalWorkingDirectory = filesystem::current_path();
 	(void)originalWorkingDirectory;
 	LaunchOptions launchOptions;
 	wstring launchError;
 	if (!ParseLaunchOptions(launchArguments, launchOptions, launchError)) {
+		const bool deprecatedSpecialRequest = any_of(
+			launchArguments.begin(), launchArguments.end(), [](const wstring& argument) {
+				return argument == L"--autostart"
+					|| argument == L"--run-special"
+					|| argument == L"-specialcfg";
+			});
+		if (deprecatedSpecialRequest) {
+			WriteEarlyLaunchError(
+				L"MineBackup: desktop special execution and login startup are disabled.\n"
+				L"Use: minebackup-cli [--data-dir <path>] run-special <SpecialConfigId>\n");
+			return 2;
+		}
 		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
 		return 2;
 	}
+	if (launchOptions.autostart
+		|| !launchOptions.runSpecialId.empty()
+		|| launchOptions.legacySpecialConfigIndex.has_value()) {
+		wstring message =
+			L"MineBackup: desktop special execution and login startup are disabled.\n";
+		if (!launchOptions.runSpecialId.empty()) {
+			message += L"Use: minebackup-cli ";
+			if (launchOptions.dataDirectory) {
+				message += L"--data-dir \""
+					+ launchOptions.dataDirectory->wstring() + L"\" ";
+			}
+			message += L"run-special " + launchOptions.runSpecialId + L"\n";
+		}
+		else {
+			message += L"Use: minebackup-cli [--data-dir <path>] run-special <SpecialConfigId>\n";
+		}
+		WriteEarlyLaunchError(message);
+		return 2;
+	}
+	// Use the host language for any pre-configuration native prompts. Loading an
+	// existing profile below will still restore the user's explicit app language.
+	GetUserDefaultUILanguageWin();
 	if (!launchOptions.legacyServiceCleanup.empty()) {
 		wstring cleanupError;
 		if (!LegacyServiceCleanup::RemoveAfterValidation(
@@ -178,22 +212,13 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		return 2;
 	}
 	SetCurrentAppPaths(std::move(appPaths));
-	bool launchSilentStartup = launchOptions.silentStartup || launchOptions.autostart;
-	#ifdef __APPLE__
-	const bool hasExplicitLaunchTarget = launchOptions.autostart
-		|| !launchOptions.runSpecialId.empty()
-		|| !launchOptions.selectConfigId.empty()
-		|| launchOptions.legacySpecialConfigIndex.has_value();
-	#endif
+	bool launchSilentStartup = launchOptions.silentStartup;
 	const auto& paths = GetAppPaths();
 	SingleInstanceService singleInstance;
 	const auto instanceResult = singleInstance.Acquire(paths.profileIdentity, paths.runtimeRoot, launchError);
 	if (instanceResult == InstanceAcquireResult::AlreadyRunning) {
 		InstanceRequest request;
-		if (!launchOptions.runSpecialId.empty()) {
-			request = { InstanceRequestType::RunSpecial, launchOptions.runSpecialId };
-		}
-		else if (!launchOptions.selectConfigId.empty()) {
+		if (!launchOptions.selectConfigId.empty()) {
 			request = { InstanceRequestType::SelectConfig, launchOptions.selectConfigId };
 		}
 		if (!singleInstance.Send(request, launchError)) {
@@ -298,30 +323,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	MigrationCoordinator::RunStartupMigration();
 	CheckForConfigConflicts();
 	LoadHistory();
-	auto selectAutostartSpecial = [&]() {
-		const auto autostartIndex = FindSpecialRunOnStartup(g_appState.specialConfigs);
-		if (!autostartIndex) return false;
-		// Resolve through the persisted stable identity instead of treating the map
-		// index as an external launch contract.
-		const auto& stableId = g_appState.specialConfigs.at(*autostartIndex).specialConfigId;
-		const int index = FindSpecialConfigByStableId(g_appState.specialConfigs, stableId);
-		if (index < 0) return false;
-		g_appState.currentConfigIndex = index;
-		g_appState.specialConfigMode = true;
-		return true;
-	};
-	if (!launchOptions.runSpecialId.empty()) {
-		const int index = FindSpecialConfigByStableId(
-			g_appState.specialConfigs,
-			launchOptions.runSpecialId);
-		if (index < 0) {
-			MessageBoxWin("MineBackup", L("REQUESTED_SPECIAL_CONFIG_MISSING"), 2);
-			return 4;
-		}
-		g_appState.currentConfigIndex = index;
-		g_appState.specialConfigMode = true;
-	}
-	else if (!launchOptions.selectConfigId.empty()) {
+	if (!launchOptions.selectConfigId.empty()) {
 		const int index = FindConfigByStableId(
 			g_appState.configs,
 			launchOptions.selectConfigId);
@@ -332,43 +334,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		g_appState.currentConfigIndex = index;
 		g_appState.specialConfigMode = false;
 	}
-	else if (launchOptions.legacySpecialConfigIndex
-		&& g_appState.specialConfigs.count(*launchOptions.legacySpecialConfigIndex)) {
-		g_appState.currentConfigIndex = *launchOptions.legacySpecialConfigIndex;
-		g_appState.specialConfigMode = true;
-	}
-	else if (launchOptions.autostart) {
-		(void)selectAutostartSpecial();
-	}
-	auto runSelectedSpecialMode = [&]() {
-		bool hide = false;
-		if (g_appState.specialConfigs.count(g_appState.currentConfigIndex)) {
-			hide = g_appState.specialConfigs[g_appState.currentConfigIndex].hideWindow;
-		}
-
-		#ifdef _WIN32
-		if (!hide) {
-			AllocConsole(); // Create a console window
-			FILE* pCout, * pCerr, * pCin;
-			freopen_s(&pCout, "CONOUT$", "w", stdout);
-			freopen_s(&pCerr, "CONOUT$", "w", stderr);
-			freopen_s(&pCin, "CONIN$", "r", stdin);
-			SetConsoleOutputCP(CP_UTF8);
-		}
-		#endif
-		minebackup::logging::SetConsoleEnabled(!hide);
-
-		RunSpecialMode(g_appState.currentConfigIndex);
-		minebackup::logging::SetConsoleEnabled(false);
-
-		#ifdef _WIN32
-		if (!hide) {
-			FreeConsole();
-		}
-		#endif
-		Sleep(3000);
-		return 0;
-	};
 
 #ifdef _WIN32
 	HWND hwnd_hidden = CreateHiddenWindow(hInstance);
@@ -381,9 +346,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #endif
 	InstallDesktopServices(desktopServices);
 	if (desktopServices->Capabilities().autostart.IsAvailable()) {
-		const bool autostartEnabled = g_RunOnStartup
-			|| FindSpecialRunOnStartup(g_appState.specialConfigs).has_value();
-		const auto autostartStatus = desktopServices->SetAutostart(autostartEnabled);
+		const auto autostartStatus = desktopServices->SetAutostart(false);
 		if (!autostartStatus.IsAvailable() && !autostartStatus.diagnostic.empty()) {
 			PLATFORM_PRINTF_WARNING("platform.autostart.reconcile_failed",
 				"Autostart reconciliation failed: %s",
@@ -391,33 +354,19 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		}
 		else if (!autostartStatus.diagnostic.empty()) {
 			PLATFORM_PRINTF_INFO("platform.autostart.reconciled",
-				"Autostart reconciliation: %s",
+				"Deprecated autostart cleanup: %s",
 				wstring_to_utf8(autostartStatus.diagnostic).c_str());
-			if (!launchSilentStartup) {
-				MessageBoxWin(L("AUTOSTART_ENTRY_TITLE"),
-					wstring_to_utf8(autostartStatus.diagnostic), 0);
-			}
 		}
 	}
 
 	GlfwProcessLifetime glfwLifetime;
 	#ifdef __APPLE__
-	// The login-item marker is delivered while GLFW pumps Cocoa's launch event.
-	// Probe only when a previously selected explicit/special launch does not need
-	// the window system, preserving the headless special-mode path.
-	if (!g_appState.specialConfigMode) {
-		glfwSetErrorCallback(glfw_error_callback);
-		if (!glfwInit()) {
-			MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
-			return 1;
-		}
-		glfwLifetime.MarkInitialized();
-		if (!hasExplicitLaunchTarget && MacWasLaunchedAsLoginItem()) {
-			launchOptions.autostart = true;
-			launchSilentStartup = true;
-			(void)selectAutostartSpecial();
-		}
+	glfwSetErrorCallback(glfw_error_callback);
+	if (!glfwInit()) {
+		MessageBoxWin(L("FATAL_ERROR_TITLE"), L("GRAPHICS_INIT_ERROR"), 2);
+		return 1;
 	}
+	glfwLifetime.MarkInitialized();
 	#endif
 
 
@@ -484,11 +433,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 				BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
 			}
 		});
-	}
-
-	if (g_appState.specialConfigMode) {
-		const int result = runSelectedSpecialMode();
-		return result;
 	}
 
 	if (!glfwLifetime.IsInitialized()) {
@@ -686,13 +630,9 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 				}
 			}
 			else if (request.type == InstanceRequestType::RunSpecial) {
-				const int index = FindSpecialConfigByStableId(
-					g_appState.specialConfigs,
-					request.stableId);
-				if (index >= 0) {
-					g_appState.currentConfigIndex = index;
-					RunSpecialMode(index);
-				}
+				PLATFORM_PRINTF_WARNING("platform.single_instance.special_disabled",
+					"Ignored a deprecated desktop special-run request for stable ID %s.",
+					wstring_to_utf8(request.stableId).c_str());
 			}
 		}
 		if (!instanceError.empty()) {

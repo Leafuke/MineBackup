@@ -137,7 +137,6 @@
     <ClCompile Include="src\core\HistoryManager.cpp" />
     <ClCompile Include="src\core\HistoryRepository.cpp" />
     <ClCompile Include="src\core\PathRuleSet.cpp" />
-    <ClCompile Include="src\core\SpecialMode.cpp" />
 	<ClCompile Include="src\core\SpecialTaskDocument.cpp" />
 	<ClCompile Include="src\core\SpecialTaskRunner.cpp" />
     <ClCompile Include="src\core\TaskCoordinator.cpp" />

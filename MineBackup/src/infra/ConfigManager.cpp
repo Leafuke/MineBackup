@@ -810,10 +810,9 @@ void LoadConfigs(const filesystem::path& filename) {
 	}
 
 	const auto executionPolicy = NormalizeSpecialConfigExecutionPolicy(g_appState.specialConfigs);
-	if (executionPolicy.autoExecuteIndex) {
-		g_appState.specialConfigMode = true;
-		g_appState.currentConfigIndex = *executionPolicy.autoExecuteIndex;
-	}
+	// Persist legacy selections for migration visibility, but the desktop shell
+	// no longer enters or executes Special Mode. minebackup-cli is authoritative.
+	g_appState.specialConfigMode = false;
 	if (executionPolicy.disabledDuplicateAutoExecute > 0
 		|| executionPolicy.disabledDuplicateRunOnStartup > 0) {
 		MigrationUnitResult normalized;

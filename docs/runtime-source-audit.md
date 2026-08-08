@@ -119,7 +119,6 @@
 | `MineBackup/src/core/SpecialTaskModels.h` | data_core | 保留纯特殊任务领域 DTO |
 | `MineBackup/src/core/SpecialTaskRunner.cpp` | runtime | 可取消预检、调度、命令/备份执行与结果聚合 |
 | `MineBackup/src/core/SpecialTaskRunner.h` | runtime | 特殊任务运行端口及可注入 clock/wait 契约 |
-| `MineBackup/src/core/SpecialMode.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
 | `MineBackup/src/core/TaskCoordinator.cpp` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/TaskCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/V15MigrationAdapter.cpp` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
