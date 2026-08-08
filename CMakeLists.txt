@@ -205,6 +205,7 @@ endif()
 
 if(WIN32)
     target_link_libraries(minebackup_data_core PUBLIC ole32 advapi32 shell32)
+    target_link_libraries(minebackup_runtime PUBLIC ws2_32)
     if(MINEBACKUP_BUILD_GUI)
         set_target_properties(MineBackup PROPERTIES WIN32_EXECUTABLE TRUE)
         target_sources(MineBackup PRIVATE ${MINEBACKUP_GENERATED_DIR}/MineBackup.rc)

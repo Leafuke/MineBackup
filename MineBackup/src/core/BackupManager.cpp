@@ -8,6 +8,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "ProcessRunner.h"
+#include "RuntimeIntegration.h"
 #include "TaskCoordinator.h"
 #include "ExternalToolManager.h"
 #include "PathRuleSet.h"
@@ -397,8 +398,8 @@ BackupResult BackupService::Run(const BackupRequest& request, stop_token stopTok
 	const wstring displayName = request.displayName.empty() ? worldName : request.displayName;
 	const wstring comment = request.comment;
 	auto publish = [&](string eventId, vector<pair<string, string>> fields = {}) {
-		if (!dependencies_.publishEvent) return;
-		dependencies_.publishEvent({std::move(eventId), std::move(fields)});
+		if (!dependencies_.eventSink) return;
+		dependencies_.eventSink->Publish({std::move(eventId), std::move(fields)});
 	};
 	auto cancelled = [&]() {
 		return stopToken.stop_requested();
@@ -525,8 +526,8 @@ BackupResult BackupService::Run(const BackupRequest& request, stop_token stopTok
 			|| dependencies_.isFileLocked(filesystem::path(sourcePath) / L"session.lock"));
 	if (sourceLocked) {
 		HotBackupPreparation preparation;
-		if (dependencies_.prepareHotBackup) {
-			preparation = dependencies_.prepareHotBackup(request, stopToken);
+		if (dependencies_.hotBackup) {
+			preparation = dependencies_.hotBackup->Prepare(request, stopToken);
 		}
 		if (preparation.status == HotBackupStatus::Rejected) {
 			BackupResult rejected = MakeBackupFailure(
@@ -910,7 +911,7 @@ execute_backup:
 		result.historyEntry = historyEntry;
 		result.diagnostics.push_back(MakeDiagnostic("backup.completed", DiagnosticSeverity::Info));
 		if (dependencies_.cloudPost && !cancelled()) {
-			result.cloud = dependencies_.cloudPost(request, historyEntry, stopToken);
+			result.cloud = dependencies_.cloudPost->Run(request, historyEntry, stopToken);
 			result.diagnostics.insert(
 				result.diagnostics.end(),
 				result.cloud.diagnostics.begin(),

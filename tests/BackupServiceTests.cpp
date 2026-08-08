@@ -2,8 +2,13 @@
 
 #include "BackupService.h"
 #include "ExternalToolManager.h"
+#include "FolderRewindFormat.h"
+#include "FolderRewindHistoryStore.h"
+#include "RuntimeIntegration.h"
+#include "RuntimeCloudPostHook.h"
 
 #include <fstream>
+#include <map>
 #include <stop_token>
 
 using namespace std;
@@ -87,9 +92,9 @@ void RunBackupServiceTests(
 		return true;
 	};
 	dependencies.removeHistory = [](const wstring&, const wstring&) { return true; };
-	dependencies.publishEvent = [&](const BackupRuntimeEvent& event) {
+	dependencies.eventSink = make_shared<CallbackRuntimeEventSink>([&](const BackupRuntimeEvent& event) {
 		events.push_back(event);
-	};
+	});
 
 	BackupService service(dependencies);
 	const BackupResult created = service.Run(request);
@@ -111,13 +116,13 @@ void RunBackupServiceTests(
 		"No-change backup should not create a new archive or history entry");
 
 	WriteFixture(world / "level.dat", "changed-world-data");
-	dependencies.cloudPost = [](const BackupRequest&, const HistoryEntry&, stop_token) {
+	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([](const BackupRequest&, const HistoryEntry&, stop_token) {
 		CloudPostResult result;
 		result.status = CloudPostStatus::Failed;
 		result.diagnostics.push_back({
 			"cloud.upload.failed", DiagnosticSeverity::Error, "fixture"});
 		return result;
-	};
+	});
 	BackupService cloudFailureService(dependencies);
 	const BackupResult partial = cloudFailureService.Run(request);
 	test.Expect(partial.code == OperationCode::PartialSuccess
@@ -131,4 +136,80 @@ void RunBackupServiceTests(
 	test.Expect(cancelledResult.code == OperationCode::Cancelled
 			&& cancelledResult.outcome == BackupOutcome::Rejected,
 		"BackupService should honor the explicit stop token before doing work");
+
+	request.config.cloudSyncEnabled = true;
+	NetworkDisabledCloudPostHook networkDisabledCloud;
+	const CloudPostResult skippedCloud = networkDisabledCloud.Run(
+		request, history.front(), {});
+	test.Expect(skippedCloud.status == CloudPostStatus::Skipped
+			&& !skippedCloud.diagnostics.empty()
+			&& skippedCloud.diagnostics.front().eventId == "cloud.network_disabled",
+		"NetworkDisabled cloud adapter should skip with a stable diagnostic");
+
+	NetworkDisabledKnotLinkBridge networkDisabledKnotLink;
+	const HotBackupPreparation degraded = networkDisabledKnotLink.Prepare(request, {});
+	test.Expect(degraded.status == HotBackupStatus::Degraded
+			&& !degraded.diagnostics.empty()
+			&& degraded.diagnostics.front().eventId == "knotlink.network_disabled",
+		"NetworkDisabled KnotLink adapter should preserve the live-file fallback");
+
+	const filesystem::path cloudRoot = temporaryRoot / "runtime-cloud-post";
+	Config cloudConfig = config;
+	cloudConfig.cloudSyncEnabled = true;
+	cloudConfig.cloudSyncMode = static_cast<int>(CloudSyncMode::HistoryAndBackups);
+	cloudConfig.rcloneRemotePath = L"fixture:minebackup";
+	cloudConfig.backupPath = (cloudRoot / "backups").wstring();
+	map<int, Config> cloudConfigs{{1, cloudConfig}};
+	FolderRewindFormat::StoragePaths cloudStorage;
+	test.Expect(FolderRewindFormat::TryResolveStoragePaths(
+		cloudConfig.backupPath, L"world", world.wstring(), cloudStorage),
+		"Cloud post fixture should resolve FolderRewind paths");
+	HistoryEntry cloudEntry = history.front();
+	cloudEntry.configId = cloudConfig.configId;
+	cloudEntry.worldName = cloudStorage.folderName;
+	cloudEntry.worldPath = world.wstring();
+	cloudEntry.backupFile = L"fixture.7z";
+	WriteFixture(cloudStorage.backupSubDir / cloudEntry.backupFile, "archive");
+	WriteFixture(cloudStorage.statePath, "{}");
+	WriteFixture(cloudStorage.recordsDir / (cloudEntry.backupFile + L".json"), "{}");
+	HistoryRepository cloudHistory;
+	FolderRewindHistoryStore::HistoryByConfigId initialHistory;
+	initialHistory[cloudConfig.configId].push_back(cloudEntry);
+	test.Expect(cloudHistory.ReplaceAll(
+		std::move(initialHistory), cloudRoot / "history.json", cloudConfigs, true),
+		"Cloud post fixture history should persist");
+
+	auto copyCount = make_shared<int>(0);
+	SynchronousRcloneCloudPostHook cloudHook(
+		AppPaths{
+			.configRoot = cloudRoot,
+			.dataRoot = cloudRoot,
+			.runtimeRoot = cloudRoot / "runtime"},
+		cloudHistory,
+		[cloudConfigs] { return cloudConfigs; },
+		[copyCount](const ProcessSpec&, stop_token) {
+			++*copyCount;
+			ProcessResult process;
+			process.status = ProcessStatus::Succeeded;
+			process.exitCode = 0;
+			return process;
+		},
+		[](const filesystem::path&, const AppPaths&, stop_token) {
+			ExternalToolResolution resolution;
+			resolution.available = true;
+			resolution.executable = L"fake-rclone";
+			resolution.source = ExternalToolSource::Managed;
+			return resolution;
+		});
+	BackupRequest cloudRequest = request;
+	cloudRequest.config = cloudConfig;
+	cloudRequest.world.configId = cloudConfig.configId;
+	const CloudPostResult uploaded = cloudHook.Run(cloudRequest, cloudEntry, {});
+	test.Expect(uploaded.status == CloudPostStatus::Succeeded && *copyCount == 5,
+		"Synchronous cloud hook should wait for archive, metadata, history, and manifest uploads");
+	const auto cloudEntries = cloudHistory.EntriesForConfig(cloudConfig.configId);
+	test.Expect(cloudEntries->size() == 1
+			&& cloudEntries->front().isCloudArchived
+			&& !cloudEntries->front().cloudArchiveRemotePath.empty(),
+		"Synchronous cloud hook should atomically commit cloud history state");
 }

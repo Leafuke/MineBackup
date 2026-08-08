@@ -10,6 +10,7 @@
 #include "KnotLinkService.h"
 #include "MigrationCoordinator.h"
 #include "PlatformCompat.h"
+#include "RuntimeIntegration.h"
 #include "TaskCoordinator.h"
 #include "text_to_text.h"
 
@@ -91,7 +92,7 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
 	dependencies.isFileLocked = [](const filesystem::path& path) {
 		return IsFileLocked(path.wstring());
 	};
-	dependencies.prepareHotBackup = PrepareDesktopHotBackup;
+	dependencies.hotBackup = make_shared<CallbackHotBackupBridge>(PrepareDesktopHotBackup);
 	dependencies.addHistory = [configIndex](const HistoryEntry& entry) {
 		return UpsertHistoryEntry(configIndex, entry, false);
 	};
@@ -117,7 +118,7 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
 			storage.backupSubDir.wstring(),
 			value.config.keepCount);
 	};
-	dependencies.cloudPost = [configIndex](
+	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([configIndex](
 		const BackupRequest& value,
 		const HistoryEntry& entry,
 		stop_token) {
@@ -147,14 +148,13 @@ BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {
 				"The desktop cloud upload could not be queued."});
 		}
 		return result;
-	};
-	dependencies.publishEvent = [](const BackupRuntimeEvent& event) {
+	});
+	dependencies.eventSink = make_shared<CallbackRuntimeEventSink>([](const BackupRuntimeEvent& event) {
 		BroadcastEvent(event.eventId, event.fields);
-	};
+	});
 
 	BackupService service(std::move(dependencies));
 	return service.Run(
 		request,
 		TaskCoordinator::CurrentStopToken()).outcome;
 }
-
