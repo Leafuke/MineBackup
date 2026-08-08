@@ -355,6 +355,7 @@ if(BUILD_TESTING)
 		${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
 		${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
         tests/BackupPipelineTest.cpp
+        tests/BackupServiceTests.cpp
         tests/CloudSyncTests.cpp
         tests/HistoryRepositoryTests.cpp
         tests/LegacyIniConfigCodecTests.cpp

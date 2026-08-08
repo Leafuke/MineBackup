@@ -51,8 +51,10 @@
 | `MineBackup/src/core/BackupChangeDetector.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/BackupChangeDetector.h` | data_core | 保留纯格式、策略或工具逻辑 |
 | `MineBackup/src/core/BackupManager.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
+| `MineBackup/src/core/BackupManagerDesktop.cpp` | desktop | 将 GUI 全局状态、KnotLink 广播与异步云上传映射到 BackupService |
 | `MineBackup/src/core/BackupManager.h` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
 | `MineBackup/src/core/BackupManagerInternal.h` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
+| `MineBackup/src/core/BackupService.h` | runtime | 显式备份请求、端口依赖与可取消运行时服务 |
 | `MineBackup/src/core/BackupRestore.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
 | `MineBackup/src/core/BackupRetention.cpp` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/CloudHistoryAnalysis.cpp` | data_core | 保留纯格式、策略或工具逻辑 |

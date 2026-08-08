@@ -113,6 +113,7 @@
     <ClCompile Include="src\core\BackupChangeDetector.cpp" />
     <ClCompile Include="src\core\BackupAuxiliary.cpp" />
     <ClCompile Include="src\core\BackupManager.cpp" />
+    <ClCompile Include="src\core\BackupManagerDesktop.cpp" />
     <ClCompile Include="src\core\BackupRestore.cpp" />
     <ClCompile Include="src\core\BackupRetention.cpp" />
     <ClCompile Include="src\core\CloudHistoryAnalysis.cpp" />
@@ -213,6 +214,7 @@
     <ClInclude Include="src\core\BackupChangeDetector.h" />
     <ClInclude Include="src\core\BackupManager.h" />
     <ClInclude Include="src\core\BackupManagerInternal.h" />
+    <ClInclude Include="src\core\BackupService.h" />
     <ClInclude Include="src\core\CloudSyncService.h" />
     <ClInclude Include="src\core\CoreValidation.h" />
     <ClInclude Include="src\core\FolderRewindFormat.h" />

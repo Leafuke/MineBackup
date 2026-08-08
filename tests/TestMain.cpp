@@ -1,4 +1,5 @@
 #include "BackupPipelineTest.h"
+#include "BackupServiceTests.h"
 #include "CloudSyncTests.h"
 #include "ExternalToolManager.h"
 #include "HistoryRepositoryTests.h"
@@ -109,6 +110,7 @@ int main(int argc, char** argv) {
 	RunOperationResultTests(test);
 	RunSpecialTaskDocumentTests(test, temporary.path);
     RunRuntimeInfrastructureTests(test, temporary.path);
+	RunBackupServiceTests(test, temporary.path);
     RunCloudSyncTests(test);
 
     if (test.failures == 0) {
