@@ -183,6 +183,30 @@
     <ClCompile Include="src\core\HistoryRepository.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+	<ClCompile Include="src\core\HotRestoreCoordinator.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\JobDocument.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\JobRunner.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileConfigRepository.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileKnotLinkCommands.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileManifest.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileRuntime.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RestoreService.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
     <ClCompile Include="src\core\PathRuleSet.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -255,6 +279,9 @@
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+	<ClCompile Include="src\infra\KnotLinkCommandDispatcher.cpp">
+	  <Filter>src\infra</Filter>
+	</ClCompile>
     <ClCompile Include="src\infra\KnotLinkServerManager.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -440,6 +467,33 @@
 	<ClInclude Include="src\core\ProfileConfigCatalog.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
+	<ClInclude Include="src\core\HotRestoreCoordinator.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\JobDocument.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\JobModels.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\JobRunner.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileConfigRepository.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileKnotLinkCommands.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileManifest.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileRuntime.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RestoreService.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
 	<ClInclude Include="src\core\RuntimeIntegration.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
@@ -521,6 +575,9 @@
     <ClInclude Include="src\infra\KnotLinkProtocol.h">
       <Filter>src\infra</Filter>
     </ClInclude>
+	<ClInclude Include="src\infra\KnotLinkCommandDispatcher.h">
+	  <Filter>src\infra</Filter>
+	</ClInclude>
     <ClInclude Include="src\infra\KnotLinkServerManager.h">
       <Filter>src\infra</Filter>
     </ClInclude>

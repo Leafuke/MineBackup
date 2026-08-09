@@ -4,6 +4,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
+#include "HotRestoreCoordinator.h"
 #include "MigrationCoordinator.h"
 #include "SingleInstanceService.h"
 #include "LegacyLocationDiscovery.h"
@@ -19,7 +20,9 @@
 #include "ExternalToolManager.h"
 #include "PortableConfigDocument.h"
 #include "ProfileConfigRepository.h"
+#include "ProfileKnotLinkCommands.h"
 #include "ProfileRuntime.h"
+#include "RuntimeIntegration.h"
 #include "JobDocument.h"
 #include "DesktopServices.h"
 #include "LegacyServicePolicy.h"
@@ -727,6 +730,27 @@ void TestProfileRuntimeReload(
 			&& runtime.ResolveBackup(config.configId, L"world").has_value(),
 		"ProfileRuntime should own a coherent catalog, Job and history snapshot");
 
+	auto bridge = std::make_shared<HeadlessKnotLinkBridge>();
+	ProfileKnotLinkCommands commands(runtime, bridge);
+	minebackup::knotlink::KnotLinkCommandDispatcher dispatcher(
+		[&commands](const auto& context) { return commands.Handle(context); });
+	const auto listed = minebackup::knotlink::KnotLinkKeyValueCodec::Parse(
+		dispatcher.Dispatch("cmd=LIST_CONFIGS"));
+	const auto folders = minebackup::knotlink::KnotLinkKeyValueCodec::Parse(
+		dispatcher.Dispatch(
+			"cmd=LIST_FOLDERS;config_id=11111111-1111-4111-8111-111111111111"));
+	test.Expect(listed.values.at("status") == "ok"
+			&& listed.values.at("data").find("11111111-1111-4111-8111-111111111111")
+				!= std::string::npos
+			&& folders.values.at("data") == "world",
+		"the headless KnotLink dispatcher should query the ProfileRuntime snapshot");
+	const auto removedSchedule = minebackup::knotlink::KnotLinkKeyValueCodec::Parse(
+		dispatcher.Dispatch(
+			"cmd=AUTO_BACKUP;from=test;request_id=removed-schedule"));
+	test.Expect(removedSchedule.values.at("status") == "error"
+			&& removedSchedule.values.at("code") == "unknown_command",
+		"the headless dispatcher should not reintroduce internal scheduling");
+
 	document.jobs.front().stages.front().steps.front().backup.configId =
 		L"99999999-9999-4999-8999-999999999999";
 	test.Expect(JobStorage::Save(paths.JobsFile(), document, saveError),
@@ -736,6 +760,129 @@ void TestProfileRuntimeReload(
 			&& runtime.IsReady()
 			&& runtime.Jobs().jobs.front().jobId == job.jobId,
 		"a failed ProfileRuntime reload should retain the previous coherent snapshot");
+}
+
+void TestHotRestoreCoordinator(TestContext& test) {
+	std::vector<std::string> events;
+	bool reset = false;
+	HotRestoreDependencies dependencies;
+	dependencies.transport.reset = [&] { reset = true; };
+	dependencies.transport.emit = [&](std::string_view event,
+		const std::vector<std::pair<std::string, std::string>>&) {
+		events.emplace_back(event);
+		return true;
+	};
+	dependencies.transport.waitHandshake = [](
+		std::chrono::milliseconds, std::stop_token) {
+		return HotRestoreHandshakeStatus::Compatible;
+	};
+	dependencies.transport.waitSaveAndExit = [](
+		std::chrono::milliseconds, std::stop_token) {
+		return true;
+	};
+	dependencies.transport.waitRejoin = [](
+		std::chrono::milliseconds, std::stop_token) {
+		return std::optional<bool>{true};
+	};
+	dependencies.isWorldOccupied = [](const std::filesystem::path&) { return false; };
+	dependencies.executeRestore = [](std::stop_token) {
+		RestoreResult result;
+		result.code = OperationCode::Success;
+		return result;
+	};
+	HotRestoreRequest request;
+	request.configId = L"11111111-1111-4111-8111-111111111111";
+	request.worldPath = L"world";
+	request.fullWorldPath = L"C:\\server\\world";
+	request.requestId = "hot-restore-test";
+	const auto succeeded = HotRestoreCoordinator(dependencies).Run(request);
+	test.Expect(reset && succeeded.code == OperationCode::Success
+			&& succeeded.handshake == HotRestoreHandshakeStatus::Compatible
+			&& succeeded.saveAndExitCompleted && succeeded.worldReleased
+			&& succeeded.rejoin == HotRestoreRejoinStatus::Succeeded,
+		"hot restore should complete handshake, release, restore, and rejoin");
+	test.Expect(events == std::vector<std::string>{"handshake", "pre_hot_restore",
+			"restore_finished", "rejoin_world", "hot_restore_complete"},
+		"hot restore should publish the stable lifecycle sequence");
+
+	dependencies.isWorldOccupied = [](const std::filesystem::path&) { return true; };
+	HotRestoreTimeouts shortTimeouts;
+	shortTimeouts.worldRelease = std::chrono::milliseconds(2);
+	shortTimeouts.releasePoll = std::chrono::milliseconds(1);
+	const auto occupied = HotRestoreCoordinator(dependencies).Run(
+		request, {}, shortTimeouts);
+	test.Expect(occupied.code == OperationCode::RestoreFailed
+			&& !occupied.worldReleased
+			&& std::any_of(occupied.diagnostics.begin(), occupied.diagnostics.end(),
+				[](const Diagnostic& item) {
+					return item.eventId == "restore.hot.world_release_timeout";
+				}),
+		"hot restore should refuse to write until the world is released");
+
+	dependencies.isWorldOccupied = [](const std::filesystem::path&) { return false; };
+	dependencies.transport.waitRejoin = [](
+		std::chrono::milliseconds, std::stop_token) {
+		return std::optional<bool>{false};
+	};
+	const auto rejoinFailed = HotRestoreCoordinator(dependencies).Run(request);
+	test.Expect(rejoinFailed.code == OperationCode::Success
+			&& rejoinFailed.rejoin == HotRestoreRejoinStatus::Failed,
+		"a failed rejoin should preserve the successful restore result");
+
+	dependencies.transport.waitHandshake = [](
+		std::chrono::milliseconds, std::stop_token) {
+		return HotRestoreHandshakeStatus::TimedOut;
+	};
+	const auto handshakeTimedOut = HotRestoreCoordinator(dependencies).Run(request);
+	test.Expect(handshakeTimedOut.code == OperationCode::RestoreFailed
+			&& handshakeTimedOut.handshake == HotRestoreHandshakeStatus::TimedOut
+			&& std::any_of(handshakeTimedOut.diagnostics.begin(),
+				handshakeTimedOut.diagnostics.end(), [](const Diagnostic& item) {
+					return item.eventId == "restore.hot.handshake_timeout";
+				}),
+		"hot restore should fail before save-and-exit when the handshake times out");
+
+	dependencies.transport.waitHandshake = [](
+		std::chrono::milliseconds, std::stop_token) {
+		return HotRestoreHandshakeStatus::Compatible;
+	};
+	dependencies.executeRestore = [](std::stop_token) {
+		RestoreResult result;
+		result.code = OperationCode::RestoreFailed;
+		return result;
+	};
+	const auto restoreFailed = HotRestoreCoordinator(dependencies).Run(request);
+	test.Expect(restoreFailed.code == OperationCode::RestoreFailed
+			&& restoreFailed.rejoin == HotRestoreRejoinStatus::NotRequested,
+		"hot restore should not request rejoin after a failed filesystem restore");
+
+	std::stop_source cancelledBeforeStart;
+	cancelledBeforeStart.request_stop();
+	const auto cancelled = HotRestoreCoordinator(dependencies).Run(
+		request, cancelledBeforeStart.get_token());
+	test.Expect(cancelled.code == OperationCode::Cancelled,
+		"hot restore should honor cancellation before changing the world");
+
+	std::stop_source cancelDuringRejoin;
+	dependencies.executeRestore = [](std::stop_token) {
+		RestoreResult result;
+		result.code = OperationCode::Success;
+		return result;
+	};
+	dependencies.transport.waitRejoin = [&cancelDuringRejoin](
+		std::chrono::milliseconds, std::stop_token) -> std::optional<bool> {
+		cancelDuringRejoin.request_stop();
+		return std::nullopt;
+	};
+	const auto rejoinCancelled = HotRestoreCoordinator(dependencies).Run(
+		request, cancelDuringRejoin.get_token());
+	test.Expect(rejoinCancelled.code == OperationCode::Success
+			&& rejoinCancelled.rejoin == HotRestoreRejoinStatus::Cancelled
+			&& std::any_of(rejoinCancelled.diagnostics.begin(),
+				rejoinCancelled.diagnostics.end(), [](const Diagnostic& item) {
+					return item.eventId == "restore.hot.rejoin_cancelled";
+				}),
+		"cancellation after restore commit should not misreport the restore as cancelled");
 }
 
 } // namespace
@@ -752,4 +899,5 @@ void RunRuntimeInfrastructureTests(
     TestLoggingStressAndRotation(test, root);
     TestLoggingFailureAndDiagnostics(test, root);
 	TestProfileRuntimeReload(test, root);
+	TestHotRestoreCoordinator(test);
 }

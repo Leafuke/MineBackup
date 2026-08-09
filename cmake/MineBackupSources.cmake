@@ -18,6 +18,7 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_INFRA_DIR}/ProcessRunner.cpp
     ${MINEBACKUP_INFRA_DIR}/ReadOnlyMappedFile.cpp
     ${MINEBACKUP_INFRA_DIR}/KnotLinkPackageManager.cpp
+    ${MINEBACKUP_INFRA_DIR}/KnotLinkCommandDispatcher.cpp
     ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.cpp
     ${MINEBACKUP_INFRA_DIR}/NetworkService.cpp
     ${MINEBACKUP_INFRA_DIR}/Sha256.cpp
@@ -40,6 +41,7 @@ set(MINEBACKUP_DATA_CORE_SOURCES
 set(MINEBACKUP_RUNTIME_SOURCES
 	${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
 	${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
+	${MINEBACKUP_CORE_DIR}/HotRestoreCoordinator.cpp
 	${MINEBACKUP_CORE_DIR}/JobDocument.cpp
 	${MINEBACKUP_CORE_DIR}/JobRunner.cpp
 	${MINEBACKUP_CORE_DIR}/MigrationCoordinator.cpp
@@ -47,6 +49,7 @@ set(MINEBACKUP_RUNTIME_SOURCES
 	${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.cpp
 	${MINEBACKUP_CORE_DIR}/ProfileConfigRepository.cpp
 	${MINEBACKUP_CORE_DIR}/ProfileManifest.cpp
+	${MINEBACKUP_CORE_DIR}/ProfileKnotLinkCommands.cpp
 	${MINEBACKUP_CORE_DIR}/ProfileRuntime.cpp
 	${MINEBACKUP_CORE_DIR}/BackupManager.cpp
 	${MINEBACKUP_CORE_DIR}/RuntimeIntegration.cpp

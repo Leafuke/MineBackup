@@ -944,6 +944,7 @@ struct ServeOperation {
 	uint64_t connectionId = 0;
 	string requestId;
 	string operationId;
+	string command;
 	stop_source cancellation;
 	atomic<bool> completed{false};
 	InstanceControlResponse response;
@@ -991,13 +992,25 @@ CliResult RunServeLoop(
 			}
 			if (request.type == InstanceControlRequestType::Status) {
 				CliResult status{"serve.status", OperationCode::Success};
+				nlohmann::json activeOperations = nlohmann::json::array();
+				for (const auto& [id, operation] : operations) {
+					activeOperations.push_back({
+						{"operationId", id}, {"command", operation->command},
+						{"cancellationRequested",
+							operation->cancellation.stop_requested()}});
+				}
 				status.data = {
 					{"role", "serve"},
 					{"accepting", !stopping},
 					{"activeOperationCount", operations.size()},
+					{"activeOperations", std::move(activeOperations)},
+					{"activeKnotLinkOperationCount",
+						runtime.ActiveKnotLinkOperationCount()},
 					{"uptimeSeconds", chrono::duration_cast<chrono::seconds>(
 						chrono::steady_clock::now() - started).count()},
 					{"profileIdentity", wstring_to_utf8(paths.profileIdentity)},
+					{"networkEnabled", runtime.NetworkEnabled()},
+					{"knotLinkRunning", runtime.KnotLinkRunning()},
 					{"capabilities", ServeCapabilities()}};
 				response.accepted = true;
 				response.exitCode = 0;
@@ -1051,6 +1064,9 @@ CliResult RunServeLoop(
 			operation->connectionId = exchange.connectionId;
 			operation->requestId = request.requestId;
 			operation->operationId = operationId;
+			const auto forwarded = ParseCliArguments(request.arguments);
+			operation->command = forwarded.success
+				? CliCommandName(forwarded.options.command) : "parse";
 			operation->response.requestId = request.requestId;
 			operation->response.accepted = true;
 			operation->response.role = InstanceRuntimeRole::Serve;

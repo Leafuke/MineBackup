@@ -495,6 +495,43 @@ bool AcceptPipe(HANDLE pipe, bool& connected, wstring& error) {
 	error = L"The profile instance pipe failed while accepting a request.";
 	return false;
 }
+
+HANDLE ConnectClientPipe(
+	const wstring& pipeName,
+	DWORD access,
+	chrono::milliseconds timeout,
+	wstring& error) {
+	const auto deadline = chrono::steady_clock::now() + timeout;
+	for (;;) {
+		const auto remaining = chrono::duration_cast<chrono::milliseconds>(
+			deadline - chrono::steady_clock::now());
+		if (remaining <= chrono::milliseconds::zero()) {
+			error = L"The primary MineBackup instance is not responding.";
+			return INVALID_HANDLE_VALUE;
+		}
+		const DWORD wait = static_cast<DWORD>(min<long long>(
+			max<long long>(remaining.count(), 1), 100));
+		if (!WaitNamedPipeW(pipeName.c_str(), wait)) {
+			const DWORD code = GetLastError();
+			if (code == ERROR_SEM_TIMEOUT || code == ERROR_PIPE_BUSY
+				|| code == ERROR_FILE_NOT_FOUND) {
+				this_thread::sleep_for(chrono::milliseconds(5));
+				continue;
+			}
+			error = L"The primary MineBackup instance is not responding.";
+			return INVALID_HANDLE_VALUE;
+		}
+		HANDLE client = CreateFileW(
+			pipeName.c_str(), access, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+		if (client != INVALID_HANDLE_VALUE) return client;
+		const DWORD code = GetLastError();
+		if (code != ERROR_PIPE_BUSY && code != ERROR_FILE_NOT_FOUND) {
+			error = L"Could not connect to the primary MineBackup instance.";
+			return INVALID_HANDLE_VALUE;
+		}
+		this_thread::sleep_for(chrono::milliseconds(5));
+	}
+}
 } // namespace
 #endif
 
@@ -612,14 +649,9 @@ bool SingleInstanceService::Send(const InstanceRequest& request, wstring& error)
 	vector<uint8_t> message;
 	if (!EncodeLegacy(request, message, error)) return false;
 #ifdef _WIN32
-	if (!WaitNamedPipeW(impl_->pipeName.c_str(), 2000)) {
-		error = L"The primary MineBackup instance is not responding.";
-		return false;
-	}
-	HANDLE client = CreateFileW(impl_->pipeName.c_str(), GENERIC_WRITE,
-		0, nullptr, OPEN_EXISTING, 0, nullptr);
+	HANDLE client = ConnectClientPipe(
+		impl_->pipeName, GENERIC_WRITE, chrono::seconds(2), error);
 	if (client == INVALID_HANDLE_VALUE) {
-		error = L"Could not connect to the primary MineBackup instance.";
 		return false;
 	}
 	const bool success = WriteMessage(client, message, error);
@@ -692,14 +724,11 @@ bool SingleInstanceService::Exchange(
 	vector<uint8_t> message;
 	if (!EncodeControlRequest(request, message, error)) return false;
 #ifdef _WIN32
-	if (!WaitNamedPipeW(impl_->pipeName.c_str(), 2000)) {
-		error = L"The primary MineBackup instance is not responding.";
-		return false;
-	}
-	HANDLE client = CreateFileW(impl_->pipeName.c_str(),
-		GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+	HANDLE client = ConnectClientPipe(impl_->pipeName,
+		GENERIC_READ | GENERIC_WRITE,
+		min(timeout, chrono::duration_cast<chrono::milliseconds>(chrono::seconds(2))),
+		error);
 	if (client == INVALID_HANDLE_VALUE) {
-		error = L"Could not connect to the primary MineBackup instance.";
 		return false;
 	}
 	const bool written = WriteMessage(client, message, error);

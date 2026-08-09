@@ -2,11 +2,14 @@
 
 #include "KnotLinkProtocol.h"
 #include "MineBackupVersion.h"
+#include "RuntimeFileLock.h"
 #include "text_to_text.h"
 #include "knotlink/OpenSocketResponser.hpp"
 #include "knotlink/SignalSender.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -90,56 +93,93 @@ HotBackupPreparation CallbackHotBackupBridge::Prepare(
 struct HeadlessKnotLinkBridge::Implementation {
 	mutable mutex lifecycleMutex;
 	mutex stateMutex;
+	mutex handlerMutex;
 	condition_variable stateChanged;
 	unique_ptr<::knotlink::SignalSender> sender;
 	unique_ptr<::knotlink::OpenSocketResponser> responder;
+	minebackup::knotlink::KnotLinkCommandDispatcher dispatcher;
+	minebackup::knotlink::KnotLinkCommandDispatcher::Handler commandHandler;
 	bool running = false;
 	bool handshakeReceived = false;
 	bool versionCompatible = false;
 	bool worldSaved = false;
+	bool worldSaveAndExitComplete = false;
+	bool rejoinResponseReceived = false;
+	bool rejoinSuccess = false;
 	string modVersion;
 
-	string HandlePayload(const string& payload) {
+	string HandleCommand(
+		const shared_ptr<minebackup::knotlink::KnotLinkCommandContext>& context) {
 		using namespace minebackup::knotlink;
-		try {
-			auto context = make_shared<KnotLinkCommandContext>(
-				KnotLinkCommandRequest::Parse(payload));
-			const auto& request = context->request;
-			if (request.command == "HANDSHAKE_RESPONSE") {
-				const string version = request.Get("mod_version");
-				if (version.empty()) {
-					return KnotLinkProtocolFormatter::FormatError(
-						context.get(), "Missing mod_version.");
-				}
-				{
-					lock_guard lock(stateMutex);
-					modVersion = version;
-					versionCompatible = KnotLinkModInfo::IsVersionCompatible(
-						version, KnotLinkModInfo::MIN_MOD_VERSION);
-					handshakeReceived = true;
-				}
-				stateChanged.notify_all();
-				return KnotLinkProtocolFormatter::FormatOk(*context, {
-					{"compatible", versionCompatible ? "true" : "false"},
-					{"minimum_mod_version", KnotLinkModInfo::MIN_MOD_VERSION}});
+		const auto& request = context->request;
+		if (request.command == "HANDSHAKE_RESPONSE") {
+			const string version = request.Get("mod_version");
+			if (version.empty()) {
+				return KnotLinkProtocolFormatter::FormatError(
+					context.get(), "Missing mod_version.");
 			}
-			if (request.command == "WORLD_SAVED") {
-				{
-					lock_guard lock(stateMutex);
-					worldSaved = true;
-				}
-				stateChanged.notify_all();
-				return KnotLinkProtocolFormatter::FormatOk(
-					*context, {{"message", "World save acknowledged."}});
+			bool compatible = false;
+			{
+				lock_guard lock(stateMutex);
+				modVersion = version;
+				compatible = KnotLinkModInfo::IsVersionCompatible(
+					version, string(KnotLinkCapabilities::MinimumModVersion));
+				versionCompatible = compatible;
+				handshakeReceived = true;
 			}
-			return KnotLinkProtocolFormatter::FormatError(
-				context.get(), "The headless bridge accepts only hot-backup responses.");
+			stateChanged.notify_all();
+			return KnotLinkProtocolFormatter::FormatOk(*context, {
+				{"compatible", compatible ? "true" : "false"},
+				{"minimum_mod_version", string(KnotLinkCapabilities::MinimumModVersion)}});
 		}
-		catch (const exception& error) {
-			return minebackup::knotlink::KnotLinkProtocolFormatter::FormatError(
-				nullptr, error.what());
+		if (request.command == "WORLD_SAVED") {
+			{
+				lock_guard lock(stateMutex);
+				worldSaved = true;
+			}
+			stateChanged.notify_all();
+			return KnotLinkProtocolFormatter::FormatOk(
+				*context, {{"message", "World save acknowledged."}});
 		}
+		if (request.command == "WORLD_SAVE_AND_EXIT_COMPLETE") {
+			{
+				lock_guard lock(stateMutex);
+				worldSaveAndExitComplete = true;
+			}
+			stateChanged.notify_all();
+			return KnotLinkProtocolFormatter::FormatOk(
+				*context, {{"message", "World save-and-exit acknowledged."}});
+		}
+		if (request.command == "REJOIN_RESULT") {
+			string value = request.Get("result");
+			transform(value.begin(), value.end(), value.begin(),
+				[](unsigned char character) {
+					return static_cast<char>(tolower(character));
+				});
+			if (value != "success" && value != "failure") {
+				return KnotLinkProtocolFormatter::FormatError(
+					context.get(), "result must be success or failure.");
+			}
+			{
+				lock_guard lock(stateMutex);
+				rejoinSuccess = value == "success";
+				rejoinResponseReceived = true;
+			}
+			stateChanged.notify_all();
+			return KnotLinkProtocolFormatter::FormatOk(
+				*context, {{"message", "Rejoin result acknowledged."}});
+		}
+		KnotLinkCommandDispatcher::Handler handler;
+		{
+			lock_guard lock(handlerMutex);
+			handler = commandHandler;
+		}
+		if (handler) return handler(context);
+		return KnotLinkProtocolFormatter::FormatError(
+			context.get(), "The headless runtime does not expose command execution.");
 	}
+
+	string HandlePayload(const string& payload) { return dispatcher.Dispatch(payload); }
 
 	bool Emit(
 		string_view eventId,
@@ -153,6 +193,7 @@ struct HeadlessKnotLinkBridge::Implementation {
 
 	bool WaitFor(bool& flag, chrono::milliseconds timeout, stop_token stopToken) {
 		unique_lock lock(stateMutex);
+		stop_callback cancellation(stopToken, [this] { stateChanged.notify_all(); });
 		const auto deadline = chrono::steady_clock::now() + timeout;
 		while (!flag && !stopToken.stop_requested()) {
 			if (stateChanged.wait_until(lock, deadline) == cv_status::timeout) break;
@@ -163,6 +204,10 @@ struct HeadlessKnotLinkBridge::Implementation {
 
 HeadlessKnotLinkBridge::HeadlessKnotLinkBridge()
 	: implementation_(make_unique<Implementation>()) {
+	implementation_->dispatcher.SetHandler(
+		[implementation = implementation_.get()](const auto& context) {
+			return implementation->HandleCommand(context);
+		});
 }
 
 HeadlessKnotLinkBridge::~HeadlessKnotLinkBridge() {
@@ -212,6 +257,67 @@ bool HeadlessKnotLinkBridge::IsRunning() const noexcept {
 	return implementation_->running;
 }
 
+void HeadlessKnotLinkBridge::SetCommandHandler(
+	minebackup::knotlink::KnotLinkCommandDispatcher::Handler handler) {
+	lock_guard lock(implementation_->handlerMutex);
+	implementation_->commandHandler = std::move(handler);
+}
+
+HotRestoreResult HeadlessKnotLinkBridge::CoordinateRestore(
+	const HotRestoreRequest& request,
+	function<RestoreResult(stop_token)> executeRestore,
+	stop_token stopToken,
+	const HotRestoreTimeouts& timeouts) {
+	HotRestoreDependencies dependencies;
+	dependencies.transport.reset = [implementation = implementation_.get()] {
+		lock_guard lock(implementation->stateMutex);
+		implementation->handshakeReceived = false;
+		implementation->versionCompatible = false;
+		implementation->worldSaved = false;
+		implementation->worldSaveAndExitComplete = false;
+		implementation->rejoinResponseReceived = false;
+		implementation->rejoinSuccess = false;
+		implementation->modVersion.clear();
+	};
+	dependencies.transport.emit = [implementation = implementation_.get()](
+		string_view eventName,
+		const vector<pair<string, string>>& fields) {
+		return implementation->Emit(eventName, fields);
+	};
+	dependencies.transport.waitHandshake = [implementation = implementation_.get()](
+		chrono::milliseconds timeout,
+		stop_token token) {
+		if (!implementation->WaitFor(
+				implementation->handshakeReceived, timeout, token)) {
+			return token.stop_requested()
+				? HotRestoreHandshakeStatus::Cancelled
+				: HotRestoreHandshakeStatus::TimedOut;
+		}
+		lock_guard lock(implementation->stateMutex);
+		return implementation->versionCompatible
+			? HotRestoreHandshakeStatus::Compatible
+			: HotRestoreHandshakeStatus::Incompatible;
+	};
+	dependencies.transport.waitSaveAndExit = [implementation = implementation_.get()](
+		chrono::milliseconds timeout,
+		stop_token token) {
+		return implementation->WaitFor(
+			implementation->worldSaveAndExitComplete, timeout, token);
+	};
+	dependencies.transport.waitRejoin = [implementation = implementation_.get()](
+		chrono::milliseconds timeout,
+		stop_token token) -> optional<bool> {
+		if (!implementation->WaitFor(
+				implementation->rejoinResponseReceived, timeout, token)) return nullopt;
+		lock_guard lock(implementation->stateMutex);
+		return implementation->rejoinSuccess;
+	};
+	dependencies.isWorldOccupied = IsRuntimeWorldOccupied;
+	dependencies.executeRestore = std::move(executeRestore);
+	return HotRestoreCoordinator(std::move(dependencies)).Run(
+		request, stopToken, timeouts);
+}
+
 HotBackupPreparation HeadlessKnotLinkBridge::Prepare(
 	const BackupRequest& request,
 	stop_token stopToken) {
@@ -240,7 +346,8 @@ HotBackupPreparation HeadlessKnotLinkBridge::Prepare(
 			{"version", MINEBACKUP_VERSION_STRING},
 			{"action", "backup"},
 			{"world", wstring_to_utf8(request.world.relativePath)},
-			{"min_mod_version", KnotLinkModInfo::MIN_MOD_VERSION}})
+			{"min_mod_version", string(
+				minebackup::knotlink::KnotLinkCapabilities::MinimumModVersion)}})
 		|| !implementation_->WaitFor(
 			implementation_->handshakeReceived, chrono::seconds(3), stopToken)) {
 		result.status = stopToken.stop_requested()

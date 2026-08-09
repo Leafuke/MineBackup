@@ -127,7 +127,15 @@
 	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp" Condition="'$(MineBackupEnableV15Migration)'=='1'" />
     <ClCompile Include="src\core\MigrationCoordinator.cpp" />
 	<ClCompile Include="src\core\OperationResult.cpp" />
+	<ClCompile Include="src\core\HotRestoreCoordinator.cpp" />
+	<ClCompile Include="src\core\JobDocument.cpp" />
+	<ClCompile Include="src\core\JobRunner.cpp" />
 	<ClCompile Include="src\core\ProfileConfigCatalog.cpp" />
+	<ClCompile Include="src\core\ProfileConfigRepository.cpp" />
+	<ClCompile Include="src\core\ProfileKnotLinkCommands.cpp" />
+	<ClCompile Include="src\core\ProfileManifest.cpp" />
+	<ClCompile Include="src\core\ProfileRuntime.cpp" />
+	<ClCompile Include="src\core\RestoreService.cpp" />
 	<ClCompile Include="src\core\RuntimeIntegration.cpp" />
 	<ClCompile Include="src\core\RuntimeCloudPostHook.cpp" />
 	<ClCompile Include="src\core\RuntimeFileLock.cpp" />
@@ -158,6 +166,7 @@
     <ClCompile Include="src\infra\Sha256.cpp" />
     <ClCompile Include="src\infra\DesktopServices.cpp" />
     <ClCompile Include="src\infra\KnotLinkPackageManager.cpp" />
+	<ClCompile Include="src\infra\KnotLinkCommandDispatcher.cpp" />
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp" />
     <ClCompile Include="src\infra\KnotLinkServerManager.cpp" />
     <ClCompile Include="src\infra\KnotLinkService.cpp" />
@@ -226,7 +235,16 @@
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h" />
 	<ClInclude Include="src\core\MigrationCoordinator.h" />
 	<ClInclude Include="src\core\OperationResult.h" />
+	<ClInclude Include="src\core\HotRestoreCoordinator.h" />
+	<ClInclude Include="src\core\JobDocument.h" />
+	<ClInclude Include="src\core\JobModels.h" />
+	<ClInclude Include="src\core\JobRunner.h" />
 	<ClInclude Include="src\core\ProfileConfigCatalog.h" />
+	<ClInclude Include="src\core\ProfileConfigRepository.h" />
+	<ClInclude Include="src\core\ProfileKnotLinkCommands.h" />
+	<ClInclude Include="src\core\ProfileManifest.h" />
+	<ClInclude Include="src\core\ProfileRuntime.h" />
+	<ClInclude Include="src\core\RestoreService.h" />
 	<ClInclude Include="src\core\RuntimeIntegration.h" />
 	<ClInclude Include="src\core\RuntimeCloudPostHook.h" />
 	<ClInclude Include="src\core\RuntimeFileLock.h" />
@@ -252,6 +270,7 @@
     <ClInclude Include="src\infra\NetworkService.h" />
     <ClInclude Include="src\infra\Sha256.h" />
     <ClInclude Include="src\infra\KnotLinkPackageManager.h" />
+	<ClInclude Include="src\infra\KnotLinkCommandDispatcher.h" />
     <ClInclude Include="src\infra\KnotLinkProtocol.h" />
     <ClInclude Include="src\infra\KnotLinkServerManager.h" />
     <ClInclude Include="src\infra\KnotLinkService.h" />

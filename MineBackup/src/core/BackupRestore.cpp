@@ -11,6 +11,7 @@
 #include "GameSessionManager.h"
 #include "Globals.h"
 #include "HistoryManager.h"
+#include "HotRestoreCoordinator.h"
 #include "Logging.h"
 #include "MigrationCoordinator.h"
 #include "PathRuleSet.h"
@@ -920,7 +921,6 @@ bool DoHotRestore(
 	const string& customRestoreList,
 	const string& requestId) {
 	(void)deleteBackup;
-	Config config = world.config;
 	auto& mod = g_appState.knotLinkMod;
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
@@ -928,139 +928,73 @@ bool DoHotRestore(
 		"operation_id", operationId},
 		{"config_id", wstring_to_utf8(world.config.configId)},
 		{"world", wstring_to_utf8(world.name)}};
-	auto broadcastLifecycle = [&](string_view eventName,
-		minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields = {}) {
-		if (!requestId.empty()) fields.emplace_back("request_id", requestId);
-		BroadcastEvent(eventName, fields);
-	};
 	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_START"), wstring_to_utf8(world.name).c_str());
-
-	mod.resetForOperation();
-	broadcastLifecycle("pre_hot_restore", {
-		{"config", to_string(world.configIndex)}, {"world", wstring_to_utf8(world.name)}});
-	RESTORE_INFO(L("KNOTLINK_WAITING_WORLD_SAVE_EXIT"));
-	const bool exitComplete = mod.waitForFlag(
-		&KnotLinkModInfo::worldSaveAndExitComplete,
-		chrono::milliseconds(10000));
-	if (!exitComplete) {
-		RESTORE_WARNING(L("KNOTLINK_HOT_RESTORE_TIMEOUT"));
-		broadcastLifecycle("restore_cancelled", {
-			{"reason", "timeout"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	RESTORE_INFO(L("KNOTLINK_MOD_EXIT_CONFIRMED"));
-	const auto releaseDeadline = chrono::steady_clock::now() + chrono::seconds(15);
-	bool worldReleased = false;
-	while (chrono::steady_clock::now() < releaseDeadline) {
-		if (!IsWorldOccupied(world.path)) {
-			worldReleased = true;
-			break;
+	HotRestoreDependencies dependencies;
+	dependencies.transport.reset = [&] { mod.resetForOperation(); };
+	dependencies.transport.emit = [](string_view eventName,
+		const vector<pair<string, string>>& fields) {
+		BroadcastEvent(eventName, fields);
+		return true;
+	};
+	dependencies.transport.waitHandshake = [&mod](chrono::milliseconds, stop_token) {
+		return mod.versionCompatible.load()
+			? HotRestoreHandshakeStatus::Compatible
+			: HotRestoreHandshakeStatus::Incompatible;
+	};
+	dependencies.transport.waitSaveAndExit = [&mod](
+		chrono::milliseconds timeout, stop_token) {
+		return mod.waitForFlag(&KnotLinkModInfo::worldSaveAndExitComplete, timeout);
+	};
+	dependencies.transport.waitRejoin = [&mod](
+		chrono::milliseconds timeout, stop_token) -> optional<bool> {
+		if (!mod.waitForFlag(&KnotLinkModInfo::rejoinResponseReceived, timeout)) {
+			return nullopt;
 		}
-		this_thread::sleep_for(chrono::milliseconds(500));
-	}
-	if (!worldReleased) {
-		RESTORE_WARNING(L("KNOTLINK_HOT_RESTORE_WORLD_OCCUPIED"));
-		broadcastLifecycle("restore_cancelled", {
-			{"reason", "world_occupied"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	const filesystem::path levelDat = filesystem::path(world.path) / L"level.dat";
-	const auto lockDeadline = chrono::steady_clock::now() + chrono::seconds(10);
-	while (chrono::steady_clock::now() < lockDeadline && IsFileLocked(levelDat.wstring())) {
-		this_thread::sleep_for(chrono::milliseconds(200));
-	}
-	this_thread::sleep_for(chrono::milliseconds(500));
-
-	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
-	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_PROCEEDING"));
-
-	const filesystem::path backupDirectory = JoinPath(config.backupPath, world.name);
-	filesystem::path targetBackup;
-	if (!backupFile.empty()) {
-		targetBackup = backupDirectory / backupFile;
-	}
-	else if (filesystem::exists(backupDirectory)) {
-		auto latestTime = filesystem::file_time_type{};
-		for (const auto& entry : filesystem::directory_iterator(backupDirectory)) {
-			const wstring fileName = entry.path().filename().wstring();
-			if (entry.is_regular_file()
-				&& (FolderRewindFormat::IsSmartBackupType(fileName)
-					|| FolderRewindFormat::IsFullLikeBackupType(fileName))
-				&& entry.last_write_time() > latestTime) {
-				latestTime = entry.last_write_time();
-				targetBackup = entry.path();
+		lock_guard<mutex> lock(mod.mtx);
+		return mod.rejoinSuccess;
+	};
+	dependencies.isWorldOccupied = [](const filesystem::path& path) {
+		return IsWorldOccupied(path.wstring());
+	};
+	dependencies.executeRestore = [&, pinnedBackup = backupFile](stop_token) {
+		g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+		RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_PROCEEDING"));
+		RestoreResult result;
+		wstring selected = pinnedBackup;
+		if (selected.empty()) {
+			FolderRewindFormat::StoragePaths storage;
+			if (FolderRewindFormat::TryResolveStoragePaths(
+					world.config.backupPath, world.name, world.path, storage)) {
+				const auto history = GetHistoryEntriesForWorld(
+					world.configIndex, world.name);
+				for (auto current = history.rbegin(); current != history.rend(); ++current) {
+					error_code error;
+					if (filesystem::is_regular_file(
+							storage.backupSubDir / current->backupFile, error) && !error) {
+						selected = current->backupFile;
+						break;
+					}
+				}
 			}
 		}
-	}
-
-	if (targetBackup.empty()) {
-		RESTORE_WARNING(L("LOG_NO_BACKUP_FOUND"));
-		broadcastLifecycle("restore_finished", {{"status", "failure"},
-			{"reason", "no_backup_found"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	RESTORE_INFO(
-		L("LOG_RESTORE_USING_FILE"),
-		wstring_to_utf8(targetBackup.filename().wstring()).c_str());
-	if (!DoRestore(
-		config,
-		world.name,
-		targetBackup.filename().wstring(),
-		restoreMethod,
-		customRestoreList,
-		restoreWhitelistOverride,
-		requestId)) {
-		broadcastLifecycle("restore_finished", {{"status", "failure"},
-			{"reason", "restore_failed"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	this_thread::sleep_for(chrono::milliseconds(100));
-	broadcastLifecycle("restore_finished", {{"status", "success"},
-		{"config", to_string(world.configIndex)}, {"world", wstring_to_utf8(world.name)}});
-	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_DONE"));
-	this_thread::sleep_for(chrono::milliseconds(3000));
-
-	broadcastLifecycle("rejoin_world", {{"world", wstring_to_utf8(world.name)}});
-	RESTORE_INFO(L("KNOTLINK_REJOIN_SENT"));
-	const bool responseReceived = mod.waitForFlag(
-		&KnotLinkModInfo::rejoinResponseReceived,
-		chrono::milliseconds(30000));
-	if (responseReceived) {
-		bool rejoinSucceeded = false;
-		{
-			lock_guard<mutex> lock(mod.mtx);
-			rejoinSucceeded = mod.rejoinSuccess;
+		if (selected.empty()) {
+			result.code = OperationCode::TargetNotFound;
+			return result;
 		}
-		if (rejoinSucceeded) {
-			RESTORE_INFO(L("KNOTLINK_REJOIN_OK"));
-			broadcastLifecycle("hot_restore_complete", {{"status", "full_success"},
-				{"world", wstring_to_utf8(world.name)}});
-		}
-		else {
-			RESTORE_WARNING(L("KNOTLINK_REJOIN_FAIL"));
-			broadcastLifecycle("hot_restore_complete", {{"status", "restore_ok_rejoin_failed"},
-				{"world", wstring_to_utf8(world.name)}});
-		}
-	}
-	else {
-		RESTORE_WARNING(L("KNOTLINK_REJOIN_TIMEOUT"));
-		broadcastLifecycle("hot_restore_complete", {{"status", "restore_ok_rejoin_timeout"},
-			{"world", wstring_to_utf8(world.name)}});
-	}
-
+		result.code = DoRestore(
+			world.config, world.name, selected, restoreMethod,
+			customRestoreList, restoreWhitelistOverride, requestId)
+			? OperationCode::Success : OperationCode::RestoreFailed;
+		return result;
+	};
+	HotRestoreRequest request;
+	request.configId = world.config.configId;
+	request.worldPath = world.name;
+	request.fullWorldPath = world.path;
+	request.requestId = requestId;
+	request.handshakeComplete = true;
+	const auto result = HotRestoreCoordinator(std::move(dependencies)).Run(request);
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 	g_appState.isRespond = false;
-	return true;
+	return IsSuccessful(result.code);
 }

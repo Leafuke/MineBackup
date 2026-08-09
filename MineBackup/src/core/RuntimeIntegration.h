@@ -1,6 +1,8 @@
 #pragma once
 
 #include "BackupService.h"
+#include "HotRestoreCoordinator.h"
+#include "KnotLinkCommandDispatcher.h"
 
 #include <functional>
 #include <memory>
@@ -104,6 +106,13 @@ public:
 	bool Start();
 	void Stop();
 	bool IsRunning() const noexcept;
+	void SetCommandHandler(
+		minebackup::knotlink::KnotLinkCommandDispatcher::Handler handler);
+	HotRestoreResult CoordinateRestore(
+		const HotRestoreRequest& request,
+		std::function<RestoreResult(std::stop_token)> executeRestore,
+		std::stop_token stopToken = {},
+		const HotRestoreTimeouts& timeouts = {});
 	HotBackupPreparation Prepare(
 		const BackupRequest& request,
 		std::stop_token stopToken) override;

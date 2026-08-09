@@ -22,9 +22,11 @@ set(runtime_contract_files
     ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h
     ${MINEBACKUP_CORE_DIR}/BackupService.h
     ${MINEBACKUP_CORE_DIR}/HistoryRepository.h
+	${MINEBACKUP_CORE_DIR}/HotRestoreCoordinator.h
     ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.h
     ${MINEBACKUP_CORE_DIR}/OperationResult.h
     ${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.h
+	${MINEBACKUP_CORE_DIR}/ProfileKnotLinkCommands.h
     ${MINEBACKUP_CORE_DIR}/ProfileRuntime.h
     ${MINEBACKUP_CORE_DIR}/RuntimeCloudPostHook.h
     ${MINEBACKUP_CORE_DIR}/RuntimeFileLock.h
@@ -32,6 +34,7 @@ set(runtime_contract_files
     ${MINEBACKUP_CORE_DIR}/RuntimeRetentionService.h
     ${MINEBACKUP_CORE_DIR}/TaskCoordinator.h
     ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.h
+	${MINEBACKUP_INFRA_DIR}/KnotLinkCommandDispatcher.h
     ${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.h
     ${MINEBACKUP_INFRA_DIR}/SingleInstanceService.h)
 

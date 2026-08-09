@@ -4,6 +4,8 @@
 #include "JobDocument.h"
 #include "JobRunner.h"
 #include "ProcessRunner.h"
+#include "ProfileConfigRepository.h"
+#include "ProfileKnotLinkCommands.h"
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeFileLock.h"
 #include "RuntimeIntegration.h"
@@ -45,6 +47,7 @@ struct ProfileRuntime::Implementation {
 	HistoryRepository history;
 	unique_ptr<RuntimeRetentionService> retention;
 	shared_ptr<IHotBackupBridge> hotBackup;
+	shared_ptr<HeadlessKnotLinkBridge> knotLink;
 	shared_ptr<IRuntimeEventSink> eventSink;
 	shared_ptr<ICloudPostHook> cloudPost;
 	unique_ptr<BackupService> onlineBackup;
@@ -59,9 +62,19 @@ ProfileRuntime::ProfileRuntime(
 	: paths_(std::move(paths)), dependencies_(std::move(dependencies)) {
 }
 
-ProfileRuntime::~ProfileRuntime() = default;
+ProfileRuntime::~ProfileRuntime() {
+	knotLinkRunning_.store(false, memory_order_release);
+	if (knotLinkCommands_) knotLinkCommands_->Stop();
+	if (implementation_ && implementation_->knotLink) {
+		implementation_->knotLink->SetCommandHandler({});
+		implementation_->knotLink->Stop();
+	}
+	knotLinkCommands_.reset();
+	implementation_.reset();
+}
 
 ProfileRuntimeInitialization ProfileRuntime::Reload() {
+	scoped_lock runtimeLock(operationMutex_, stateMutex_);
 	ProfileRuntimeInitialization result;
 	auto next = make_unique<Implementation>();
 	auto catalog = ProfileConfigCatalogLoader::Load(paths_.ConfigFile());
@@ -97,8 +110,9 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 	next->retention = make_unique<RuntimeRetentionService>(
 		next->history, paths_.HistoryFile(), next->catalog.configs);
 	if (!dependencies_.noNetwork) {
-		if (implementation_ && implementation_->hotBackup && implementation_->eventSink) {
-			next->hotBackup = implementation_->hotBackup;
+		if (implementation_ && implementation_->knotLink && implementation_->eventSink) {
+			next->knotLink = implementation_->knotLink;
+			next->hotBackup = next->knotLink;
 			next->eventSink = implementation_->eventSink;
 		}
 		else {
@@ -109,6 +123,7 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 					"The local KnotLink ports are unavailable; locked worlds use the live-file fallback."});
 			}
 			next->hotBackup = bridge;
+			next->knotLink = bridge;
 			next->eventSink = bridge;
 		}
 		next->cloudPost = make_shared<SynchronousRcloneCloudPostHook>(
@@ -202,6 +217,22 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 		next->onlineRestore = createRestore(next->onlineBackup.get());
 	}
 	implementation_ = std::move(next);
+	if (implementation_->knotLink) {
+		if (!knotLinkCommands_) {
+			knotLinkCommands_ = make_unique<ProfileKnotLinkCommands>(
+				*this, implementation_->knotLink);
+		}
+		else {
+			knotLinkCommands_->SetBridge(implementation_->knotLink);
+		}
+		implementation_->knotLink->SetCommandHandler(
+			[this](const auto& context) {
+				return knotLinkCommands_->Handle(context);
+			});
+	}
+	knotLinkRunning_.store(
+		implementation_->knotLink && implementation_->knotLink->IsRunning(),
+		memory_order_release);
 	result.code = OperationCode::Success;
 	return result;
 }
@@ -214,12 +245,66 @@ bool ProfileRuntime::NetworkEnabled() const noexcept {
 	return !dependencies_.noNetwork;
 }
 
+bool ProfileRuntime::KnotLinkRunning() const {
+	return knotLinkRunning_.load(memory_order_acquire);
+}
+
+size_t ProfileRuntime::ActiveKnotLinkOperationCount() {
+	return knotLinkCommands_ ? knotLinkCommands_->ActiveOperationCount() : 0;
+}
+
 const AppPaths& ProfileRuntime::Paths() const noexcept { return paths_; }
 const ProfileConfigCatalog& ProfileRuntime::Catalog() const { return implementation_->catalog; }
 const JobDocument& ProfileRuntime::Jobs() const { return implementation_->jobs; }
 const HistoryRepository& ProfileRuntime::History() const { return implementation_->history; }
 
+ProfileConfigCatalog ProfileRuntime::CatalogSnapshot() const {
+	lock_guard lock(stateMutex_);
+	return implementation_ ? implementation_->catalog : ProfileConfigCatalog{};
+}
+
+vector<HistoryEntry> ProfileRuntime::HistorySnapshot(const wstring& configId) const {
+	lock_guard lock(stateMutex_);
+	if (!implementation_) return {};
+	return *implementation_->history.EntriesForConfig(configId);
+}
+
+vector<wstring> ProfileRuntime::RestorePreserveSnapshot() const {
+	lock_guard lock(stateMutex_);
+	const auto profile = ProfileConfigRepository(paths_.ConfigFile()).Load();
+	return profile.IsUsable() ? profile.restorePreserve : vector<wstring>{};
+}
+
+bool ProfileRuntime::SetBackupImportant(
+	const wstring& configId,
+	const wstring& worldPath,
+	const wstring& backupFile,
+	bool important) {
+	lock_guard lock(stateMutex_);
+	if (!implementation_ || !implementation_->catalog.FindConfig(configId)) return false;
+	const auto mutation = implementation_->history.Mutate(
+		configId, paths_.HistoryFile(), implementation_->catalog.configs, true,
+		[&](vector<HistoryEntry>& entries) {
+			for (auto& entry : entries) {
+				if (entry.worldName == worldPath && entry.backupFile == backupFile) {
+					entry.isImportant = important;
+					return true;
+				}
+			}
+			return false;
+		});
+	return mutation.changed && mutation.persisted;
+}
+
 optional<BackupRequest> ProfileRuntime::ResolveBackup(
+	const wstring& configId,
+	const wstring& worldPath,
+	const wstring& comment) const {
+	lock_guard lock(stateMutex_);
+	return ResolveBackupUnlocked(configId, worldPath, comment);
+}
+
+optional<BackupRequest> ProfileRuntime::ResolveBackupUnlocked(
 	const wstring& configId,
 	const wstring& worldPath,
 	const wstring& comment) const {
@@ -284,12 +369,28 @@ BackupResult ProfileRuntime::RunBackup(
 	const wstring& comment,
 	stop_token stopToken,
 	bool noNetwork) const {
-	const auto request = ResolveBackup(configId, worldPath, comment);
+	scoped_lock lock(operationMutex_, stateMutex_);
+	const auto request = ResolveBackupUnlocked(configId, worldPath, comment);
 	if (!request) {
 		return FailedBackup(OperationCode::TargetNotFound,
 			"world.not_found", wstring_to_utf8(worldPath));
 	}
-	const auto preflight = PreflightBackup(*request, stopToken);
+	return RunBackupRequestUnlocked(*request, stopToken, noNetwork);
+}
+
+BackupResult ProfileRuntime::RunBackupRequest(
+	const BackupRequest& request,
+	stop_token stopToken,
+	bool noNetwork) const {
+	scoped_lock lock(operationMutex_, stateMutex_);
+	return RunBackupRequestUnlocked(request, stopToken, noNetwork);
+}
+
+BackupResult ProfileRuntime::RunBackupRequestUnlocked(
+	const BackupRequest& request,
+	stop_token stopToken,
+	bool noNetwork) const {
+	const auto preflight = PreflightBackup(request, stopToken);
 	if (!IsSuccessful(preflight.code)) {
 		BackupResult result;
 		result.code = preflight.code;
@@ -299,13 +400,14 @@ BackupResult ProfileRuntime::RunBackup(
 	}
 	BackupService* backup = !noNetwork && implementation_->onlineBackup
 		? implementation_->onlineBackup.get() : implementation_->offlineBackup.get();
-	return backup->Run(*request, stopToken);
+	return backup->Run(request, stopToken);
 }
 
 JobRunResult ProfileRuntime::RunJob(
 	const wstring& jobId,
 	stop_token stopToken,
 	bool noNetwork) const {
+	scoped_lock lock(operationMutex_, stateMutex_);
 	JobRunResult missing;
 	missing.jobId = jobId;
 	const Job* job = implementation_ ? JobStorage::Find(implementation_->jobs, jobId) : nullptr;
@@ -319,7 +421,8 @@ JobRunResult ProfileRuntime::RunJob(
 		? implementation_->onlineBackup.get() : implementation_->offlineBackup.get();
 	JobRunner runner({
 		[this](const JobBackupTarget& target) {
-			return ResolveBackup(target.configId, target.worldPath, target.comment);
+			return ResolveBackupUnlocked(
+				target.configId, target.worldPath, target.comment);
 		},
 		[this, stopToken](const BackupRequest& request) {
 			const auto current = PreflightBackup(request, stopToken);
@@ -337,6 +440,7 @@ JobRunResult ProfileRuntime::RunJob(
 RestorePlan ProfileRuntime::Verify(
 	const RestoreRequest& request,
 	stop_token stopToken) const {
+	lock_guard lock(stateMutex_);
 	const auto resolution = ExternalToolManager::ResolveSevenZip(
 		request.config.zipPath, paths_, stopToken);
 	if (!resolution.available) {
@@ -362,6 +466,7 @@ RestoreResult ProfileRuntime::Restore(
 	bool dryRun,
 	stop_token stopToken,
 	bool noNetwork) const {
+	scoped_lock lock(operationMutex_, stateMutex_);
 	const auto verified = Verify(request, stopToken);
 	if (!IsSuccessful(verified.code)) {
 		RestoreResult result;
@@ -374,4 +479,39 @@ RestoreResult ProfileRuntime::Restore(
 	RestoreService* restore = !noNetwork && implementation_->onlineRestore
 		? implementation_->onlineRestore.get() : implementation_->offlineRestore.get();
 	return restore->Run(request, dryRun, stopToken);
+}
+
+HotRestoreResult ProfileRuntime::RunHotRestore(
+	const HotRestoreRequest& hotRequest,
+	const RestoreRequest& restoreRequest,
+	stop_token stopToken) {
+	lock_guard operationLock(operationMutex_);
+	const auto verified = Verify(restoreRequest, stopToken);
+	if (!IsSuccessful(verified.code)) {
+		HotRestoreResult result;
+		result.code = verified.code == OperationCode::Cancelled
+			? OperationCode::Cancelled : OperationCode::RestoreFailed;
+		result.restore.code = verified.code;
+		result.restore.plan = verified;
+		result.restore.diagnostics = verified.diagnostics;
+		result.diagnostics = verified.diagnostics;
+		return result;
+	}
+	shared_ptr<HeadlessKnotLinkBridge> bridge;
+	{
+		lock_guard stateLock(stateMutex_);
+		if (implementation_) bridge = implementation_->knotLink;
+	}
+	if (!bridge || !bridge->IsRunning()) {
+		HotRestoreResult result;
+		result.code = OperationCode::RestoreFailed;
+		result.diagnostics.push_back({
+			"restore.hot.knotlink_unavailable", DiagnosticSeverity::Error, {}});
+		return result;
+	}
+	return bridge->CoordinateRestore(
+		hotRequest,
+		[this, restoreRequest](stop_token restoreToken) {
+			return Restore(restoreRequest, false, restoreToken);
+		}, stopToken);
 }

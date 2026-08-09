@@ -1,6 +1,7 @@
 #include "KnotLinkService.h"
 #include "GameSessionManager.h"
 
+#include "KnotLinkCommandDispatcher.h"
 #include "Logging.h"
 #include "knotlink/OpenSocketResponser.hpp"
 #include "knotlink/SignalSender.hpp"
@@ -140,14 +141,32 @@ std::optional<ResolvedFolder> ResolveFolder(
         return std::nullopt;
     }
     if (*currentSave) {
-        MyFolder current = GetOccupiedWorld();
-        if (current.path.empty()) {
+        std::vector<ResolvedFolder> occupied;
+        {
+            std::lock_guard<std::mutex> lock(g_appState.configsMutex);
+            for (const auto& [configIndex, config] : g_appState.configs) {
+                for (std::size_t worldIndex = 0;
+                     worldIndex < config.worlds.size(); ++worldIndex) {
+                    const auto& world = config.worlds[worldIndex];
+                    const std::filesystem::path path =
+                        JoinPath(config.saveRoot, world.first);
+                    if (IsWorldOccupied(path)) {
+                        occupied.push_back({
+                            config, configIndex, static_cast<int>(worldIndex),
+                            world.first, path.wstring()});
+                    }
+                }
+            }
+        }
+        if (occupied.empty()) {
             error = "No active world was found.";
             return std::nullopt;
         }
-        return ResolvedFolder{
-            current.config, current.configIndex, current.worldIndex,
-            current.name, current.path};
+        if (occupied.size() != 1) {
+            error = "Multiple active worlds were found; specify config_id and folder.";
+            return std::nullopt;
+        }
+        return occupied.front();
     }
 
     const auto resolvedConfig = ResolveConfig(request.Get("config_id"));
@@ -248,27 +267,6 @@ std::optional<Config> ApplyBackupOverrides(
     return config;
 }
 
-std::optional<std::string> ValidateUnsupportedParameters(
-    const KnotLinkCommandRequest& request) {
-    for (const auto& [key, value] : request.values) {
-        if ((key == "backup_whitelist" || key == "backup_scope" ||
-             key.starts_with("scope_")) &&
-            !value.empty()) {
-            return "Parameter '" + key + "' is not supported by MineBackup.";
-        }
-        if (key == "preserve_player_data") {
-            const auto enabled = ParseBoolean(value);
-            if (!enabled.has_value()) {
-                return "preserve_player_data must be true or false.";
-            }
-            if (*enabled) {
-                return "Parameter 'preserve_player_data' is not supported by MineBackup.";
-            }
-        }
-    }
-    return std::nullopt;
-}
-
 std::filesystem::path BackupDirectory(const ResolvedFolder& folder) {
     FolderRewindFormat::StoragePaths paths;
     if (FolderRewindFormat::TryResolveStoragePaths(
@@ -314,6 +312,7 @@ KnotLinkProtocolFormatter::Fields EventTargetFields(const ResolvedFolder& folder
 struct KnotLinkService::Implementation {
     std::unique_ptr<::knotlink::SignalSender> sender;
     std::unique_ptr<::knotlink::OpenSocketResponser> responder;
+    KnotLinkCommandDispatcher dispatcher;
 };
 
 class KnotLinkService::ContextScope {
@@ -332,7 +331,12 @@ private:
 };
 
 KnotLinkService::KnotLinkService()
-    : implementation_(std::make_unique<Implementation>()) {}
+    : implementation_(std::make_unique<Implementation>()) {
+    implementation_->dispatcher.SetHandler(
+        [this](const std::shared_ptr<KnotLinkCommandContext>& context) {
+            return HandleRequest(context);
+        });
+}
 
 KnotLinkService::~KnotLinkService() {
     Stop();
@@ -451,44 +455,7 @@ void KnotLinkService::BroadcastLegacyPayload(std::string_view payload) {
 
 std::string KnotLinkService::HandlePayload(
     std::string_view payload) {
-    if (!KnotLinkKeyValueCodec::HasCommandField(payload)) {
-        return KnotLinkProtocolFormatter::FormatError(
-            nullptr,
-            "MineBackup requires KnotLink v2 key=value commands; upgrade the caller.");
-    }
-    try {
-        auto context = std::make_shared<KnotLinkCommandContext>(
-            KnotLinkCommandRequest::Parse(payload));
-        if (const auto metadataError =
-                KnotLinkCommandValidator::Validate(context->request);
-            metadataError.has_value()) {
-            return KnotLinkProtocolFormatter::FormatError(
-                context.get(), *metadataError);
-        }
-        if (const auto unsupported =
-                ValidateUnsupportedParameters(context->request);
-            unsupported.has_value()) {
-            return KnotLinkProtocolFormatter::FormatError(
-                context.get(), *unsupported, {{"code", "unsupported_parameter"}});
-        }
-        logging::ScopedLogContext requestContext({
-            {"request_id", context->metadata.requestId},
-            {"command", context->request.command}
-        });
-        MB_LOG_DEBUG(logging::LogCategory::KnotLink,
-            "knotlink.request.received",
-            "Received KnotLink request '{}'", context->request.command);
-        return HandleRequest(context);
-    } catch (const KnotLinkProtocolError& error) {
-        MB_LOG_WARNING(logging::LogCategory::KnotLink,
-            "knotlink.request.invalid", "Invalid KnotLink request: {}", error.what());
-        return KnotLinkProtocolFormatter::FormatError(nullptr, error.what());
-    } catch (const std::exception& error) {
-        MB_LOG_ERROR(logging::LogCategory::KnotLink,
-            "knotlink.request.failed", "KnotLink request failed: {}", error.what());
-        return KnotLinkProtocolFormatter::FormatError(
-            nullptr, std::string("Command failed: ") + error.what());
-    }
+    return implementation_->dispatcher.Dispatch(payload);
 }
 
 std::string KnotLinkService::HandleRequest(
@@ -515,25 +482,17 @@ std::string KnotLinkService::HandleRequest(
             {"func_list", std::string(KnotLinkCapabilities::ManifestJson())}});
     }
     if (request.command == "GET_STATUS") {
-        std::size_t activeAutoBackups = 0;
-        {
-            std::lock_guard<std::mutex> lock(g_appState.task_mutex);
-            activeAutoBackups = g_appState.g_active_auto_backups.size();
-        }
         const std::string enabled = g_enableKnotLink ? "True" : "False";
         const std::string initialized = IsRunning() ? "True" : "False";
-        const std::string autoBackupCount = std::to_string(activeAutoBackups);
         const std::string activeTaskCount =
             std::to_string(TaskCoordinator::Instance().ActiveTaskCount());
         const std::string data =
             "enabled=" + enabled +
             ";initialized=" + initialized +
-            ";active_auto_backups=" + autoBackupCount +
             ";active_tasks=" + activeTaskCount;
         Broadcast("status",
                   {{"enabled", enabled},
                    {"initialized", initialized},
-                   {"active_auto_backups", autoBackupCount},
                    {"active_tasks", activeTaskCount}},
                   context);
         return ok({{"data", data}});
@@ -793,7 +752,7 @@ std::string KnotLinkService::HandleRequest(
             }
             backupFile = *latest;
         }
-        const std::string mode = LowerAscii(request.Get("mode", "overwrite"));
+        const std::string mode = LowerAscii(request.Get("mode", "clean"));
         if (mode != "overwrite" && mode != "clean") {
             return error("mode must be overwrite or clean.");
         }
@@ -822,12 +781,13 @@ std::string KnotLinkService::HandleRequest(
             ParseBoolean(request.Get("current_save", "false")).value_or(false);
         if (currentSave) {
             const MyFolder target = folder->ToMyFolder();
+            const std::string requestId = context->metadata.requestId;
             return submit(
                 L"KnotLink v2 current restore",
                 {TaskCoordinator::WorldResourceKey(
                     target.config.configId, target.path)},
                 [target, backupFile, mode,
-                 restoreWhitelist = std::move(restoreWhitelist)] {
+                 restoreWhitelist = std::move(restoreWhitelist), requestId] {
                     HotRestoreState expected = HotRestoreState::IDLE;
                     if (!g_appState.hotkeyRestoreState.compare_exchange_strong(
                             expected, HotRestoreState::WAITING_FOR_MOD)) {
@@ -837,7 +797,7 @@ std::string KnotLinkService::HandleRequest(
                     }
                     g_appState.isRespond = false;
                     const bool modAvailable = PerformModHandshake(
-                        "restore", wstring_to_utf8(target.name));
+                        "restore", wstring_to_utf8(target.name), 3000, requestId);
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     if (!modAvailable) {
                         g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
@@ -850,7 +810,7 @@ std::string KnotLinkService::HandleRequest(
                     }
                     const bool restored = DoHotRestore(
                         target, false, backupFile,
-                        mode == "clean" ? 0 : 1, &restoreWhitelist);
+                        mode == "clean" ? 0 : 1, &restoreWhitelist, "", requestId);
                     return std::pair{
                         restored,
                         restored
@@ -873,71 +833,6 @@ std::string KnotLinkService::HandleRequest(
                     restored ? std::string("Restore completed.")
                              : std::string("Restore failed.")};
             });
-    }
-    if (request.command == "AUTO_BACKUP") {
-        std::string targetError;
-        const auto folder = ResolveFolder(request, targetError);
-        if (!folder.has_value()) {
-            return error(targetError);
-        }
-        int interval = 0;
-        if (!TryParseInteger(request.Get("interval_minutes"), interval) ||
-            interval < 1) {
-            return error("interval_minutes must be at least 1.");
-        }
-        const auto key = std::pair{folder->configIndex, folder->folderIndex};
-        std::lock_guard<std::mutex> taskLock(g_appState.task_mutex);
-        if (g_appState.g_active_auto_backups.contains(key)) {
-            return error("An auto-backup task is already running.");
-        }
-        AutoBackupTask& task = g_appState.g_active_auto_backups[key];
-        task.taskName = TaskCoordinator::AutoBackupTaskName(key.first, key.second);
-        const std::wstring taskName = task.taskName;
-        Broadcast("command_accepted", {{"command", request.command}}, context);
-        const bool queued = TaskCoordinator::Instance().Submit(
-            taskName, {},
-            [this, context, key, interval, taskName](
-                std::stop_token token) {
-                ContextScope scope(context);
-                Broadcast("command_started", {{"command", "AUTO_BACKUP"}}, context);
-                AutoBackupThreadFunction(
-                    key.first, key.second, interval, token);
-                Broadcast("command_completed",
-                          {{"command", "AUTO_BACKUP"}}, context);
-                TaskCoordinator::Instance().PostEvent(
-                    {L"auto-backup-finished", taskName});
-            });
-        if (!queued) {
-            g_appState.g_active_auto_backups.erase(key);
-            return error("Application is shutting down.");
-        }
-        Broadcast("auto_backup_started",
-                  {{"config", std::to_string(key.first)},
-                   {"folder", wstring_to_utf8(folder->folderName)},
-                   {"interval_minutes", std::to_string(interval)}},
-                  context);
-        return ok({{"message", "Auto-backup started."}});
-    }
-    if (request.command == "STOP_AUTO_BACKUP") {
-        std::string targetError;
-        const auto folder = ResolveFolder(request, targetError);
-        if (!folder.has_value()) {
-            return error(targetError);
-        }
-        const auto key = std::pair{folder->configIndex, folder->folderIndex};
-        std::wstring taskName;
-        {
-            std::lock_guard<std::mutex> taskLock(g_appState.task_mutex);
-            const auto task = g_appState.g_active_auto_backups.find(key);
-            if (task == g_appState.g_active_auto_backups.end()) {
-                return error("No active auto-backup task was found.");
-            }
-            taskName = task->second.taskName;
-            g_appState.g_active_auto_backups.erase(task);
-        }
-        TaskCoordinator::Instance().RequestStop(taskName);
-        Broadcast("auto_backup_stopped", EventTargetFields(*folder), context);
-        return ok({{"message", "Auto-backup stop requested."}});
     }
     if (request.command == "MARK_IMPORTANT") {
         std::string targetError;

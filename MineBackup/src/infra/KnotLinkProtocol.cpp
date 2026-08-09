@@ -245,24 +245,6 @@ std::string BuildManifest() {
         "Start backing up every folder in a configuration.",
         ConversationArguments(std::move(backupAllArgs)), {"message"});
     AddFunction(
-        manifest, "auto_backup", "AUTO_BACKUP",
-        "Start periodic backup for one managed folder.",
-        ConversationArguments(json::object({
-            {"config_id", InputArgument(
-                "Backup configuration ID.", "config-id")},
-            {"folder", InputArgument("Folder name or index.", "0")},
-            {"interval_minutes", InputArgument(
-                "Backup interval in minutes.", "10")}})),
-        {"message"});
-    AddFunction(
-        manifest, "stop_auto_backup", "STOP_AUTO_BACKUP",
-        "Stop periodic backup for one managed folder.",
-        ConversationArguments(json::object({
-            {"config_id", InputArgument(
-                "Backup configuration ID.", "config-id")},
-            {"folder", InputArgument("Folder name or index.", "0")}})),
-        {"message"});
-    AddFunction(
         manifest, "mark_important", "MARK_IMPORTANT",
         "Mark or unmark a backup archive as important.",
         ConversationArguments(json::object({
@@ -301,9 +283,7 @@ std::string BuildManifest() {
     }
     for (const auto name : {
              "backup_started", "backup_success", "backup_failed",
-             "restore_started", "restore_success", "restore_failed",
-             "auto_backup_started", "auto_backup_executed",
-             "auto_backup_error", "auto_backup_stopped"}) {
+             "restore_started", "restore_success", "restore_failed"}) {
         AddSignal(
             manifest, name, "Folder operation event.",
             {{"config", "Configuration ID."}, {"folder", "Folder name."}});
@@ -550,9 +530,8 @@ std::string KnotLinkCommandRequest::GetEncoded(std::string_view key) const {
 }
 
 bool KnotLinkCommandValidator::RequiresConversationMetadata(std::string_view command) {
-    constexpr std::array<std::string_view, 6> commands = {
-        "BACKUP", "RESTORE", "BACKUP_ALL", "AUTO_BACKUP",
-        "STOP_AUTO_BACKUP", "MARK_IMPORTANT"};
+    constexpr std::array<std::string_view, 4> commands = {
+        "BACKUP", "RESTORE", "BACKUP_ALL", "MARK_IMPORTANT"};
     const std::string normalized = UpperAscii(command);
     return std::find(commands.begin(), commands.end(), normalized) != commands.end();
 }
