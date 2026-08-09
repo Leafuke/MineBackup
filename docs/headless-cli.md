@@ -69,6 +69,9 @@ minebackup-cli.exe --data-dir "D:\MineBackupProfile" --json `
 
 ```text
 profile init|validate|diff|apply|export
+serve
+serve status
+serve stop
 doctor
 config list
 config show --config <ConfigId>
@@ -90,6 +93,20 @@ restore --config <ConfigId> --world <relative-path> (--backup <file> | --latest)
 Job 是一次性工作流，不包含时间触发器。Stage 按数组顺序执行；同一 Stage 内的 Backup/Process Step 并行，必须全部结束后才进入下一 Stage。Process 使用 `executable + arguments[]` 直接启动，不经过 shell；确需 shell 时显式调用 `/bin/sh -c` 或 `cmd.exe /C`。
 
 当前 Stage 失败会跳过后续 Stage。成功与失败混合返回 `partial_success`/10，全部失败返回 `job_failed`/6。Ctrl+C、SIGTERM 和 Ctrl+Break 会请求已启动备份及进程树取消。
+
+### 常驻 Profile Runtime
+
+需要长期监听 KnotLink 或避免每次命令重新载入配置时，启动：
+
+```bash
+"$CLI" --data-dir "$PROFILE" --json serve
+"$CLI" --data-dir "$PROFILE" --json serve status
+"$CLI" --data-dir "$PROFILE" --json serve stop
+```
+
+`serve` 独占 profile，并长期持有配置、Job、历史、备份、还原和 KnotLink 运行时。同一用户随后执行原有 `doctor`、查询、apply、backup、job、verify 或 restore 命令时，客户端会通过本机 IPC 提交请求并等待，stdout envelope 与退出码保持不变；系统定时任务不需要改命令。Windows IPC 使用当前用户 ACL，Unix socket 权限为 `0600`，不会开放网络控制端口。若占用者是 GUI 或普通一次性 CLI，仍返回 `profile_busy`。
+
+客户端 Ctrl+C 会把对应 operationId 的取消请求发给服务端。`serve stop` 或服务端 SIGTERM 会停止接单、取消活动 IPC/KnotLink 操作、等待其收尾后以 0 退出；第二个控制信号仍可立即终止。`serve status` 报告 IPC 与 KnotLink 活动操作、网络/KnotLink 状态和运行时间。
 
 ### 备份与本地历史
 
@@ -122,7 +139,15 @@ Job 是一次性工作流，不包含时间触发器。Stage 按数组顺序执�
   --latest --mode clean --confirm
 ```
 
-`clean` 先把现有世界切换为同文件系统快照，成功后恢复 preserve 规则并删除快照；解压、提交或取消失败时尝试回滚。Smart clean 缺少完整 metadata 或 Full 基线时会安全拒绝。`overwrite` 逐链覆盖目标，不删除归档中不存在的现有文件，也不承诺完整回滚。配置启用 `restore.backupBefore` 时，实际还原前先执行安全备份。M1 检测到世界占用会拒绝还原；必须先停止服务器并用 `doctor` 确认 `coldRestoreReady=true`。
+`clean` 先把现有世界切换为同文件系统快照，成功后恢复 preserve 规则并删除快照；解压、提交或取消失败时尝试回滚。Smart clean 缺少完整 metadata 或 Full 基线时会安全拒绝。`overwrite` 逐链覆盖目标，不删除归档中不存在的现有文件，也不承诺完整回滚。配置启用 `restore.backupBefore` 时，实际还原前先执行安全备份。普通 CLI restore 仍是冷还原：检测到世界占用会拒绝，必须先停止服务器并用 `doctor` 确认 `coldRestoreReady=true`。
+
+### KnotLink 查询、备份与热还原
+
+网络模式的 `serve` 长期持有 KnotLink endpoint，支持 `PING`、能力/状态、Config/World/本地历史查询、`BACKUP`、`BACKUP_ALL`、`RESTORE` 和 `MARK_IMPORTANT`。`AUTO_BACKUP`/`STOP_AUTO_BACKUP` 已从能力清单删除；时间触发始终由 systemd timer 或 Task Scheduler 持有。
+
+`RESTORE current_save=true` 使用共享热还原协调器：验证本地历史归档链，默认 `clean`，与模组握手，要求游戏保存并退出，等待世界锁释放，调用与 CLI/GUI 相同的 `RestoreService`，最后通知重新进入世界。多个配置世界同时占用时会拒绝歧义请求；本地链缺失会明确失败，不下载云端数据。还原成功但 rejoin 失败或超时时，归档还原仍视为成功并发出 warning，玩家需手动重进。GUI 也使用同一协调状态机。
+
+KnotLinkService 与联动模组须单独安装并与运行 `serve` 的同一账户/本机会话可达。若本地 KnotLink endpoint 启动失败，`serve status` 的 `knotLinkRunning=false`，普通在线备份继续按既有规则 warning 后使用 `-ssw` 降级，但热还原不可用。`--no-network serve` 明确禁用 KnotLink 与 rclone；转发命令自己的 `--no-network` 只禁用该次操作的网络后处理。
 
 灾难恢复演练至少应定期完成 `verify --latest`、`restore --dry-run`，并在隔离目录/profile 中执行真实 clean restore 后对关键文件做哈希或字节比对。历史和 metadata 必须与归档一起保存；不要只复制 `.7z` 增量包。
 
@@ -134,21 +159,23 @@ Job 是一次性工作流，不包含时间触发器。Stage 按数组顺序执�
 
 ## 系统调度
 
-时间计划属于操作系统，不属于 Job。Linux 包含 `minebackup-backup@.service`、`.timer` 和示例 env：
+时间计划属于操作系统，不属于 Job。Linux 包含 `minebackup-serve@.service`、`minebackup-backup@.service`、`.timer` 和示例 env。先启动常驻 runtime，再启用 timer：
 
 ```bash
 sudo install -d -m 0750 /etc/minebackup
 sudo cp /usr/share/doc/minebackup-cli/examples/systemd.env /etc/minebackup/server.env
 sudoedit /etc/minebackup/server.env
 sudo systemctl daemon-reload
+sudo systemctl enable --now minebackup-serve@server.service
 sudo systemctl enable --now minebackup-backup@server.timer
+systemctl status minebackup-serve@server.service
 systemctl list-timers 'minebackup-backup@*'
 journalctl -u minebackup-backup@server.service
 ```
 
 模板默认以 `minecraft` 用户运行；按服务器账户调整 User/Group，并确保该账户可写 env 中的 profile、存档和备份路径。定时器启用 `Persistent=true`，错过的计划会在下次启动补跑。
 
-Windows ZIP 的 `scheduling/windows/MineBackup-Job.xml` 使用三个占位符：`@@MINEBACKUP_CLI@@`、`@@MINEBACKUP_DATA_DIR@@`、`@@MINEBACKUP_JOB_ID@@`。替换为绝对值后导入 Task Scheduler，并选择服务器服务账户；计划任务动作应保持普通 `job run` 命令，不调用 GUI。
+Windows ZIP 的 `scheduling/windows/MineBackup-Serve.xml` 提供开机常驻模板，`MineBackup-Job.xml` 提供定时 Job 模板。替换 `@@MINEBACKUP_CLI@@`、`@@MINEBACKUP_DATA_DIR@@` 和 Job 模板中的 `@@MINEBACKUP_JOB_ID@@` 后，以同一个服务器服务账户导入；先启动 Serve 任务。计划任务动作保持普通 `job run` 命令，它会自动转发，不调用 GUI。
 
 ## JSON、日志与退出码
 
@@ -171,6 +198,6 @@ Windows ZIP 的 `scheduling/windows/MineBackup-Job.xml` 使用三个占位符：
 
 - CLI-only 不迁移 v1.15 普通 profile；用支持版本的 GUI 导出 manifest，或新建服务器 profile。
 - `run-special`、SpecialConfig、内置 interval/scheduled 和 Script Step 已移除；遗留数据不迁移、不删除、不读取。
-- 当前一次性 CLI 与 GUI 对同一 profile 严格互斥；常驻 `serve`、透明 IPC 转发和 KnotLink 热还原属于下一里程碑。
+- GUI 与 `serve` 对同一 profile 严格互斥；GUI 不作为 `serve` 控制客户端。一次性 CLI 在 `serve` 存在时透明转发，在 GUI 或另一普通 CLI 占用时返回 `profile_busy`。
 - 不支持 Restore 云补链、手动云分析/下载、历史删除/评论编辑、Agent、Pack Mode、容器镜像或原生 Windows Service 安装器。
 - CLI 不弹窗、不读 stdin、不打开浏览器或目录，也不运行更新/公告服务。

@@ -17,7 +17,9 @@ disable backup and restore or make the main window unreachable.
 SpecialConfig and built-in scheduling are removed. Windows x64 publishes a
 headless CLI ZIP; Ubuntu/Debian x86_64 publish a CLI tar and deb with bundled
 7zz. macOS retains CLI-only build validation without a formal server asset; see
-[Headless CLI](headless-cli.md).
+[Headless CLI](headless-cli.md). The server assets include systemd and Task
+Scheduler templates for both the long-running `serve` runtime and externally
+scheduled one-shot Jobs.
 
 ## Logging verification
 
