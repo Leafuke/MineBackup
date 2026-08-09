@@ -43,10 +43,14 @@ stage_common() {
     "$root/scheduling/systemd/minebackup-backup@.service"
   install -Dm0644 "$repo_root/packaging/cli/systemd/minebackup-backup@.timer" \
     "$root/scheduling/systemd/minebackup-backup@.timer"
+  install -Dm0644 "$repo_root/packaging/cli/systemd/minebackup-serve@.service" \
+    "$root/scheduling/systemd/minebackup-serve@.service"
   install -Dm0644 "$repo_root/packaging/cli/systemd/example.env" \
     "$root/scheduling/systemd/example.env"
   install -Dm0644 "$repo_root/packaging/cli/windows/MineBackup-Job.xml" \
     "$root/scheduling/windows/MineBackup-Job.xml"
+  install -Dm0644 "$repo_root/packaging/cli/windows/MineBackup-Serve.xml" \
+    "$root/scheduling/windows/MineBackup-Serve.xml"
 }
 
 archive_root="$work/MineBackup-CLI-$version-linux-x64"
@@ -72,6 +76,8 @@ install -Dm0644 "$repo_root/packaging/cli/systemd/minebackup-backup@.service" \
   "$deb_root/usr/lib/systemd/system/minebackup-backup@.service"
 install -Dm0644 "$repo_root/packaging/cli/systemd/minebackup-backup@.timer" \
   "$deb_root/usr/lib/systemd/system/minebackup-backup@.timer"
+install -Dm0644 "$repo_root/packaging/cli/systemd/minebackup-serve@.service" \
+  "$deb_root/usr/lib/systemd/system/minebackup-serve@.service"
 install -Dm0644 "$repo_root/packaging/cli/systemd/example.env" \
   "$deb_root/usr/share/doc/minebackup-cli/examples/systemd.env"
 mkdir -p "$deb_root/DEBIAN"
@@ -84,7 +90,7 @@ Architecture: amd64
 Maintainer: MineBackup contributors
 Depends: libc6 (>= 2.39), libstdc++6 (>= 13.2), libgcc-s1
 Description: Headless Minecraft world backup and restore runtime
- MineBackup CLI manages server profiles, jobs, backups, verification and cold restore.
+ MineBackup CLI manages server profiles, jobs, backups, verification, restore and the optional serve runtime.
 EOF
 find "$deb_root" -type d -exec chmod 0755 {} +
 dpkg-deb --root-owner-group --build "$deb_root" \

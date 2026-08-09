@@ -335,12 +335,14 @@ if(MINEBACKUP_BUILD_CLI)
         COMPONENT cli)
     install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/windows/MineBackup-Job.xml
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/windows/MineBackup-Serve.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/minebackup-cli/scheduling/windows
         COMPONENT cli)
     if(UNIX AND NOT APPLE)
         install(FILES
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/systemd/minebackup-backup@.service
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/systemd/minebackup-backup@.timer
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/systemd/minebackup-serve@.service
             DESTINATION lib/systemd/system
             COMPONENT cli)
         install(FILES

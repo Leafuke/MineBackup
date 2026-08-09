@@ -35,9 +35,13 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\cli\systemd\minebackup-ba
     -Destination (Join-Path $packageRoot 'scheduling\systemd')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\cli\systemd\minebackup-backup@.timer') `
     -Destination (Join-Path $packageRoot 'scheduling\systemd')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\cli\systemd\minebackup-serve@.service') `
+    -Destination (Join-Path $packageRoot 'scheduling\systemd')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\cli\systemd\example.env') `
     -Destination (Join-Path $packageRoot 'scheduling\systemd')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\cli\windows\MineBackup-Job.xml') `
+    -Destination (Join-Path $packageRoot 'scheduling\windows')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\cli\windows\MineBackup-Serve.xml') `
     -Destination (Join-Path $packageRoot 'scheduling\windows')
 
 New-Item -ItemType Directory -Path $output -Force | Out-Null
