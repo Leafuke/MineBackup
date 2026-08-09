@@ -11,6 +11,9 @@ const char* ToString(OperationCode code) noexcept {
 	case OperationCode::InvalidProfile: return "invalid_profile";
 	case OperationCode::ToolUnavailable: return "tool_unavailable";
 	case OperationCode::BackupFailed: return "backup_failed";
+	case OperationCode::JobFailed: return "job_failed";
+	case OperationCode::VerificationFailed: return "verification_failed";
+	case OperationCode::RestoreFailed: return "restore_failed";
 	case OperationCode::TaskFailed: return "task_failed";
 	case OperationCode::Cancelled: return "cancelled";
 	case OperationCode::PartialSuccess: return "partial_success";
@@ -65,8 +68,12 @@ int ToExitCode(OperationCode code) noexcept {
 	case OperationCode::InvalidProfile:
 		return 5;
 	case OperationCode::BackupFailed:
+	case OperationCode::JobFailed:
+	case OperationCode::VerificationFailed:
 	case OperationCode::TaskFailed:
 		return 6;
+	case OperationCode::RestoreFailed:
+		return 7;
 	case OperationCode::ToolUnavailable:
 		return 8;
 	case OperationCode::Cancelled:

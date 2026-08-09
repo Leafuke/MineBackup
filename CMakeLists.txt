@@ -363,6 +363,7 @@ if(BUILD_TESTING)
         tests/BackupServiceTests.cpp
         tests/CloudSyncTests.cpp
         tests/HistoryRepositoryTests.cpp
+		tests/JobTests.cpp
         tests/LegacyIniConfigCodecTests.cpp
 		tests/OperationResultTests.cpp
         tests/SpecialTaskDocumentTests.cpp

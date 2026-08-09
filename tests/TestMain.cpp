@@ -3,6 +3,7 @@
 #include "CloudSyncTests.h"
 #include "ExternalToolManager.h"
 #include "HistoryRepositoryTests.h"
+#include "JobTests.h"
 #include "LegacyIniConfigCodecTests.h"
 #include "ProcessRunner.h"
 #include "ProcessToolTests.h"
@@ -107,7 +108,8 @@ int main(int argc, char** argv) {
     RunStorageMigrationTests(test, temporary.path);
     RunProcessToolTests(test, executable, temporary.path);
     RunBackupPipelineTests(test, temporary.path);
-    RunHistoryRepositoryTests(test, temporary.path);
+	RunHistoryRepositoryTests(test, temporary.path);
+	RunJobTests(test, temporary.path);
     RunLegacyIniConfigCodecTests(test);
 	RunOperationResultTests(test);
 	RunProfileConfigCatalogTests(test, temporary.path);

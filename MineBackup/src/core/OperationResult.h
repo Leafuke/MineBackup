@@ -17,6 +17,9 @@ enum class OperationCode {
 	InvalidProfile,
 	ToolUnavailable,
 	BackupFailed,
+	JobFailed,
+	VerificationFailed,
+	RestoreFailed,
 	TaskFailed,
 	Cancelled,
 	PartialSuccess
