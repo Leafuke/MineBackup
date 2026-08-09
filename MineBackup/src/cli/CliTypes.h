@@ -12,6 +12,11 @@
 enum class CliCommand {
 	Help,
 	Version,
+	ProfileInit,
+	ProfileValidate,
+	ProfileDiff,
+	ProfileApply,
+	ProfileExport,
 	Doctor,
 	ConfigList,
 	WorldList,
@@ -26,11 +31,17 @@ struct CliOptions {
 	bool json = false;
 	bool noNetwork = false;
 	bool nonInteractive = false;
+	bool force = false;
+	bool prune = false;
+	bool confirmPrune = false;
+	bool dryRun = false;
 	minebackup::logging::LogFileLevel logLevel =
 		minebackup::logging::LogFileLevel::Info;
 	std::wstring configId;
 	std::wstring worldPath;
 	std::wstring specialConfigId;
+	std::filesystem::path filePath;
+	std::filesystem::path outputPath;
 };
 
 struct CliParseResult {

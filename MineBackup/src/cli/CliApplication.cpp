@@ -1,6 +1,7 @@
 #include "CliApplication.h"
 
 #include "AppPaths.h"
+#include "AtomicFileWriter.h"
 #include "BackupService.h"
 #include "CliArguments.h"
 #include "CliRenderer.h"
@@ -12,6 +13,7 @@
 #include "MineBackupVersion.h"
 #include "OperationResult.h"
 #include "ProfileConfigCatalog.h"
+#include "ProfileManifest.h"
 #include "RuntimeIntegration.h"
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeFileLock.h"
@@ -524,6 +526,132 @@ CliResult Doctor(
 	return result;
 }
 
+OperationCode ManifestCode(ProfileManifestStatus status) {
+	switch (status) {
+	case ProfileManifestStatus::Loaded: return OperationCode::Success;
+	case ProfileManifestStatus::Missing: return OperationCode::TargetNotFound;
+	case ProfileManifestStatus::Invalid:
+	case ProfileManifestStatus::UnsupportedSchema:
+	case ProfileManifestStatus::IoError:
+		return OperationCode::InvalidProfile;
+	}
+	return OperationCode::InvalidProfile;
+}
+
+void AppendDiff(nlohmann::json& data, const vector<ProfileDiffItem>& diff) {
+	data["changes"] = nlohmann::json::array();
+	for (const auto& item : diff) {
+		data["changes"].push_back({
+			{"kind", item.kind},
+			{"id", wstring_to_utf8(item.stableId)},
+			{"action", ProfileManifest::ToString(item.action)},
+			{"orphanHistoryCount", item.orphanHistoryCount}});
+	}
+	data["changeCount"] = diff.size();
+}
+
+CliResult ProfileInitCommand(const CliOptions& options) {
+	CliResult result{"profile.init", OperationCode::Success};
+	error_code error;
+	const auto output = filesystem::absolute(options.outputPath, error).lexically_normal();
+	if (error) {
+		result.code = OperationCode::InvalidArguments;
+		result.diagnostics.push_back({"profile.output.invalid", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.outputPath.wstring())});
+		return result;
+	}
+	if (filesystem::exists(output) && !options.force) {
+		result.code = OperationCode::InvalidArguments;
+		result.diagnostics.push_back({"profile.output.exists", DiagnosticSeverity::Error,
+			wstring_to_utf8(output.wstring())});
+		return result;
+	}
+	const auto manifest = ProfileManifest::CreateTemplate();
+	const auto write = AtomicFileWriter::WriteText(
+		output, ProfileManifest::Serialize(manifest) + "\n");
+	if (!write.success) {
+		result.code = OperationCode::InvalidProfile;
+		result.diagnostics.push_back({"profile.output.write_failed",
+			DiagnosticSeverity::Error, wstring_to_utf8(write.error)});
+		return result;
+	}
+	result.data = {
+		{"output", wstring_to_utf8(output.wstring())},
+		{"configCount", manifest.configs.size()},
+		{"jobCount", manifest.jobs.jobs.size()}};
+	return result;
+}
+
+CliResult ProfileValidateCommand(const CliOptions& options) {
+	const auto loaded = ProfileManifest::Load(options.filePath);
+	CliResult result{"profile.validate", ManifestCode(loaded.status)};
+	result.diagnostics = loaded.diagnostics;
+	result.data = {
+		{"file", wstring_to_utf8(filesystem::absolute(options.filePath).wstring())},
+		{"schemaVersion", loaded.manifest.schemaVersion},
+		{"configCount", loaded.manifest.configs.size()},
+		{"jobCount", loaded.manifest.jobs.jobs.size()}};
+	return result;
+}
+
+CliResult ProfilePlanCommand(
+	const AppPaths& paths,
+	const CliOptions& options,
+	bool apply) {
+	const auto loaded = ProfileManifest::Load(options.filePath);
+	CliResult result{apply ? "profile.apply" : "profile.diff", ManifestCode(loaded.status)};
+	result.diagnostics = loaded.diagnostics;
+	if (!loaded.IsLoaded()) return result;
+	auto plan = ProfileManifest::Plan(paths, loaded.manifest, options.prune);
+	result.code = plan.code;
+	result.diagnostics.insert(result.diagnostics.end(),
+		plan.diagnostics.begin(), plan.diagnostics.end());
+	AppendDiff(result.data, plan.diff);
+	result.data["prune"] = options.prune;
+	result.data["dryRun"] = !apply || options.dryRun;
+	if (!apply || options.dryRun || !IsSuccessful(plan.code)) return result;
+	const auto applied = ProfileManifest::Apply(paths, plan);
+	result.code = applied.code;
+	result.diagnostics = std::move(applied.diagnostics);
+	result.data["dryRun"] = false;
+	return result;
+}
+
+CliResult ProfileExportCommand(const AppPaths& paths, const CliOptions& options) {
+	CliResult result{"profile.export", OperationCode::Success};
+	error_code error;
+	const auto output = filesystem::absolute(options.outputPath, error).lexically_normal();
+	if (error) {
+		result.code = OperationCode::InvalidArguments;
+		result.diagnostics.push_back({"profile.output.invalid", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.outputPath.wstring())});
+		return result;
+	}
+	if (filesystem::exists(output) && !options.force) {
+		result.code = OperationCode::InvalidArguments;
+		result.diagnostics.push_back({"profile.output.exists", DiagnosticSeverity::Error,
+			wstring_to_utf8(output.wstring())});
+		return result;
+	}
+	const auto exported = ProfileManifest::Export(paths);
+	result.code = ManifestCode(exported.status);
+	result.diagnostics = exported.diagnostics;
+	if (!exported.IsLoaded()) return result;
+	const auto write = AtomicFileWriter::WriteText(
+		output, ProfileManifest::Serialize(exported.manifest) + "\n");
+	if (!write.success) {
+		result.code = OperationCode::InvalidProfile;
+		result.diagnostics.push_back({"profile.output.write_failed",
+			DiagnosticSeverity::Error, wstring_to_utf8(write.error)});
+		return result;
+	}
+	result.data = {
+		{"output", wstring_to_utf8(output.wstring())},
+		{"configCount", exported.manifest.configs.size()},
+		{"jobCount", exported.manifest.jobs.jobs.size()}};
+	return result;
+}
+
 } // namespace
 
 int RunMineBackupCli(const vector<wstring>& arguments) {
@@ -555,6 +683,14 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 			cout << "minebackup-cli " MINEBACKUP_VERSION_STRING "\n";
 		}
 		return 0;
+	}
+	if (parsed.options.command == CliCommand::ProfileInit
+		|| parsed.options.command == CliCommand::ProfileValidate) {
+		CliResult result = parsed.options.command == CliCommand::ProfileInit
+			? ProfileInitCommand(parsed.options)
+			: ProfileValidateCommand(parsed.options);
+		RenderCliResult(result, parsed.options.json);
+		return ToExitCode(result.code);
 	}
 
 	AppPaths paths;
@@ -595,9 +731,19 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		return ToExitCode(error.code);
 	}
 
-	auto loaded = ProfileConfigCatalogLoader::Load(
-		paths.ConfigFile(), paths.SpecialTasksFile());
 	CliResult result;
+	if (parsed.options.command == CliCommand::ProfileDiff) {
+		result = ProfilePlanCommand(paths, parsed.options, false);
+	}
+	else if (parsed.options.command == CliCommand::ProfileApply) {
+		result = ProfilePlanCommand(paths, parsed.options, true);
+	}
+	else if (parsed.options.command == CliCommand::ProfileExport) {
+		result = ProfileExportCommand(paths, parsed.options);
+	}
+	else {
+		auto loaded = ProfileConfigCatalogLoader::Load(
+			paths.ConfigFile(), paths.SpecialTasksFile());
 	if (parsed.options.command == CliCommand::Doctor) {
 		result = Doctor(loaded, paths, parsed.options);
 	}
@@ -642,6 +788,7 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		result.diagnostics.push_back({
 			"cli.command.not_implemented", DiagnosticSeverity::Error,
 			"Execution commands are added in the next implementation stage."});
+	}
 	}
 	RenderCliResult(result, parsed.options.json);
 	minebackup::logging::Shutdown();

@@ -20,6 +20,11 @@ string CliCommandName(CliCommand command) {
 	switch (command) {
 	case CliCommand::Help: return "help";
 	case CliCommand::Version: return "version";
+	case CliCommand::ProfileInit: return "profile.init";
+	case CliCommand::ProfileValidate: return "profile.validate";
+	case CliCommand::ProfileDiff: return "profile.diff";
+	case CliCommand::ProfileApply: return "profile.apply";
+	case CliCommand::ProfileExport: return "profile.export";
 	case CliCommand::Doctor: return "doctor";
 	case CliCommand::ConfigList: return "config.list";
 	case CliCommand::WorldList: return "world.list";
@@ -41,6 +46,10 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 		if (argument == L"--json") continue;
 		if (argument == L"--no-network") { result.options.noNetwork = true; continue; }
 		if (argument == L"--non-interactive") { result.options.nonInteractive = true; continue; }
+		if (argument == L"--force") { result.options.force = true; continue; }
+		if (argument == L"--prune") { result.options.prune = true; continue; }
+		if (argument == L"--confirm-prune") { result.options.confirmPrune = true; continue; }
+		if (argument == L"--dry-run") { result.options.dryRun = true; continue; }
 		if (argument == L"--help" || argument == L"-h") {
 			result.options.command = CliCommand::Help;
 			result.success = true;
@@ -90,6 +99,22 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 			result.options.worldPath = arguments[index];
 			continue;
 		}
+		if (argument == L"--file") {
+			if (++index >= arguments.size()) {
+				AddParseError(result, "cli.argument.missing_value", "--file requires a manifest path.");
+				return result;
+			}
+			result.options.filePath = filesystem::path(arguments[index]);
+			continue;
+		}
+		if (argument == L"--output") {
+			if (++index >= arguments.size()) {
+				AddParseError(result, "cli.argument.missing_value", "--output requires a path.");
+				return result;
+			}
+			result.options.outputPath = filesystem::path(arguments[index]);
+			continue;
+		}
 		if (!argument.empty() && argument.front() == L'-') {
 			AddParseError(result, "cli.argument.unknown", wstring_to_utf8(argument));
 			return result;
@@ -101,7 +126,12 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 		AddParseError(result, "cli.command.missing", "A command is required.");
 		return result;
 	}
-	if (positional == vector<wstring>{L"doctor"}) result.options.command = CliCommand::Doctor;
+	if (positional == vector<wstring>{L"profile", L"init"}) result.options.command = CliCommand::ProfileInit;
+	else if (positional == vector<wstring>{L"profile", L"validate"}) result.options.command = CliCommand::ProfileValidate;
+	else if (positional == vector<wstring>{L"profile", L"diff"}) result.options.command = CliCommand::ProfileDiff;
+	else if (positional == vector<wstring>{L"profile", L"apply"}) result.options.command = CliCommand::ProfileApply;
+	else if (positional == vector<wstring>{L"profile", L"export"}) result.options.command = CliCommand::ProfileExport;
+	else if (positional == vector<wstring>{L"doctor"}) result.options.command = CliCommand::Doctor;
 	else if (positional == vector<wstring>{L"config", L"list"}) result.options.command = CliCommand::ConfigList;
 	else if (positional == vector<wstring>{L"world", L"list"}) result.options.command = CliCommand::WorldList;
 	else if (positional == vector<wstring>{L"history", L"list"}) result.options.command = CliCommand::HistoryList;
@@ -127,6 +157,25 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 		AddParseError(result, "cli.world.required", "The command requires --world <relative-path>.");
 		return result;
 	}
+	if ((result.options.command == CliCommand::ProfileValidate
+			|| result.options.command == CliCommand::ProfileDiff
+			|| result.options.command == CliCommand::ProfileApply)
+		&& result.options.filePath.empty()) {
+		AddParseError(result, "cli.manifest.required", "The command requires --file <manifest.json>.");
+		return result;
+	}
+	if ((result.options.command == CliCommand::ProfileInit
+			|| result.options.command == CliCommand::ProfileExport)
+		&& result.options.outputPath.empty()) {
+		AddParseError(result, "cli.output.required", "The command requires --output <manifest.json>.");
+		return result;
+	}
+	if (result.options.command == CliCommand::ProfileApply
+		&& result.options.prune && !result.options.dryRun && !result.options.confirmPrune) {
+		AddParseError(result, "cli.prune.confirmation_required",
+			"profile apply --prune requires --confirm-prune unless --dry-run is used.");
+		return result;
+	}
 	result.success = true;
 	return result;
 }
@@ -135,6 +184,11 @@ void PrintCliHelp() {
 	cout
 		<< "MineBackup headless command line interface\n\n"
 		<< "Usage:\n"
+		<< "  minebackup-cli profile init --output <manifest.json> [--force]\n"
+		<< "  minebackup-cli profile validate --file <manifest.json>\n"
+		<< "  minebackup-cli [global options] profile diff --file <manifest.json> [--prune]\n"
+		<< "  minebackup-cli [global options] profile apply --file <manifest.json> [--dry-run] [--prune --confirm-prune]\n"
+		<< "  minebackup-cli [global options] profile export --output <manifest.json> [--force]\n"
 		<< "  minebackup-cli [global options] doctor\n"
 		<< "  minebackup-cli [global options] config list\n"
 		<< "  minebackup-cli [global options] world list --config <ConfigId>\n"

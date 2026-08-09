@@ -443,6 +443,11 @@ if(BUILD_TESTING)
                 -DCLI=$<TARGET_FILE:minebackup-cli>
                 -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliReadOnlyTest.cmake)
+        add_test(NAME minebackup.cli.profile
+            COMMAND ${CMAKE_COMMAND}
+                -DCLI=$<TARGET_FILE:minebackup-cli>
+                -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/test-work
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunCliProfileTest.cmake)
         set(MINEBACKUP_CLI_ARCHIVE_TEST_AVAILABLE ${WIN32})
         if(NOT WIN32)
             find_program(MINEBACKUP_CLI_TEST_7ZIP NAMES 7zz 7z)
