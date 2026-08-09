@@ -398,7 +398,7 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME minebackup.font_mapping COMMAND minebackup_font_mapping_tests)
 
-		add_test(NAME minebackup.desktop.special_disabled
+		add_test(NAME minebackup.desktop.special_cli_only
 			COMMAND ${CMAKE_COMMAND}
 				-DGUI=$<TARGET_FILE:MineBackup>
 				-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunDeprecatedDesktopLaunchTest.cmake)

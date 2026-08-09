@@ -163,6 +163,6 @@ CLI 是前台进程，不安装系统服务。systemd、Task Scheduler、launchd
 - 无法解析的旧逗号行、无效/越界目标或重复身份会使迁移整体失败，不写半成品 JSON。
 - 迁移或手工编辑前，应同时备份 `config/config.ini` 与 `config/special-tasks.json`；不要只备份其中一个。
 
-桌面程序不再执行 `--run-special`、`-specialcfg` 或 `--autostart`。这些参数会在任何桌面/网络初始化前写 stderr、提示等价的 `minebackup-cli run-special <id>` 命令并退出 2。普通 GUI 启动会注销旧 MineBackup 登录项，但保留 `runOnStartup` 字段供后续迁移；`--silent-startup` 和 `--select-config` 继续维持 GUI 语义。
+桌面程序不再执行 `--run-special` 或 `-specialcfg`；这些参数会在任何桌面/网络初始化前写 stderr、提示等价的 `minebackup-cli run-special <id>` 命令并退出 2。`--autostart` 仅作为 GUI 登录启动项的内部标记，不执行特殊任务；GUI 设置决定是否创建登录项以及登录启动时是否隐藏到托盘。`--silent-startup` 和 `--select-config` 继续维持 GUI 语义。
 
 本版 CLI 不支持名称选择、配置创建/编辑、Restore、浏览器/目录打开、Agent、Pack Mode、服务安装或正式发行打包。

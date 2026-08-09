@@ -55,6 +55,30 @@ using namespace std;
 
 namespace {
 	std::unique_ptr<MainUiController> controller;
+
+	bool ApplyGuiAutostartSetting(DesktopServices& desktopServices, bool enabled) {
+		const auto status = desktopServices.SetAutostart(enabled);
+		if (!status.IsAvailable()) {
+			PLATFORM_PRINTF_WARNING("platform.autostart.update_failed",
+				"Could not %s the GUI login startup entry: %s",
+				enabled ? "enable" : "disable",
+				wstring_to_utf8(status.diagnostic).c_str());
+			MessageBoxWin("MineBackup", L("AUTOSTART_UPDATE_FAILED"), 1);
+			return false;
+		}
+
+		if (SaveConfigs()) return true;
+
+		// 配置文件写入失败时回滚系统启动项，避免出现“注册表已启用但
+		// 配置仍显示关闭”（或反过来）的不一致状态。
+		const auto rollback = desktopServices.SetAutostart(!enabled);
+		if (!rollback.IsAvailable()) {
+			PLATFORM_PRINTF_ERROR("platform.autostart.rollback_failed",
+				"Could not roll back the GUI login startup entry after configuration save failure: %s",
+				wstring_to_utf8(rollback.diagnostic).c_str());
+		}
+		return false;
+	}
 }
 
 void MainUiController::ResetForClose() {
@@ -279,11 +303,29 @@ if (ImGui::BeginMenuBar()) {
 	if (ImGui::BeginMenu(L("SETTINGS"))) {
 		const auto desktopCapabilities = desktopServices->Capabilities();
 
-		ImGui::BeginDisabled();
-		ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup);
-		ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray);
-		ImGui::EndDisabled();
-		ImGui::TextDisabled("%s", L("AUTOSTART_CLI_ONLY_NOTICE"));
+		const bool autostartAvailable = desktopCapabilities.autostart.IsAvailable();
+		if (!autostartAvailable) ImGui::BeginDisabled();
+		const bool previousRunOnStartup = g_RunOnStartup;
+		if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup)
+			&& !ApplyGuiAutostartSetting(*desktopServices, g_RunOnStartup)) {
+			g_RunOnStartup = previousRunOnStartup;
+		}
+		if (!autostartAvailable) ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+			ImGui::SetTooltip("%s", L("TIP_GLOBAL_STARTUP"));
+		}
+		if (!autostartAvailable) {
+			ImGui::TextDisabled("%s", L("AUTOSTART_UNAVAILABLE_NOTICE"));
+		}
+
+		const bool previousSilentStartupToTray = g_SilentStartupToTray;
+		if (ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray)
+			&& !SaveConfigs()) {
+			g_SilentStartupToTray = previousSilentStartupToTray;
+		}
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
+		}
 		if (ImGui::BeginMenu(L("LOG_FILE_LEVEL"))) {
 			const struct {
 				minebackup::logging::LogFileLevel value;

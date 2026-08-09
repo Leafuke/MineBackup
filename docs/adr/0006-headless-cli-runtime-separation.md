@@ -16,7 +16,7 @@ MineBackup 已有可在 GLFW 初始化前执行特殊配置的路径，但构建
 5. 特殊任务迁移到带 schemaVersion 的 JSON，任务使用 UUID，目标使用 ConfigId 与配置内相对路径。
 6. CLI 是永久非交互前端，使用稳定结果码、诊断 ID、JSON envelope 和进程退出码。
 7. v1.15 adapter 继续由 GUI 承担；CLI 遇到未迁移配置档时明确失败。
-8. 旧 GUI `--run-special`、`-specialcfg` 和 `--autostart` 在 CLI 可用后停用。
+8. 旧 GUI `--run-special`、`-specialcfg` 在 CLI 可用后停用；`--autostart` 保留为 GUI 登录启动项的内部标记，不再触发特殊任务。
 9. Pack Mode、Restore CLI、配置创建、Agent 和正式 CLI 打包不属于本里程碑。
 
 ## 兼容策略

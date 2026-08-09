@@ -150,24 +150,22 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	if (!ParseLaunchOptions(launchArguments, launchOptions, launchError)) {
 		const bool deprecatedSpecialRequest = any_of(
 			launchArguments.begin(), launchArguments.end(), [](const wstring& argument) {
-				return argument == L"--autostart"
-					|| argument == L"--run-special"
+				return argument == L"--run-special"
 					|| argument == L"-specialcfg";
 			});
 		if (deprecatedSpecialRequest) {
 			WriteEarlyLaunchError(
-				L"MineBackup: desktop special execution and login startup are disabled.\n"
+				L"MineBackup: desktop special-task execution is disabled.\n"
 				L"Use: minebackup-cli [--data-dir <path>] run-special <SpecialConfigId>\n");
 			return 2;
 		}
 		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
 		return 2;
 	}
-	if (launchOptions.autostart
-		|| !launchOptions.runSpecialId.empty()
+	if (!launchOptions.runSpecialId.empty()
 		|| launchOptions.legacySpecialConfigIndex.has_value()) {
 		wstring message =
-			L"MineBackup: desktop special execution and login startup are disabled.\n";
+			L"MineBackup: desktop special-task execution is disabled.\n";
 		if (!launchOptions.runSpecialId.empty()) {
 			message += L"Use: minebackup-cli ";
 			if (launchOptions.dataDirectory) {
@@ -212,11 +210,17 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		return 2;
 	}
 	SetCurrentAppPaths(std::move(appPaths));
+	// --autostart 只是系统登录启动项传入的内部标记，不再触发特殊任务执行。
+	// 是否隐藏到托盘要等配置加载后结合 GUI 设置决定；显式 --silent-startup
+	// 仍然可以直接强制使用静默启动。
 	bool launchSilentStartup = launchOptions.silentStartup;
 	const auto& paths = GetAppPaths();
 	SingleInstanceService singleInstance;
 	const auto instanceResult = singleInstance.Acquire(paths.profileIdentity, paths.runtimeRoot, launchError);
 	if (instanceResult == InstanceAcquireResult::AlreadyRunning) {
+		// 登录启动不应把已经打开的 GUI 窗口抢到前台；普通重复启动仍保持
+		// 原有的激活行为。
+		if (launchOptions.autostart && launchOptions.selectConfigId.empty()) return 0;
 		InstanceRequest request;
 		if (!launchOptions.selectConfigId.empty()) {
 			request = { InstanceRequestType::SelectConfig, launchOptions.selectConfigId };
@@ -311,6 +315,9 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	V15MigrationAdapter::Install();
 #endif
 	LoadConfigs();
+	if (launchOptions.autostart && g_SilentStartupToTray) {
+		launchSilentStartup = true;
+	}
 	minebackup::logging::Initialize({
 		paths.logsRoot,
 		g_logFileLevel,
@@ -346,7 +353,10 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #endif
 	InstallDesktopServices(desktopServices);
 	if (desktopServices->Capabilities().autostart.IsAvailable()) {
-		const auto autostartStatus = desktopServices->SetAutostart(false);
+		// 每次 GUI 启动都校正一次登录启动项：既能修复程序路径变化，
+		// 也能清理旧版按特殊任务创建的启动项。特殊配置的 runOnStartup
+		// 字段不再参与这里的决策，避免与 GUI 自启动概念混淆。
+		const auto autostartStatus = desktopServices->SetAutostart(g_RunOnStartup);
 		if (!autostartStatus.IsAvailable() && !autostartStatus.diagnostic.empty()) {
 			PLATFORM_PRINTF_WARNING("platform.autostart.reconcile_failed",
 				"Autostart reconciliation failed: %s",
@@ -354,7 +364,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		}
 		else if (!autostartStatus.diagnostic.empty()) {
 			PLATFORM_PRINTF_INFO("platform.autostart.reconciled",
-				"Deprecated autostart cleanup: %s",
+				"GUI login startup entry synchronized: %s",
 				wstring_to_utf8(autostartStatus.diagnostic).c_str());
 		}
 	}
