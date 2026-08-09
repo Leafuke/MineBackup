@@ -1,6 +1,6 @@
 # ADR 0006：以 Headless CLI 牵引 MineBackup Runtime 分层
 
-- 状态：Accepted
+- 状态：Superseded by ADR 0007
 - 日期：2026-08-07
 
 ## 背景

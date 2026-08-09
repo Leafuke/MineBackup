@@ -18,11 +18,17 @@
 - **恢复快照**：覆盖规范路径前保留的旧 JSON。它用于人工恢复，不代表运行期双写。
 - **降级迁移**：部分 record 可保存，但不足以安全延续 Smart 链；下一次备份必须建立新 Full 链。
 - **配置档身份（Profile Identity）**：由规范化配置档根派生的稳定身份；单实例锁和 IPC 端点按该身份隔离，而不是按可执行文件路径隔离。
-- **单实例请求（Instance Request）**：第二个进程交给同配置档主实例的有界、版本化 IPC 消息；当前包括激活窗口、按 ConfigId 选择普通配置和按 SpecialConfigId 运行特殊配置。
-- **SpecialConfigId**：特殊配置的稳定 UUID；进程间请求和 autostart 不使用可被重排的配置序号定位特殊配置。
+- **单实例请求（Instance Request）**：第二个进程交给同配置档主实例的有界、版本化 IPC 消息；消息只能在同一操作系统用户的本地端点上传递。
 - **启动位置迁移（Startup Location Migration）**：在目标配置档尚未初始化时，对旧位置进行规范化发现、用户选择和事务复制的启动阶段；源文件保留不动，完成后才进入格式迁移。
 - **ProcessSpec**：内部外部进程调用的无 shell 契约；可执行文件、参数向量、工作目录、超时、输出上限和优先级分别表达。
-- **ShellTaskSpec**：唯一允许保存并执行原始 shell 命令字符串的用户任务契约；Windows 固定使用 `cmd.exe`，Linux/macOS 固定使用 `/bin/sh`，且不承诺跨平台可移植。
+- **服务器清单（Server Manifest）**：用于声明 Config、Job 和配置档级还原保留规则的可移植文档；它是显式 apply/export 的交换格式，不是运行时自动监视的权威存储。
+- **配置（Config）**：一个备份策略及其世界、存储、压缩、保留和云后处理设置；以 ConfigId 作为跨前端稳定身份。
+- **作业（Job）**：可重复执行的一次性工作流，由顺序 Stage 组成；作业不持有时间触发条件。_避免称为_：特殊配置、计划任务。
+- **阶段（Stage）**：Job 内的顺序执行边界；同一 Stage 的 Step 可并行执行，所有 Step 完成后才能进入下一 Stage。
+- **步骤（Step）**：Job 内可独立报告结果的工作单元；当前只有 Backup Step 和 Process Step。
+- **进程步骤（Process Step）**：以显式可执行文件和参数向量启动外部进程的 Step；不隐式解释 shell 文本，需要 shell 时由用户把 shell 本身声明为可执行文件。
+- **调度（Schedule）**：由 systemd timer 或 Windows Task Scheduler 持有的时间触发资源；它调用一次性 CLI 命令，不属于 Job。
+- **配置档运行时（Profile Runtime）**：独占一个 Profile 并协调配置、历史、备份、还原、Job 和 KnotLink 资源的运行边界；可由一次性命令临时持有，也可由常驻代理长期持有。
 - **任务协调器（Task Coordinator）**：应用内后台工作的统一生命周期边界；负责接收新任务、持有 `jthread`、传播停止令牌、隔离异常、串行化资源冲突并在退出时拒绝新工作后完成收尾。
 - **世界资源键（World Resource Key）**：由 ConfigId 与规范化绝对世界路径组成的互斥身份；同一世界的备份、恢复、删除、验证和迁移提交不得并行修改数据。
 - **配置档云队列（Profile Cloud Queue）**：按 Profile Identity 建立的单队列资源；同一配置档的 rclone 上传、下载、历史同步与分析按提交顺序互斥执行。
