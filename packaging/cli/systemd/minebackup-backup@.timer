@@ -1,0 +1,12 @@
+[Unit]
+Description=Scheduled MineBackup job for profile %i
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=5m
+Unit=minebackup-backup@%i.service
+
+[Install]
+WantedBy=timers.target
+

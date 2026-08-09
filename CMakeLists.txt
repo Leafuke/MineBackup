@@ -312,6 +312,43 @@ if(MINEBACKUP_BUILD_GUI)
 endif()
 if(MINEBACKUP_BUILD_CLI)
     set_target_properties(minebackup-cli PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
+
+    include(GNUInstallDirs)
+    install(TARGETS minebackup-cli
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        COMPONENT cli)
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/minebackup-cli
+        COMPONENT cli)
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/LICENSES/7zip-zstd.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/LICENSES/spdlog.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/LICENSES/fmt.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/LICENSES/knotlink-sdk-cpp.txt
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/minebackup-cli/LICENSES
+        COMPONENT cli)
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/server-manifest.example.json
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/minebackup-cli/examples
+        RENAME server-manifest.json
+        COMPONENT cli)
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/windows/MineBackup-Job.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/minebackup-cli/scheduling/windows
+        COMPONENT cli)
+    if(UNIX AND NOT APPLE)
+        install(FILES
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/systemd/minebackup-backup@.service
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/systemd/minebackup-backup@.timer
+            DESTINATION lib/systemd/system
+            COMPONENT cli)
+        install(FILES
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/cli/systemd/example.env
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/minebackup-cli/examples
+            RENAME systemd.env
+            COMPONENT cli)
+    endif()
 endif()
 
 include(CTest)

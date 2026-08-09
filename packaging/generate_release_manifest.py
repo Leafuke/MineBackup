@@ -8,8 +8,8 @@ from pathlib import Path
 
 
 PLATFORM_ASSETS = {
-    "windows": {"windows"},
-    "linux": {"linux-deb", "linux-appimage"},
+    "windows": {"windows", "windows-cli"},
+    "linux": {"linux-deb", "linux-appimage", "linux-cli-tar", "linux-cli-deb"},
     "macos": {"macos"},
 }
 AUXILIARY_NAMES = {"release-manifest.json", "dependency-manifest.json", "SHA256SUMS"}
@@ -18,8 +18,11 @@ AUXILIARY_NAMES = {"release-manifest.json", "dependency-manifest.json", "SHA256S
 def asset_names(version: str) -> dict[str, str]:
     return {
         "windows": "MineBackup-windows-x64.exe",
+        "windows-cli": f"MineBackup-CLI-{version}-windows-x64.zip",
         "linux-deb": f"minebackup_{version}_amd64.deb",
         "linux-appimage": f"MineBackup-{version}-x86_64.AppImage",
+        "linux-cli-tar": f"MineBackup-CLI-{version}-linux-x64.tar.gz",
+        "linux-cli-deb": f"minebackup-cli_{version}_amd64.deb",
         "macos": f"MineBackup-{version}-macos-arm64.dmg",
     }
 
@@ -76,8 +79,8 @@ def main() -> None:
         })
 
     platform_gate_descriptions = {
-        "windows": "MSBuild formal candidate plus CMake/MSVC shadow, CTest, PE resources, /MT and startup smoke",
-        "linux": "Ubuntu 24.04/GCC 13 build, CTest, X11/Wayland smoke, deb and AppImage layout/dependency checks",
+        "windows": "MSBuild desktop candidate plus CMake/MSVC CLI, CTest, PE resources, /MT, startup and package smoke",
+        "linux": "Ubuntu 24.04/GCC 13 desktop and CLI builds, CTest, display smoke, package layout and dependency checks",
         "macos": "macOS 15 and 26 arm64 build/CTest/startup; macOS 15 nested signing and DMG verification",
     }
     gates = {
