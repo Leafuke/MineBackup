@@ -372,6 +372,7 @@ if(BUILD_TESTING)
         tests/ProcessToolTests.cpp
         tests/ProfileConfigCatalogTests.cpp
 		tests/ProfileManifestTests.cpp
+		tests/RestoreServiceTests.cpp
         tests/RuntimeInfrastructureTests.cpp)
     target_link_libraries(minebackup_data_tests PRIVATE minebackup_runtime)
     if(MSVC)

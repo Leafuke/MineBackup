@@ -11,6 +11,7 @@
 #include "ProfileManifestTests.h"
 #include "OperationResultTests.h"
 #include "RuntimeInfrastructureTests.h"
+#include "RestoreServiceTests.h"
 #include "StorageMigrationTests.h"
 #include "SpecialTaskDocumentTests.h"
 #include "SpecialTaskRunnerTests.h"
@@ -118,6 +119,7 @@ int main(int argc, char** argv) {
 	RunSpecialTaskDocumentTests(test, temporary.path);
 	RunSpecialTaskRunnerTests(test);
     RunRuntimeInfrastructureTests(test, temporary.path);
+	RunRestoreServiceTests(test, temporary.path);
 	RunBackupServiceTests(test, temporary.path);
     RunCloudSyncTests(test);
 
