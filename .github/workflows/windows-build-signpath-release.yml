@@ -121,6 +121,21 @@ jobs:
         .\cmake\VerifyWindowsArtifact.ps1 -Executable .\out\release\MineBackup-windows-x64.exe
         .\cmake\SmokeTestWindowsArtifact.ps1 -Executable .\out\release\MineBackup-windows-x64.exe
 
+    - name: Build headless Windows server candidate
+      shell: pwsh
+      run: |
+        $versionFile = Join-Path $env:RUNNER_TEMP 'minebackup-version.txt'
+        cmake "-DMINEBACKUP_VERSION_OUTPUT=$versionFile" `
+          -P .\cmake\ExportMineBackupVersion.cmake
+        $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+        .\packaging\cli\build-cli-windows.ps1 `
+          -Executable .\build\windows-msvc-x64\bin\Release\minebackup-cli.exe `
+          -OutputDirectory .\out\release `
+          -Version $version
+        if (-not (Test-Path ".\out\release\MineBackup-CLI-$version-windows-x64.zip")) {
+          throw 'Windows CLI package was not created.'
+        }
+
     - name: Print SignPath links
       shell: pwsh
       run: |
@@ -133,7 +148,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: minebackup-windows-candidate
-        path: .\out\release\MineBackup-windows-x64.exe
+        path: |
+          .\out\release\MineBackup-windows-x64.exe
+          .\out\release\MineBackup-CLI-*-windows-x64.zip
         if-no-files-found: error
         compression-level: 0
         retention-days: 14

@@ -91,6 +91,15 @@ jobs:
           test -f "build/release/minebackup_${VERSION}_amd64.deb"
           test -x "build/release/MineBackup-${VERSION}-x86_64.AppImage"
 
+      - name: Build headless server candidates
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          bash packaging/cli/build-cli-linux.sh \
+            build/linux-x64/bin/minebackup-cli build/release \
+            build/package-inputs/linux-gcc-x64.zip "$VERSION"
+          test -f "build/release/MineBackup-CLI-${VERSION}-linux-x64.tar.gz"
+          test -f "build/release/minebackup-cli_${VERSION}_amd64.deb"
+
       - name: Verify package dependency declarations
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -121,6 +130,8 @@ jobs:
           path: |
             build/release/minebackup_${{ steps.version.outputs.version }}_amd64.deb
             build/release/MineBackup-${{ steps.version.outputs.version }}-x86_64.AppImage
+            build/release/MineBackup-CLI-${{ steps.version.outputs.version }}-linux-x64.tar.gz
+            build/release/minebackup-cli_${{ steps.version.outputs.version }}_amd64.deb
             build/release/deb-depends.txt
             build/release/deb-ldd.txt
 

@@ -55,6 +55,38 @@ jobs:
           cmake -DCLI="$PWD/build/linux-x64-cli-only/bin/minebackup-cli" \
             -P cmake/VerifyHeadlessCliDependencies.cmake
 
+      - name: Build and audit Linux server assets
+        run: |
+          version_file="$RUNNER_TEMP/minebackup-version.txt"
+          cmake -DMINEBACKUP_VERSION_OUTPUT="$version_file" \
+            -P cmake/ExportMineBackupVersion.cmake
+          version="$(tr -d '\r\n' <"$version_file")"
+          bash packaging/cli/build-cli-linux.sh \
+            build/linux-x64-cli-only/bin/minebackup-cli \
+            build/cli-release build/headless-inputs/linux-gcc-x64.zip "$version"
+          mkdir -p build/cli-release/tar-audit build/cli-release/deb-audit
+          tar -xzf "build/cli-release/MineBackup-CLI-$version-linux-x64.tar.gz" \
+            -C build/cli-release/tar-audit
+          dpkg-deb --extract "build/cli-release/minebackup-cli_${version}_amd64.deb" \
+            build/cli-release/deb-audit
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/bin/minebackup-cli" \
+            --version </dev/null
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            build/cli-release/deb-audit/usr/bin/minebackup-cli --version </dev/null
+          ldd build/cli-release/deb-audit/usr/bin/minebackup-cli | tee build/cli-release/ldd.txt
+          ! grep -E 'not found|libGL|libX11|libwayland|libgtk' build/cli-release/ldd.txt
+
+      - name: Upload Linux CLI candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-cli-linux-candidates
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/cli-release/MineBackup-CLI-*-linux-x64.tar.gz
+            build/cli-release/minebackup-cli_*_amd64.deb
+
   macos-cli-only:
     runs-on: macos-15
     steps:
@@ -128,3 +160,29 @@ jobs:
         run: |
           .\cmake\VerifyWindowsCliBinary.ps1 `
             -Executable .\build\headless-windows\bin\Release\minebackup-cli.exe
+
+      - name: Build and audit Windows server asset
+        shell: pwsh
+        run: |
+          $versionFile = Join-Path $env:RUNNER_TEMP 'minebackup-version.txt'
+          cmake "-DMINEBACKUP_VERSION_OUTPUT=$versionFile" `
+            -P .\cmake\ExportMineBackupVersion.cmake
+          $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+          .\packaging\cli\build-cli-windows.ps1 `
+            -Executable .\build\headless-windows\bin\Release\minebackup-cli.exe `
+            -OutputDirectory .\build\cli-release `
+            -Version $version
+          Expand-Archive `
+            -LiteralPath ".\build\cli-release\MineBackup-CLI-$version-windows-x64.zip" `
+            -DestinationPath .\build\cli-release\audit
+          .\cmake\VerifyWindowsCliBinary.ps1 `
+            -Executable ".\build\cli-release\audit\MineBackup-CLI-$version-windows-x64\minebackup-cli.exe"
+
+      - name: Upload Windows CLI candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-cli-windows-candidate
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          path: .\build\cli-release\MineBackup-CLI-*-windows-x64.zip
