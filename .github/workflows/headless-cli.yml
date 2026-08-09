@@ -74,6 +74,9 @@ jobs:
             --version </dev/null
           env -u DISPLAY -u WAYLAND_DISPLAY \
             build/cli-release/deb-audit/usr/bin/minebackup-cli --version </dev/null
+          test -f "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/scheduling/systemd/minebackup-serve@.service"
+          test -f "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/scheduling/windows/MineBackup-Serve.xml"
+          test -f build/cli-release/deb-audit/usr/lib/systemd/system/minebackup-serve@.service
           ldd build/cli-release/deb-audit/usr/bin/minebackup-cli | tee build/cli-release/ldd.txt
           ! grep -E 'not found|libGL|libX11|libwayland|libgtk' build/cli-release/ldd.txt
 
@@ -177,6 +180,13 @@ jobs:
             -DestinationPath .\build\cli-release\audit
           .\cmake\VerifyWindowsCliBinary.ps1 `
             -Executable ".\build\cli-release\audit\MineBackup-CLI-$version-windows-x64\minebackup-cli.exe"
+          $packageRoot = ".\build\cli-release\audit\MineBackup-CLI-$version-windows-x64"
+          if (-not (Test-Path "$packageRoot\scheduling\systemd\minebackup-serve@.service")) {
+            throw 'Packaged systemd serve template is missing.'
+          }
+          if (-not (Test-Path "$packageRoot\scheduling\windows\MineBackup-Serve.xml")) {
+            throw 'Packaged Task Scheduler serve template is missing.'
+          }
 
       - name: Upload Windows CLI candidate
         uses: actions/upload-artifact@v4

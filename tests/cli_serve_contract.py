@@ -122,12 +122,20 @@ def status(cli: Path, profile: Path, environment: dict[str, str]) -> dict:
     return parse_single_json(response.stdout, "serve status")
 
 
-def wait_for_active(cli: Path, profile: Path, environment: dict[str, str], expected: int) -> None:
+def wait_for_active(
+    cli: Path, profile: Path, environment: dict[str, str], expected: int
+) -> dict:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         value = status(cli, profile, environment)
-        if value.get("data", {}).get("activeOperationCount") == expected:
-            return
+        data = value.get("data", {})
+        if data.get("activeOperationCount") == expected:
+            active = data.get("activeOperations")
+            if not isinstance(active, list) or len(active) != expected:
+                raise AssertionError(f"serve returned an invalid activeOperations list: {data!r}")
+            if expected and any(item.get("command") != "job.run" for item in active):
+                raise AssertionError(f"serve returned an unstable operation command: {active!r}")
+            return value
         time.sleep(0.05)
     raise AssertionError(f"serve did not reach activeOperationCount={expected}")
 
@@ -177,6 +185,9 @@ def main() -> int:
     )
     clients: list[subprocess.Popen[str]] = []
     try:
+        # Do not let the first status probe briefly acquire the profile lock
+        # before the newly spawned serve process reaches its own Acquire call.
+        time.sleep(0.1)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if serve.poll() is not None:
@@ -190,6 +201,14 @@ def main() -> int:
             time.sleep(0.05)
         else:
             raise AssertionError("serve did not become ready")
+
+        runtime_status = status(cli, profile, environment).get("data", {})
+        if runtime_status.get("networkEnabled") is not False:
+            raise AssertionError(f"--no-network serve reported network enabled: {runtime_status!r}")
+        if runtime_status.get("knotLinkRunning") is not False:
+            raise AssertionError(f"--no-network serve started KnotLink: {runtime_status!r}")
+        if runtime_status.get("activeKnotLinkOperationCount") != 0:
+            raise AssertionError(f"serve reported a phantom KnotLink operation: {runtime_status!r}")
 
         listed = run_cli(cli, profile, environment, "config", "list")
         listed_json = parse_single_json(listed.stdout, "forwarded config list")
