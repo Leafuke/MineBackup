@@ -18,6 +18,9 @@
 #include "Sha256.h"
 #include "ExternalToolManager.h"
 #include "PortableConfigDocument.h"
+#include "ProfileConfigRepository.h"
+#include "ProfileRuntime.h"
+#include "JobDocument.h"
 #include "DesktopServices.h"
 #include "LegacyServicePolicy.h"
 #include "text_to_text.h"
@@ -669,6 +672,72 @@ void TestLoggingFailureAndDiagnostics(
     Shutdown();
 }
 
+void TestProfileRuntimeReload(
+	TestContext& test,
+	const std::filesystem::path& root) {
+	const auto profileRoot = root / "profile-runtime";
+	AppPaths paths;
+	paths.configRoot = profileRoot / "config";
+	paths.dataRoot = profileRoot / "data";
+	paths.stateRoot = profileRoot / "state";
+	paths.cacheRoot = profileRoot / "cache";
+	paths.runtimeRoot = profileRoot / "runtime";
+	paths.toolsRoot = profileRoot / "tools";
+	paths.logsRoot = profileRoot / "logs";
+	paths.resourcesRoot = profileRoot / "resources";
+	paths.profileIdentity = L"profile-runtime-test";
+	std::filesystem::create_directories(paths.configRoot);
+	std::filesystem::create_directories(paths.dataRoot);
+	std::filesystem::create_directories(profileRoot / "server" / "world");
+
+	Config config;
+	config.configId = L"11111111-1111-4111-8111-111111111111";
+	config.name = "Server";
+	config.saveRoot = (profileRoot / "server").wstring();
+	config.backupPath = (profileRoot / "backups").wstring();
+	config.worlds = {{L"world", L"Primary"}};
+	test.Expect(ProfileConfigRepository(paths.ConfigFile()).Save(
+		{{1, config}}, {L"session.lock"}, true).success,
+		"ProfileRuntime fixture should persist a server config");
+
+	JobStep step;
+	step.stepId = L"44444444-4444-4444-8444-444444444444";
+	step.name = "World";
+	step.type = JobStepType::Backup;
+	step.backup = {config.configId, L"world", {}};
+	JobStage stage;
+	stage.stageId = L"33333333-3333-4333-8333-333333333333";
+	stage.name = "Backup";
+	stage.steps = {step};
+	Job job;
+	job.jobId = L"22222222-2222-4222-8222-222222222222";
+	job.name = "Nightly";
+	job.stages = {stage};
+	JobDocument document;
+	document.jobs = {job};
+	std::wstring saveError;
+	test.Expect(JobStorage::Save(paths.JobsFile(), document, saveError),
+		"ProfileRuntime fixture should persist jobs.json");
+
+	ProfileRuntime runtime(paths, {true, {}});
+	const auto loaded = runtime.Reload();
+	test.Expect(IsSuccessful(loaded.code) && runtime.IsReady()
+			&& runtime.Catalog().configs.size() == 1
+			&& runtime.Jobs().jobs.size() == 1
+			&& runtime.ResolveBackup(config.configId, L"world").has_value(),
+		"ProfileRuntime should own a coherent catalog, Job and history snapshot");
+
+	document.jobs.front().stages.front().steps.front().backup.configId =
+		L"99999999-9999-4999-8999-999999999999";
+	test.Expect(JobStorage::Save(paths.JobsFile(), document, saveError),
+		"ProfileRuntime invalid reload fixture should persist");
+	const auto rejected = runtime.Reload();
+	test.Expect(rejected.code == OperationCode::InvalidProfile
+			&& runtime.IsReady()
+			&& runtime.Jobs().jobs.front().jobId == job.jobId,
+		"a failed ProfileRuntime reload should retain the previous coherent snapshot");
+}
+
 } // namespace
 
 void RunRuntimeInfrastructureTests(
@@ -682,4 +751,5 @@ void RunRuntimeInfrastructureTests(
     TestLoggingCore(test, root);
     TestLoggingStressAndRotation(test, root);
     TestLoggingFailureAndDiagnostics(test, root);
+	TestProfileRuntimeReload(test, root);
 }

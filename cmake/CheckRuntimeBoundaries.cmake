@@ -25,6 +25,7 @@ set(runtime_contract_files
     ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.h
     ${MINEBACKUP_CORE_DIR}/OperationResult.h
     ${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.h
+    ${MINEBACKUP_CORE_DIR}/ProfileRuntime.h
     ${MINEBACKUP_CORE_DIR}/RuntimeCloudPostHook.h
     ${MINEBACKUP_CORE_DIR}/RuntimeFileLock.h
     ${MINEBACKUP_CORE_DIR}/RuntimeIntegration.h

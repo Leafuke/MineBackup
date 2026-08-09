@@ -96,8 +96,10 @@ CI 通过 `check_runtime_boundaries` 检查 runtime 源文件与公共头的禁�
 | `MineBackup/src/core/MigrationCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |
 | `MineBackup/src/core/OperationResult.cpp` | runtime | 固定操作码、聚合规则与进程退出码映射 |
 | `MineBackup/src/core/OperationResult.h` | runtime | 纯运行时结果、诊断和任务结果契约 |
-| `MineBackup/src/core/ProfileConfigCatalog.cpp` | runtime | 只读安全解析普通配置、特殊配置和任务文档 |
+| `MineBackup/src/core/ProfileConfigCatalog.cpp` | runtime | 只读安全解析普通服务器配置 |
 | `MineBackup/src/core/ProfileConfigCatalog.h` | runtime | 稳定 ID 配置目录与加载诊断契约 |
+| `MineBackup/src/core/ProfileRuntime.cpp` | runtime | 长期持有配置、历史、Job、备份与还原服务的 profile 生命周期 |
+| `MineBackup/src/core/ProfileRuntime.h` | runtime | 一次性 CLI 与常驻代理共用的运行时边界 |
 | `MineBackup/src/core/RuntimeIntegration.cpp` | runtime | 云后处理、热备份桥接与事件输出的无桌面适配器 |
 | `MineBackup/src/core/RuntimeIntegration.h` | runtime | 定义集成端口及 NetworkDisabled/no-op 实现 |
 | `MineBackup/src/core/RuntimeCloudPostHook.cpp` | runtime | 同步上传归档、元数据、历史与 manifest，并提交云状态 |

@@ -47,6 +47,7 @@ set(MINEBACKUP_RUNTIME_SOURCES
 	${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.cpp
 	${MINEBACKUP_CORE_DIR}/ProfileConfigRepository.cpp
 	${MINEBACKUP_CORE_DIR}/ProfileManifest.cpp
+	${MINEBACKUP_CORE_DIR}/ProfileRuntime.cpp
 	${MINEBACKUP_CORE_DIR}/BackupManager.cpp
 	${MINEBACKUP_CORE_DIR}/RuntimeIntegration.cpp
 	${MINEBACKUP_CORE_DIR}/RuntimeCloudPostHook.cpp
