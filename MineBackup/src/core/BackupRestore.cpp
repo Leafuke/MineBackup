@@ -15,6 +15,7 @@
 #include "MigrationCoordinator.h"
 #include "PathRuleSet.h"
 #include "PlatformCompat.h"
+#include "RestoreService.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "TaskCoordinator.h"
@@ -497,6 +498,102 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 	return true;
 }
 
+bool RunSharedManagedRestore(
+	const Config& config,
+	const wstring& worldName,
+	const wstring& backupFile,
+	RestoreMode mode,
+	const vector<wstring>* restoreWhitelistOverride,
+	const string& requestId) {
+	const string operationId = requestId.empty()
+		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
+	minebackup::logging::ScopedLogContext operationContext{{
+		{"operation_id", operationId},
+		{"config_id", wstring_to_utf8(config.configId)},
+		{"world", wstring_to_utf8(worldName)}}};
+	auto fail = [&](string reason) {
+		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId)
+			+ ";world=" + wstring_to_utf8(worldName) + ";error=" + reason
+			+ (requestId.empty() ? "" : ";request_id=" + requestId));
+		return false;
+	};
+	if (config.pendingLocalBinding) {
+		RESTORE_WARNING("Restore is disabled until local paths are bound.");
+		return fail("binding_required");
+	}
+
+	const filesystem::path destination = JoinPath(config.saveRoot, worldName);
+	if (IsWorldOccupied(destination)) {
+		RESTORE_WARNING(L("LOG_RESTORE_ACTIVE_WORLD_BLOCKED"),
+			wstring_to_utf8(worldName).c_str());
+		return fail("world_occupied");
+	}
+	const int configIndex = ResolveConfigIndexForCloud(config);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(
+		config, configIndex, worldName, destination.wstring());
+	if ((migration.status == MigrationStatus::Failed
+			|| migration.status == MigrationStatus::Degraded)
+		&& FolderRewindFormat::IsSmartBackupType(backupFile)) {
+		RESTORE_ERROR("Exact Smart restore is unavailable until metadata migration succeeds: %s",
+			wstring_to_utf8(migration.message).c_str());
+		return fail("legacy_metadata_migration_incomplete");
+	}
+	HistoryEntry historyEntry;
+	if (configIndex >= 0
+		&& TryGetHistoryEntry(configIndex, worldName, backupFile, historyEntry)
+		&& config.cloudAutoDownloadBeforeRestore) {
+		EnsureRestoreChainAvailable(config, configIndex, historyEntry);
+	}
+
+	RestoreRequest request;
+	request.config = config;
+	request.world = {config.configId, worldName};
+	request.archive = backupFile;
+	request.mode = mode;
+	request.restorePreserve = restoreWhitelistOverride
+		? *restoreWhitelistOverride : restoreWhitelist;
+	RestoreServiceDependencies dependencies;
+	dependencies.paths = GetAppPaths();
+	dependencies.isWorldOccupied = IsWorldOccupied;
+	dependencies.backupBeforeRestore = [config, worldName, configIndex](
+		const BackupRequest&, stop_token stopToken) {
+		wstring description;
+		const auto found = find_if(config.worlds.begin(), config.worlds.end(),
+			[&](const auto& world) { return world.first == worldName; });
+		if (found != config.worlds.end()) description = found->second;
+		MyFolder world{JoinPath(config.saveRoot, worldName).wstring(), worldName,
+			description, config, configIndex, -1};
+		return RunDesktopBackup(
+			world, L"Automatic backup before restore", stopToken);
+	};
+
+	RESTORE_INFO(L("LOG_RESTORE_START_HEADER"));
+	RESTORE_INFO(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
+	RESTORE_INFO(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
+	RestoreService service(std::move(dependencies));
+	const auto restored = service.Run(
+		request, false, TaskCoordinator::CurrentStopToken());
+	for (const auto& diagnostic : restored.diagnostics) {
+		if (diagnostic.severity == DiagnosticSeverity::Error) {
+			RESTORE_ERROR("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+		}
+		else if (diagnostic.severity == DiagnosticSeverity::Warning) {
+			RESTORE_WARNING("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+		}
+		else {
+			RESTORE_INFO("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+		}
+	}
+	if (!IsSuccessful(restored.code)) return fail(ToString(restored.code));
+
+	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
+	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId)
+		+ ";world=" + wstring_to_utf8(worldName) + ";backup="
+		+ wstring_to_utf8(backupFile)
+		+ (requestId.empty() ? "" : ";request_id=" + requestId));
+	return true;
+}
+
 } // namespace
 
 bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, int restoreMethod) {
@@ -608,6 +705,11 @@ bool DoRestore(
 	const string& customRestoreList,
 	const vector<wstring>* restoreWhitelistOverride,
 	const string& requestId) {
+	if (restoreMethod == 0 || restoreMethod == 1) {
+		return RunSharedManagedRestore(config, worldName, backupFile,
+			restoreMethod == 0 ? RestoreMode::Clean : RestoreMode::Overwrite,
+			restoreWhitelistOverride, requestId);
+	}
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
 	minebackup::logging::ScopedLogContext operationContext{{
