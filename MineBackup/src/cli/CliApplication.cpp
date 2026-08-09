@@ -18,6 +18,7 @@
 #include "ProfileConfigCatalog.h"
 #include "ProfileConfigRepository.h"
 #include "ProfileManifest.h"
+#include "ProcessRunner.h"
 #include "RestoreService.h"
 #include "RuntimeIntegration.h"
 #include "RuntimeCloudPostHook.h"
@@ -27,15 +28,103 @@
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <utility>
 
 using namespace std;
 
 namespace {
+
+struct DirectoryProbe {
+	bool writable = false;
+	string detail;
+};
+
+DirectoryProbe ProbeWritableDirectory(const filesystem::path& directory) {
+	DirectoryProbe result;
+	error_code error;
+	filesystem::create_directories(directory, error);
+	if (error || !filesystem::is_directory(directory, error) || error) {
+		result.detail = error ? error.message() : "not a directory";
+		return result;
+	}
+	const auto nonce = chrono::steady_clock::now().time_since_epoch().count();
+	const filesystem::path probe = directory
+		/ (L".minebackup-doctor-write-probe-" + to_wstring(nonce));
+	{
+		ofstream output(probe, ios::binary | ios::trunc);
+		if (!output.is_open()) {
+			result.detail = "unable to create a probe file";
+			return result;
+		}
+		output << "minebackup-doctor\n";
+		output.flush();
+		if (!output.good()) {
+			result.detail = "unable to flush a probe file";
+			output.close();
+			filesystem::remove(probe, error);
+			return result;
+		}
+	}
+	filesystem::remove(probe, error);
+	if (error) {
+		result.detail = "probe file could not be removed: " + error.message();
+		return result;
+	}
+	result.writable = true;
+	result.detail = "ready";
+	return result;
+}
+
+const char* JobLoadStatusName(JobStorage::LoadStatus status) {
+	switch (status) {
+	case JobStorage::LoadStatus::Missing: return "missing";
+	case JobStorage::LoadStatus::Loaded: return "loaded";
+	case JobStorage::LoadStatus::Invalid: return "invalid";
+	case JobStorage::LoadStatus::UnsupportedSchema: return "unsupported_schema";
+	case JobStorage::LoadStatus::IoError: return "io_error";
+	}
+	return "invalid";
+}
+
+wstring RcloneRemoteName(const wstring& remotePath) {
+	const auto separator = remotePath.find(L':');
+	if (separator == wstring::npos || separator == 0) return {};
+	return remotePath.substr(0, separator) + L":";
+}
+
+bool RcloneRemoteConfigured(
+	const filesystem::path& executable,
+	const wstring& remoteName,
+	string& detail) {
+	ProcessSpec spec;
+	spec.executable = executable;
+	spec.arguments = {L"listremotes"};
+	spec.timeout = chrono::seconds(15);
+	spec.maximumCapturedBytes = 512u * 1024u;
+	const auto process = ProcessRunner::Run(spec);
+	if (process.status != ProcessStatus::Succeeded) {
+		detail = wstring_to_utf8(process.error);
+		if (detail.empty()) detail = "rclone listremotes failed";
+		return false;
+	}
+	const string expected = wstring_to_utf8(remoteName);
+	istringstream lines(process.standardOutput);
+	for (string line; getline(lines, line);) {
+		if (!line.empty() && line.back() == '\r') line.pop_back();
+		if (line == expected) {
+			detail = "configured";
+			return true;
+		}
+	}
+	detail = "configured rclone remote was not found";
+	return false;
+}
 
 OperationCode CatalogCode(ProfileCatalogStatus status) {
 	switch (status) {
@@ -503,10 +592,7 @@ CliResult RestoreOrVerifyCommand(
 	unique_ptr<CliBackupRuntime> backupRuntime;
 	RestoreServiceDependencies dependencies;
 	dependencies.paths = paths;
-	dependencies.isWorldOccupied = [](const filesystem::path& world) {
-		return IsRuntimeFileLocked(world / L"session.lock")
-			|| IsRuntimeFileLocked(world / L"level.dat");
-	};
+	dependencies.isWorldOccupied = IsRuntimeWorldOccupied;
 	if (!verify && !options.dryRun && context.request.config.backupBefore) {
 		backupRuntime = make_unique<CliBackupRuntime>(
 			paths, catalog, options.noNetwork, stopToken);
@@ -684,6 +770,42 @@ CliResult Doctor(
 	result.data["jobsFile"] = wstring_to_utf8(paths.JobsFile().wstring());
 	result.data["historyFile"] = wstring_to_utf8(paths.HistoryFile().wstring());
 	result.data["configCount"] = loaded.catalog.configs.size();
+	const auto jobs = JobStorage::Load(paths.JobsFile());
+	result.data["jobs"] = {
+		{"status", JobLoadStatusName(jobs.status)},
+		{"count", jobs.document.jobs.size()},
+		{"referencesValid", false}};
+	result.diagnostics.insert(result.diagnostics.end(),
+		jobs.diagnostics.begin(), jobs.diagnostics.end());
+	if (jobs.status == JobStorage::LoadStatus::Loaded) {
+		vector<Diagnostic> referenceDiagnostics;
+		const bool referencesValid = JobStorage::ValidateReferences(
+			jobs.document, loaded.catalog.configs, referenceDiagnostics);
+		result.data["jobs"]["referencesValid"] = referencesValid;
+		result.diagnostics.insert(result.diagnostics.end(),
+			referenceDiagnostics.begin(), referenceDiagnostics.end());
+		if (!referencesValid) result.code = OperationCode::InvalidProfile;
+	}
+	else if (jobs.status == JobStorage::LoadStatus::Missing) {
+		result.data["jobs"]["referencesValid"] = true;
+	}
+	else {
+		result.code = OperationCode::InvalidProfile;
+	}
+
+	const auto profile = ProfileConfigRepository(paths.ConfigFile()).Load();
+	vector<wstring> effectiveRestorePreserve = profile.restorePreserve;
+	if (none_of(effectiveRestorePreserve.begin(), effectiveRestorePreserve.end(),
+		[](const wstring& item) { return item == L"session.lock"; })) {
+		effectiveRestorePreserve.push_back(L"session.lock");
+	}
+	result.data["restorePreserve"] = nlohmann::json::array();
+	for (const auto& item : effectiveRestorePreserve) {
+		result.data["restorePreserve"].push_back(wstring_to_utf8(item));
+	}
+	result.data["sessionLockImplicitlyPreserved"] =
+		find(profile.restorePreserve.begin(), profile.restorePreserve.end(), L"session.lock")
+			== profile.restorePreserve.end();
 	const size_t ignoredSections = CountIgnoredSpecialSections(paths.ConfigFile());
 	const bool ignoredDocument = filesystem::is_regular_file(paths.SpecialTasksFile());
 	result.data["legacySpecialConfigSectionsIgnored"] = ignoredSections;
@@ -704,14 +826,41 @@ CliResult Doctor(
 		const bool saveRootReady = saveRoot.is_absolute()
 			&& filesystem::is_directory(saveRoot);
 		const bool backupRootValid = backupRoot.is_absolute();
-		result.data["paths"].push_back({
+		const auto backupProbe = backupRootValid
+			? ProbeWritableDirectory(backupRoot)
+			: DirectoryProbe{false, "path is not absolute"};
+		nlohmann::json pathStatus{
 			{"configId", wstring_to_utf8(config.configId)},
 			{"saveRoot", wstring_to_utf8(config.saveRoot)},
 			{"saveRootReady", saveRootReady},
 			{"backupRoot", wstring_to_utf8(config.backupPath)},
 			{"backupRootAbsolute", backupRootValid},
-			{"pendingLocalBinding", config.pendingLocalBinding}});
-		if (!saveRootReady || !backupRootValid || config.pendingLocalBinding) {
+			{"backupRootWritable", backupProbe.writable},
+			{"backupRootDetail", backupProbe.detail},
+			{"pendingLocalBinding", config.pendingLocalBinding},
+			{"worlds", nlohmann::json::array()}};
+		bool worldsReady = true;
+		for (const auto& [relativePath, description] : config.worlds) {
+			(void)description;
+			const filesystem::path world = saveRoot / relativePath;
+			error_code worldError;
+			const bool exists = filesystem::is_directory(world, worldError) && !worldError;
+			const bool occupied = exists && IsRuntimeWorldOccupied(world);
+			pathStatus["worlds"].push_back({
+				{"relativePath", wstring_to_utf8(relativePath)},
+				{"path", wstring_to_utf8(world.wstring())},
+				{"exists", exists},
+				{"occupied", occupied},
+				{"coldRestoreReady", exists && !occupied}});
+			worldsReady &= exists;
+			if (occupied) result.diagnostics.push_back({
+				"profile.world.occupied", DiagnosticSeverity::Warning,
+				wstring_to_utf8(config.configId + L":" + relativePath)});
+		}
+		pathStatus["worldsReady"] = worldsReady;
+		result.data["paths"].push_back(std::move(pathStatus));
+		if (!saveRootReady || !backupRootValid || !backupProbe.writable
+			|| !worldsReady || config.pendingLocalBinding) {
 			result.code = OperationCode::InvalidProfile;
 			result.diagnostics.push_back({
 				"profile.path.not_ready", DiagnosticSeverity::Error,
@@ -726,16 +875,30 @@ CliResult Doctor(
 			{"path", wstring_to_utf8(sevenZip.executable.wstring())},
 			{"detail", wstring_to_utf8(sevenZip.diagnostic)}});
 		missingTool |= !sevenZip.available;
-		if (config.cloudSyncEnabled && !options.noNetwork) {
+		if (config.cloudSyncEnabled) {
 			const auto rclone = ExternalToolManager::ResolveRclone(
 				config.rclonePath, paths);
+			const wstring remoteName = RcloneRemoteName(config.rcloneRemotePath);
+			string remoteDetail;
+			const bool remoteConfigured = rclone.available && !remoteName.empty()
+				&& RcloneRemoteConfigured(rclone.executable, remoteName, remoteDetail);
+			if (remoteName.empty()) remoteDetail = "remote must use the name:path form";
 			result.data["tools"].push_back({
 				{"configId", wstring_to_utf8(config.configId)},
 				{"tool", "rclone"},
 				{"available", rclone.available},
 				{"path", wstring_to_utf8(rclone.executable.wstring())},
-				{"detail", wstring_to_utf8(rclone.diagnostic)}});
+				{"detail", wstring_to_utf8(rclone.diagnostic)},
+				{"remoteName", wstring_to_utf8(remoteName)},
+				{"remoteConfigured", remoteConfigured},
+				{"remoteDetail", remoteDetail}});
 			missingTool |= !rclone.available;
+			if (rclone.available && !remoteConfigured) {
+				result.code = OperationCode::InvalidProfile;
+				result.diagnostics.push_back({
+					"cloud.remote.not_configured", DiagnosticSeverity::Error,
+					wstring_to_utf8(config.configId)});
+			}
 		}
 	}
 	if (options.noNetwork) {

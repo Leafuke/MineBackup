@@ -96,6 +96,8 @@ set(SCRIPT_PROFILE "${TEST_ROOT}/cli-doctor-script-profile")
 file(REMOVE_RECURSE "${SCRIPT_PROFILE}")
 file(MAKE_DIRECTORY "${SCRIPT_PROFILE}/config" "${SCRIPT_PROFILE}/server/world")
 file(WRITE "${SCRIPT_PROFILE}/config/config.ini"
+"[General]\n"
+"RestoreWhitelistItem=ops-marker.txt\n"
 "[Config1]\n"
 "ConfigName=Server\n"
 "ConfigId=11111111-1111-4111-8111-111111111111\n"
@@ -113,6 +115,16 @@ file(WRITE "${SCRIPT_PROFILE}/config/config.ini"
 "[SpCfg2]\n"
 "Name=Script preservation\n"
 "SpecialConfigId=22222222-2222-4222-8222-222222222222\n")
+file(WRITE "${SCRIPT_PROFILE}/config/jobs.json"
+"{\"schemaVersion\":1,\"jobs\":[{"
+"\"jobId\":\"33333333-3333-4333-8333-333333333333\","
+"\"name\":\"Backup world\",\"stages\":[{"
+"\"stageId\":\"44444444-4444-4444-8444-444444444444\","
+"\"name\":\"Backup\",\"steps\":[{"
+"\"stepId\":\"55555555-5555-4555-8555-555555555555\","
+"\"name\":\"World\",\"type\":\"backup\",\"target\":{"
+"\"configId\":\"11111111-1111-4111-8111-111111111111\","
+"\"worldPath\":\"world\"}}]}]}]}\n")
 file(WRITE "${SCRIPT_PROFILE}/config/special-tasks.json"
 "{\n"
 "  \"schemaVersion\": 1,\n"
@@ -141,11 +153,50 @@ string(JSON script_doctor_schema ERROR_VARIABLE script_doctor_json_error
 string(JSON script_doctor_code GET "${script_doctor_json}" code)
 string(JSON ignored_sections GET "${script_doctor_json}" data legacySpecialConfigSectionsIgnored)
 string(JSON ignored_document GET "${script_doctor_json}" data legacySpecialTasksFileIgnored)
+string(JSON jobs_status GET "${script_doctor_json}" data jobs status)
+string(JSON jobs_references GET "${script_doctor_json}" data jobs referencesValid)
+string(JSON backup_writable GET "${script_doctor_json}" data paths 0 backupRootWritable)
+string(JSON world_ready GET "${script_doctor_json}" data paths 0 worlds 0 coldRestoreReady)
+string(JSON preserve_count LENGTH "${script_doctor_json}" data restorePreserve)
+string(JSON preserve_first GET "${script_doctor_json}" data restorePreserve 0)
+string(JSON preserve_second GET "${script_doctor_json}" data restorePreserve 1)
 if(NOT script_doctor_result EQUAL 8 OR script_doctor_json_error
 		OR NOT script_doctor_schema EQUAL 1
 		OR NOT script_doctor_code STREQUAL "tool_unavailable"
-        OR NOT ignored_sections EQUAL 1 OR NOT ignored_document)
+        OR NOT ignored_sections EQUAL 1 OR NOT ignored_document
+		OR NOT jobs_status STREQUAL "loaded" OR NOT jobs_references
+		OR NOT backup_writable OR NOT world_ready OR NOT preserve_count EQUAL 2
+		OR NOT preserve_first STREQUAL "ops-marker.txt"
+		OR NOT preserve_second STREQUAL "session.lock")
     message(FATAL_ERROR
         "doctor must report retained legacy special data as ignored: "
         "${script_doctor_error}\n${script_doctor_json}")
+endif()
+
+set(INVALID_JOB_PROFILE "${TEST_ROOT}/cli-doctor-invalid-job-profile")
+file(REMOVE_RECURSE "${INVALID_JOB_PROFILE}")
+file(COPY "${SCRIPT_PROFILE}/" DESTINATION "${INVALID_JOB_PROFILE}")
+file(WRITE "${INVALID_JOB_PROFILE}/config/jobs.json"
+"{\"schemaVersion\":1,\"jobs\":[{"
+"\"jobId\":\"33333333-3333-4333-8333-333333333333\","
+"\"name\":\"Broken\",\"stages\":[{"
+"\"stageId\":\"44444444-4444-4444-8444-444444444444\","
+"\"name\":\"Backup\",\"steps\":[{"
+"\"stepId\":\"55555555-5555-4555-8555-555555555555\","
+"\"name\":\"Missing\",\"type\":\"backup\",\"target\":{"
+"\"configId\":\"99999999-9999-4999-8999-999999999999\","
+"\"worldPath\":\"world\"}}]}]}]}\n")
+execute_process(
+	COMMAND "${CLI}" --data-dir "${INVALID_JOB_PROFILE}" --json --no-network doctor
+	RESULT_VARIABLE invalid_job_result
+	OUTPUT_VARIABLE invalid_job_json
+	ERROR_VARIABLE invalid_job_error)
+string(STRIP "${invalid_job_json}" invalid_job_json)
+string(JSON invalid_job_code ERROR_VARIABLE invalid_job_json_error GET "${invalid_job_json}" code)
+string(JSON invalid_job_references GET "${invalid_job_json}" data jobs referencesValid)
+if(NOT invalid_job_result EQUAL 5 OR invalid_job_json_error
+		OR NOT invalid_job_code STREQUAL "invalid_profile" OR invalid_job_references)
+	message(FATAL_ERROR
+		"doctor must reject dangling Job backup references: "
+		"${invalid_job_error}\n${invalid_job_json}")
 endif()

@@ -50,3 +50,26 @@ bool IsRuntimeFileLocked(const filesystem::path& path) {
 	return locked;
 #endif
 }
+
+bool IsRuntimeWorldOccupied(const filesystem::path& worldPath) {
+	error_code error;
+	if (!filesystem::is_directory(worldPath, error) || error) return false;
+
+	for (const filesystem::path& candidate : {
+		worldPath / L"session.lock", worldPath / L"level.dat",
+		worldPath / L"db" / L"LOCK"}) {
+		if (IsRuntimeFileLocked(candidate)) return true;
+	}
+
+	const filesystem::path database = worldPath / L"db";
+	error.clear();
+	if (!filesystem::is_directory(database, error) || error) return false;
+	int inspected = 0;
+	for (filesystem::directory_iterator iterator(
+		database, filesystem::directory_options::skip_permission_denied, error), end;
+		iterator != end && !error && inspected < 20;
+		iterator.increment(error), ++inspected) {
+		if (IsRuntimeFileLocked(iterator->path())) return true;
+	}
+	return false;
+}
