@@ -19,8 +19,12 @@ enum class CliCommand {
 	ProfileExport,
 	Doctor,
 	ConfigList,
+	ConfigShow,
 	WorldList,
 	HistoryList,
+	JobList,
+	JobShow,
+	JobRun,
 	Backup,
 	RunSpecial
 };
@@ -40,6 +44,8 @@ struct CliOptions {
 	std::wstring configId;
 	std::wstring worldPath;
 	std::wstring specialConfigId;
+	std::wstring jobId;
+	std::wstring comment;
 	std::filesystem::path filePath;
 	std::filesystem::path outputPath;
 };

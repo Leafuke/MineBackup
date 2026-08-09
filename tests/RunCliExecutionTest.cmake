@@ -52,7 +52,7 @@ function(run_cli output_variable)
     set(${output_variable} "${output}" PARENT_SCOPE)
 endfunction()
 
-run_cli(backup_json backup --config config-id --world world)
+run_cli(backup_json backup --config config-id --world world --comment "initial backup")
 string(JSON backup_code GET "${backup_json}" code)
 string(JSON outcome GET "${backup_json}" data outcome)
 string(JSON archive GET "${backup_json}" data archivePath)
@@ -62,6 +62,42 @@ if(NOT backup_code STREQUAL "success" OR NOT outcome STREQUAL "created"
 endif()
 if(NOT EXISTS "${PROFILE}/data/history.json")
     message(FATAL_ERROR "backup did not commit history.json")
+endif()
+run_cli(history_json history list --config config-id --world world)
+string(JSON first_comment GET "${history_json}" data history 0 comment)
+if(NOT first_comment STREQUAL "initial backup")
+    message(FATAL_ERROR "backup --comment was not committed to history: ${history_json}")
+endif()
+
+string(REPLACE "\\" "\\\\" cmake_json_path "${CMAKE_COMMAND}")
+file(WRITE "${PROFILE}/config/jobs.json"
+"{\n"
+"  \"schemaVersion\": 1,\n"
+"  \"jobs\": [{\n"
+"    \"jobId\": \"11111111-1111-4111-8111-111111111111\",\n"
+"    \"name\": \"Process contract\",\n"
+"    \"stages\": [{\n"
+"      \"stageId\": \"22222222-2222-4222-8222-222222222222\",\n"
+"      \"name\": \"Run\",\n"
+"      \"steps\": [{\n"
+"        \"stepId\": \"33333333-3333-4333-8333-333333333333\",\n"
+"        \"name\": \"Echo\",\n"
+"        \"type\": \"process\",\n"
+"        \"executable\": \"${cmake_json_path}\",\n"
+"        \"arguments\": [\"-E\", \"echo\", \"job-ok\"],\n"
+"        \"workingDirectory\": \"\",\n"
+"        \"timeoutSeconds\": 10,\n"
+"        \"maximumCapturedBytes\": 4096,\n"
+"        \"lowPriority\": false\n"
+"      }]\n"
+"    }]\n"
+"  }]\n"
+"}\n")
+run_cli(job_json job run --job 11111111-1111-4111-8111-111111111111)
+string(JSON job_code GET "${job_json}" code)
+string(JSON job_step_code GET "${job_json}" data stages 0 steps 0 code)
+if(NOT job_code STREQUAL "success" OR NOT job_step_code STREQUAL "success")
+    message(FATAL_ERROR "job run did not execute the explicit Process Step: ${job_json}")
 endif()
 
 run_cli(no_change_json backup --config config-id --world world)

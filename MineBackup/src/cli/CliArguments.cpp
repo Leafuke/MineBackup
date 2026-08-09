@@ -27,8 +27,12 @@ string CliCommandName(CliCommand command) {
 	case CliCommand::ProfileExport: return "profile.export";
 	case CliCommand::Doctor: return "doctor";
 	case CliCommand::ConfigList: return "config.list";
+	case CliCommand::ConfigShow: return "config.show";
 	case CliCommand::WorldList: return "world.list";
 	case CliCommand::HistoryList: return "history.list";
+	case CliCommand::JobList: return "job.list";
+	case CliCommand::JobShow: return "job.show";
+	case CliCommand::JobRun: return "job.run";
 	case CliCommand::Backup: return "backup";
 	case CliCommand::RunSpecial: return "run-special";
 	}
@@ -99,6 +103,22 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 			result.options.worldPath = arguments[index];
 			continue;
 		}
+		if (argument == L"--job") {
+			if (++index >= arguments.size()) {
+				AddParseError(result, "cli.argument.missing_value", "--job requires a JobId.");
+				return result;
+			}
+			result.options.jobId = arguments[index];
+			continue;
+		}
+		if (argument == L"--comment") {
+			if (++index >= arguments.size()) {
+				AddParseError(result, "cli.argument.missing_value", "--comment requires text.");
+				return result;
+			}
+			result.options.comment = arguments[index];
+			continue;
+		}
 		if (argument == L"--file") {
 			if (++index >= arguments.size()) {
 				AddParseError(result, "cli.argument.missing_value", "--file requires a manifest path.");
@@ -133,8 +153,12 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 	else if (positional == vector<wstring>{L"profile", L"export"}) result.options.command = CliCommand::ProfileExport;
 	else if (positional == vector<wstring>{L"doctor"}) result.options.command = CliCommand::Doctor;
 	else if (positional == vector<wstring>{L"config", L"list"}) result.options.command = CliCommand::ConfigList;
+	else if (positional == vector<wstring>{L"config", L"show"}) result.options.command = CliCommand::ConfigShow;
 	else if (positional == vector<wstring>{L"world", L"list"}) result.options.command = CliCommand::WorldList;
 	else if (positional == vector<wstring>{L"history", L"list"}) result.options.command = CliCommand::HistoryList;
+	else if (positional == vector<wstring>{L"job", L"list"}) result.options.command = CliCommand::JobList;
+	else if (positional == vector<wstring>{L"job", L"show"}) result.options.command = CliCommand::JobShow;
+	else if (positional == vector<wstring>{L"job", L"run"}) result.options.command = CliCommand::JobRun;
 	else if (positional == vector<wstring>{L"backup"}) result.options.command = CliCommand::Backup;
 	else if (positional.size() == 2 && positional[0] == L"run-special") {
 		result.options.command = CliCommand::RunSpecial;
@@ -145,10 +169,17 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 		return result;
 	}
 	if ((result.options.command == CliCommand::WorldList
+			|| result.options.command == CliCommand::ConfigShow
 			|| result.options.command == CliCommand::HistoryList
 			|| result.options.command == CliCommand::Backup)
 		&& result.options.configId.empty()) {
 		AddParseError(result, "cli.config.required", "The command requires --config <ConfigId>.");
+		return result;
+	}
+	if ((result.options.command == CliCommand::JobShow
+			|| result.options.command == CliCommand::JobRun)
+		&& result.options.jobId.empty()) {
+		AddParseError(result, "cli.job.required", "The command requires --job <JobId>.");
 		return result;
 	}
 	if ((result.options.command == CliCommand::HistoryList
@@ -191,9 +222,13 @@ void PrintCliHelp() {
 		<< "  minebackup-cli [global options] profile export --output <manifest.json> [--force]\n"
 		<< "  minebackup-cli [global options] doctor\n"
 		<< "  minebackup-cli [global options] config list\n"
+		<< "  minebackup-cli [global options] config show --config <ConfigId>\n"
 		<< "  minebackup-cli [global options] world list --config <ConfigId>\n"
 		<< "  minebackup-cli [global options] history list --config <ConfigId> --world <relative-path>\n"
-		<< "  minebackup-cli [global options] backup --config <ConfigId> --world <relative-path>\n"
+		<< "  minebackup-cli [global options] job list\n"
+		<< "  minebackup-cli [global options] job show --job <JobId>\n"
+		<< "  minebackup-cli [global options] job run --job <JobId>\n"
+		<< "  minebackup-cli [global options] backup --config <ConfigId> --world <relative-path> [--comment <text>]\n"
 		<< "  minebackup-cli [global options] run-special <SpecialConfigId>\n\n"
 		<< "Global options:\n"
 		<< "  --data-dir <path>  --json  --log-level <off|info|debug>\n"

@@ -9,6 +9,8 @@
 #include "CliToolBootstrap.h"
 #include "ExternalToolManager.h"
 #include "HistoryRepository.h"
+#include "JobDocument.h"
+#include "JobRunner.h"
 #include "Logging.h"
 #include "MineBackupVersion.h"
 #include "OperationResult.h"
@@ -239,11 +241,14 @@ public:
 		return OperationCode::Success;
 	}
 
-	optional<BackupRequest> Resolve(const SpecialTaskTarget& target) const {
-		const Config* config = catalog_.FindConfig(target.configId);
+	optional<BackupRequest> Resolve(
+		const wstring& configId,
+		const wstring& worldPath,
+		const wstring& comment = {}) const {
+		const Config* config = catalog_.FindConfig(configId);
 		wstring normalized;
 		if (!config
-			|| !SpecialTaskStorage::TryNormalizeWorldPath(target.worldPath, normalized)) {
+			|| !JobStorage::TryNormalizeWorldPath(worldPath, normalized)) {
 			return nullopt;
 		}
 		const auto world = find_if(config->worlds.begin(), config->worlds.end(),
@@ -254,7 +259,16 @@ public:
 		request.world = {config->configId, normalized};
 		request.sourcePath = filesystem::path(config->saveRoot) / normalized;
 		request.displayName = world->second.empty() ? normalized : world->second;
+		request.comment = comment;
 		return request;
+	}
+
+	optional<BackupRequest> Resolve(const SpecialTaskTarget& target) const {
+		return Resolve(target.configId, target.worldPath);
+	}
+
+	optional<BackupRequest> Resolve(const JobBackupTarget& target) const {
+		return Resolve(target.configId, target.worldPath, target.comment);
 	}
 
 	SpecialTaskPreflightResult Preflight(const BackupRequest& request) const {
@@ -293,6 +307,10 @@ public:
 
 	BackupResult Run(const BackupRequest& request) const {
 		return service_->Run(request, stopToken_);
+	}
+
+	BackupResult Run(const BackupRequest& request, stop_token stopToken) const {
+		return service_->Run(request, stopToken);
 	}
 
 private:
@@ -336,8 +354,7 @@ CliResult BackupCommand(
 	if (!IsSuccessful(initialized)) {
 		return {"backup", initialized, nlohmann::json::object(), std::move(initialization)};
 	}
-	SpecialTaskTarget target{options.configId, options.worldPath};
-	auto request = runtime.Resolve(target);
+	auto request = runtime.Resolve(options.configId, options.worldPath, options.comment);
 	if (!request) {
 		initialization.push_back({
 			"world.not_found", DiagnosticSeverity::Error,
@@ -355,6 +372,128 @@ CliResult BackupCommand(
 	CliResult result = RenderBackupResult(runtime.Run(*request));
 	result.diagnostics.insert(result.diagnostics.begin(),
 		initialization.begin(), initialization.end());
+	return result;
+}
+
+CliResult JobListCommand(const AppPaths& paths) {
+	CliResult result{"job.list", OperationCode::Success};
+	const auto loaded = JobStorage::Load(paths.JobsFile());
+	result.data["jobs"] = nlohmann::json::array();
+	if (loaded.status == JobStorage::LoadStatus::Missing) return result;
+	if (!loaded.IsLoaded()) {
+		result.code = OperationCode::InvalidProfile;
+		result.diagnostics = loaded.diagnostics;
+		return result;
+	}
+	for (const auto& job : loaded.document.jobs) {
+		size_t stepCount = 0;
+		for (const auto& stage : job.stages) stepCount += stage.steps.size();
+		result.data["jobs"].push_back({
+			{"jobId", wstring_to_utf8(job.jobId)},
+			{"name", job.name},
+			{"stageCount", job.stages.size()},
+			{"stepCount", stepCount}});
+	}
+	return result;
+}
+
+CliResult JobShowCommand(const AppPaths& paths, const CliOptions& options) {
+	CliResult result{"job.show", OperationCode::Success};
+	const auto loaded = JobStorage::Load(paths.JobsFile());
+	if (!loaded.IsLoaded()) {
+		result.code = loaded.status == JobStorage::LoadStatus::Missing
+			? OperationCode::TargetNotFound : OperationCode::InvalidProfile;
+		result.diagnostics = loaded.diagnostics;
+		if (loaded.status == JobStorage::LoadStatus::Missing) {
+			result.diagnostics.push_back({"job.document.missing", DiagnosticSeverity::Error,
+				wstring_to_utf8(paths.JobsFile().wstring())});
+		}
+		return result;
+	}
+	const Job* job = JobStorage::Find(loaded.document, options.jobId);
+	if (!job) {
+		result.code = OperationCode::TargetNotFound;
+		result.diagnostics.push_back({"job.not_found", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.jobId)});
+		return result;
+	}
+	JobDocument document;
+	document.jobs.push_back(*job);
+	const auto value = nlohmann::json::parse(JobStorage::Serialize(document));
+	result.data["job"] = value.at("jobs").at(0);
+	return result;
+}
+
+CliResult JobRunCommand(
+	const ProfileConfigCatalog& catalog,
+	const AppPaths& paths,
+	const CliOptions& options,
+	stop_token stopToken) {
+	CliResult result{"job.run", OperationCode::Success};
+	const auto loaded = JobStorage::Load(paths.JobsFile());
+	if (!loaded.IsLoaded()) {
+		result.code = loaded.status == JobStorage::LoadStatus::Missing
+			? OperationCode::TargetNotFound : OperationCode::InvalidProfile;
+		result.diagnostics = loaded.diagnostics;
+		return result;
+	}
+	const Job* job = JobStorage::Find(loaded.document, options.jobId);
+	if (!job) {
+		result.code = OperationCode::TargetNotFound;
+		result.diagnostics.push_back({"job.not_found", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.jobId)});
+		return result;
+	}
+	if (!JobStorage::ValidateReferences(loaded.document, catalog.configs, result.diagnostics)) {
+		result.code = OperationCode::InvalidProfile;
+		return result;
+	}
+	vector<Diagnostic> initialization;
+	CliBackupRuntime runtime(paths, catalog, options.noNetwork, stopToken);
+	const OperationCode initialized = runtime.Initialize(initialization);
+	result.diagnostics.insert(result.diagnostics.end(),
+		initialization.begin(), initialization.end());
+	if (!IsSuccessful(initialized)) {
+		result.code = initialized;
+		return result;
+	}
+	JobRunner runner({
+		[&](const JobBackupTarget& target) { return runtime.Resolve(target); },
+		[&](const BackupRequest& request) {
+			const auto current = runtime.Preflight(request);
+			return JobPreflightResult{current.code, current.diagnostics};
+		},
+		[&](const BackupRequest& request, stop_token token) {
+			return runtime.Run(request, token);
+		},
+		[](const ProcessSpec& spec, stop_token token) {
+			return ProcessRunner::Run(spec, token);
+		}});
+	const auto run = runner.Run(*job, stopToken);
+	result.code = run.code;
+	result.diagnostics.insert(result.diagnostics.end(),
+		run.diagnostics.begin(), run.diagnostics.end());
+	result.data["jobId"] = wstring_to_utf8(run.jobId);
+	result.data["stages"] = nlohmann::json::array();
+	for (const auto& stage : run.stages) {
+		nlohmann::json stageValue{
+			{"stageId", wstring_to_utf8(stage.stageId)},
+			{"code", ToString(stage.code)},
+			{"skipped", stage.skipped},
+			{"steps", nlohmann::json::array()}};
+		for (const auto& step : stage.steps) {
+			nlohmann::json diagnostics = nlohmann::json::array();
+			for (const auto& item : step.diagnostics) {
+				diagnostics.push_back({{"eventId", item.eventId},
+					{"severity", ToString(item.severity)}, {"detail", item.detail}});
+			}
+			stageValue["steps"].push_back({
+				{"stepId", wstring_to_utf8(step.stepId)},
+				{"code", ToString(step.code)},
+				{"diagnostics", std::move(diagnostics)}});
+		}
+		result.data["stages"].push_back(std::move(stageValue));
+	}
 	return result;
 }
 
@@ -523,6 +662,22 @@ CliResult Doctor(
 	if (missingTool && IsSuccessful(result.code)) {
 		result.code = OperationCode::ToolUnavailable;
 	}
+	return result;
+}
+
+CliResult ConfigShow(const ProfileConfigCatalog& catalog, const CliOptions& options) {
+	CliResult result{"config.show", OperationCode::Success};
+	const Config* config = catalog.FindConfig(options.configId);
+	if (!config) {
+		result.code = OperationCode::TargetNotFound;
+		result.diagnostics.push_back({"config.not_found", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.configId)});
+		return result;
+	}
+	ServerProfileManifest manifest;
+	manifest.configs.push_back(*config);
+	const auto value = nlohmann::json::parse(ProfileManifest::Serialize(manifest));
+	result.data["config"] = value.at("configs").at(0);
 	return result;
 }
 
@@ -756,6 +911,11 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		result = ConfigList(loaded.catalog);
 		result.diagnostics = loaded.diagnostics;
 	}
+	else if (parsed.options.command == CliCommand::ConfigShow) {
+		result = ConfigShow(loaded.catalog, parsed.options);
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+	}
 	else if (parsed.options.command == CliCommand::WorldList) {
 		result = WorldList(loaded.catalog, parsed.options);
 		result.diagnostics.insert(result.diagnostics.begin(),
@@ -765,6 +925,23 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		result = HistoryList(loaded.catalog, paths, parsed.options);
 		result.diagnostics.insert(result.diagnostics.begin(),
 			loaded.diagnostics.begin(), loaded.diagnostics.end());
+	}
+	else if (parsed.options.command == CliCommand::JobList) {
+		result = JobListCommand(paths);
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+	}
+	else if (parsed.options.command == CliCommand::JobShow) {
+		result = JobShowCommand(paths, parsed.options);
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+	}
+	else if (parsed.options.command == CliCommand::JobRun) {
+		CliSignalHandler signals;
+		result = JobRunCommand(loaded.catalog, paths, parsed.options, signals.Token());
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+		if (signals.WasInterrupted()) result.code = OperationCode::Cancelled;
 	}
 	else if (parsed.options.command == CliCommand::Backup) {
 		CliSignalHandler signals;
