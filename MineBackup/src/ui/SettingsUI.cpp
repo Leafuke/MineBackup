@@ -11,16 +11,13 @@ enum class SettingsCategory {
 	Appearance,
 	Integration,
 	Migration,
+	Jobs,
 	NormalOverview,
 	NormalWorlds,
 	NormalBackup,
 	NormalRestore,
 	NormalCloud,
-	NormalWorldEdit,
-	SpecialOverview,
-	SpecialTasks,
-	SpecialBackup,
-	SpecialCleanup
+	NormalWorldEdit
 };
 
 struct CategoryItem {
@@ -31,7 +28,8 @@ struct CategoryItem {
 constexpr CategoryItem kApplicationCategories[] = {
 	{SettingsCategory::Appearance, "SETTINGS_CATEGORY_APPEARANCE"},
 	{SettingsCategory::Integration, "SETTINGS_CATEGORY_INTEGRATION"},
-	{SettingsCategory::Migration, "SETTINGS_CATEGORY_MIGRATION"}
+	{SettingsCategory::Migration, "SETTINGS_CATEGORY_MIGRATION"},
+	{SettingsCategory::Jobs, "SETTINGS_CATEGORY_SPECIAL_TASKS"}
 };
 constexpr CategoryItem kNormalCategories[] = {
 	{SettingsCategory::NormalOverview, "SETTINGS_CATEGORY_NORMAL_OVERVIEW"},
@@ -41,13 +39,6 @@ constexpr CategoryItem kNormalCategories[] = {
 	{SettingsCategory::NormalCloud, "SETTINGS_CATEGORY_NORMAL_CLOUD"},
 	{SettingsCategory::NormalWorldEdit, "SETTINGS_CATEGORY_NORMAL_WORLDEDIT"}
 };
-constexpr CategoryItem kSpecialCategories[] = {
-	{SettingsCategory::SpecialOverview, "SETTINGS_CATEGORY_SPECIAL_OVERVIEW"},
-	{SettingsCategory::SpecialTasks, "SETTINGS_CATEGORY_SPECIAL_TASKS"},
-	{SettingsCategory::SpecialBackup, "SETTINGS_CATEGORY_SPECIAL_BACKUP"},
-	{SettingsCategory::SpecialCleanup, "SETTINGS_CATEGORY_SPECIAL_CLEANUP"}
-};
-
 SettingsAutoSaveController g_settingsAutoSave;
 SettingsCategory g_selectedCategory = SettingsCategory::Appearance;
 bool g_settingsNeedsInitialViewport = true;
@@ -111,18 +102,8 @@ bool IsNormalCategory(SettingsCategory category) {
 		&& category <= SettingsCategory::NormalWorldEdit;
 }
 
-bool IsSpecialCategory(SettingsCategory category) {
-	return category >= SettingsCategory::SpecialOverview
-		&& category <= SettingsCategory::SpecialCleanup;
-}
-
 void NormalizeSelectedCategory() {
-	if (specialSetting && IsNormalCategory(g_selectedCategory)) {
-		g_selectedCategory = SettingsCategory::SpecialOverview;
-	}
-	if (!specialSetting && IsSpecialCategory(g_selectedCategory)) {
-		g_selectedCategory = SettingsCategory::NormalOverview;
-	}
+	specialSetting = false;
 }
 
 void DrawCategoryItem(const CategoryItem& item) {
@@ -142,9 +123,8 @@ void DrawSidebarSection(const char* titleKey, const CategoryItem* items, size_t 
 void DrawSidebar() {
 	DrawSidebarSection("SETTINGS_GROUP_APPLICATION", kApplicationCategories,
 		IM_ARRAYSIZE(kApplicationCategories));
-	DrawSidebarSection(specialSetting ? "SETTINGS_GROUP_SPECIAL" : "SETTINGS_GROUP_NORMAL",
-		specialSetting ? kSpecialCategories : kNormalCategories,
-		specialSetting ? IM_ARRAYSIZE(kSpecialCategories) : IM_ARRAYSIZE(kNormalCategories));
+	DrawSidebarSection("SETTINGS_GROUP_NORMAL", kNormalCategories,
+		IM_ARRAYSIZE(kNormalCategories));
 }
 
 void DrawCategoryCombo() {
@@ -155,22 +135,15 @@ void DrawCategoryCombo() {
 		}
 	};
 	findSelected(kApplicationCategories, IM_ARRAYSIZE(kApplicationCategories));
-	if (specialSetting) findSelected(kSpecialCategories, IM_ARRAYSIZE(kSpecialCategories));
-	else findSelected(kNormalCategories, IM_ARRAYSIZE(kNormalCategories));
+	findSelected(kNormalCategories, IM_ARRAYSIZE(kNormalCategories));
 
 	ImGui::SetNextItemWidth(-1.0f);
 	if (ImGui::BeginCombo("##SettingsCategory", L(selectedItem->labelKey))) {
 		ImGui::TextDisabled("%s", L("SETTINGS_GROUP_APPLICATION"));
 		for (const auto& item : kApplicationCategories) DrawCategoryItem(item);
 		ImGui::Separator();
-		ImGui::TextDisabled("%s", L(specialSetting
-			? "SETTINGS_GROUP_SPECIAL" : "SETTINGS_GROUP_NORMAL"));
-		if (specialSetting) {
-			for (const auto& item : kSpecialCategories) DrawCategoryItem(item);
-		}
-		else {
-			for (const auto& item : kNormalCategories) DrawCategoryItem(item);
-		}
+		ImGui::TextDisabled("%s", L("SETTINGS_GROUP_NORMAL"));
+		for (const auto& item : kNormalCategories) DrawCategoryItem(item);
 		ImGui::EndCombo();
 	}
 }
@@ -267,24 +240,11 @@ void DrawSelectedContent(Config& normalConfig) {
 	case SettingsCategory::Migration:
 		MigrationReportUI::DrawSettings();
 		break;
+	case SettingsCategory::Jobs:
+		DrawJobSettings();
+		break;
 	default:
-		if (specialSetting) {
-			SpecialConfig& special = g_appState.specialConfigs.at(g_appState.currentConfigIndex);
-			SpecialSettingsPage page = SpecialSettingsPage::Overview;
-			if (g_selectedCategory == SettingsCategory::SpecialTasks) {
-				page = SpecialSettingsPage::Tasks;
-			}
-			else if (g_selectedCategory == SettingsCategory::SpecialBackup) {
-				page = SpecialSettingsPage::Backup;
-			}
-			else if (g_selectedCategory == SettingsCategory::SpecialCleanup) {
-				page = SpecialSettingsPage::LegacyCleanup;
-			}
-			DrawSpecialConfigSettings(special, page);
-		}
-		else {
-			DrawNormalCategory(normalConfig);
-		}
+		DrawNormalCategory(normalConfig);
 		break;
 	}
 	EndUiCard();
@@ -313,10 +273,7 @@ void ShowSettingsWindowV2() {
 	if (!specialSetting && !g_appState.configs.contains(g_appState.currentConfigIndex)) {
 		g_appState.currentConfigIndex = g_appState.configs.begin()->first;
 	}
-	if (specialSetting && !g_appState.specialConfigs.contains(g_appState.currentConfigIndex)) {
-		specialSetting = false;
-		g_appState.currentConfigIndex = g_appState.configs.begin()->first;
-	}
+	specialSetting = false;
 
 	const UiMetrics metrics = GetUiMetrics();
 	SetNextWindowSizeFromMetrics(metrics, 56.0f, 38.0f);
@@ -366,8 +323,7 @@ void ShowSettingsWindowV2() {
 
 	ImGui::BeginChild("##SettingsContent", ImVec2(0.0f, 0.0f),
 		ImGuiChildFlags_None, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-	Config* normalConfig = &g_appState.configs.begin()->second;
-	if (!specialSetting) normalConfig = &g_appState.configs.at(g_appState.currentConfigIndex);
+	Config* normalConfig = &g_appState.configs.at(g_appState.currentConfigIndex);
 	DrawSelectedContent(*normalConfig);
 	ImGui::EndChild();
 

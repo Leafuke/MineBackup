@@ -28,14 +28,9 @@ bool IsWEIntegrationPathValidForSave(const Config& cfg) {
 
 void DrawConfigManagementPanel() {
 	string currentLabel = L("NO_CONFIG");
-	if (const auto it = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
-		it != g_appState.specialConfigs.end()) {
-		specialSetting = true;
-		currentLabel = "[Sp." + to_string(it->first) + "] " + it->second.name;
-	}
-	else if (const auto it = g_appState.configs.find(g_appState.currentConfigIndex);
+	specialSetting = false;
+	if (const auto it = g_appState.configs.find(g_appState.currentConfigIndex);
 		it != g_appState.configs.end()) {
-		specialSetting = false;
 		currentLabel = "[No." + to_string(it->first) + "] " + it->second.name;
 	}
 
@@ -45,21 +40,10 @@ void DrawConfigManagementPanel() {
 		ImGui::GetContentRegionAvail().x - actionWidth - metrics.spacingX));
 	if (ImGui::BeginCombo("##CurrentConfig", currentLabel.c_str())) {
 		for (const auto& [index, config] : g_appState.configs) {
-			const bool selected = !specialSetting && g_appState.currentConfigIndex == index;
+			const bool selected = g_appState.currentConfigIndex == index;
 			const string label = "[No." + to_string(index) + "] " + config.name;
 			if (ImGui::Selectable(label.c_str(), selected)) {
 				g_appState.currentConfigIndex = index;
-				specialSetting = false;
-			}
-			if (selected) ImGui::SetItemDefaultFocus();
-		}
-		if (!g_appState.specialConfigs.empty()) ImGui::Separator();
-		for (const auto& [index, config] : g_appState.specialConfigs) {
-			const bool selected = specialSetting && g_appState.currentConfigIndex == index;
-			const string label = "[Sp." + to_string(index) + "] " + config.name;
-			if (ImGui::Selectable(label.c_str(), selected)) {
-				g_appState.currentConfigIndex = index;
-				specialSetting = true;
 			}
 			if (selected) ImGui::SetItemDefaultFocus();
 		}
@@ -67,17 +51,15 @@ void DrawConfigManagementPanel() {
 	}
 	ImGui::SameLine();
 
-	static int pendingCreateType = -1;
+	static bool pendingCreate = false;
 	static bool requestDelete = false;
 	static char newConfigName[128] = "New Config";
 	if (ImGui::Button(L("CONFIG_ACTIONS"), ImVec2(actionWidth, 0.0f))) {
 		ImGui::OpenPopup("##ConfigActions");
 	}
 	if (ImGui::BeginPopup("##ConfigActions")) {
-		if (ImGui::MenuItem(L("CONFIG_NEW_NORMAL"))) pendingCreateType = 0;
-		if (ImGui::MenuItem(L("CONFIG_NEW_SPECIAL"))) pendingCreateType = 1;
-		const bool canCopy = !specialSetting
-			&& g_appState.configs.contains(g_appState.currentConfigIndex);
+		if (ImGui::MenuItem(L("CONFIG_NEW_NORMAL"))) pendingCreate = true;
+		const bool canCopy = g_appState.configs.contains(g_appState.currentConfigIndex);
 		ImGui::BeginDisabled(!canCopy);
 		if (ImGui::MenuItem(L("CONFIG_COPY_CURRENT"))) {
 			const int sourceIndex = g_appState.currentConfigIndex;
@@ -92,40 +74,34 @@ void DrawConfigManagementPanel() {
 		}
 		ImGui::EndDisabled();
 		ImGui::Separator();
-		const bool canDelete = specialSetting
-			? g_appState.specialConfigs.contains(g_appState.currentConfigIndex)
-			: g_appState.configs.size() > 1
-				&& g_appState.configs.contains(g_appState.currentConfigIndex);
+		const bool canDelete = g_appState.configs.size() > 1
+			&& g_appState.configs.contains(g_appState.currentConfigIndex);
 		ImGui::BeginDisabled(!canDelete);
 		if (ImGui::MenuItem(L("CONFIG_DELETE_CURRENT"))) requestDelete = true;
 		ImGui::EndDisabled();
 		ImGui::EndPopup();
 	}
 
-	if (pendingCreateType >= 0) ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
+	if (pendingCreate) ImGui::OpenPopup(L("ADD_NEW_CONFIG_POPUP_TITLE"));
 	ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID);
 	if (ImGui::BeginPopupModal(L("ADD_NEW_CONFIG_POPUP_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::TextWrapped("%s", pendingCreateType == 0
-			? L("CONFIG_TYPE_NORMAL_DESC") : L("CONFIG_TYPE_SPECIAL_DESC"));
+		ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));
 		ImGui::SetNextItemWidth(metrics.Em(22.0f));
 		ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), newConfigName, IM_ARRAYSIZE(newConfigName));
 		const float buttonWidth = CalcPairButtonWidth(L("CREATE_BUTTON"), L("BUTTON_CANCEL"));
 		ImGui::BeginDisabled(newConfigName[0] == '\0');
 		if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(buttonWidth, 0.0f))) {
-			const int newIndex = pendingCreateType == 0
-				? CreateNewNormalConfig(newConfigName)
-				: CreateNewSpecialConfig(newConfigName);
+			const int newIndex = CreateNewNormalConfig(newConfigName);
 			g_appState.currentConfigIndex = newIndex;
-			specialSetting = pendingCreateType == 1;
-			pendingCreateType = -1;
+			pendingCreate = false;
 			ImGui::MarkItemEdited(ImGui::GetItemID());
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(L("BUTTON_CANCEL"), ImVec2(buttonWidth, 0.0f))) {
-			pendingCreateType = -1;
+			pendingCreate = false;
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndPopup();
@@ -136,25 +112,14 @@ void DrawConfigManagementPanel() {
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
 		requestDelete = false;
-		const string name = specialSetting
-			? g_appState.specialConfigs.at(g_appState.currentConfigIndex).name
-			: g_appState.configs.at(g_appState.currentConfigIndex).name;
+		const string name = g_appState.configs.at(g_appState.currentConfigIndex).name;
 		ImGui::TextWrapped(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, name.c_str());
 		const float buttonWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(buttonWidth, 0.0f))) {
-			if (specialSetting) {
-				g_appState.specialConfigs.erase(g_appState.currentConfigIndex);
-			}
-			else {
-				g_appState.configs.erase(g_appState.currentConfigIndex);
-			}
+			g_appState.configs.erase(g_appState.currentConfigIndex);
 			if (!g_appState.configs.empty()) {
 				g_appState.currentConfigIndex = g_appState.configs.begin()->first;
 				specialSetting = false;
-			}
-			else if (!g_appState.specialConfigs.empty()) {
-				g_appState.currentConfigIndex = g_appState.specialConfigs.begin()->first;
-				specialSetting = true;
 			}
 			ImGui::MarkItemEdited(ImGui::GetItemID());
 			ImGui::CloseCurrentPopup();

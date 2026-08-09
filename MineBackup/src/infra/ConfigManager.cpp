@@ -4,6 +4,7 @@
 #include "AppPaths.h"
 #include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
+#include "JobDocument.h"
 #include "MigrationCoordinator.h"
 #include "SpecialConfigPolicy.h"
 #include "SpecialTaskDocument.h"
@@ -30,6 +31,10 @@ vector<LegacyIniConfigCodec::Diagnostic> g_configLoadDiagnostics;
 
 filesystem::path SpecialTasksPathForConfig(const filesystem::path& configFile) {
 	return configFile.parent_path() / L"special-tasks.json";
+}
+
+filesystem::path JobsPathForConfig(const filesystem::path& configFile) {
+	return configFile.parent_path() / L"jobs.json";
 }
 
 void RecordConfigDiagnostic(
@@ -264,6 +269,7 @@ void LoadConfigs(const filesystem::path& filename) {
 	g_configLoadDiagnostics.clear();
 	g_appState.configs.clear();
 	g_appState.specialConfigs.clear();
+	g_appState.jobs = JobDocument{};
 	g_appState.specialConfigMode = false;
 	g_theme = static_cast<int>(ThemeId::ImGuiLight);
 	g_lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
@@ -824,6 +830,17 @@ void LoadConfigs(const filesystem::path& filename) {
 		MigrationCoordinator::RecordUnit(normalized);
 	}
 
+	const auto jobs = JobStorage::Load(JobsPathForConfig(filename));
+	if (jobs.status == JobStorage::LoadStatus::Loaded) {
+		g_appState.jobs = jobs.document;
+	}
+	else if (jobs.status != JobStorage::LoadStatus::Missing) {
+		for (const auto& diagnostic : jobs.diagnostics) {
+			MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
+				diagnostic.eventId, "{}", diagnostic.detail);
+		}
+	}
+
 	auto validFontPath = [](const wstring& value) {
 		return !value.empty() && value.size() >= 3 && filesystem::exists(value);
 	};
@@ -904,6 +921,13 @@ bool SaveConfigs(const filesystem::path& filename) {
 	for (auto& [index, special] : g_appState.specialConfigs) {
 		(void)index;
 		special.specialConfigId = FolderRewindFormat::EnsureConfigId(special.specialConfigId);
+	}
+	wstring jobsWriteError;
+	if (!JobStorage::Save(JobsPathForConfig(target), g_appState.jobs, jobsWriteError)) {
+		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
+			"jobs.write_failed", "{}", wstring_to_utf8(jobsWriteError));
+		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
+		return false;
 	}
 	const auto taskDocument = SpecialTaskStorage::BuildDocument(g_appState.specialConfigs);
 	wstring taskWriteError;

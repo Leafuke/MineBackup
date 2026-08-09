@@ -64,6 +64,21 @@ int main() {
 	FinalizeUiScaleMigration(1.5f);
 	Check(g_uiScale == 1.0f && !g_uiScaleMigrationPending && g_uiScaleV2,
 		"DPI-derived legacy scale migrates once");
+	Job job;
+	job.jobId = L"11111111-1111-4111-8111-111111111111";
+	job.name = "GUI round trip";
+	JobStage stage;
+	stage.stageId = L"22222222-2222-4222-8222-222222222222";
+	stage.name = "Sequential stage";
+	JobStep step;
+	step.stepId = L"33333333-3333-4333-8333-333333333333";
+	step.name = "Explicit process";
+	step.type = JobStepType::Process;
+	step.process.executable = L"tool";
+	step.process.arguments = {L"--value", L"with spaces"};
+	stage.steps.push_back(step);
+	job.stages.push_back(stage);
+	g_appState.jobs.jobs = {job};
 
 	const std::filesystem::path roundTrip = root / "roundtrip.ini";
 	Check(SaveConfigs(roundTrip), "global appearance saves atomically");
@@ -83,6 +98,8 @@ int main() {
 	Check(configSection != std::string::npos
 		&& saved.find("\nFont=", configSection) == std::string::npos,
 		"legacy per-config font is no longer written");
+	Check(std::filesystem::exists(root / "jobs.json"),
+		"GUI save writes the shared jobs.json document");
 
 	g_theme = static_cast<int>(ThemeId::ImGuiDark);
 	Fontss.clear();
@@ -92,6 +109,10 @@ int main() {
 		&& std::filesystem::path(Fontss) == font && g_uiScale == 1.0f
 		&& !g_uiScaleMigrationPending,
 		"global appearance round-trips without a second migration");
+	Check(g_appState.jobs.jobs.size() == 1
+			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments.size() == 2
+			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments[1] == L"with spaces",
+		"GUI and CLI share the versioned Job document without shell argument loss");
 
 	const std::filesystem::path malformed = root / "malformed.ini";
 	{
