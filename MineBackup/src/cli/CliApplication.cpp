@@ -26,12 +26,16 @@
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 using namespace std;
@@ -172,7 +176,8 @@ CliResult WorldList(const ProfileConfigCatalog& catalog, const CliOptions& optio
 CliResult HistoryList(
 	const ProfileConfigCatalog& catalog,
 	const AppPaths& paths,
-	const CliOptions& options) {
+	const CliOptions& options,
+	const HistoryRepository* sharedHistory = nullptr) {
 	CliResult result{"history.list", OperationCode::Success};
 	const Config* config = catalog.FindConfig(options.configId);
 	if (!config) {
@@ -191,9 +196,9 @@ CliResult HistoryList(
 			"world.not_found", DiagnosticSeverity::Error, wstring_to_utf8(options.worldPath)});
 		return result;
 	}
-	HistoryRepository history;
-	if (filesystem::exists(paths.HistoryFile())
-		&& !history.Load(paths.HistoryFile(), catalog.configs)) {
+	HistoryRepository localHistory;
+	if (!sharedHistory && filesystem::exists(paths.HistoryFile())
+		&& !localHistory.Load(paths.HistoryFile(), catalog.configs)) {
 		result.code = OperationCode::InvalidProfile;
 		result.diagnostics.push_back({
 			"history.load.invalid", DiagnosticSeverity::Error,
@@ -203,7 +208,10 @@ CliResult HistoryList(
 	result.data["configId"] = wstring_to_utf8(config->configId);
 	result.data["world"] = wstring_to_utf8(normalized);
 	result.data["history"] = nlohmann::json::array();
-	for (const auto& entry : *history.EntriesForConfig(config->configId)) {
+	const auto entries = sharedHistory
+		? sharedHistory->EntriesForConfig(config->configId)
+		: localHistory.EntriesForConfig(config->configId);
+	for (const auto& entry : *entries) {
 		if (entry.worldName != normalized
 			&& filesystem::path(entry.worldPath).lexically_normal()
 				!= (filesystem::path(config->saveRoot) / normalized).lexically_normal()) continue;
@@ -252,7 +260,8 @@ CliResult BackupCommand(
 	const CliOptions& options,
 	stop_token stopToken) {
 	return RenderBackupResult(runtime.RunBackup(
-		options.configId, options.worldPath, options.comment, stopToken));
+		options.configId, options.worldPath, options.comment,
+		stopToken, options.noNetwork));
 }
 
 struct RestoreCommandContext {
@@ -364,7 +373,8 @@ CliResult RestoreOrVerifyCommand(
 		return result;
 	}
 
-	const auto restored = runtime.Restore(context.request, options.dryRun, stopToken);
+	const auto restored = runtime.Restore(
+		context.request, options.dryRun, stopToken, options.noNetwork);
 	result.code = restored.code;
 	result.diagnostics.insert(result.diagnostics.end(),
 		restored.diagnostics.begin(), restored.diagnostics.end());
@@ -380,17 +390,24 @@ CliResult RestoreOrVerifyCommand(
 	return result;
 }
 
-CliResult JobListCommand(const AppPaths& paths) {
+CliResult JobListCommand(
+	const AppPaths& paths,
+	const JobDocument* sharedJobs = nullptr) {
 	CliResult result{"job.list", OperationCode::Success};
-	const auto loaded = JobStorage::Load(paths.JobsFile());
 	result.data["jobs"] = nlohmann::json::array();
-	if (loaded.status == JobStorage::LoadStatus::Missing) return result;
-	if (!loaded.IsLoaded()) {
-		result.code = OperationCode::InvalidProfile;
-		result.diagnostics = loaded.diagnostics;
-		return result;
+	JobDocument localJobs;
+	if (!sharedJobs) {
+		const auto loaded = JobStorage::Load(paths.JobsFile());
+		if (loaded.status == JobStorage::LoadStatus::Missing) return result;
+		if (!loaded.IsLoaded()) {
+			result.code = OperationCode::InvalidProfile;
+			result.diagnostics = loaded.diagnostics;
+			return result;
+		}
+		localJobs = loaded.document;
+		sharedJobs = &localJobs;
 	}
-	for (const auto& job : loaded.document.jobs) {
+	for (const auto& job : sharedJobs->jobs) {
 		size_t stepCount = 0;
 		for (const auto& stage : job.stages) stepCount += stage.steps.size();
 		result.data["jobs"].push_back({
@@ -402,20 +419,28 @@ CliResult JobListCommand(const AppPaths& paths) {
 	return result;
 }
 
-CliResult JobShowCommand(const AppPaths& paths, const CliOptions& options) {
+CliResult JobShowCommand(
+	const AppPaths& paths,
+	const CliOptions& options,
+	const JobDocument* sharedJobs = nullptr) {
 	CliResult result{"job.show", OperationCode::Success};
-	const auto loaded = JobStorage::Load(paths.JobsFile());
-	if (!loaded.IsLoaded()) {
-		result.code = loaded.status == JobStorage::LoadStatus::Missing
-			? OperationCode::TargetNotFound : OperationCode::InvalidProfile;
-		result.diagnostics = loaded.diagnostics;
-		if (loaded.status == JobStorage::LoadStatus::Missing) {
-			result.diagnostics.push_back({"job.document.missing", DiagnosticSeverity::Error,
-				wstring_to_utf8(paths.JobsFile().wstring())});
+	JobDocument localJobs;
+	if (!sharedJobs) {
+		const auto loaded = JobStorage::Load(paths.JobsFile());
+		if (!loaded.IsLoaded()) {
+			result.code = loaded.status == JobStorage::LoadStatus::Missing
+				? OperationCode::TargetNotFound : OperationCode::InvalidProfile;
+			result.diagnostics = loaded.diagnostics;
+			if (loaded.status == JobStorage::LoadStatus::Missing) {
+				result.diagnostics.push_back({"job.document.missing", DiagnosticSeverity::Error,
+					wstring_to_utf8(paths.JobsFile().wstring())});
+			}
+			return result;
 		}
-		return result;
+		localJobs = loaded.document;
+		sharedJobs = &localJobs;
 	}
-	const Job* job = JobStorage::Find(loaded.document, options.jobId);
+	const Job* job = JobStorage::Find(*sharedJobs, options.jobId);
 	if (!job) {
 		result.code = OperationCode::TargetNotFound;
 		result.diagnostics.push_back({"job.not_found", DiagnosticSeverity::Error,
@@ -434,7 +459,7 @@ CliResult JobRunCommand(
 	const CliOptions& options,
 	stop_token stopToken) {
 	CliResult result{"job.run", OperationCode::Success};
-	const auto run = runtime.RunJob(options.jobId, stopToken);
+	const auto run = runtime.RunJob(options.jobId, stopToken, options.noNetwork);
 	result.code = run.code;
 	result.diagnostics.insert(result.diagnostics.end(),
 		run.diagnostics.begin(), run.diagnostics.end());
@@ -465,7 +490,8 @@ CliResult JobRunCommand(
 CliResult Doctor(
 	const ProfileCatalogLoadResult& loaded,
 	const AppPaths& paths,
-	const CliOptions& options) {
+	const CliOptions& options,
+	optional<bool> runtimeNetwork = nullopt) {
 	CliResult result{"doctor", CatalogCode(loaded.status)};
 	result.diagnostics = loaded.diagnostics;
 	result.data["profileIdentity"] = wstring_to_utf8(paths.profileIdentity);
@@ -604,7 +630,10 @@ CliResult Doctor(
 			}
 		}
 	}
-	if (options.noNetwork) {
+	if (runtimeNetwork.value_or(false)) {
+		result.data["knotLink"] = "owned_by_serve";
+	}
+	else if (runtimeNetwork.has_value() || options.noNetwork) {
 		result.data["knotLink"] = "disabled";
 	}
 	else {
@@ -764,6 +793,423 @@ CliResult ProfileExportCommand(const AppPaths& paths, const CliOptions& options)
 	return result;
 }
 
+CliResult ExecuteProfileCommand(
+	const AppPaths& paths,
+	const CliOptions& options,
+	stop_token stopToken,
+	ProfileRuntime* sharedRuntime = nullptr) {
+	if (options.command == CliCommand::ProfileDiff) {
+		return ProfilePlanCommand(paths, options, false);
+	}
+	if (options.command == CliCommand::ProfileApply) {
+		auto result = ProfilePlanCommand(paths, options, true);
+		if (sharedRuntime && IsSuccessful(result.code) && !options.dryRun) {
+			const auto reloaded = sharedRuntime->Reload();
+			result.diagnostics.insert(result.diagnostics.end(),
+				reloaded.diagnostics.begin(), reloaded.diagnostics.end());
+			if (!IsSuccessful(reloaded.code)) result.code = reloaded.code;
+		}
+		return result;
+	}
+	if (options.command == CliCommand::ProfileExport) {
+		return ProfileExportCommand(paths, options);
+	}
+
+	unique_ptr<ProfileRuntime> localRuntime;
+	vector<Diagnostic> initializationDiagnostics;
+	const bool needsOperationalRuntime = options.command == CliCommand::JobRun
+		|| options.command == CliCommand::Backup
+		|| options.command == CliCommand::Verify
+		|| options.command == CliCommand::Restore;
+	if (!sharedRuntime && needsOperationalRuntime) {
+		localRuntime = make_unique<ProfileRuntime>(paths, ProfileRuntimeDependencies{
+			options.noNetwork,
+			[&paths](stop_token token, wstring& error) {
+				return EnsureCliSevenZip(paths, token, error);
+			}});
+		const auto initialized = localRuntime->Reload();
+		initializationDiagnostics = initialized.diagnostics;
+		if (!IsSuccessful(initialized.code)) {
+			return {CliCommandName(options.command), initialized.code,
+				nlohmann::json::object(), std::move(initializationDiagnostics)};
+		}
+		sharedRuntime = localRuntime.get();
+	}
+
+	ProfileCatalogLoadResult loaded;
+	if (sharedRuntime) {
+		loaded.status = ProfileCatalogStatus::Loaded;
+		loaded.catalog = sharedRuntime->Catalog();
+	}
+	else {
+		loaded = ProfileConfigCatalogLoader::Load(paths.ConfigFile());
+	}
+	CliResult result;
+	if (options.command == CliCommand::Doctor) {
+		result = Doctor(loaded, paths, options,
+			sharedRuntime ? optional<bool>(sharedRuntime->NetworkEnabled()) : nullopt);
+	}
+	else if (!loaded.IsLoaded()) {
+		result.command = CliCommandName(options.command);
+		result.code = CatalogCode(loaded.status);
+		result.diagnostics = loaded.diagnostics;
+	}
+	else if (options.command == CliCommand::ConfigList) {
+		result = ConfigList(loaded.catalog);
+	}
+	else if (options.command == CliCommand::ConfigShow) {
+		result = ConfigShow(loaded.catalog, options);
+	}
+	else if (options.command == CliCommand::WorldList) {
+		result = WorldList(loaded.catalog, options);
+	}
+	else if (options.command == CliCommand::HistoryList) {
+		result = HistoryList(loaded.catalog, paths, options,
+			sharedRuntime ? &sharedRuntime->History() : nullptr);
+	}
+	else if (options.command == CliCommand::JobList) {
+		result = JobListCommand(paths,
+			sharedRuntime ? &sharedRuntime->Jobs() : nullptr);
+	}
+	else if (options.command == CliCommand::JobShow) {
+		result = JobShowCommand(paths, options,
+			sharedRuntime ? &sharedRuntime->Jobs() : nullptr);
+	}
+	else if (options.command == CliCommand::JobRun) {
+		result = JobRunCommand(*sharedRuntime, options, stopToken);
+	}
+	else if (options.command == CliCommand::Backup) {
+		result = BackupCommand(*sharedRuntime, options, stopToken);
+	}
+	else if (options.command == CliCommand::Verify
+		|| options.command == CliCommand::Restore) {
+		result = RestoreOrVerifyCommand(*sharedRuntime, options, stopToken);
+	}
+	else {
+		result.command = CliCommandName(options.command);
+		result.code = OperationCode::InvalidArguments;
+		result.diagnostics.push_back({
+			"cli.command.not_implemented", DiagnosticSeverity::Error, {}});
+	}
+	result.diagnostics.insert(result.diagnostics.begin(),
+		initializationDiagnostics.begin(), initializationDiagnostics.end());
+	if (options.command != CliCommand::Doctor
+		&& loaded.IsLoaded() && !loaded.diagnostics.empty()) {
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+	}
+	return result;
+}
+
+const vector<string>& ServeCapabilities() {
+	static const vector<string> capabilities{
+		"execute", "status", "cancel", "stop"};
+	return capabilities;
+}
+
+CliResult ForwardedCommandResult(
+	const vector<wstring>& arguments,
+	const AppPaths& paths,
+	ProfileRuntime& runtime,
+	stop_token stopToken) {
+	const auto parsed = ParseCliArguments(arguments);
+	if (!parsed.success) {
+		return {"parse", OperationCode::InvalidArguments,
+			nlohmann::json::object(), parsed.diagnostics};
+	}
+	if (parsed.options.command == CliCommand::Help
+		|| parsed.options.command == CliCommand::Version
+		|| parsed.options.command == CliCommand::ProfileInit
+		|| parsed.options.command == CliCommand::ProfileValidate
+		|| parsed.options.command == CliCommand::Serve
+		|| parsed.options.command == CliCommand::ServeStatus
+		|| parsed.options.command == CliCommand::ServeStop) {
+		return {CliCommandName(parsed.options.command), OperationCode::InvalidArguments,
+			nlohmann::json::object(), {{"serve.command.not_forwardable",
+				DiagnosticSeverity::Error, {}}}};
+	}
+	AppPaths requestedPaths;
+	wstring pathError;
+	if (!ResolveAppPaths({parsed.options.dataDirectory}, GetExecutablePath(),
+			requestedPaths, pathError)
+		|| requestedPaths.profileIdentity != paths.profileIdentity) {
+		return {CliCommandName(parsed.options.command), OperationCode::InvalidArguments,
+			nlohmann::json::object(), {{"serve.profile.identity_mismatch",
+				DiagnosticSeverity::Error, wstring_to_utf8(pathError)}}};
+	}
+	return ExecuteProfileCommand(paths, parsed.options, stopToken, &runtime);
+}
+
+struct ServeOperation {
+	uint64_t connectionId = 0;
+	string requestId;
+	string operationId;
+	stop_source cancellation;
+	atomic<bool> completed{false};
+	InstanceControlResponse response;
+	jthread worker;
+};
+
+CliResult RunServeLoop(
+	SingleInstanceService& instance,
+	const AppPaths& paths,
+	const CliOptions& options) {
+	CliResult result{"serve", OperationCode::Success};
+	ProfileRuntime runtime(paths, {
+		options.noNetwork,
+		[&paths](stop_token token, wstring& error) {
+			return EnsureCliSevenZip(paths, token, error);
+		}});
+	const auto initialized = runtime.Reload();
+	result.diagnostics = initialized.diagnostics;
+	if (!IsSuccessful(initialized.code)) {
+		result.code = initialized.code;
+		return result;
+	}
+
+	CliSignalHandler signals;
+	mutex executionMutex;
+	map<string, shared_ptr<ServeOperation>> operations;
+	bool stopping = false;
+	const auto started = chrono::steady_clock::now();
+	while (!stopping || !operations.empty()) {
+		if (signals.Token().stop_requested()) stopping = true;
+		wstring pollError;
+		for (auto& exchange : instance.PollControlRequests(pollError)) {
+			const auto& request = exchange.request;
+			InstanceControlResponse response;
+			response.requestId = request.requestId;
+			response.role = InstanceRuntimeRole::Serve;
+			response.capabilities = ServeCapabilities();
+			response.operationId = request.operationId;
+			if (request.type == InstanceControlRequestType::Probe) {
+				response.accepted = true;
+				response.exitCode = 0;
+				wstring replyError;
+				(void)instance.Reply(exchange.connectionId, response, replyError);
+				continue;
+			}
+			if (request.type == InstanceControlRequestType::Status) {
+				CliResult status{"serve.status", OperationCode::Success};
+				status.data = {
+					{"role", "serve"},
+					{"accepting", !stopping},
+					{"activeOperationCount", operations.size()},
+					{"uptimeSeconds", chrono::duration_cast<chrono::seconds>(
+						chrono::steady_clock::now() - started).count()},
+					{"profileIdentity", wstring_to_utf8(paths.profileIdentity)},
+					{"capabilities", ServeCapabilities()}};
+				response.accepted = true;
+				response.exitCode = 0;
+				response.payload = BuildCliEnvelope(status).dump();
+				wstring replyError;
+				(void)instance.Reply(exchange.connectionId, response, replyError);
+				continue;
+			}
+			if (request.type == InstanceControlRequestType::Stop) {
+				stopping = true;
+				for (auto& [id, operation] : operations) {
+					(void)id;
+					operation->cancellation.request_stop();
+				}
+				CliResult stopped{"serve.stop", OperationCode::Success};
+				stopped.data["stopping"] = true;
+				response.accepted = true;
+				response.exitCode = 0;
+				response.payload = BuildCliEnvelope(stopped).dump();
+				wstring replyError;
+				(void)instance.Reply(exchange.connectionId, response, replyError);
+				continue;
+			}
+			if (request.type == InstanceControlRequestType::Cancel) {
+				const auto found = operations.find(request.operationId);
+				response.accepted = found != operations.end();
+				response.exitCode = response.accepted ? 0 : 4;
+				if (found != operations.end()) {
+					found->second->cancellation.request_stop();
+				}
+				else {
+					response.error = "operation_not_found";
+				}
+				wstring replyError;
+				(void)instance.Reply(exchange.connectionId, response, replyError);
+				continue;
+			}
+
+			const string operationId = request.operationId.empty()
+				? wstring_to_utf8(FolderRewindFormat::GenerateGuidString())
+				: request.operationId;
+			if (stopping || operations.contains(operationId)) {
+				response.accepted = false;
+				response.operationId = operationId;
+				response.error = stopping ? "serve_stopping" : "operation_id_conflict";
+				wstring replyError;
+				(void)instance.Reply(exchange.connectionId, response, replyError);
+				continue;
+			}
+			auto operation = make_shared<ServeOperation>();
+			operation->connectionId = exchange.connectionId;
+			operation->requestId = request.requestId;
+			operation->operationId = operationId;
+			operation->response.requestId = request.requestId;
+			operation->response.accepted = true;
+			operation->response.role = InstanceRuntimeRole::Serve;
+			operation->response.capabilities = ServeCapabilities();
+			operation->response.operationId = operationId;
+			const auto forwardedArguments = request.arguments;
+			operation->worker = jthread([
+				operation, forwardedArguments, &executionMutex, &paths, &runtime](stop_token) {
+				lock_guard lock(executionMutex);
+				auto commandResult = ForwardedCommandResult(
+					forwardedArguments, paths, runtime,
+					operation->cancellation.get_token());
+				if (operation->cancellation.stop_requested()
+					&& IsSuccessful(commandResult.code)) {
+					commandResult.code = OperationCode::Cancelled;
+				}
+				operation->response.exitCode = ToExitCode(commandResult.code);
+				operation->response.payload = BuildCliEnvelope(commandResult).dump();
+				operation->completed.store(true, memory_order_release);
+			});
+			operations.emplace(operationId, std::move(operation));
+		}
+		if (!pollError.empty()) {
+			result.diagnostics.push_back({
+				"serve.ipc.poll_failed", DiagnosticSeverity::Warning,
+				wstring_to_utf8(pollError)});
+		}
+
+		for (auto iterator = operations.begin(); iterator != operations.end();) {
+			auto operation = iterator->second;
+			if (!operation->completed.load(memory_order_acquire)) {
+				++iterator;
+				continue;
+			}
+			if (operation->worker.joinable()) operation->worker.join();
+			wstring replyError;
+			if (!instance.Reply(
+					operation->connectionId, operation->response, replyError)
+				&& !replyError.empty()) {
+				result.diagnostics.push_back({
+					"serve.ipc.reply_failed", DiagnosticSeverity::Warning,
+					wstring_to_utf8(replyError)});
+			}
+			iterator = operations.erase(iterator);
+		}
+		if (stopping) {
+			for (auto& [id, operation] : operations) {
+				(void)id;
+				operation->cancellation.request_stop();
+			}
+		}
+		this_thread::sleep_for(chrono::milliseconds(10));
+	}
+	result.data = {
+		{"stopped", true},
+		{"uptimeSeconds", chrono::duration_cast<chrono::seconds>(
+			chrono::steady_clock::now() - started).count()}};
+	return result;
+}
+
+CliResult ControlServe(
+	SingleInstanceService& instance,
+	InstanceControlRequestType type) {
+	InstanceControlRequest request;
+	request.requestId = wstring_to_utf8(FolderRewindFormat::GenerateGuidString());
+	request.type = type;
+	InstanceControlResponse response;
+	wstring error;
+	if (!instance.Exchange(request, response, error, chrono::seconds(5))
+		|| response.role != InstanceRuntimeRole::Serve) {
+		return {type == InstanceControlRequestType::Status ? "serve.status" : "serve.stop",
+			OperationCode::ProfileBusy, nlohmann::json::object(), {{
+				"serve.not_available", DiagnosticSeverity::Error,
+				wstring_to_utf8(error)}}};
+	}
+	CliResult result;
+	if (!response.payload.empty() && ParseCliEnvelope(response.payload, result)) {
+		return result;
+	}
+	return {type == InstanceControlRequestType::Status ? "serve.status" : "serve.stop",
+		response.accepted ? OperationCode::Success : OperationCode::InvalidProfile,
+		nlohmann::json::object(), response.error.empty() ? vector<Diagnostic>{}
+			: vector<Diagnostic>{{"serve.control.rejected", DiagnosticSeverity::Error,
+				response.error}}};
+}
+
+CliResult ForwardToServe(
+	const vector<wstring>& arguments,
+	const AppPaths& paths,
+	SingleInstanceService& instance) {
+	InstanceControlRequest probe;
+	probe.requestId = wstring_to_utf8(FolderRewindFormat::GenerateGuidString());
+	probe.type = InstanceControlRequestType::Probe;
+	InstanceControlResponse probeResponse;
+	wstring error;
+	if (!instance.Exchange(probe, probeResponse, error, chrono::seconds(2))
+		|| !probeResponse.accepted
+		|| probeResponse.role != InstanceRuntimeRole::Serve
+		|| find(probeResponse.capabilities.begin(), probeResponse.capabilities.end(),
+			"execute") == probeResponse.capabilities.end()) {
+		return {"forward", OperationCode::ProfileBusy,
+			nlohmann::json::object(), {{"profile.lock.busy",
+				DiagnosticSeverity::Error, wstring_to_utf8(error)}}};
+	}
+
+	InstanceControlRequest execute;
+	execute.requestId = wstring_to_utf8(FolderRewindFormat::GenerateGuidString());
+	execute.type = InstanceControlRequestType::Execute;
+	execute.arguments = arguments;
+	execute.operationId = wstring_to_utf8(FolderRewindFormat::GenerateGuidString());
+	InstanceControlResponse response;
+	atomic<bool> finished{false};
+	bool exchanged = false;
+	CliSignalHandler signals;
+	jthread exchangeThread([&](stop_token) {
+		exchanged = instance.Exchange(
+			execute, response, error, chrono::hours(24));
+		finished.store(true, memory_order_release);
+	});
+	bool cancellationSent = false;
+	while (!finished.load(memory_order_acquire)) {
+		if (signals.Token().stop_requested() && !cancellationSent) {
+			cancellationSent = true;
+			SingleInstanceService cancellationClient;
+			wstring cancellationError;
+			if (cancellationClient.Acquire(
+					paths.profileIdentity, paths.runtimeRoot, cancellationError)
+				== InstanceAcquireResult::AlreadyRunning) {
+				InstanceControlRequest cancel;
+				cancel.requestId = wstring_to_utf8(
+					FolderRewindFormat::GenerateGuidString());
+				cancel.type = InstanceControlRequestType::Cancel;
+				cancel.operationId = execute.operationId;
+				InstanceControlResponse cancelResponse;
+				(void)cancellationClient.Exchange(
+					cancel, cancelResponse, cancellationError, chrono::seconds(5));
+			}
+		}
+		this_thread::sleep_for(chrono::milliseconds(10));
+	}
+	if (exchangeThread.joinable()) exchangeThread.join();
+	if (!exchanged || !response.accepted
+		|| response.role != InstanceRuntimeRole::Serve) {
+		return {"forward", cancellationSent
+				? OperationCode::Cancelled : OperationCode::ProfileBusy,
+			nlohmann::json::object(), {{
+				cancellationSent ? "serve.operation.cancelled" : "serve.forward.failed",
+				cancellationSent ? DiagnosticSeverity::Warning : DiagnosticSeverity::Error,
+				response.error.empty() ? wstring_to_utf8(error) : response.error}}};
+	}
+	CliResult result;
+	if (!ParseCliEnvelope(response.payload, result)) {
+		return {"forward", OperationCode::InvalidProfile,
+			nlohmann::json::object(), {{"serve.response.invalid",
+				DiagnosticSeverity::Error, {}}}};
+	}
+	return result;
+}
+
 } // namespace
 
 int RunMineBackupCli(const vector<wstring>& arguments) {
@@ -829,109 +1275,46 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 	wstring lockError;
 	const InstanceAcquireResult lock = instance.Acquire(
 		paths.profileIdentity, paths.runtimeRoot, lockError);
-	if (lock != InstanceAcquireResult::Acquired) {
-		CliResult error{CliCommandName(parsed.options.command),
-			lock == InstanceAcquireResult::AlreadyRunning
-				? OperationCode::ProfileBusy : OperationCode::InvalidProfile};
-		error.diagnostics.push_back({
-			lock == InstanceAcquireResult::AlreadyRunning
-				? "profile.lock.busy" : "profile.lock.failed",
-			DiagnosticSeverity::Error,
-			wstring_to_utf8(lockError)});
-		RenderCliResult(error, parsed.options.json);
-		minebackup::logging::Shutdown();
-		return ToExitCode(error.code);
-	}
-
 	CliResult result;
-	if (parsed.options.command == CliCommand::ProfileDiff) {
-		result = ProfilePlanCommand(paths, parsed.options, false);
+	if (lock == InstanceAcquireResult::Failed) {
+		result = {CliCommandName(parsed.options.command),
+			OperationCode::InvalidProfile, nlohmann::json::object(), {{
+				"profile.lock.failed", DiagnosticSeverity::Error,
+				wstring_to_utf8(lockError)}}};
 	}
-	else if (parsed.options.command == CliCommand::ProfileApply) {
-		result = ProfilePlanCommand(paths, parsed.options, true);
-	}
-	else if (parsed.options.command == CliCommand::ProfileExport) {
-		result = ProfileExportCommand(paths, parsed.options);
-	}
-	else {
-		auto loaded = ProfileConfigCatalogLoader::Load(paths.ConfigFile());
-	if (parsed.options.command == CliCommand::Doctor) {
-		result = Doctor(loaded, paths, parsed.options);
-	}
-	else if (!loaded.IsLoaded()) {
-		result.command = CliCommandName(parsed.options.command);
-		result.code = CatalogCode(loaded.status);
-		result.diagnostics = loaded.diagnostics;
-	}
-	else if (parsed.options.command == CliCommand::ConfigList) {
-		result = ConfigList(loaded.catalog);
-		result.diagnostics = loaded.diagnostics;
-	}
-	else if (parsed.options.command == CliCommand::ConfigShow) {
-		result = ConfigShow(loaded.catalog, parsed.options);
-		result.diagnostics.insert(result.diagnostics.begin(),
-			loaded.diagnostics.begin(), loaded.diagnostics.end());
-	}
-	else if (parsed.options.command == CliCommand::WorldList) {
-		result = WorldList(loaded.catalog, parsed.options);
-		result.diagnostics.insert(result.diagnostics.begin(),
-			loaded.diagnostics.begin(), loaded.diagnostics.end());
-	}
-	else if (parsed.options.command == CliCommand::HistoryList) {
-		result = HistoryList(loaded.catalog, paths, parsed.options);
-		result.diagnostics.insert(result.diagnostics.begin(),
-			loaded.diagnostics.begin(), loaded.diagnostics.end());
-	}
-	else if (parsed.options.command == CliCommand::JobList) {
-		result = JobListCommand(paths);
-		result.diagnostics.insert(result.diagnostics.begin(),
-			loaded.diagnostics.begin(), loaded.diagnostics.end());
-	}
-	else if (parsed.options.command == CliCommand::JobShow) {
-		result = JobShowCommand(paths, parsed.options);
-		result.diagnostics.insert(result.diagnostics.begin(),
-			loaded.diagnostics.begin(), loaded.diagnostics.end());
-	}
-	else if (parsed.options.command == CliCommand::JobRun
-		|| parsed.options.command == CliCommand::Backup
-		|| parsed.options.command == CliCommand::Verify
-		|| parsed.options.command == CliCommand::Restore) {
-		CliSignalHandler signals;
-		ProfileRuntime runtime(paths, {
-			parsed.options.noNetwork,
-			[&paths](stop_token token, wstring& error) {
-				return EnsureCliSevenZip(paths, token, error);
-			}});
-		const auto initialized = runtime.Reload();
-		if (!IsSuccessful(initialized.code)) {
-			result.command = CliCommandName(parsed.options.command);
-			result.code = initialized.code;
-			result.diagnostics = initialized.diagnostics;
-		}
-		else if (parsed.options.command == CliCommand::JobRun) {
-			result = JobRunCommand(runtime, parsed.options, signals.Token());
-			result.diagnostics.insert(result.diagnostics.begin(),
-				initialized.diagnostics.begin(), initialized.diagnostics.end());
-		}
-		else if (parsed.options.command == CliCommand::Backup) {
-			result = BackupCommand(runtime, parsed.options, signals.Token());
-			result.diagnostics.insert(result.diagnostics.begin(),
-				initialized.diagnostics.begin(), initialized.diagnostics.end());
+	else if (parsed.options.command == CliCommand::ServeStatus
+		|| parsed.options.command == CliCommand::ServeStop) {
+		if (lock == InstanceAcquireResult::AlreadyRunning) {
+			result = ControlServe(instance,
+				parsed.options.command == CliCommand::ServeStatus
+					? InstanceControlRequestType::Status
+					: InstanceControlRequestType::Stop);
 		}
 		else {
-			result = RestoreOrVerifyCommand(runtime, parsed.options, signals.Token());
-			result.diagnostics.insert(result.diagnostics.begin(),
-				initialized.diagnostics.begin(), initialized.diagnostics.end());
+			result = {CliCommandName(parsed.options.command),
+				OperationCode::TargetNotFound, nlohmann::json::object(), {{
+					"serve.not_running", DiagnosticSeverity::Error, {}}}};
 		}
-		if (signals.WasInterrupted()) result.code = OperationCode::Cancelled;
+	}
+	else if (lock == InstanceAcquireResult::AlreadyRunning) {
+		if (parsed.options.command == CliCommand::Serve) {
+			result = {"serve", OperationCode::ProfileBusy,
+				nlohmann::json::object(), {{"profile.lock.busy",
+					DiagnosticSeverity::Error, wstring_to_utf8(lockError)}}};
+		}
+		else {
+			result = ForwardToServe(arguments, paths, instance);
+		}
+	}
+	else if (parsed.options.command == CliCommand::Serve) {
+		result = RunServeLoop(instance, paths, parsed.options);
 	}
 	else {
-		result.command = CliCommandName(parsed.options.command);
-		result.code = OperationCode::InvalidArguments;
-		result.diagnostics.push_back({
-			"cli.command.not_implemented", DiagnosticSeverity::Error,
-			"Execution commands are added in the next implementation stage."});
-	}
+		CliSignalHandler signals;
+		result = ExecuteProfileCommand(paths, parsed.options, signals.Token());
+		if (signals.WasInterrupted() && IsSuccessful(result.code)) {
+			result.code = OperationCode::Cancelled;
+		}
 	}
 	RenderCliResult(result, parsed.options.json);
 	minebackup::logging::Shutdown();

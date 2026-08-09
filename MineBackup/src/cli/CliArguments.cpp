@@ -25,6 +25,9 @@ string CliCommandName(CliCommand command) {
 	case CliCommand::ProfileDiff: return "profile.diff";
 	case CliCommand::ProfileApply: return "profile.apply";
 	case CliCommand::ProfileExport: return "profile.export";
+	case CliCommand::Serve: return "serve";
+	case CliCommand::ServeStatus: return "serve.status";
+	case CliCommand::ServeStop: return "serve.stop";
 	case CliCommand::Doctor: return "doctor";
 	case CliCommand::ConfigList: return "config.list";
 	case CliCommand::ConfigShow: return "config.show";
@@ -175,6 +178,9 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 	else if (positional == vector<wstring>{L"profile", L"diff"}) result.options.command = CliCommand::ProfileDiff;
 	else if (positional == vector<wstring>{L"profile", L"apply"}) result.options.command = CliCommand::ProfileApply;
 	else if (positional == vector<wstring>{L"profile", L"export"}) result.options.command = CliCommand::ProfileExport;
+	else if (positional == vector<wstring>{L"serve"}) result.options.command = CliCommand::Serve;
+	else if (positional == vector<wstring>{L"serve", L"status"}) result.options.command = CliCommand::ServeStatus;
+	else if (positional == vector<wstring>{L"serve", L"stop"}) result.options.command = CliCommand::ServeStop;
 	else if (positional == vector<wstring>{L"doctor"}) result.options.command = CliCommand::Doctor;
 	else if (positional == vector<wstring>{L"config", L"list"}) result.options.command = CliCommand::ConfigList;
 	else if (positional == vector<wstring>{L"config", L"show"}) result.options.command = CliCommand::ConfigShow;
@@ -267,6 +273,9 @@ void PrintCliHelp() {
 		<< "  minebackup-cli [global options] profile diff --file <manifest.json> [--prune]\n"
 		<< "  minebackup-cli [global options] profile apply --file <manifest.json> [--dry-run] [--prune --confirm-prune]\n"
 		<< "  minebackup-cli [global options] profile export --output <manifest.json> [--force]\n"
+		<< "  minebackup-cli [global options] serve\n"
+		<< "  minebackup-cli [global options] serve status\n"
+		<< "  minebackup-cli [global options] serve stop\n"
 		<< "  minebackup-cli [global options] doctor\n"
 		<< "  minebackup-cli [global options] config list\n"
 		<< "  minebackup-cli [global options] config show --config <ConfigId>\n"

@@ -40,6 +40,7 @@ public:
 
 	ProfileRuntimeInitialization Reload();
 	bool IsReady() const noexcept;
+	bool NetworkEnabled() const noexcept;
 
 	const AppPaths& Paths() const noexcept;
 	const ProfileConfigCatalog& Catalog() const;
@@ -57,17 +58,20 @@ public:
 		const std::wstring& configId,
 		const std::wstring& worldPath,
 		const std::wstring& comment = {},
-		std::stop_token stopToken = {}) const;
+		std::stop_token stopToken = {},
+		bool noNetwork = false) const;
 	JobRunResult RunJob(
 		const std::wstring& jobId,
-		std::stop_token stopToken = {}) const;
+		std::stop_token stopToken = {},
+		bool noNetwork = false) const;
 	RestorePlan Verify(
 		const RestoreRequest& request,
 		std::stop_token stopToken = {}) const;
 	RestoreResult Restore(
 		const RestoreRequest& request,
 		bool dryRun,
-		std::stop_token stopToken = {}) const;
+		std::stop_token stopToken = {},
+		bool noNetwork = false) const;
 
 private:
 	struct Implementation;

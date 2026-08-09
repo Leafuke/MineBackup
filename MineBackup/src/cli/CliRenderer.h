@@ -2,4 +2,6 @@
 
 #include "CliTypes.h"
 
+nlohmann::json BuildCliEnvelope(const CliResult& result);
+bool ParseCliEnvelope(const std::string& payload, CliResult& result);
 void RenderCliResult(const CliResult& result, bool jsonOutput);

@@ -378,10 +378,20 @@ bool WaitForDescriptor(int descriptor, short events, chrono::milliseconds timeou
 }
 
 bool WriteMessage(int descriptor, const vector<uint8_t>& message, wstring& error) {
+#ifdef SO_NOSIGPIPE
+	const int suppressSignal = 1;
+	(void)::setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE,
+		&suppressSignal, sizeof(suppressSignal));
+#endif
 	size_t offset = 0;
 	while (offset < message.size()) {
+#ifdef MSG_NOSIGNAL
+		const ssize_t sent = ::send(descriptor, message.data() + offset,
+			message.size() - offset, MSG_NOSIGNAL);
+#else
 		const ssize_t sent = ::write(
 			descriptor, message.data() + offset, message.size() - offset);
+#endif
 		if (sent < 0 && errno == EINTR) continue;
 		if (sent <= 0) {
 			error = L"Could not write the instance message.";

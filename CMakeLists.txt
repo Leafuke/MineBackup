@@ -505,6 +505,12 @@ if(BUILD_TESTING)
                         --cli $<TARGET_FILE:minebackup-cli>
                         --work-root ${CMAKE_CURRENT_BINARY_DIR}/test-work/cli-process-contract)
                 set_tests_properties(minebackup.cli.process_contract PROPERTIES TIMEOUT 30)
+                add_test(NAME minebackup.cli.serve_contract
+                    COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_serve_contract.py
+                        --cli $<TARGET_FILE:minebackup-cli>
+                        --work-root ${CMAKE_CURRENT_BINARY_DIR}/test-work/cli-serve-contract)
+                set_tests_properties(minebackup.cli.serve_contract PROPERTIES TIMEOUT 45)
             else()
                 message(STATUS "Python 3 not found; skipping CLI process contract test")
             endif()

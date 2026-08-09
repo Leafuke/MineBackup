@@ -47,8 +47,10 @@ struct ProfileRuntime::Implementation {
 	shared_ptr<IHotBackupBridge> hotBackup;
 	shared_ptr<IRuntimeEventSink> eventSink;
 	shared_ptr<ICloudPostHook> cloudPost;
-	unique_ptr<BackupService> backup;
-	unique_ptr<RestoreService> restore;
+	unique_ptr<BackupService> onlineBackup;
+	unique_ptr<BackupService> offlineBackup;
+	unique_ptr<RestoreService> onlineRestore;
+	unique_ptr<RestoreService> offlineRestore;
 };
 
 ProfileRuntime::ProfileRuntime(
@@ -94,20 +96,21 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 	}
 	next->retention = make_unique<RuntimeRetentionService>(
 		next->history, paths_.HistoryFile(), next->catalog.configs);
-	if (dependencies_.noNetwork) {
-		next->hotBackup = make_shared<NetworkDisabledKnotLinkBridge>();
-		next->eventSink = make_shared<NoopRuntimeEventSink>();
-		next->cloudPost = make_shared<NetworkDisabledCloudPostHook>();
-	}
-	else {
-		auto bridge = make_shared<HeadlessKnotLinkBridge>();
-		if (!bridge->Start()) {
-			result.diagnostics.push_back({
-				"knotlink.listener.unavailable", DiagnosticSeverity::Warning,
-				"The local KnotLink ports are unavailable; locked worlds use the live-file fallback."});
+	if (!dependencies_.noNetwork) {
+		if (implementation_ && implementation_->hotBackup && implementation_->eventSink) {
+			next->hotBackup = implementation_->hotBackup;
+			next->eventSink = implementation_->eventSink;
 		}
-		next->hotBackup = bridge;
-		next->eventSink = bridge;
+		else {
+			auto bridge = make_shared<HeadlessKnotLinkBridge>();
+			if (!bridge->Start()) {
+				result.diagnostics.push_back({
+					"knotlink.listener.unavailable", DiagnosticSeverity::Warning,
+					"The local KnotLink ports are unavailable; locked worlds use the live-file fallback."});
+			}
+			next->hotBackup = bridge;
+			next->eventSink = bridge;
+		}
 		next->cloudPost = make_shared<SynchronousRcloneCloudPostHook>(
 			paths_, next->history, [&catalog = next->catalog] {
 				return catalog.ConfigSnapshot();
@@ -115,69 +118,89 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 	}
 
 	Implementation* state = next.get();
-	BackupServiceDependencies backupDependencies;
-	backupDependencies.paths = paths_;
-	backupDependencies.ensureMigration = [](const BackupRequest&) {
-		MigrationUnitResult migration;
-		migration.status = MigrationStatus::NotNeeded;
-		return migration;
-	};
-	backupDependencies.isFileLocked = IsRuntimeFileLocked;
-	backupDependencies.hotBackup = next->hotBackup;
-	backupDependencies.eventSink = next->eventSink;
-	backupDependencies.cloudPost = next->cloudPost;
-	backupDependencies.addHistory = [this, state](const HistoryEntry& entry) {
-		const auto mutation = state->history.Mutate(
-			entry.configId, paths_.HistoryFile(), state->catalog.configs, true,
-			[&](vector<HistoryEntry>& entries) {
-				for (auto& current : entries) {
-					if (current.worldName == entry.worldName
-						&& current.backupFile == entry.backupFile) {
-						current = entry;
-						return true;
-					}
-				}
-				entries.push_back(entry);
-				return true;
-			});
-		return mutation.changed && mutation.persisted;
-	};
-	backupDependencies.removeHistory = [this, state](
-		const wstring& worldName,
-		const wstring& backupFile) {
-		bool persisted = true;
-		for (const auto& [index, config] : state->catalog.configs) {
-			(void)index;
+	auto createBackup = [this, state](
+		shared_ptr<IHotBackupBridge> hotBackup,
+		shared_ptr<IRuntimeEventSink> eventSink,
+		shared_ptr<ICloudPostHook> cloudPost) {
+		BackupServiceDependencies backupDependencies;
+		backupDependencies.paths = paths_;
+		backupDependencies.ensureMigration = [](const BackupRequest&) {
+			MigrationUnitResult migration;
+			migration.status = MigrationStatus::NotNeeded;
+			return migration;
+		};
+		backupDependencies.isFileLocked = IsRuntimeFileLocked;
+		backupDependencies.hotBackup = std::move(hotBackup);
+		backupDependencies.eventSink = std::move(eventSink);
+		backupDependencies.cloudPost = std::move(cloudPost);
+		backupDependencies.addHistory = [this, state](const HistoryEntry& entry) {
 			const auto mutation = state->history.Mutate(
-				config.configId, paths_.HistoryFile(), state->catalog.configs, true,
+				entry.configId, paths_.HistoryFile(), state->catalog.configs, true,
 				[&](vector<HistoryEntry>& entries) {
-					const auto before = entries.size();
-					erase_if(entries, [&](const HistoryEntry& entry) {
-						return entry.worldName == worldName
-							&& entry.backupFile == backupFile;
-					});
-					return entries.size() != before;
+					for (auto& current : entries) {
+						if (current.worldName == entry.worldName
+							&& current.backupFile == entry.backupFile) {
+							current = entry;
+							return true;
+						}
+					}
+					entries.push_back(entry);
+					return true;
 				});
-			persisted = mutation.persisted && persisted;
-		}
-		return persisted;
+			return mutation.changed && mutation.persisted;
+		};
+		backupDependencies.removeHistory = [this, state](
+			const wstring& worldName,
+			const wstring& backupFile) {
+			bool persisted = true;
+			for (const auto& [index, config] : state->catalog.configs) {
+				(void)index;
+				const auto mutation = state->history.Mutate(
+					config.configId, paths_.HistoryFile(), state->catalog.configs, true,
+					[&](vector<HistoryEntry>& entries) {
+						const auto before = entries.size();
+						erase_if(entries, [&](const HistoryEntry& entry) {
+							return entry.worldName == worldName
+								&& entry.backupFile == backupFile;
+						});
+						return entries.size() != before;
+					});
+				persisted = mutation.persisted && persisted;
+			}
+			return persisted;
+		};
+		backupDependencies.enforceRetention = [state](
+			const BackupRequest& request,
+			const HistoryEntry& entry) {
+			state->retention->Enforce(request, entry);
+		};
+		return make_unique<BackupService>(std::move(backupDependencies));
 	};
-	backupDependencies.enforceRetention = [state](
-		const BackupRequest& request,
-		const HistoryEntry& entry) {
-		state->retention->Enforce(request, entry);
-	};
-	next->backup = make_unique<BackupService>(std::move(backupDependencies));
+	const auto disabledHotBackup = make_shared<NetworkDisabledKnotLinkBridge>();
+	const auto disabledEventSink = make_shared<NoopRuntimeEventSink>();
+	const auto disabledCloudPost = make_shared<NetworkDisabledCloudPostHook>();
+	next->offlineBackup = createBackup(
+		disabledHotBackup, disabledEventSink, disabledCloudPost);
+	if (!dependencies_.noNetwork) {
+		next->onlineBackup = createBackup(
+			next->hotBackup, next->eventSink, next->cloudPost);
+	}
 
-	RestoreServiceDependencies restoreDependencies;
-	restoreDependencies.paths = paths_;
-	restoreDependencies.isWorldOccupied = IsRuntimeWorldOccupied;
-	restoreDependencies.backupBeforeRestore = [state](
-		const BackupRequest& request,
-		stop_token stopToken) {
-		return state->backup->Run(request, stopToken);
+	auto createRestore = [this](BackupService* backup) {
+		RestoreServiceDependencies restoreDependencies;
+		restoreDependencies.paths = paths_;
+		restoreDependencies.isWorldOccupied = IsRuntimeWorldOccupied;
+		restoreDependencies.backupBeforeRestore = [backup](
+			const BackupRequest& request,
+			stop_token stopToken) {
+			return backup->Run(request, stopToken);
+		};
+		return make_unique<RestoreService>(std::move(restoreDependencies));
 	};
-	next->restore = make_unique<RestoreService>(std::move(restoreDependencies));
+	next->offlineRestore = createRestore(next->offlineBackup.get());
+	if (next->onlineBackup) {
+		next->onlineRestore = createRestore(next->onlineBackup.get());
+	}
 	implementation_ = std::move(next);
 	result.code = OperationCode::Success;
 	return result;
@@ -185,6 +208,10 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 
 bool ProfileRuntime::IsReady() const noexcept {
 	return implementation_ != nullptr;
+}
+
+bool ProfileRuntime::NetworkEnabled() const noexcept {
+	return !dependencies_.noNetwork;
 }
 
 const AppPaths& ProfileRuntime::Paths() const noexcept { return paths_; }
@@ -255,7 +282,8 @@ BackupResult ProfileRuntime::RunBackup(
 	const wstring& configId,
 	const wstring& worldPath,
 	const wstring& comment,
-	stop_token stopToken) const {
+	stop_token stopToken,
+	bool noNetwork) const {
 	const auto request = ResolveBackup(configId, worldPath, comment);
 	if (!request) {
 		return FailedBackup(OperationCode::TargetNotFound,
@@ -269,12 +297,15 @@ BackupResult ProfileRuntime::RunBackup(
 		result.diagnostics = preflight.diagnostics;
 		return result;
 	}
-	return implementation_->backup->Run(*request, stopToken);
+	BackupService* backup = !noNetwork && implementation_->onlineBackup
+		? implementation_->onlineBackup.get() : implementation_->offlineBackup.get();
+	return backup->Run(*request, stopToken);
 }
 
 JobRunResult ProfileRuntime::RunJob(
 	const wstring& jobId,
-	stop_token stopToken) const {
+	stop_token stopToken,
+	bool noNetwork) const {
 	JobRunResult missing;
 	missing.jobId = jobId;
 	const Job* job = implementation_ ? JobStorage::Find(implementation_->jobs, jobId) : nullptr;
@@ -284,6 +315,8 @@ JobRunResult ProfileRuntime::RunJob(
 			"job.not_found", DiagnosticSeverity::Error, wstring_to_utf8(jobId)});
 		return missing;
 	}
+	BackupService* backup = !noNetwork && implementation_->onlineBackup
+		? implementation_->onlineBackup.get() : implementation_->offlineBackup.get();
 	JobRunner runner({
 		[this](const JobBackupTarget& target) {
 			return ResolveBackup(target.configId, target.worldPath, target.comment);
@@ -292,8 +325,8 @@ JobRunResult ProfileRuntime::RunJob(
 			const auto current = PreflightBackup(request, stopToken);
 			return JobPreflightResult{current.code, current.diagnostics};
 		},
-		[this](const BackupRequest& request, stop_token token) {
-			return implementation_->backup->Run(request, token);
+		[backup](const BackupRequest& request, stop_token token) {
+			return backup->Run(request, token);
 		},
 		[](const ProcessSpec& process, stop_token token) {
 			return ProcessRunner::Run(process, token);
@@ -321,13 +354,14 @@ RestorePlan ProfileRuntime::Verify(
 			return plan;
 		}
 	}
-	return implementation_->restore->Verify(request, stopToken);
+	return implementation_->offlineRestore->Verify(request, stopToken);
 }
 
 RestoreResult ProfileRuntime::Restore(
 	const RestoreRequest& request,
 	bool dryRun,
-	stop_token stopToken) const {
+	stop_token stopToken,
+	bool noNetwork) const {
 	const auto verified = Verify(request, stopToken);
 	if (!IsSuccessful(verified.code)) {
 		RestoreResult result;
@@ -337,5 +371,7 @@ RestoreResult ProfileRuntime::Restore(
 		result.diagnostics = verified.diagnostics;
 		return result;
 	}
-	return implementation_->restore->Run(request, dryRun, stopToken);
+	RestoreService* restore = !noNetwork && implementation_->onlineRestore
+		? implementation_->onlineRestore.get() : implementation_->offlineRestore.get();
+	return restore->Run(request, dryRun, stopToken);
 }
