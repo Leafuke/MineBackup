@@ -1,6 +1,7 @@
 #include "ProfileConfigCatalogTests.h"
 
 #include "ProfileConfigCatalog.h"
+#include "ProfileConfigRepository.h"
 
 #include <fstream>
 
@@ -74,5 +75,68 @@ void RunProfileConfigCatalogTests(
 	test.Expect(future.status == ProfileCatalogStatus::Invalid
 			&& !future.diagnostics.empty(),
 		"Future special-task schemas should be rejected without legacy fallback");
+
+	const filesystem::path repositoryConfig = root / "repository.ini";
+	WriteText(repositoryConfig,
+		"[General]\n"
+		"Language=zh_CN\n"
+		"ExtensionGlobal=keep\n"
+		"RestoreWhitelistItem=session.lock\n\n"
+		"[Config4]\n"
+		"ConfigName=Before\n"
+		"ConfigId=repository-config\n"
+		"SavePath=C:/before\n"
+		"WorldData=\nworld\ndescription\n*\n"
+		"BackupPath=C:/backup-before\n"
+		"ZipLevel=5\n"
+		"Theme=7\n"
+		"ExtensionConfig=keep\n\n"
+		"[SpCfg8]\n"
+		"Name=Ignored legacy data\n"
+		"SpecialConfigId=legacy-special\n");
+	ProfileConfigRepository repository(repositoryConfig);
+	auto snapshot = repository.Load();
+	test.Expect(snapshot.status == ProfileCatalogStatus::Loaded
+			&& snapshot.configs.size() == 1
+			&& snapshot.restorePreserve == vector<wstring>{L"session.lock"},
+		"ProfileConfigRepository should load server fields and restore preserve rules");
+	auto updated = snapshot.configs;
+	updated.at(4).name = "After";
+	updated.at(4).saveRoot = L"C:/after";
+	updated.at(4).backupPath = L"C:/backup-after";
+	updated.at(4).worlds = {{L"world", L"changed"}};
+	Config added;
+	added.configId = L"new-config";
+	added.name = "Added";
+	added.saveRoot = L"C:/server";
+	added.backupPath = L"C:/backups";
+	added.worlds = {{L"new-world", L"New world"}};
+	updated.emplace(9, added);
+	const auto saved = repository.Save(
+		updated, {L"session.lock", L"ops-marker.txt"}, false);
+	ifstream mergedInput(repositoryConfig, ios::binary);
+	const string merged((istreambuf_iterator<char>(mergedInput)), {});
+	mergedInput.close();
+	test.Expect(saved.success
+			&& merged.find("ConfigName=After") != string::npos
+			&& merged.find("ExtensionGlobal=keep") != string::npos
+			&& merged.find("Theme=7") != string::npos
+			&& merged.find("ExtensionConfig=keep") != string::npos
+			&& merged.find("[SpCfg8]") != string::npos
+			&& merged.find("RestoreWhitelistItem=ops-marker.txt") != string::npos,
+		"Repository writes should update managed fields while preserving desktop and unknown fields");
+
+	map<int, Config> onlyAdded{{1, added}};
+	const auto pruned = repository.Save(onlyAdded, {L"session.lock"}, true);
+	ifstream prunedInput(repositoryConfig, ios::binary);
+	const string prunedText((istreambuf_iterator<char>(prunedInput)), {});
+	test.Expect(pruned.success,
+		"Repository prune should commit atomically");
+	test.Expect(prunedText.find("ConfigId=repository-config") == string::npos,
+		"Repository prune should remove missing Config sections");
+	test.Expect(prunedText.find("ConfigId=new-config") != string::npos,
+		"Repository prune should retain Config sections present in the desired snapshot");
+	test.Expect(prunedText.find("[SpCfg8]") != string::npos,
+		"Repository prune should retain legacy non-Config sections");
 }
 
