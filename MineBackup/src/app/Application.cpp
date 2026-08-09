@@ -619,11 +619,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 					g_appState.currentConfigIndex = index;
 				}
 			}
-			else if (request.type == InstanceRequestType::RunSpecial) {
-				PLATFORM_PRINTF_WARNING("platform.single_instance.special_disabled",
-					"Ignored a deprecated desktop special-run request for stable ID %s.",
-					wstring_to_utf8(request.stableId).c_str());
-			}
 		}
 		if (!instanceError.empty()) {
 			PLATFORM_PRINTF_WARNING("platform.single_instance.poll_failed",

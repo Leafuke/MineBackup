@@ -423,6 +423,49 @@ void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
         test.Expect(requests.size() == 1 && requests.front().type == InstanceRequestType::SelectConfig
             && requests.front().stableId == L"stable-config-id", "the primary instance should decode the IPC request");
 
+		InstanceControlResponse clientResponse;
+		std::wstring clientError;
+		bool exchanged = false;
+		std::jthread client([&] {
+			exchanged = secondary.Exchange({
+				"request-1", InstanceControlRequestType::Execute,
+				{L"--json", L"世界"}, {}},
+				clientResponse, clientError, std::chrono::seconds(5));
+		});
+		std::vector<InstanceControlExchange> controls;
+		const auto controlDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(2);
+		while (controls.empty() && std::chrono::steady_clock::now() < controlDeadline) {
+			controls = primary.PollControlRequests(error);
+			if (controls.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		test.Expect(controls.size() == 1
+				&& controls.front().request.requestId == "request-1"
+				&& controls.front().request.arguments == std::vector<std::wstring>{L"--json", L"世界"},
+			"protocol v2 should preserve request identity and Unicode argument vectors");
+		if (!controls.empty()) {
+			InstanceControlResponse serverResponse;
+			serverResponse.requestId = controls.front().request.requestId;
+			serverResponse.accepted = true;
+			serverResponse.role = InstanceRuntimeRole::Serve;
+			serverResponse.capabilities = {"execute", "cancel", "status", "stop"};
+			serverResponse.operationId = "operation-1";
+			serverResponse.exitCode = 0;
+			serverResponse.payload = R"({"schemaVersion":1,"code":"success"})";
+			test.Expect(primary.Reply(
+				controls.front().connectionId, serverResponse, error),
+				"protocol v2 server should send a final response on the accepted connection");
+		}
+		client.join();
+		if (!exchanged && !clientError.empty()) {
+			std::wcerr << L"[DETAIL] control IPC: " << clientError << L'\n';
+		}
+		test.Expect(exchanged && clientResponse.accepted
+				&& clientResponse.role == InstanceRuntimeRole::Serve
+				&& clientResponse.operationId == "operation-1"
+				&& clientResponse.exitCode == 0,
+			"protocol v2 client should receive role, capabilities, operationId and final exit code");
+
         const std::wstring oversizedId(70u * 1024u, L'x');
         test.Expect(!secondary.Send({InstanceRequestType::SelectConfig, oversizedId}, error),
             "instance IPC should reject payloads above the protocol limit");
