@@ -8,15 +8,16 @@
 | macOS arm64 | macOS 15 and later | `MineBackup-1.16.0-macos-arm64.dmg` | Native dialogs, menu bar, notifications and hotkeys |
 
 Backup, restore, history, FolderRewind metadata, rclone cloud workflows and
-automatic tasks share the same data contracts on all three platforms. Linux
+one-shot Jobs share the same data contracts on all three platforms. Linux
 desktop features are environment-dependent: the UI reports `Available`,
 `Unavailable`, `PermissionRequired` or `Failed` and explains the active reason.
 Missing portals, a missing StatusNotifier host or a rejected shortcut must not
 disable backup and restore or make the main window unreachable.
 
-Desktop special-task execution and its Windows/macOS login startup integration
-are disabled. The source tree provides a desktop-free CLI replacement, but it
-is not included in the release assets yet; see [Headless CLI](headless-cli.md).
+SpecialConfig and built-in scheduling are removed. Windows x64 publishes a
+headless CLI ZIP; Ubuntu/Debian x86_64 publish a CLI tar and deb with bundled
+7zz. macOS retains CLI-only build validation without a formal server asset; see
+[Headless CLI](headless-cli.md).
 
 ## Logging verification
 

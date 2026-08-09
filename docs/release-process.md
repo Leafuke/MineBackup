@@ -5,7 +5,8 @@ candidates. A `v1.16.0` tag starts one orchestration workflow; platform jobs
 upload non-public candidate artifacts and never query or mutate the "latest"
 GitHub Release.
 
-The convergence job accepts only the four fixed asset names, checks that the
+The convergence job accepts only the seven fixed asset names (four desktop
+assets plus Windows ZIP, Linux tar and Linux deb server assets), checks that the
 annotated tag and every candidate refer to the same commit, and generates
 `release-manifest.json`, `dependency-manifest.json` and `SHA256SUMS`. The only
 publishing job uses the protected `release` environment. It uploads to a draft

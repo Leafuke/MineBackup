@@ -104,13 +104,13 @@ cmake --build --preset windows-msvc-x64-release  # Windows
 切换 Off/Info/Debug，并从日志面板导出已知路径脱敏的诊断副本。位置、保留、
 隐私边界和排障步骤见[日志与诊断说明](docs/logging-and-diagnostics.md)。
 
-### Headless CLI 开发者预览
+### 无头服务器 CLI
 
-仓库现已提供完全不依赖桌面组件的 `minebackup-cli` 构建，用于诊断、查询、
-自动备份和特殊任务执行；它暂未进入正式发行资产。旧桌面
-`--run-special`、`-specialcfg` 和 `--autostart` 执行路径已经停用，源码构建
-用户应改用 CLI。命令、退出码、JSON、信号、网络行为与迁移限制见
-[Headless CLI 使用与兼容性说明](docs/headless-cli.md)。
+`minebackup-cli` 无需启动 GUI，即可从 manifest 初始化配置档、运行分阶段 Job、
+执行 Full/Smart 备份、校验归档链并在显式确认后完成冷还原。正式发行提供
+Windows ZIP 与 Linux tar/deb 服务器资产，并包含示例和外部调度模板。已移除的
+SpecialConfig 与内置调度不会迁移或执行。部署、JSON、还原和
+systemd/Task Scheduler 运维见[无头服务器 CLI 指南](docs/headless-cli.md)。
 
 ---
 
