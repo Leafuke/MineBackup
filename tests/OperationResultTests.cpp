@@ -22,7 +22,9 @@ void RunOperationResultTests(TestContext& test) {
 		ExpectedCode{OperationCode::InvalidProfile, "invalid_profile", 5},
 		ExpectedCode{OperationCode::ToolUnavailable, "tool_unavailable", 8},
 		ExpectedCode{OperationCode::BackupFailed, "backup_failed", 6},
-		ExpectedCode{OperationCode::TaskFailed, "task_failed", 6},
+		ExpectedCode{OperationCode::JobFailed, "job_failed", 6},
+		ExpectedCode{OperationCode::VerificationFailed, "verification_failed", 6},
+		ExpectedCode{OperationCode::RestoreFailed, "restore_failed", 7},
 		ExpectedCode{OperationCode::Cancelled, "cancelled", 9},
 		ExpectedCode{OperationCode::PartialSuccess, "partial_success", 10}};
 	for (const auto& item : expected) {
@@ -35,28 +37,6 @@ void RunOperationResultTests(TestContext& test) {
 			&& IsSuccessful(OperationCode::NoChanges)
 			&& !IsSuccessful(OperationCode::PartialSuccess),
 		"only success and no_changes should be fully successful");
-
-	test.Expect(AggregateSpecialTaskCodes({}) == OperationCode::Success,
-		"an empty enabled task set should succeed");
-	test.Expect(AggregateSpecialTaskCodes({
-			{L"one", OperationCode::NoChanges, {}},
-			{L"two", OperationCode::NoChanges, {}}}) == OperationCode::NoChanges,
-		"all no-change tasks should aggregate to no_changes");
-	test.Expect(AggregateSpecialTaskCodes({
-			{L"one", OperationCode::Success, {}},
-			{L"two", OperationCode::TaskFailed, {}}}) == OperationCode::PartialSuccess,
-		"mixed task success and failure should aggregate to partial_success");
-	test.Expect(AggregateSpecialTaskCodes({
-			{L"cloud", OperationCode::PartialSuccess, {}}}) == OperationCode::PartialSuccess,
-		"a local backup with failed cloud post-processing should remain partial_success");
-	test.Expect(AggregateSpecialTaskCodes({
-			{L"one", OperationCode::BackupFailed, {}},
-			{L"two", OperationCode::ToolUnavailable, {}}}) == OperationCode::TaskFailed,
-		"all failed tasks should aggregate to task_failed");
-	test.Expect(AggregateSpecialTaskCodes({
-			{L"one", OperationCode::Success, {}},
-			{L"two", OperationCode::Cancelled, {}}}) == OperationCode::Cancelled,
-		"cancellation should take precedence over partial success");
 
 	test.Expect(std::string(ToString(DiagnosticSeverity::Info)) == "info"
 			&& std::string(ToString(DiagnosticSeverity::Warning)) == "warning"

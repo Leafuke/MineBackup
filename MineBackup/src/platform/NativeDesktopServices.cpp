@@ -102,7 +102,7 @@ CapabilityStatus ConfigureWindowsAutostart(const fs::path& executablePath, bool 
     wstring diagnostic;
     if (enabled) {
         // --autostart 是 GUI 登录启动的内部标记；特殊任务由 CLI 的
-        // run-special 子命令负责，启动项不再携带任务配置或数字索引。
+        // Job 由外部调度器调用 CLI；GUI 登录启动项不携带任务配置。
         const wstring command = L"\"" + executablePath.wstring() + L"\" --autostart";
         const bool unchanged = existingValue && existingType == REG_SZ
             && existingCommand.size() == command.size()

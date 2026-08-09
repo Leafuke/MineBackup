@@ -152,12 +152,6 @@ void GameSessionWatcherThread(stop_token stopToken) {
 			if (cfgIt != g_appState.configs.end()) {
 				backupOnStart = cfgIt->second.backupOnGameStart;
 			}
-			if (!backupOnStart) {
-				auto spIt = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
-				if (spIt != g_appState.specialConfigs.end()) {
-					backupOnStart = spIt->second.backupOnGameStart;
-				}
-			}
 		}
 
 		if (!worlds_to_backup.empty() && backupOnStart) {

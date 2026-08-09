@@ -23,14 +23,6 @@ struct ProcessSpec {
     bool useLowPriority = false;
 };
 
-struct ShellTaskSpec {
-    std::wstring command;
-    std::filesystem::path workingDirectory;
-    std::chrono::milliseconds timeout{0};
-    std::size_t maximumCapturedBytes = 4u * 1024u * 1024u;
-    bool useLowPriority = false;
-};
-
 struct ProcessResult {
     ProcessStatus status = ProcessStatus::FailedToStart;
     int exitCode = -1;
@@ -42,5 +34,4 @@ struct ProcessResult {
 
 namespace ProcessRunner {
 ProcessResult Run(const ProcessSpec& spec, std::stop_token stopToken = {});
-ProcessResult RunShellTask(const ShellTaskSpec& spec, std::stop_token stopToken = {});
 }

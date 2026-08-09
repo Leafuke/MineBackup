@@ -20,7 +20,6 @@
 #include "ExternalToolManager.h"
 #include "PortableConfigDocument.h"
 #include "DesktopServices.h"
-#include "SpecialConfigPolicy.h"
 #include "LegacyServicePolicy.h"
 #include "text_to_text.h"
 #include "BackupPipelineTest.h"
@@ -247,16 +246,19 @@ void TestMigrationCoordinator(TestContext& test, const std::filesystem::path& ro
 }
 
 void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path& root) {
-    LaunchOptions options;
+	LaunchOptions options;
+	LaunchOptions rejected;
     std::wstring error;
     const auto profile = std::filesystem::absolute(root / "explicit-profile");
-    test.Expect(ParseLaunchOptions(
-        {L"MineBackup", L"--data-dir", profile.wstring(), L"--autostart",
-            L"--select-config", L"config-id", L"--run-special", L"special-id"},
-        options, error), "known launch options should parse");
-    test.Expect(options.autostart && options.selectConfigId == L"config-id"
-        && options.runSpecialId == L"special-id", "launch option values should be retained");
-    LaunchOptions rejected;
+	test.Expect(ParseLaunchOptions(
+		{L"MineBackup", L"--data-dir", profile.wstring(), L"--autostart",
+			L"--select-config", L"config-id"},
+		options, error), "known launch options should parse");
+	test.Expect(options.autostart && options.selectConfigId == L"config-id",
+		"launch option values should be retained");
+	test.Expect(!ParseLaunchOptions(
+		{L"MineBackup", L"--run-special", L"special-id"}, rejected, error),
+		"removed special-run launch options should be rejected");
     test.Expect(!ParseLaunchOptions({L"MineBackup", L"--data-dir"}, rejected, error),
         "a launch option with a missing value should be rejected");
     test.Expect(!ParseLaunchOptions({L"MineBackup", L"--unknown"}, rejected, error),

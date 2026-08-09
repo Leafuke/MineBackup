@@ -88,12 +88,6 @@ if(NOT history_count EQUAL 0)
     message(FATAL_ERROR "history list should be empty for a new profile: ${history_json}")
 endif()
 
-foreach(query_json IN ITEMS config_json world_json history_json)
-    string(JSON diagnostic_count LENGTH "${${query_json}}" diagnostics)
-    if(diagnostic_count LESS 1)
-        message(FATAL_ERROR "read-only commands must report pending task migration")
-    endif()
-endforeach()
 if(EXISTS "${PROFILE}/config/special-tasks.json")
     message(FATAL_ERROR "read-only commands must not migrate legacy special tasks")
 endif()
@@ -145,12 +139,13 @@ string(STRIP "${script_doctor_json}" script_doctor_json)
 string(JSON script_doctor_schema ERROR_VARIABLE script_doctor_json_error
     GET "${script_doctor_json}" schemaVersion)
 string(JSON script_doctor_code GET "${script_doctor_json}" code)
-string(JSON script_count GET "${script_doctor_json}" data unsupportedScriptTaskCount)
-if(NOT script_doctor_result EQUAL 5 OR script_doctor_json_error
-        OR NOT script_doctor_schema EQUAL 1
-        OR NOT script_doctor_code STREQUAL "invalid_profile"
-        OR NOT script_count EQUAL 1)
+string(JSON ignored_sections GET "${script_doctor_json}" data legacySpecialConfigSectionsIgnored)
+string(JSON ignored_document GET "${script_doctor_json}" data legacySpecialTasksFileIgnored)
+if(NOT script_doctor_result EQUAL 8 OR script_doctor_json_error
+		OR NOT script_doctor_schema EQUAL 1
+		OR NOT script_doctor_code STREQUAL "tool_unavailable"
+        OR NOT ignored_sections EQUAL 1 OR NOT ignored_document)
     message(FATAL_ERROR
-        "doctor must report preserved Script tasks as unsupported: "
+        "doctor must report retained legacy special data as ignored: "
         "${script_doctor_error}\n${script_doctor_json}")
 endif()

@@ -16,11 +16,8 @@ enum class ProfileCatalogStatus {
 
 struct ProfileConfigCatalog {
 	std::map<int, Config> configs;
-	std::map<int, SpecialConfig> specialConfigs;
-	bool specialTaskMigrationPending = false;
 
 	const Config* FindConfig(const std::wstring& configId) const;
-	const SpecialConfig* FindSpecialConfig(const std::wstring& specialConfigId) const;
 	std::map<int, Config> ConfigSnapshot() const { return configs; }
 };
 
@@ -35,7 +32,6 @@ struct ProfileCatalogLoadResult {
 class ProfileConfigCatalogLoader {
 public:
 	static ProfileCatalogLoadResult Load(
-		const std::filesystem::path& configFile,
-		const std::filesystem::path& specialTasksFile);
+		const std::filesystem::path& configFile);
 };
 

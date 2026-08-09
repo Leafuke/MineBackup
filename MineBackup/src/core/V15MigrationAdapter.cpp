@@ -416,11 +416,6 @@ MigrationReport RunStartupMigration() {
 		changed = true;
 		configUnit.migratedItems++;
 	}
-	for (auto& [index, config] : g_appState.specialConfigs) {
-		if (!config.legacySpecialConfigIdGenerated) continue;
-		changed = true;
-		configUnit.migratedItems++;
-	}
 	if (changed) {
 		filesystem::path snapshot;
 		const auto configPath = MigrationCoordinator::GetPaths().configFile;
@@ -430,7 +425,6 @@ MigrationReport RunStartupMigration() {
 				configUnit.status = MigrationStatus::Succeeded;
 				configUnit.message = L"Stable ConfigId values were persisted for 1.15 configurations.";
 				for (auto& [index, config] : g_appState.configs) config.legacyConfigIdGenerated = false;
-				for (auto& [index, config] : g_appState.specialConfigs) config.legacySpecialConfigIdGenerated = false;
 			}
 			else {
 				configUnit.status = MigrationStatus::Failed;

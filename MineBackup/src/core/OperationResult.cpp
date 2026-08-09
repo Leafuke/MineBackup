@@ -14,7 +14,6 @@ const char* ToString(OperationCode code) noexcept {
 	case OperationCode::JobFailed: return "job_failed";
 	case OperationCode::VerificationFailed: return "verification_failed";
 	case OperationCode::RestoreFailed: return "restore_failed";
-	case OperationCode::TaskFailed: return "task_failed";
 	case OperationCode::Cancelled: return "cancelled";
 	case OperationCode::PartialSuccess: return "partial_success";
 	}
@@ -70,7 +69,6 @@ int ToExitCode(OperationCode code) noexcept {
 	case OperationCode::BackupFailed:
 	case OperationCode::JobFailed:
 	case OperationCode::VerificationFailed:
-	case OperationCode::TaskFailed:
 		return 6;
 	case OperationCode::RestoreFailed:
 		return 7;
@@ -82,32 +80,4 @@ int ToExitCode(OperationCode code) noexcept {
 		return 10;
 	}
 	return 5;
-}
-
-OperationCode AggregateSpecialTaskCodes(
-	const std::vector<SpecialTaskResult>& tasks) noexcept {
-	if (tasks.empty()) return OperationCode::Success;
-	bool hasSuccess = false;
-	bool hasFailure = false;
-	bool hasPartialSuccess = false;
-	bool allNoChanges = true;
-	for (const auto& task : tasks) {
-		if (task.code == OperationCode::Cancelled) return OperationCode::Cancelled;
-		if (task.code == OperationCode::PartialSuccess) {
-			hasPartialSuccess = true;
-			allNoChanges = false;
-			continue;
-		}
-		if (IsSuccessful(task.code)) {
-			hasSuccess = true;
-			if (task.code != OperationCode::NoChanges) allNoChanges = false;
-		}
-		else {
-			hasFailure = true;
-		}
-	}
-	if (hasPartialSuccess) return OperationCode::PartialSuccess;
-	if (hasSuccess && hasFailure) return OperationCode::PartialSuccess;
-	if (hasFailure) return OperationCode::TaskFailed;
-	return allNoChanges ? OperationCode::NoChanges : OperationCode::Success;
 }

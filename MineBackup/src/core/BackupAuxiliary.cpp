@@ -272,7 +272,7 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 			BACKUP_INFO(L("LOG_BACKUP_OTHERS_END"));
 			return;
 		}
-		LimitBackupFiles(config, g_appState.realConfigIndex, destinationFolder.wstring(), config.keepCount);
+		LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount);
 		AddHistoryEntry(g_appState.currentConfigIndex, storagePaths.folderName, archiveFileName, L"Full", comment, othersPath.wstring());
 	}
 

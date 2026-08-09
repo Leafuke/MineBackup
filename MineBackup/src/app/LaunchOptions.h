@@ -10,9 +10,7 @@ struct LaunchOptions {
     bool autostart = false;
     bool silentStartup = false;
     std::wstring selectConfigId;
-    std::wstring runSpecialId;
-    std::wstring legacyServiceCleanup;
-    std::optional<int> legacySpecialConfigIndex;
+	std::wstring legacyServiceCleanup;
     bool legacyServiceMode = false;
 };
 

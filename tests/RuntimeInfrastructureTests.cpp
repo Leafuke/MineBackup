@@ -19,7 +19,6 @@
 #include "ExternalToolManager.h"
 #include "PortableConfigDocument.h"
 #include "DesktopServices.h"
-#include "SpecialConfigPolicy.h"
 #include "LegacyServicePolicy.h"
 #include "text_to_text.h"
 #include "BackupPipelineTest.h"
@@ -348,33 +347,6 @@ void TestDesktopServicesAndCapabilities(TestContext& test) {
     test.Expect(CanHideToTray(mock->Capabilities()),
         "an available tray should allow hide-to-tray for the current run");
     ResetDesktopServices();
-}
-
-void TestSpecialConfigExecutionPolicy(TestContext& test) {
-    std::map<int, SpecialConfig> configs;
-    configs[8].autoExecute = true;
-    configs[8].runOnStartup = true;
-    configs[2].autoExecute = true;
-    configs[2].runOnStartup = true;
-    configs[5].autoExecute = true;
-    configs[5].runOnStartup = true;
-
-    const auto normalized = NormalizeSpecialConfigExecutionPolicy(configs);
-    test.Expect(normalized.autoExecuteIndex == 2 && normalized.runOnStartupIndex == 2,
-        "duplicate startup selections should retain the lowest deterministic config index");
-    test.Expect(normalized.disabledDuplicateAutoExecute == 2
-        && normalized.disabledDuplicateRunOnStartup == 2,
-        "normalization should report every disabled duplicate startup selection");
-    test.Expect(configs[2].autoExecute && !configs[5].autoExecute && !configs[8].autoExecute,
-        "at most one special configuration may auto-execute");
-
-    SetExclusiveSpecialAutoExecute(configs, 8, true);
-    test.Expect(configs[8].autoExecute && !configs[2].autoExecute && !configs[5].autoExecute,
-        "enabling a new auto-execute target should disable the old target");
-    SetExclusiveSpecialRunOnStartup(configs, 5, true);
-    test.Expect(FindSpecialRunOnStartup(configs) == 5
-        && configs[5].runOnStartup && !configs[2].runOnStartup && !configs[8].runOnStartup,
-        "OS autostart should resolve to exactly one persisted special configuration");
 }
 
 void TestLoggingCore(TestContext& test, const std::filesystem::path& root) {
@@ -707,7 +679,6 @@ void RunRuntimeInfrastructureTests(
     TestNetworkService(test, root);
     TestKnotLinkPackageManifest(test);
     TestDesktopServicesAndCapabilities(test);
-    TestSpecialConfigExecutionPolicy(test);
     TestLoggingCore(test, root);
     TestLoggingStressAndRotation(test, root);
     TestLoggingFailureAndDiagnostics(test, root);

@@ -24,8 +24,6 @@ struct WorldSelectionKey {
 
 std::vector<DisplayWorld> BuildDisplayWorlds(
 	const std::map<int, Config>& configs,
-	const std::map<int, SpecialConfig>& specialConfigs,
-	int selectedConfigIndex,
-	bool specialSelection);
+	int selectedConfigIndex);
 
 bool IsNarrowWorldListLayout(float availableWidth, float em);

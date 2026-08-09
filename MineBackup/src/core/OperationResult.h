@@ -20,7 +20,6 @@ enum class OperationCode {
 	JobFailed,
 	VerificationFailed,
 	RestoreFailed,
-	TaskFailed,
 	Cancelled,
 	PartialSuccess
 };
@@ -69,18 +68,6 @@ struct BackupResult {
 	std::vector<Diagnostic> diagnostics;
 };
 
-struct SpecialTaskResult {
-	std::wstring taskId;
-	OperationCode code = OperationCode::TaskFailed;
-	std::vector<Diagnostic> diagnostics;
-};
-
-struct SpecialRunResult {
-	OperationCode code = OperationCode::TaskFailed;
-	std::vector<SpecialTaskResult> tasks;
-	std::vector<Diagnostic> diagnostics;
-};
-
 const char* ToString(OperationCode code) noexcept;
 const char* ToString(DiagnosticSeverity severity) noexcept;
 const char* ToString(BackupOutcome outcome) noexcept;
@@ -88,5 +75,3 @@ const char* ToString(CloudPostStatus status) noexcept;
 
 bool IsSuccessful(OperationCode code) noexcept;
 int ToExitCode(OperationCode code) noexcept;
-OperationCode AggregateSpecialTaskCodes(
-	const std::vector<SpecialTaskResult>& tasks) noexcept;

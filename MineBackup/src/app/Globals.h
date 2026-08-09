@@ -103,11 +103,6 @@ struct CoreValidationRuntimeState {
 	std::atomic<bool> running{ false };
 };
 
-struct SpecialTaskRuntimeState {
-	std::atomic<bool> tasksRunning{ false };
-	std::atomic<bool> tasksComplete{ false };
-};
-
 struct ExternalToolRuntimeState {
 	bool rcloneInstallRunning = false;
 	bool rcloneInstallSucceeded = false;
@@ -124,7 +119,6 @@ struct AppGlobalState {
 	AppUpdateState update;
 	AppUiState ui;
 	AppSettingsState settings;
-	SpecialTaskRuntimeState specialTasks;
 	CoreValidationRuntimeState coreValidation;
 	ExternalToolRuntimeState externalTools;
 };
@@ -187,8 +181,6 @@ inline int& g_hotKeyBackupId = g_globals.settings.hotKeyBackupId;
 inline int& g_hotKeyRestoreId = g_globals.settings.hotKeyRestoreId;
 inline std::vector<std::wstring>& restoreWhitelist = g_globals.settings.restoreWhitelist;
 
-inline std::atomic<bool>& specialTasksRunning = g_globals.specialTasks.tasksRunning;
-inline std::atomic<bool>& specialTasksComplete = g_globals.specialTasks.tasksComplete;
 inline std::atomic<bool>& g_CoreValidationRunning = g_globals.coreValidation.running;
 inline bool& g_RcloneInstallRunning = g_globals.externalTools.rcloneInstallRunning;
 inline bool& g_RcloneInstallSucceeded = g_globals.externalTools.rcloneInstallSucceeded;

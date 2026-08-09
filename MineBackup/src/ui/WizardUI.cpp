@@ -448,7 +448,6 @@ void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtr
 				} else {
 					Fontss = GetDefaultUIFontPath();
 				}
-				g_appState.specialConfigs.clear();
 				g_CoreValidationPending.store(true);
 				g_CoreValidationPassed.store(false);
 

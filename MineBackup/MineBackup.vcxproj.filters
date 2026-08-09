@@ -186,12 +186,6 @@
     <ClCompile Include="src\core\PathRuleSet.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
-	<ClCompile Include="src\core\SpecialTaskDocument.cpp">
-	  <Filter>src\core</Filter>
-	</ClCompile>
-	<ClCompile Include="src\core\SpecialTaskRunner.cpp">
-	  <Filter>src\core</Filter>
-	</ClCompile>
     <ClCompile Include="src\core\TaskCoordinator.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -205,9 +199,6 @@
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\RcloneClient.cpp">
-      <Filter>src\core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\core\SpecialConfigPolicy.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\LegacyServicePolicy.cpp">
@@ -482,18 +473,6 @@
     <ClInclude Include="src\core\PortableConfigDocument.h">
       <Filter>src\core</Filter>
     </ClInclude>
-    <ClInclude Include="src\core\SpecialConfigPolicy.h">
-      <Filter>src\core</Filter>
-    </ClInclude>
-	<ClInclude Include="src\core\SpecialTaskDocument.h">
-	  <Filter>src\core</Filter>
-	</ClInclude>
-	<ClInclude Include="src\core\SpecialTaskRunner.h">
-	  <Filter>src\core</Filter>
-	</ClInclude>
-	<ClInclude Include="src\core\SpecialTaskModels.h">
-	  <Filter>src\core</Filter>
-	</ClInclude>
     <ClInclude Include="src\core\LegacyServicePolicy.h">
       <Filter>src\core</Filter>
     </ClInclude>

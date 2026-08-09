@@ -185,8 +185,7 @@ ProfileConfigSnapshot ProfileConfigRepository::Load() const {
 		snapshot.status = ProfileCatalogStatus::Missing;
 		return snapshot;
 	}
-	const auto loaded = ProfileConfigCatalogLoader::Load(
-		configFile_, configFile_.parent_path() / L".minebackup-ignore-special-tasks.json");
+	const auto loaded = ProfileConfigCatalogLoader::Load(configFile_);
 	snapshot.status = loaded.status;
 	snapshot.configs = loaded.catalog.configs;
 	snapshot.diagnostics = loaded.diagnostics;

@@ -12,7 +12,6 @@ bool SaveConfigs();
 bool SaveConfigs(const std::filesystem::path& filename);
 void AddHistoryEntry(int configIndex, const std::wstring& worldName, const std::wstring& backupFile, const std::wstring& backupType, const std::wstring& comment, const std::wstring& worldPath = L"");
 void RemoveHistoryEntry(int configIndex, const std::wstring& backupFileToRemove);
-int CreateNewSpecialConfig(const std::string& name_hint = "None");
 int CreateNewNormalConfig(const std::string& name_hint = "None");
 void AssignFreshNormalConfigId(int configIndex);
 void EnsureConfigIds();

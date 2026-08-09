@@ -19,7 +19,6 @@
 #include "ExternalToolManager.h"
 #include "PortableConfigDocument.h"
 #include "DesktopServices.h"
-#include "SpecialConfigPolicy.h"
 #include "LegacyServicePolicy.h"
 #include "text_to_text.h"
 #include "BackupPipelineTest.h"
@@ -95,16 +94,6 @@ void TestProcessRunner(TestContext& test, const std::filesystem::path& executabl
 	test.Expect(result.status == ProcessStatus::Succeeded
 		&& std::filesystem::equivalent(std::filesystem::path(utf8_to_wstring(result.standardOutput)), root),
 		"ProcessRunner should apply a working directory without mutating the parent process");
-
-	ShellTaskSpec shell;
-#ifdef _WIN32
-	shell.command = L"echo shell-task";
-#else
-	shell.command = L"printf shell-task";
-#endif
-	result = ProcessRunner::RunShellTask(shell);
-	test.Expect(result.status == ProcessStatus::Succeeded && result.standardOutput.find("shell-task") != std::string::npos,
-		"ShellTaskSpec should be the explicit raw-command execution boundary");
 
     const auto marker = root / "process-grandchild-marker";
     ProcessSpec timeout;

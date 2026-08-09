@@ -155,29 +155,11 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			});
 		if (deprecatedSpecialRequest) {
 			WriteEarlyLaunchError(
-				L"MineBackup: desktop special-task execution is disabled.\n"
-				L"Use: minebackup-cli [--data-dir <path>] run-special <SpecialConfigId>\n");
+				L"MineBackup: SpecialConfig and run-special have been removed.\n"
+				L"Create a Job and run it with minebackup-cli job run --job <JobId>.\n");
 			return 2;
 		}
 		MessageBoxWin("MineBackup", wstring_to_utf8(launchError), 2);
-		return 2;
-	}
-	if (!launchOptions.runSpecialId.empty()
-		|| launchOptions.legacySpecialConfigIndex.has_value()) {
-		wstring message =
-			L"MineBackup: desktop special-task execution is disabled.\n";
-		if (!launchOptions.runSpecialId.empty()) {
-			message += L"Use: minebackup-cli ";
-			if (launchOptions.dataDirectory) {
-				message += L"--data-dir \""
-					+ launchOptions.dataDirectory->wstring() + L"\" ";
-			}
-			message += L"run-special " + launchOptions.runSpecialId + L"\n";
-		}
-		else {
-			message += L"Use: minebackup-cli [--data-dir <path>] run-special <SpecialConfigId>\n";
-		}
-		WriteEarlyLaunchError(message);
 		return 2;
 	}
 	// Use the host language for any pre-configuration native prompts. Loading an
@@ -339,7 +321,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			return 4;
 		}
 		g_appState.currentConfigIndex = index;
-		g_appState.specialConfigMode = false;
 	}
 
 #ifdef _WIN32
@@ -636,7 +617,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 					request.stableId);
 				if (index >= 0) {
 					g_appState.currentConfigIndex = index;
-					g_appState.specialConfigMode = false;
 				}
 			}
 			else if (request.type == InstanceRequestType::RunSpecial) {

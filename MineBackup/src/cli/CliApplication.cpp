@@ -24,12 +24,11 @@
 #include "RuntimeFileLock.h"
 #include "RuntimeRetentionService.h"
 #include "SingleInstanceService.h"
-#include "SpecialTaskDocument.h"
-#include "SpecialTaskRunner.h"
 #include "text_to_text.h"
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <utility>
@@ -96,7 +95,7 @@ CliResult HistoryList(
 		return result;
 	}
 	wstring normalized;
-	if (!SpecialTaskStorage::TryNormalizeWorldPath(options.worldPath, normalized)
+	if (!JobStorage::TryNormalizeWorldPath(options.worldPath, normalized)
 		|| none_of(config->worlds.begin(), config->worlds.end(), [&](const auto& world) {
 			return world.first == normalized;
 		})) {
@@ -132,16 +131,19 @@ CliResult HistoryList(
 	return result;
 }
 
-void AppendTaskDiagnostics(
-	vector<Diagnostic>& destination,
-	const vector<SpecialTaskStorage::Diagnostic>& source) {
-	for (const auto& diagnostic : source) {
-		destination.push_back({
-			diagnostic.eventId,
-			diagnostic.severity == SpecialTaskStorage::DiagnosticSeverity::Fatal
-				? DiagnosticSeverity::Error : DiagnosticSeverity::Warning,
-			diagnostic.detail});
+struct BackupPreflightResult {
+	OperationCode code = OperationCode::Success;
+	vector<Diagnostic> diagnostics;
+};
+
+size_t CountIgnoredSpecialSections(const filesystem::path& configFile) {
+	ifstream input(configFile, ios::binary);
+	size_t count = 0;
+	for (string line; getline(input, line);) {
+		if (!line.empty() && line.back() == '\r') line.pop_back();
+		if (line.rfind("[SpCfg", 0) == 0 && line.ends_with(']')) ++count;
 	}
+	return count;
 }
 
 class CliBackupRuntime {
@@ -266,16 +268,12 @@ public:
 		return request;
 	}
 
-	optional<BackupRequest> Resolve(const SpecialTaskTarget& target) const {
-		return Resolve(target.configId, target.worldPath);
-	}
-
 	optional<BackupRequest> Resolve(const JobBackupTarget& target) const {
 		return Resolve(target.configId, target.worldPath, target.comment);
 	}
 
-	SpecialTaskPreflightResult Preflight(const BackupRequest& request) const {
-		SpecialTaskPreflightResult result;
+	BackupPreflightResult Preflight(const BackupRequest& request) const {
+		BackupPreflightResult result;
 		if (!filesystem::is_directory(request.sourcePath)) {
 			result.code = OperationCode::TargetNotFound;
 			result.diagnostics.push_back({
@@ -675,84 +673,6 @@ CliResult JobRunCommand(
 	return result;
 }
 
-CliResult RunSpecialCommand(
-	ProfileConfigCatalog& catalog,
-	const AppPaths& paths,
-	const CliOptions& options,
-	stop_token stopToken) {
-	CliResult result{"run-special", OperationCode::Success};
-	if (catalog.specialTaskMigrationPending) {
-		auto migration = SpecialTaskStorage::MigrateLegacy(
-			catalog.configs, catalog.specialConfigs);
-		AppendTaskDiagnostics(result.diagnostics, migration.diagnostics);
-		if (!migration.success) {
-			result.code = OperationCode::InvalidProfile;
-			return result;
-		}
-		wstring saveError;
-		if (!SpecialTaskStorage::Save(paths.SpecialTasksFile(), migration.document, saveError)) {
-			result.code = OperationCode::InvalidProfile;
-			result.diagnostics.push_back({
-				"special.migration.write_failed", DiagnosticSeverity::Error,
-				wstring_to_utf8(saveError)});
-			return result;
-		}
-		vector<SpecialTaskStorage::Diagnostic> validation;
-		if (!SpecialTaskStorage::ApplyAndValidate(
-				migration.document, catalog.configs, catalog.specialConfigs, validation)) {
-			result.code = OperationCode::InvalidProfile;
-			AppendTaskDiagnostics(result.diagnostics, validation);
-			return result;
-		}
-		AppendTaskDiagnostics(result.diagnostics, validation);
-		catalog.specialTaskMigrationPending = false;
-	}
-	const SpecialConfig* special = catalog.FindSpecialConfig(options.specialConfigId);
-	if (!special) {
-		result.code = OperationCode::TargetNotFound;
-		result.diagnostics.push_back({
-			"special.config.not_found", DiagnosticSeverity::Error,
-			wstring_to_utf8(options.specialConfigId)});
-		return result;
-	}
-
-	vector<Diagnostic> initialization;
-	CliBackupRuntime runtime(paths, catalog, options.noNetwork, stopToken);
-	const OperationCode initialized = runtime.Initialize(initialization);
-	result.diagnostics.insert(result.diagnostics.end(),
-		initialization.begin(), initialization.end());
-	if (!IsSuccessful(initialized)) {
-		result.code = initialized;
-		return result;
-	}
-	SpecialTaskRunner runner({
-		[&](const SpecialTaskTarget& target) { return runtime.Resolve(target); },
-		[&](const BackupRequest& request) { return runtime.Preflight(request); },
-		[&](const BackupRequest& request, stop_token) { return runtime.Run(request); },
-		[](const ShellTaskSpec& spec, stop_token token) {
-			return ProcessRunner::RunShellTask(spec, token);
-		}});
-	SpecialRunResult run = runner.Run(*special, stopToken);
-	result.code = run.code;
-	result.diagnostics.insert(result.diagnostics.end(),
-		run.diagnostics.begin(), run.diagnostics.end());
-	result.data["tasks"] = nlohmann::json::array();
-	for (const auto& task : run.tasks) {
-		nlohmann::json diagnostics = nlohmann::json::array();
-		for (const auto& diagnostic : task.diagnostics) {
-			diagnostics.push_back({
-				{"eventId", diagnostic.eventId},
-				{"severity", ToString(diagnostic.severity)},
-				{"detail", diagnostic.detail}});
-		}
-		result.data["tasks"].push_back({
-			{"taskId", wstring_to_utf8(task.taskId)},
-			{"code", ToString(task.code)},
-			{"diagnostics", diagnostics}});
-	}
-	return result;
-}
-
 CliResult Doctor(
 	const ProfileCatalogLoadResult& loaded,
 	const AppPaths& paths,
@@ -761,29 +681,22 @@ CliResult Doctor(
 	result.diagnostics = loaded.diagnostics;
 	result.data["profileIdentity"] = wstring_to_utf8(paths.profileIdentity);
 	result.data["configFile"] = wstring_to_utf8(paths.ConfigFile().wstring());
-	result.data["specialTasksFile"] = wstring_to_utf8(paths.SpecialTasksFile().wstring());
+	result.data["jobsFile"] = wstring_to_utf8(paths.JobsFile().wstring());
 	result.data["historyFile"] = wstring_to_utf8(paths.HistoryFile().wstring());
 	result.data["configCount"] = loaded.catalog.configs.size();
-	result.data["specialConfigCount"] = loaded.catalog.specialConfigs.size();
-	result.data["specialTaskMigrationPending"] = loaded.catalog.specialTaskMigrationPending;
+	const size_t ignoredSections = CountIgnoredSpecialSections(paths.ConfigFile());
+	const bool ignoredDocument = filesystem::is_regular_file(paths.SpecialTasksFile());
+	result.data["legacySpecialConfigSectionsIgnored"] = ignoredSections;
+	result.data["legacySpecialTasksFileIgnored"] = ignoredDocument;
+	if (ignoredSections > 0 || ignoredDocument) {
+		result.diagnostics.push_back({"special.legacy.ignored", DiagnosticSeverity::Warning,
+			"Legacy SpecialConfig data is retained on disk but is not read or executed."});
+	}
 	result.data["paths"] = nlohmann::json::array();
 	if (!loaded.IsLoaded()) return result;
 
 	bool missingTool = false;
 	result.data["tools"] = nlohmann::json::array();
-	result.data["unsupportedScriptTaskCount"] = 0;
-	for (const auto& [index, special] : loaded.catalog.specialConfigs) {
-		(void)index;
-		for (const auto& task : special.specialTasks) {
-			if (task.type != SpecialTaskType::Script) continue;
-			result.code = OperationCode::InvalidProfile;
-			result.data["unsupportedScriptTaskCount"] =
-				result.data["unsupportedScriptTaskCount"].get<size_t>() + 1;
-			result.diagnostics.push_back({
-				"special.script.unsupported", DiagnosticSeverity::Error,
-				wstring_to_utf8(special.specialConfigId + L":" + task.taskId)});
-		}
-	}
 	for (const auto& [index, config] : loaded.catalog.configs) {
 		(void)index;
 		const filesystem::path saveRoot(config.saveRoot);
@@ -1075,8 +988,7 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		result = ProfileExportCommand(paths, parsed.options);
 	}
 	else {
-		auto loaded = ProfileConfigCatalogLoader::Load(
-			paths.ConfigFile(), paths.SpecialTasksFile());
+		auto loaded = ProfileConfigCatalogLoader::Load(paths.ConfigFile());
 	if (parsed.options.command == CliCommand::Doctor) {
 		result = Doctor(loaded, paths, parsed.options);
 	}
@@ -1133,14 +1045,6 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 		|| parsed.options.command == CliCommand::Restore) {
 		CliSignalHandler signals;
 		result = RestoreOrVerifyCommand(
-			loaded.catalog, paths, parsed.options, signals.Token());
-		result.diagnostics.insert(result.diagnostics.begin(),
-			loaded.diagnostics.begin(), loaded.diagnostics.end());
-		if (signals.WasInterrupted()) result.code = OperationCode::Cancelled;
-	}
-	else if (parsed.options.command == CliCommand::RunSpecial) {
-		CliSignalHandler signals;
-		result = RunSpecialCommand(
 			loaded.catalog, paths, parsed.options, signals.Token());
 		result.diagnostics.insert(result.diagnostics.begin(),
 			loaded.diagnostics.begin(), loaded.diagnostics.end());

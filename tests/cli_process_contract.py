@@ -16,8 +16,9 @@ import time
 
 
 CONFIG_ID = "11111111-1111-4111-8111-111111111111"
-SPECIAL_CONFIG_ID = "22222222-2222-4222-8222-222222222222"
-TASK_ID = "33333333-3333-4333-8333-333333333333"
+JOB_ID = "22222222-2222-4222-8222-222222222222"
+STAGE_ID = "33333333-3333-4333-8333-333333333333"
+STEP_ID = "44444444-4444-4444-8444-444444444444"
 
 
 def write_profile(profile: Path) -> None:
@@ -47,38 +48,40 @@ def write_profile(profile: Path) -> None:
             "SkipIfUnchanged=1",
             "MaxSmartBackups=5",
             "CloudSyncEnabled=0",
-            "[SpCfg2]",
-            "Name=Recurring contract",
-            f"SpecialConfigId={SPECIAL_CONFIG_ID}",
-            "ZipLevel=1",
-            "KeepCount=0",
-            "CpuThreads=1",
-            "UseLowPriority=0",
             "",
         ]
     )
     (profile / "config" / "config.ini").write_text(config, encoding="utf-8")
-    tasks = {
+    jobs = {
         "schemaVersion": 1,
-        "specialConfigs": [
+        "jobs": [
             {
-                "specialConfigId": SPECIAL_CONFIG_ID,
-                "tasks": [
+                "jobId": JOB_ID,
+                "name": "cancellation contract",
+                "stages": [
                     {
-                        "taskId": TASK_ID,
-                        "name": "wait before first backup",
-                        "type": "backup",
-                        "executionMode": "sequential",
-                        "enabled": True,
-                        "trigger": {"type": "interval", "intervalMinutes": 1},
-                        "target": {"configId": CONFIG_ID, "worldPath": "world"},
+                        "stageId": STAGE_ID,
+                        "name": "wait",
+                        "steps": [
+                            {
+                                "stepId": STEP_ID,
+                                "name": "long process",
+                                "type": "process",
+                                "executable": sys.executable,
+                                "arguments": ["-c", "import time; time.sleep(60)"],
+                                "workingDirectory": "",
+                                "timeoutSeconds": 0,
+                                "maximumCapturedBytes": 4096,
+                                "lowPriority": False,
+                            }
+                        ],
                     }
                 ],
             }
         ],
     }
-    (profile / "config" / "special-tasks.json").write_text(
-        json.dumps(tasks, ensure_ascii=False, indent=2), encoding="utf-8"
+    (profile / "config" / "jobs.json").write_text(
+        json.dumps(jobs, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -132,8 +135,10 @@ def main() -> int:
         str(profile),
         "--json",
         "--no-network",
-        "run-special",
-        SPECIAL_CONFIG_ID,
+        "job",
+        "run",
+        "--job",
+        JOB_ID,
     ]
     creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     running = subprocess.Popen(

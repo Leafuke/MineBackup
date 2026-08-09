@@ -163,25 +163,23 @@ int main() {
 	LoadConfigs(legacyTasks);
 	const std::filesystem::path migratedTasks = taskRoot / "special-tasks.json";
 	Check(!LastConfigLoadHasFatalDiagnostics()
-			&& std::filesystem::exists(migratedTasks)
-			&& g_appState.specialConfigs.at(3).specialTasks.size() == 2
-			&& g_appState.specialConfigs.at(3).specialTasks[0].command == L"echo A,B",
-		"GUI load migrates legacy commands and tasks to authoritative JSON");
-	Check(SaveConfigs(legacyTasks), "migrated task configuration saves");
+			&& !std::filesystem::exists(migratedTasks),
+		"GUI load ignores legacy special tasks without migrating or creating files");
+	Check(SaveConfigs(legacyTasks), "configuration with ignored legacy sections saves");
 	const std::string cleanedTasksIni = ReadFile(legacyTasks);
-	Check(cleanedTasksIni.find("Command=") == std::string::npos
-			&& cleanedTasksIni.find("UnifiedTask=") == std::string::npos
-			&& cleanedTasksIni.find("AutoBackupTask=") == std::string::npos,
-		"next GUI save removes legacy task lines after JSON migration");
+	Check(cleanedTasksIni.find("[SpCfg3]") != std::string::npos
+			&& cleanedTasksIni.find("Command=echo A,B") != std::string::npos
+			&& cleanedTasksIni.find("UnifiedTask=") != std::string::npos,
+		"GUI save preserves ignored legacy special sections byte-for-byte");
 
 	{
 		std::ofstream output(migratedTasks, std::ios::binary | std::ios::trunc);
 		output << R"({"schemaVersion":2,"specialConfigs":[]})";
 	}
 	LoadConfigs(legacyTasks);
-	Check(LastConfigLoadHasFatalDiagnostics()
-			&& g_appState.specialConfigs.at(3).specialTasks.empty(),
-		"future task schema is fatal and does not fall back to legacy INI");
+	Check(!LastConfigLoadHasFatalDiagnostics()
+			&& ReadFile(migratedTasks).find("\"schemaVersion\":2") != std::string::npos,
+		"future legacy task schemas are retained but ignored");
 
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {

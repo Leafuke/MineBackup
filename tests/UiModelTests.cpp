@@ -201,50 +201,22 @@ namespace {
 		second.worlds = {{L"TaskWorld", L"task"}};
 		map<int, Config> configs{{1, first}, {2, second}};
 
-		const auto normal = BuildDisplayWorlds(configs, {}, 1, false);
+		const auto normal = BuildDisplayWorlds(configs, 1);
 		Expect(normal.size() == 1
 			&& normal[0].baseConfigIndex == 1
 			&& normal[0].baseWorldIndex == 0,
 			"normal world model should hide marker entries and preserve stable source indices");
 
-		SpecialConfig specialConfig;
-		specialConfig.zipLevel = 8;
-		specialConfig.keepCount = 4;
-		SpecialTask backup;
-		backup.type = SpecialTaskType::Backup;
-		backup.target.configId = second.configId;
-		backup.target.worldPath = L"TaskWorld";
-		specialConfig.specialTasks.push_back(backup);
-		const auto special = BuildDisplayWorlds(configs, {{9, specialConfig}}, 9, true);
-		Expect(special.size() == 1
-			&& special[0].name == L"TaskWorld"
-			&& special[0].effectiveConfig.zipLevel == 8
-			&& special[0].effectiveConfig.keepCount == 4,
-			"stable special tasks should reuse the common world construction and override policy");
-
-		const map<int, Config> remappedConfigs{{1, first}, {42, second}};
-		const auto remapped = BuildDisplayWorlds(
-			remappedConfigs, {{10, specialConfig}}, 10, true);
-		Expect(remapped.size() == 1
-			&& WorldSelectionKey{remapped[0].baseConfigIndex,
-				remapped[0].baseWorldIndex} == WorldSelectionKey{42, 0},
-			"special world references should survive numeric config index changes");
 	}
 
 	void TestStableConfigSelection() {
 		Config normal;
 		normal.configId = L"normal-stable-id";
-		SpecialConfig special;
-		special.specialConfigId = L"special-stable-id";
 		const map<int, Config> configs{{42, normal}};
-		const map<int, SpecialConfig> specialConfigs{{73, special}};
 
 		Expect(FindConfigByStableId(configs, L"NORMAL-STABLE-ID") == 42,
 			"normal startup selection should resolve stable IDs case-insensitively");
-		Expect(FindSpecialConfigByStableId(specialConfigs, L"SPECIAL-STABLE-ID") == 73,
-			"special startup selection should not treat the map index as persisted identity");
-		Expect(FindConfigByStableId(configs, L"missing") == -1
-			&& FindSpecialConfigByStableId(specialConfigs, L"missing") == -1,
+		Expect(FindConfigByStableId(configs, L"missing") == -1,
 			"unknown stable IDs should produce an explicit not-found result");
 	}
 }

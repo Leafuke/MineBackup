@@ -47,34 +47,33 @@ void RunProfileConfigCatalogTests(
 	const filesystem::path tasks = root / "special-tasks.json";
 	WriteText(config, StableProfile());
 
-	const auto loaded = ProfileConfigCatalogLoader::Load(config, tasks);
+	const auto loaded = ProfileConfigCatalogLoader::Load(config);
 	test.Expect(loaded.status == ProfileCatalogStatus::Loaded
-			&& loaded.catalog.FindConfig(L"config-id") != nullptr
-			&& loaded.catalog.FindSpecialConfig(L"special-id") != nullptr,
-		"Runtime profile catalog should load stable ConfigId and SpecialConfigId values");
+			&& loaded.catalog.FindConfig(L"config-id") != nullptr,
+		"Runtime profile catalog should load stable ConfigId values");
 	test.Expect(loaded.catalog.configs.at(1).worlds.size() == 1
 			&& loaded.catalog.configs.at(1).worlds.front().first == L"world/subdirectory",
 		"Runtime profile catalog should preserve normalized relative world paths");
-	test.Expect(loaded.catalog.specialTaskMigrationPending
-			&& !filesystem::exists(tasks),
-		"Read-only catalog loading should report legacy task migration without writing JSON");
+	test.Expect(!filesystem::exists(tasks),
+		"Read-only catalog loading should ignore legacy special sections without writing JSON");
 
 	WriteText(config, StableProfile(false));
-	const auto legacy = ProfileConfigCatalogLoader::Load(config, tasks);
+	const auto legacy = ProfileConfigCatalogLoader::Load(config);
 	test.Expect(legacy.status == ProfileCatalogStatus::MigrationRequired,
 		"Profiles without stable identities should require GUI compatibility migration");
 
-	WriteText(config, StableProfile() + "ZipLevel=not-a-number\n");
-	const auto invalid = ProfileConfigCatalogLoader::Load(config, tasks);
+	string invalidProfile = StableProfile();
+	invalidProfile.replace(invalidProfile.find("ZipLevel=5"), 10, "ZipLevel=not-a-number");
+	WriteText(config, invalidProfile);
+	const auto invalid = ProfileConfigCatalogLoader::Load(config);
 	test.Expect(invalid.status == ProfileCatalogStatus::Invalid,
 		"Invalid operational values should make the runtime profile unusable");
 
 	WriteText(config, StableProfile());
 	WriteText(tasks, R"({"schemaVersion":999,"specialConfigs":[]})");
-	const auto future = ProfileConfigCatalogLoader::Load(config, tasks);
-	test.Expect(future.status == ProfileCatalogStatus::Invalid
-			&& !future.diagnostics.empty(),
-		"Future special-task schemas should be rejected without legacy fallback");
+	const auto future = ProfileConfigCatalogLoader::Load(config);
+	test.Expect(future.status == ProfileCatalogStatus::Loaded,
+		"Legacy special-task files should be retained but ignored by the runtime catalog");
 
 	const filesystem::path repositoryConfig = root / "repository.ini";
 	WriteText(repositoryConfig,

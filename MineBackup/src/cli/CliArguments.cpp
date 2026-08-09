@@ -36,7 +36,6 @@ string CliCommandName(CliCommand command) {
 	case CliCommand::Backup: return "backup";
 	case CliCommand::Verify: return "verify";
 	case CliCommand::Restore: return "restore";
-	case CliCommand::RunSpecial: return "run-special";
 	}
 	return "unknown";
 }
@@ -187,10 +186,6 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 	else if (positional == vector<wstring>{L"backup"}) result.options.command = CliCommand::Backup;
 	else if (positional == vector<wstring>{L"verify"}) result.options.command = CliCommand::Verify;
 	else if (positional == vector<wstring>{L"restore"}) result.options.command = CliCommand::Restore;
-	else if (positional.size() == 2 && positional[0] == L"run-special") {
-		result.options.command = CliCommand::RunSpecial;
-		result.options.specialConfigId = positional[1];
-	}
 	else {
 		AddParseError(result, "cli.command.invalid", "Unknown command or extra positional arguments.");
 		return result;
@@ -283,7 +278,7 @@ void PrintCliHelp() {
 		<< "  minebackup-cli [global options] backup --config <ConfigId> --world <relative-path> [--comment <text>]\n"
 		<< "  minebackup-cli [global options] verify --config <ConfigId> --world <relative-path> (--backup <file> | --latest)\n"
 		<< "  minebackup-cli [global options] restore --config <ConfigId> --world <relative-path> (--backup <file> | --latest) [--mode clean|overwrite] (--dry-run | --confirm)\n"
-		<< "  minebackup-cli [global options] run-special <SpecialConfigId>\n\n"
+		<< "\n"
 		<< "Global options:\n"
 		<< "  --data-dir <path>  --json  --log-level <off|info|debug>\n"
 		<< "  --no-network  --non-interactive  --help  --version\n";

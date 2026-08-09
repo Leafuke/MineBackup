@@ -29,9 +29,6 @@ set(runtime_contract_files
     ${MINEBACKUP_CORE_DIR}/RuntimeFileLock.h
     ${MINEBACKUP_CORE_DIR}/RuntimeIntegration.h
     ${MINEBACKUP_CORE_DIR}/RuntimeRetentionService.h
-    ${MINEBACKUP_CORE_DIR}/SpecialTaskDocument.h
-    ${MINEBACKUP_CORE_DIR}/SpecialTaskModels.h
-    ${MINEBACKUP_CORE_DIR}/SpecialTaskRunner.h
     ${MINEBACKUP_CORE_DIR}/TaskCoordinator.h
     ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.h
     ${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.h

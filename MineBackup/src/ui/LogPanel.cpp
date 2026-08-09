@@ -107,13 +107,15 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
         AddRedaction(options, config.weSnapshotPath, "<worldedit-root>");
         AddRedaction(options, config.rcloneRemotePath, "<rclone-remote>");
     }
-    for (const auto& [index, special] : g_appState.specialConfigs) {
-        (void)index;
-        for (const auto& task : special.specialTasks) {
-            AddRedaction(
-                options, task.workingDirectory, "<working-directory>");
-        }
-    }
+	for (const auto& job : g_appState.jobs.jobs) {
+		for (const auto& stage : job.stages) {
+			for (const auto& step : stage.steps) {
+				if (step.type != JobStepType::Process) continue;
+				AddRedaction(options, step.process.executable.wstring(), "<local-tool>");
+				AddRedaction(options, step.process.workingDirectory.wstring(), "<working-directory>");
+			}
+		}
+	}
     return options;
 }
 

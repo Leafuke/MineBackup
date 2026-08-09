@@ -366,8 +366,6 @@ if(BUILD_TESTING)
 		tests/JobTests.cpp
         tests/LegacyIniConfigCodecTests.cpp
 		tests/OperationResultTests.cpp
-        tests/SpecialTaskDocumentTests.cpp
-        tests/SpecialTaskRunnerTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
         tests/ProfileConfigCatalogTests.cpp

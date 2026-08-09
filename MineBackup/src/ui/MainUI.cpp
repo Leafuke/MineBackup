@@ -740,27 +740,6 @@ if (showSettings) {
 	ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 }
 if (showHistoryWindow) {
-	if (specialSetting) {
-		if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size())
-			ShowHistoryWindow(displayWorlds[selectedWorldIndex].baseConfigIndex,
-				displayWorlds[selectedWorldIndex].name);
-		else {
-			auto spIt = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
-			if (spIt != g_appState.specialConfigs.end()) {
-				auto task = find_if(spIt->second.specialTasks.begin(), spIt->second.specialTasks.end(),
-					[](const SpecialTask& item) {
-						return item.type == SpecialTaskType::Backup && item.enabled;
-					});
-				if (task != spIt->second.specialTasks.end()) {
-					auto config = find_if(g_appState.configs.begin(), g_appState.configs.end(),
-						[&](const auto& item) { return item.second.configId == task->target.configId; });
-					if (config != g_appState.configs.end()) ShowHistoryWindow(config->first);
-				}
-			}
-		}
-	}
-	else {
-		ShowHistoryWindow(g_appState.currentConfigIndex);
-	}
+	ShowHistoryWindow(g_appState.currentConfigIndex);
 }
 }
