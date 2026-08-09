@@ -136,7 +136,7 @@ void RunRestoreServiceTests(
 	Write(root / "backups" / "world" / "[Smart]-World.7z", "incremental");
 	request.archive = L"[Smart]-World.7z";
 	const auto missingMetadata = service.Verify(request);
-	test.Expect(missingMetadata.code == OperationCode::RestoreFailed
+	test.Expect(missingMetadata.code == OperationCode::VerificationFailed
 			&& !missingMetadata.diagnostics.empty()
 			&& missingMetadata.diagnostics.front().eventId == "restore.metadata.missing",
 		"Smart restore should reject a missing exact metadata chain");

@@ -345,8 +345,16 @@ RestorePlan RestoreService::BuildAndVerify(
 		plan.diagnostics.push_back(Failure("restore.world.invalid"));
 		return plan;
 	}
-	const filesystem::path backupRoot =
-		filesystem::path(request.config.backupPath) / normalized;
+	FolderRewindFormat::StoragePaths storagePaths;
+	if (!FolderRewindFormat::TryResolveStoragePaths(
+			request.config.backupPath,
+			normalized,
+			plan.targetWorld.wstring(),
+			storagePaths)) {
+		plan.diagnostics.push_back(Failure("restore.storage.invalid", wstring_to_utf8(normalized)));
+		return plan;
+	}
+	const filesystem::path backupRoot = storagePaths.backupSubDir;
 	plan.selectedArchive = request.archive.is_absolute()
 		? request.archive.lexically_normal()
 		: (backupRoot / request.archive).lexically_normal();
@@ -421,7 +429,11 @@ RestorePlan RestoreService::BuildAndVerify(
 RestorePlan RestoreService::Verify(
 	const RestoreRequest& request,
 	stop_token stopToken) const {
-	return BuildAndVerify(request, false, stopToken);
+	auto plan = BuildAndVerify(request, false, stopToken);
+	if (plan.code == OperationCode::RestoreFailed) {
+		plan.code = OperationCode::VerificationFailed;
+	}
+	return plan;
 }
 
 RestoreResult RestoreService::Run(

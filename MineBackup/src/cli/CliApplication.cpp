@@ -8,6 +8,7 @@
 #include "CliSignalHandler.h"
 #include "CliToolBootstrap.h"
 #include "ExternalToolManager.h"
+#include "FolderRewindFormat.h"
 #include "HistoryRepository.h"
 #include "JobDocument.h"
 #include "JobRunner.h"
@@ -15,7 +16,9 @@
 #include "MineBackupVersion.h"
 #include "OperationResult.h"
 #include "ProfileConfigCatalog.h"
+#include "ProfileConfigRepository.h"
 #include "ProfileManifest.h"
+#include "RestoreService.h"
 #include "RuntimeIntegration.h"
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeFileLock.h"
@@ -373,6 +376,180 @@ CliResult BackupCommand(
 	CliResult result = RenderBackupResult(runtime.Run(*request));
 	result.diagnostics.insert(result.diagnostics.begin(),
 		initialization.begin(), initialization.end());
+	return result;
+}
+
+struct RestoreCommandContext {
+	OperationCode code = OperationCode::Success;
+	RestoreRequest request;
+	vector<Diagnostic> diagnostics;
+};
+
+bool MatchesWorldHistory(
+	const HistoryEntry& entry,
+	const Config& config,
+	const wstring& normalizedWorld) {
+	return entry.worldName == normalizedWorld
+		|| filesystem::path(entry.worldPath).lexically_normal()
+			== (filesystem::path(config.saveRoot) / normalizedWorld).lexically_normal();
+}
+
+RestoreCommandContext ResolveRestoreCommand(
+	const ProfileConfigCatalog& catalog,
+	const AppPaths& paths,
+	const CliOptions& options) {
+	RestoreCommandContext context;
+	const Config* config = catalog.FindConfig(options.configId);
+	wstring normalized;
+	if (!config
+		|| !JobStorage::TryNormalizeWorldPath(options.worldPath, normalized)
+		|| none_of(config->worlds.begin(), config->worlds.end(), [&](const auto& world) {
+			return world.first == normalized;
+		})) {
+		context.code = OperationCode::TargetNotFound;
+		context.diagnostics.push_back({"world.not_found", DiagnosticSeverity::Error,
+			wstring_to_utf8(options.worldPath)});
+		return context;
+	}
+
+	context.request.config = *config;
+	context.request.world = {config->configId, normalized};
+	context.request.mode = options.restoreMode == L"overwrite"
+		? RestoreMode::Overwrite : RestoreMode::Clean;
+	context.request.archive = options.backupPath;
+
+	const auto profile = ProfileConfigRepository(paths.ConfigFile()).Load();
+	if (!profile.IsUsable()) {
+		context.code = OperationCode::InvalidProfile;
+		context.diagnostics = profile.diagnostics;
+		return context;
+	}
+	context.request.restorePreserve = profile.restorePreserve;
+	if (!options.latest) return context;
+
+	HistoryRepository history;
+	if (filesystem::exists(paths.HistoryFile())
+		&& !history.Load(paths.HistoryFile(), catalog.configs)) {
+		context.code = OperationCode::InvalidProfile;
+		context.diagnostics.push_back({"history.load.invalid", DiagnosticSeverity::Error,
+			wstring_to_utf8(paths.HistoryFile().wstring())});
+		return context;
+	}
+	FolderRewindFormat::StoragePaths storagePaths;
+	if (!FolderRewindFormat::TryResolveStoragePaths(
+			config->backupPath,
+			normalized,
+			(filesystem::path(config->saveRoot) / normalized).wstring(),
+			storagePaths)) {
+		context.code = OperationCode::InvalidArguments;
+		context.diagnostics.push_back({"restore.storage.invalid", DiagnosticSeverity::Error,
+			wstring_to_utf8(normalized)});
+		return context;
+	}
+	const auto entries = history.EntriesForConfig(config->configId);
+	for (auto current = entries->rbegin(); current != entries->rend(); ++current) {
+		if (!MatchesWorldHistory(*current, *config, normalized)) continue;
+		const auto candidate = storagePaths.backupSubDir / current->backupFile;
+		error_code error;
+		if (!filesystem::is_regular_file(candidate, error) || error) continue;
+		context.request.archive = current->backupFile;
+		return context;
+	}
+	context.code = OperationCode::TargetNotFound;
+	context.diagnostics.push_back({"restore.latest.local_not_found", DiagnosticSeverity::Error,
+		wstring_to_utf8(normalized)});
+	return context;
+}
+
+void WriteRestorePlan(nlohmann::json& data, const RestorePlan& plan) {
+	data["targetWorld"] = wstring_to_utf8(plan.targetWorld.wstring());
+	data["selectedBackup"] = wstring_to_utf8(plan.selectedArchive.wstring());
+	data["archiveChain"] = nlohmann::json::array();
+	for (const auto& archive : plan.archiveChain) {
+		data["archiveChain"].push_back(wstring_to_utf8(archive.wstring()));
+	}
+	data["mode"] = ToString(plan.mode);
+	data["checkedArchiveCount"] = plan.checkedArchiveCount;
+	data["usesExactSmartPlan"] = plan.usesExactSmartPlan;
+}
+
+CliResult RestoreOrVerifyCommand(
+	const ProfileConfigCatalog& catalog,
+	const AppPaths& paths,
+	const CliOptions& options,
+	stop_token stopToken) {
+	const bool verify = options.command == CliCommand::Verify;
+	CliResult result{verify ? "verify" : "restore", OperationCode::Success};
+	auto context = ResolveRestoreCommand(catalog, paths, options);
+	result.code = context.code;
+	result.diagnostics = std::move(context.diagnostics);
+	if (!IsSuccessful(result.code)) return result;
+
+	const auto sevenZip = ExternalToolManager::ResolveSevenZip(
+		context.request.config.zipPath, paths, stopToken);
+	if (!sevenZip.available) {
+		wstring bootstrapError;
+		if (!EnsureCliSevenZip(paths, stopToken, bootstrapError)
+			|| !ExternalToolManager::ResolveSevenZip(
+				context.request.config.zipPath, paths, stopToken).available) {
+			result.code = stopToken.stop_requested()
+				? OperationCode::Cancelled : OperationCode::ToolUnavailable;
+			result.diagnostics.push_back({
+				stopToken.stop_requested() ? "restore.cancelled" : "restore.tool.unavailable",
+				stopToken.stop_requested() ? DiagnosticSeverity::Warning : DiagnosticSeverity::Error,
+				wstring_to_utf8(bootstrapError.empty() ? sevenZip.diagnostic : bootstrapError)});
+			return result;
+		}
+	}
+
+	unique_ptr<CliBackupRuntime> backupRuntime;
+	RestoreServiceDependencies dependencies;
+	dependencies.paths = paths;
+	dependencies.isWorldOccupied = [](const filesystem::path& world) {
+		return IsRuntimeFileLocked(world / L"session.lock")
+			|| IsRuntimeFileLocked(world / L"level.dat");
+	};
+	if (!verify && !options.dryRun && context.request.config.backupBefore) {
+		backupRuntime = make_unique<CliBackupRuntime>(
+			paths, catalog, options.noNetwork, stopToken);
+		vector<Diagnostic> initialization;
+		const auto initialized = backupRuntime->Initialize(initialization);
+		result.diagnostics.insert(result.diagnostics.end(),
+			initialization.begin(), initialization.end());
+		if (!IsSuccessful(initialized)) {
+			result.code = OperationCode::RestoreFailed;
+			return result;
+		}
+		dependencies.backupBeforeRestore = [&](const BackupRequest& request, stop_token token) {
+			return backupRuntime->Run(request, token);
+		};
+	}
+
+	RestoreService service(std::move(dependencies));
+	if (verify) {
+		const auto plan = service.Verify(context.request, stopToken);
+		result.code = plan.code;
+		result.diagnostics.insert(result.diagnostics.end(),
+			plan.diagnostics.begin(), plan.diagnostics.end());
+		WriteRestorePlan(result.data, plan);
+		result.data["rollbackAttempted"] = false;
+		result.data["rollbackSucceeded"] = false;
+		return result;
+	}
+
+	const auto restored = service.Run(context.request, options.dryRun, stopToken);
+	result.code = restored.code;
+	result.diagnostics.insert(result.diagnostics.end(),
+		restored.diagnostics.begin(), restored.diagnostics.end());
+	WriteRestorePlan(result.data, restored.plan);
+	result.data["dryRun"] = restored.dryRun;
+	result.data["rollbackAttempted"] = restored.rollbackAttempted;
+	result.data["rollbackSucceeded"] = restored.rollbackSucceeded;
+	if (restored.safetyBackup) {
+		result.data["safetyBackup"] = {
+			{"code", ToString(restored.safetyBackup->code)},
+			{"archivePath", wstring_to_utf8(restored.safetyBackup->archivePath.wstring())}};
+	}
 	return result;
 }
 
@@ -947,6 +1124,15 @@ int RunMineBackupCli(const vector<wstring>& arguments) {
 	else if (parsed.options.command == CliCommand::Backup) {
 		CliSignalHandler signals;
 		result = BackupCommand(
+			loaded.catalog, paths, parsed.options, signals.Token());
+		result.diagnostics.insert(result.diagnostics.begin(),
+			loaded.diagnostics.begin(), loaded.diagnostics.end());
+		if (signals.WasInterrupted()) result.code = OperationCode::Cancelled;
+	}
+	else if (parsed.options.command == CliCommand::Verify
+		|| parsed.options.command == CliCommand::Restore) {
+		CliSignalHandler signals;
+		result = RestoreOrVerifyCommand(
 			loaded.catalog, paths, parsed.options, signals.Token());
 		result.diagnostics.insert(result.diagnostics.begin(),
 			loaded.diagnostics.begin(), loaded.diagnostics.end());

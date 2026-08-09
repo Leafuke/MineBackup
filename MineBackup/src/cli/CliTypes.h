@@ -26,6 +26,8 @@ enum class CliCommand {
 	JobShow,
 	JobRun,
 	Backup,
+	Verify,
+	Restore,
 	RunSpecial
 };
 
@@ -39,6 +41,8 @@ struct CliOptions {
 	bool prune = false;
 	bool confirmPrune = false;
 	bool dryRun = false;
+	bool latest = false;
+	bool confirm = false;
 	minebackup::logging::LogFileLevel logLevel =
 		minebackup::logging::LogFileLevel::Info;
 	std::wstring configId;
@@ -46,8 +50,10 @@ struct CliOptions {
 	std::wstring specialConfigId;
 	std::wstring jobId;
 	std::wstring comment;
+	std::wstring restoreMode = L"clean";
 	std::filesystem::path filePath;
 	std::filesystem::path outputPath;
+	std::filesystem::path backupPath;
 };
 
 struct CliParseResult {

@@ -34,6 +34,8 @@ string CliCommandName(CliCommand command) {
 	case CliCommand::JobShow: return "job.show";
 	case CliCommand::JobRun: return "job.run";
 	case CliCommand::Backup: return "backup";
+	case CliCommand::Verify: return "verify";
+	case CliCommand::Restore: return "restore";
 	case CliCommand::RunSpecial: return "run-special";
 	}
 	return "unknown";
@@ -54,6 +56,8 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 		if (argument == L"--prune") { result.options.prune = true; continue; }
 		if (argument == L"--confirm-prune") { result.options.confirmPrune = true; continue; }
 		if (argument == L"--dry-run") { result.options.dryRun = true; continue; }
+		if (argument == L"--latest") { result.options.latest = true; continue; }
+		if (argument == L"--confirm") { result.options.confirm = true; continue; }
 		if (argument == L"--help" || argument == L"-h") {
 			result.options.command = CliCommand::Help;
 			result.success = true;
@@ -119,6 +123,27 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 			result.options.comment = arguments[index];
 			continue;
 		}
+		if (argument == L"--backup") {
+			if (++index >= arguments.size()) {
+				AddParseError(result, "cli.argument.missing_value", "--backup requires an archive file.");
+				return result;
+			}
+			result.options.backupPath = filesystem::path(arguments[index]);
+			continue;
+		}
+		if (argument == L"--mode") {
+			if (++index >= arguments.size()) {
+				AddParseError(result, "cli.argument.missing_value", "--mode requires clean or overwrite.");
+				return result;
+			}
+			result.options.restoreMode = arguments[index];
+			if (result.options.restoreMode != L"clean"
+				&& result.options.restoreMode != L"overwrite") {
+				AddParseError(result, "cli.restore.mode.invalid", "--mode requires clean or overwrite.");
+				return result;
+			}
+			continue;
+		}
 		if (argument == L"--file") {
 			if (++index >= arguments.size()) {
 				AddParseError(result, "cli.argument.missing_value", "--file requires a manifest path.");
@@ -160,6 +185,8 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 	else if (positional == vector<wstring>{L"job", L"show"}) result.options.command = CliCommand::JobShow;
 	else if (positional == vector<wstring>{L"job", L"run"}) result.options.command = CliCommand::JobRun;
 	else if (positional == vector<wstring>{L"backup"}) result.options.command = CliCommand::Backup;
+	else if (positional == vector<wstring>{L"verify"}) result.options.command = CliCommand::Verify;
+	else if (positional == vector<wstring>{L"restore"}) result.options.command = CliCommand::Restore;
 	else if (positional.size() == 2 && positional[0] == L"run-special") {
 		result.options.command = CliCommand::RunSpecial;
 		result.options.specialConfigId = positional[1];
@@ -171,7 +198,9 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 	if ((result.options.command == CliCommand::WorldList
 			|| result.options.command == CliCommand::ConfigShow
 			|| result.options.command == CliCommand::HistoryList
-			|| result.options.command == CliCommand::Backup)
+			|| result.options.command == CliCommand::Backup
+			|| result.options.command == CliCommand::Verify
+			|| result.options.command == CliCommand::Restore)
 		&& result.options.configId.empty()) {
 		AddParseError(result, "cli.config.required", "The command requires --config <ConfigId>.");
 		return result;
@@ -183,7 +212,9 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 		return result;
 	}
 	if ((result.options.command == CliCommand::HistoryList
-			|| result.options.command == CliCommand::Backup)
+			|| result.options.command == CliCommand::Backup
+			|| result.options.command == CliCommand::Verify
+			|| result.options.command == CliCommand::Restore)
 		&& result.options.worldPath.empty()) {
 		AddParseError(result, "cli.world.required", "The command requires --world <relative-path>.");
 		return result;
@@ -207,6 +238,27 @@ CliParseResult ParseCliArguments(const vector<wstring>& arguments) {
 			"profile apply --prune requires --confirm-prune unless --dry-run is used.");
 		return result;
 	}
+	if (result.options.command == CliCommand::Verify
+		|| result.options.command == CliCommand::Restore) {
+		const bool explicitBackup = !result.options.backupPath.empty();
+		if (explicitBackup == result.options.latest) {
+			AddParseError(result, "cli.restore.backup_selection_required",
+				"The command requires exactly one of --backup <file> or --latest.");
+			return result;
+		}
+	}
+	if (result.options.command == CliCommand::Restore) {
+		if (result.options.dryRun && result.options.confirm) {
+			AddParseError(result, "cli.restore.confirmation_conflict",
+				"restore accepts --dry-run or --confirm, not both.");
+			return result;
+		}
+		if (!result.options.dryRun && !result.options.confirm) {
+			AddParseError(result, "cli.restore.confirmation_required",
+				"restore requires --confirm for writes; use --dry-run to inspect the plan.");
+			return result;
+		}
+	}
 	result.success = true;
 	return result;
 }
@@ -229,6 +281,8 @@ void PrintCliHelp() {
 		<< "  minebackup-cli [global options] job show --job <JobId>\n"
 		<< "  minebackup-cli [global options] job run --job <JobId>\n"
 		<< "  minebackup-cli [global options] backup --config <ConfigId> --world <relative-path> [--comment <text>]\n"
+		<< "  minebackup-cli [global options] verify --config <ConfigId> --world <relative-path> (--backup <file> | --latest)\n"
+		<< "  minebackup-cli [global options] restore --config <ConfigId> --world <relative-path> (--backup <file> | --latest) [--mode clean|overwrite] (--dry-run | --confirm)\n"
 		<< "  minebackup-cli [global options] run-special <SpecialConfigId>\n\n"
 		<< "Global options:\n"
 		<< "  --data-dir <path>  --json  --log-level <off|info|debug>\n"

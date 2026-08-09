@@ -64,6 +64,37 @@ endif()
 if(NOT EXISTS "${PROFILE}/data/history.json")
     message(FATAL_ERROR "backup did not commit history.json")
 endif()
+
+run_cli(verify_json verify --config config-id --world world --latest)
+string(JSON verify_code GET "${verify_json}" code)
+string(JSON verify_selected GET "${verify_json}" data selectedBackup)
+string(JSON verify_checked GET "${verify_json}" data checkedArchiveCount)
+get_filename_component(archive_real "${archive}" REALPATH)
+get_filename_component(verify_selected_real "${verify_selected}" REALPATH)
+if(NOT verify_code STREQUAL "success" OR NOT verify_selected_real STREQUAL "${archive_real}"
+        OR NOT verify_checked EQUAL 1)
+    message(FATAL_ERROR "verify --latest did not select and test the local history archive: ${verify_json}")
+endif()
+
+file(WRITE "${WORLD}/level.dat" "dry-run-must-not-write")
+run_cli(dry_restore_json restore --config config-id --world world --backup "${archive}" --dry-run)
+string(JSON dry_restore_code GET "${dry_restore_json}" code)
+string(JSON dry_restore_flag GET "${dry_restore_json}" data dryRun)
+file(READ "${WORLD}/level.dat" after_dry_run)
+if(NOT dry_restore_code STREQUAL "success" OR NOT dry_restore_flag
+        OR NOT after_dry_run STREQUAL "dry-run-must-not-write")
+    message(FATAL_ERROR "restore --dry-run modified the world or returned an invalid plan: ${dry_restore_json}")
+endif()
+
+run_cli(clean_restore_json restore --config config-id --world world --backup "${archive}" --confirm)
+string(JSON clean_restore_code GET "${clean_restore_json}" code)
+string(JSON clean_restore_mode GET "${clean_restore_json}" data mode)
+file(READ "${WORLD}/level.dat" after_clean_restore)
+if(NOT clean_restore_code STREQUAL "success" OR NOT clean_restore_mode STREQUAL "clean"
+        OR NOT after_clean_restore STREQUAL "${payload}")
+    message(FATAL_ERROR "clean restore did not reproduce the original world bytes: ${clean_restore_json}")
+endif()
+
 run_cli(history_json history list --config config-id --world world)
 string(JSON first_comment GET "${history_json}" data history 0 comment)
 if(NOT first_comment STREQUAL "initial backup")
@@ -124,6 +155,30 @@ if(NOT partial_result EQUAL 10 OR partial_json_error OR NOT partial_schema EQUAL
         OR NOT partial_outcome STREQUAL "created" OR NOT EXISTS "${partial_archive}")
     message(FATAL_ERROR
         "local success with cloud failure must preserve the archive and exit 10: ${partial_error}\n${partial_json}")
+endif()
+
+set(expected_smart_payload "${payload}changed-for-cloud-partial")
+run_cli(smart_verify_json verify --config config-id --world world --latest)
+string(JSON smart_verify_code GET "${smart_verify_json}" code)
+string(JSON smart_chain_count LENGTH "${smart_verify_json}" data archiveChain)
+if(NOT smart_verify_code STREQUAL "success" OR smart_chain_count LESS 2)
+    message(FATAL_ERROR "Smart verify did not validate the complete Full/Smart chain: ${smart_verify_json}")
+endif()
+
+file(WRITE "${WORLD}/level.dat" "broken-before-smart-restore")
+run_cli(smart_restore_json restore --config config-id --world world --latest --confirm)
+file(READ "${WORLD}/level.dat" after_smart_restore)
+if(NOT after_smart_restore STREQUAL "${expected_smart_payload}")
+    message(FATAL_ERROR "Smart clean restore did not reproduce the expected bytes: ${smart_restore_json}")
+endif()
+
+file(WRITE "${WORLD}/operator-note.txt" "preserved-by-overwrite")
+file(WRITE "${WORLD}/level.dat" "broken-before-overwrite")
+run_cli(overwrite_restore_json restore --config config-id --world world --latest --mode overwrite --confirm)
+file(READ "${WORLD}/level.dat" after_overwrite_restore)
+if(NOT after_overwrite_restore STREQUAL "${expected_smart_payload}"
+        OR NOT EXISTS "${WORLD}/operator-note.txt")
+    message(FATAL_ERROR "overwrite restore did not overlay the chain as documented: ${overwrite_restore_json}")
 endif()
 
 run_cli(special_json run-special special-id)
