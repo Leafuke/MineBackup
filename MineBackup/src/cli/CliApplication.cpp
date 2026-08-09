@@ -338,6 +338,7 @@ CliResult RenderBackupResult(BackupResult backup) {
 			{"world", wstring_to_utf8(backup.historyEntry->worldName)},
 			{"backupFile", wstring_to_utf8(backup.historyEntry->backupFile)},
 			{"backupType", wstring_to_utf8(backup.historyEntry->backupType)},
+			{"comment", wstring_to_utf8(backup.historyEntry->comment)},
 			{"timestamp", wstring_to_utf8(backup.historyEntry->timestamp_str)}};
 	}
 	return result;

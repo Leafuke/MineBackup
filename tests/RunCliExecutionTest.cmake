@@ -56,8 +56,9 @@ run_cli(backup_json backup --config config-id --world world --comment "initial b
 string(JSON backup_code GET "${backup_json}" code)
 string(JSON outcome GET "${backup_json}" data outcome)
 string(JSON archive GET "${backup_json}" data archivePath)
+string(JSON backup_comment GET "${backup_json}" data history comment)
 if(NOT backup_code STREQUAL "success" OR NOT outcome STREQUAL "created"
-        OR NOT EXISTS "${archive}")
+		OR NOT backup_comment STREQUAL "initial backup" OR NOT EXISTS "${archive}")
     message(FATAL_ERROR "backup did not create the reported archive: ${backup_json}")
 endif()
 if(NOT EXISTS "${PROFILE}/data/history.json")
