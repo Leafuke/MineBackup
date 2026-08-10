@@ -4,6 +4,8 @@
 #include "KnotLinkProtocol.h"
 #include "text_to_text.h"
 
+#include <algorithm>
+#include <iterator>
 #include <thread>
 #include <utility>
 
@@ -19,10 +21,28 @@ Diagnostic Warning(string eventId, string detail = {}) {
 	return {std::move(eventId), DiagnosticSeverity::Warning, std::move(detail)};
 }
 
-vector<pair<string, string>> TargetFields(const HotRestoreRequest& request) {
-	return {
+vector<pair<string, string>> TargetFields(
+	const HotRestoreRequest& request,
+	vector<pair<string, string>> fields = {}) {
+	vector<pair<string, string>> result{
+		{"config", wstring_to_utf8(request.configId)},
 		{"config_id", wstring_to_utf8(request.configId)},
+		{"folder", wstring_to_utf8(request.worldPath)},
 		{"world", wstring_to_utf8(request.worldPath)}};
+	result.insert(result.end(),
+		make_move_iterator(fields.begin()), make_move_iterator(fields.end()));
+	return result;
+}
+
+bool WaitDelay(chrono::milliseconds delay, stop_token stopToken) {
+	const auto deadline = chrono::steady_clock::now() + delay;
+	while (chrono::steady_clock::now() < deadline) {
+		if (stopToken.stop_requested()) return false;
+		const auto remaining = chrono::duration_cast<chrono::milliseconds>(
+			deadline - chrono::steady_clock::now());
+		this_thread::sleep_for(min(remaining, chrono::milliseconds(25)));
+	}
+	return !stopToken.stop_requested();
 }
 
 } // namespace
@@ -45,7 +65,8 @@ HotRestoreResult HotRestoreCoordinator::Run(
 	auto cancelled = [&] {
 		result.code = OperationCode::Cancelled;
 		result.diagnostics.push_back(Warning("restore.cancelled"));
-		(void)emit("restore_cancelled", {{"reason", "cancelled"}});
+		(void)emit("restore_cancelled", TargetFields(
+			request, {{"reason", "cancelled"}}));
 		return result;
 	};
 	if (stopToken.stop_requested()) return cancelled();
@@ -88,6 +109,8 @@ HotRestoreResult HotRestoreCoordinator::Run(
 		result.diagnostics.push_back(Failure("restore.hot.handshake_timeout"));
 		return result;
 	}
+	if (!request.handshakeComplete
+		&& !WaitDelay(timeouts.postHandshake, stopToken)) return cancelled();
 
 	if (!emit("pre_hot_restore", TargetFields(request))) {
 		result.diagnostics.push_back(Failure("restore.hot.save_exit_emit_failed"));
@@ -98,7 +121,8 @@ HotRestoreResult HotRestoreCoordinator::Run(
 	if (stopToken.stop_requested()) return cancelled();
 	if (!result.saveAndExitCompleted) {
 		result.diagnostics.push_back(Failure("restore.hot.save_exit_timeout"));
-		(void)emit("restore_cancelled", {{"reason", "timeout"}});
+		(void)emit("restore_cancelled", TargetFields(
+			request, {{"reason", "timeout"}}));
 		return result;
 	}
 
@@ -114,7 +138,8 @@ HotRestoreResult HotRestoreCoordinator::Run(
 	if (stopToken.stop_requested()) return cancelled();
 	if (!result.worldReleased) {
 		result.diagnostics.push_back(Failure("restore.hot.world_release_timeout"));
-		(void)emit("restore_cancelled", {{"reason", "world_occupied"}});
+		(void)emit("restore_cancelled", TargetFields(
+			request, {{"reason", "world_occupied"}}));
 		return result;
 	}
 
@@ -124,15 +149,23 @@ HotRestoreResult HotRestoreCoordinator::Run(
 	if (!IsSuccessful(result.restore.code)) {
 		result.code = result.restore.code == OperationCode::Cancelled
 			? OperationCode::Cancelled : OperationCode::RestoreFailed;
-		(void)emit("restore_finished", {{"status", "failure"},
-			{"reason", ToString(result.restore.code)}});
+		(void)emit("restore_finished", TargetFields(request, {
+			{"status", "failure"}, {"reason", ToString(result.restore.code)}}));
 		return result;
 	}
-	(void)emit("restore_finished", {{"status", "success"}});
-	if (!emit("rejoin_world", {{"world", wstring_to_utf8(request.worldPath)}})) {
+	(void)WaitDelay(timeouts.restoreFinishedDelay, stopToken);
+	(void)emit("restore_finished", TargetFields(
+		request, {{"status", "success"}}));
+	// FolderRewind and the companion mod both retain this stabilization window:
+	// the restored files are committed, but the client-side integrated server
+	// needs a short pause before it is asked to reopen the level.
+	(void)WaitDelay(timeouts.postRestoreStabilize, stopToken);
+	if (!emit("rejoin_world", TargetFields(request))) {
 		result.code = OperationCode::Success;
 		result.rejoin = HotRestoreRejoinStatus::TimedOut;
 		result.diagnostics.push_back(Warning("restore.hot.rejoin_emit_failed"));
+		(void)emit("hot_restore_complete", TargetFields(
+			request, {{"status", "restore_ok_rejoin_emit_failed"}}));
 		return result;
 	}
 	const auto rejoin = dependencies_.transport.waitRejoin(timeouts.rejoin, stopToken);
@@ -140,22 +173,26 @@ HotRestoreResult HotRestoreCoordinator::Run(
 	if (stopToken.stop_requested()) {
 		result.rejoin = HotRestoreRejoinStatus::Cancelled;
 		result.diagnostics.push_back(Warning("restore.hot.rejoin_cancelled"));
-		(void)emit("hot_restore_complete", {{"status", "restore_ok_rejoin_cancelled"}});
+		(void)emit("hot_restore_complete", TargetFields(
+			request, {{"status", "restore_ok_rejoin_cancelled"}}));
 		return result;
 	}
 	if (!rejoin.has_value()) {
 		result.rejoin = HotRestoreRejoinStatus::TimedOut;
 		result.diagnostics.push_back(Warning("restore.hot.rejoin_timeout"));
-		(void)emit("hot_restore_complete", {{"status", "restore_ok_rejoin_timeout"}});
+		(void)emit("hot_restore_complete", TargetFields(
+			request, {{"status", "restore_ok_rejoin_timeout"}}));
 	}
 	else if (*rejoin) {
 		result.rejoin = HotRestoreRejoinStatus::Succeeded;
-		(void)emit("hot_restore_complete", {{"status", "full_success"}});
+		(void)emit("hot_restore_complete", TargetFields(
+			request, {{"status", "full_success"}}));
 	}
 	else {
 		result.rejoin = HotRestoreRejoinStatus::Failed;
 		result.diagnostics.push_back(Warning("restore.hot.rejoin_failed"));
-		(void)emit("hot_restore_complete", {{"status", "restore_ok_rejoin_failed"}});
+		(void)emit("hot_restore_complete", TargetFields(
+			request, {{"status", "restore_ok_rejoin_failed"}}));
 	}
 	return result;
 }

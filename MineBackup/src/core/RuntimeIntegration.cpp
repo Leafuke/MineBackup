@@ -371,15 +371,20 @@ HotBackupPreparation HeadlessKnotLinkBridge::Prepare(
 	}
 	this_thread::sleep_for(chrono::milliseconds(100));
 	if (!implementation_->Emit("pre_hot_backup", {
+			{"config", wstring_to_utf8(request.config.configId)},
 			{"config_id", wstring_to_utf8(request.config.configId)},
+			{"folder", wstring_to_utf8(request.world.relativePath)},
 			{"world", wstring_to_utf8(request.world.relativePath)}})
 		|| !implementation_->WaitFor(
 			implementation_->worldSaved, chrono::seconds(10), stopToken)) {
-		result.status = HotBackupStatus::Rejected;
+		result.status = stopToken.stop_requested()
+			? HotBackupStatus::Rejected : HotBackupStatus::Degraded;
 		result.diagnostics.push_back({
 			stopToken.stop_requested() ? "backup.cancelled" : "knotlink.world_save.timeout",
-			stopToken.stop_requested() ? DiagnosticSeverity::Warning : DiagnosticSeverity::Error,
-			"The coordinated world save did not complete."});
+			DiagnosticSeverity::Warning,
+			stopToken.stop_requested()
+				? "The coordinated world save was cancelled."
+				: "The coordinated world save did not complete; using the 7-Zip -ssw fallback."});
 		return result;
 	}
 	result.status = HotBackupStatus::Coordinated;

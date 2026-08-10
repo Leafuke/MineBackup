@@ -765,11 +765,22 @@ void TestProfileRuntimeReload(
 void TestHotRestoreCoordinator(TestContext& test) {
 	std::vector<std::string> events;
 	bool reset = false;
+	bool targetFieldsValid = true;
 	HotRestoreDependencies dependencies;
 	dependencies.transport.reset = [&] { reset = true; };
 	dependencies.transport.emit = [&](std::string_view event,
-		const std::vector<std::pair<std::string, std::string>>&) {
+		const std::vector<std::pair<std::string, std::string>>& fields) {
 		events.emplace_back(event);
+		auto field = [&](std::string_view name) {
+			for (const auto& [key, value] : fields) {
+				if (key == name) return value;
+			}
+			return std::string{};
+		};
+		targetFieldsValid = targetFieldsValid
+			&& field("config") == "11111111-1111-4111-8111-111111111111"
+			&& field("world") == "world"
+			&& field("request_id") == "hot-restore-test";
 		return true;
 	};
 	dependencies.transport.waitHandshake = [](
@@ -795,7 +806,12 @@ void TestHotRestoreCoordinator(TestContext& test) {
 	request.worldPath = L"world";
 	request.fullWorldPath = L"C:\\server\\world";
 	request.requestId = "hot-restore-test";
-	const auto succeeded = HotRestoreCoordinator(dependencies).Run(request);
+	HotRestoreTimeouts fastTimeouts;
+	fastTimeouts.postHandshake = std::chrono::milliseconds::zero();
+	fastTimeouts.restoreFinishedDelay = std::chrono::milliseconds::zero();
+	fastTimeouts.postRestoreStabilize = std::chrono::milliseconds::zero();
+	const auto succeeded = HotRestoreCoordinator(dependencies).Run(
+		request, {}, fastTimeouts);
 	test.Expect(reset && succeeded.code == OperationCode::Success
 			&& succeeded.handshake == HotRestoreHandshakeStatus::Compatible
 			&& succeeded.saveAndExitCompleted && succeeded.worldReleased
@@ -804,9 +820,19 @@ void TestHotRestoreCoordinator(TestContext& test) {
 	test.Expect(events == std::vector<std::string>{"handshake", "pre_hot_restore",
 			"restore_finished", "rejoin_world", "hot_restore_complete"},
 		"hot restore should publish the stable lifecycle sequence");
+	test.Expect(targetFieldsValid,
+		"every hot-restore lifecycle event should retain config, world, and request correlation");
+	events.clear();
+	const auto repeated = HotRestoreCoordinator(dependencies).Run(
+		request, {}, fastTimeouts);
+	test.Expect(repeated.code == OperationCode::Success
+			&& repeated.rejoin == HotRestoreRejoinStatus::Succeeded
+			&& events == std::vector<std::string>{"handshake", "pre_hot_restore",
+				"restore_finished", "rejoin_world", "hot_restore_complete"},
+		"a completed hot restore should leave the protocol ready for a second restore");
 
 	dependencies.isWorldOccupied = [](const std::filesystem::path&) { return true; };
-	HotRestoreTimeouts shortTimeouts;
+	HotRestoreTimeouts shortTimeouts = fastTimeouts;
 	shortTimeouts.worldRelease = std::chrono::milliseconds(2);
 	shortTimeouts.releasePoll = std::chrono::milliseconds(1);
 	const auto occupied = HotRestoreCoordinator(dependencies).Run(
@@ -824,7 +850,8 @@ void TestHotRestoreCoordinator(TestContext& test) {
 		std::chrono::milliseconds, std::stop_token) {
 		return std::optional<bool>{false};
 	};
-	const auto rejoinFailed = HotRestoreCoordinator(dependencies).Run(request);
+	const auto rejoinFailed = HotRestoreCoordinator(dependencies).Run(
+		request, {}, fastTimeouts);
 	test.Expect(rejoinFailed.code == OperationCode::Success
 			&& rejoinFailed.rejoin == HotRestoreRejoinStatus::Failed,
 		"a failed rejoin should preserve the successful restore result");
@@ -833,7 +860,8 @@ void TestHotRestoreCoordinator(TestContext& test) {
 		std::chrono::milliseconds, std::stop_token) {
 		return HotRestoreHandshakeStatus::TimedOut;
 	};
-	const auto handshakeTimedOut = HotRestoreCoordinator(dependencies).Run(request);
+	const auto handshakeTimedOut = HotRestoreCoordinator(dependencies).Run(
+		request, {}, fastTimeouts);
 	test.Expect(handshakeTimedOut.code == OperationCode::RestoreFailed
 			&& handshakeTimedOut.handshake == HotRestoreHandshakeStatus::TimedOut
 			&& std::any_of(handshakeTimedOut.diagnostics.begin(),
@@ -851,7 +879,8 @@ void TestHotRestoreCoordinator(TestContext& test) {
 		result.code = OperationCode::RestoreFailed;
 		return result;
 	};
-	const auto restoreFailed = HotRestoreCoordinator(dependencies).Run(request);
+	const auto restoreFailed = HotRestoreCoordinator(dependencies).Run(
+		request, {}, fastTimeouts);
 	test.Expect(restoreFailed.code == OperationCode::RestoreFailed
 			&& restoreFailed.rejoin == HotRestoreRejoinStatus::NotRequested,
 		"hot restore should not request rejoin after a failed filesystem restore");
@@ -875,7 +904,7 @@ void TestHotRestoreCoordinator(TestContext& test) {
 		return std::nullopt;
 	};
 	const auto rejoinCancelled = HotRestoreCoordinator(dependencies).Run(
-		request, cancelDuringRejoin.get_token());
+		request, cancelDuringRejoin.get_token(), fastTimeouts);
 	test.Expect(rejoinCancelled.code == OperationCode::Success
 			&& rejoinCancelled.rejoin == HotRestoreRejoinStatus::Cancelled
 			&& std::any_of(rejoinCancelled.diagnostics.begin(),

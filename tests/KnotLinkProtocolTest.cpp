@@ -133,6 +133,8 @@ void TestCapabilities() {
     }
     Check(!document.at("openSocket").at("list_configs").contains("command"),
           "funcList functions should not use the non-standard command property");
+    Check(document.at("signal").contains("backup_warning"),
+          "funcList should advertise the backup warning notification");
     for (const std::string unsupported : {
              "backup_whitelist", "backup_scope", "preserve_player_data",
              "AUTO_BACKUP", "STOP_AUTO_BACKUP",

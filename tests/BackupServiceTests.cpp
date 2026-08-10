@@ -8,10 +8,12 @@
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeRetentionService.h"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <map>
 #include <stop_token>
+#include <string_view>
 
 using namespace std;
 
@@ -51,6 +53,22 @@ ArchiveRunner MakeFakeArchiveRunner(
 			result.exitCode = 0;
 			return result;
 		});
+}
+
+const BackupRuntimeEvent* FindLastEvent(
+	const vector<BackupRuntimeEvent>& events,
+	string_view eventId) {
+	for (auto current = events.rbegin(); current != events.rend(); ++current) {
+		if (current->eventId == eventId) return &*current;
+	}
+	return nullptr;
+}
+
+string EventField(const BackupRuntimeEvent& event, string_view name) {
+	for (const auto& [key, value] : event.fields) {
+		if (key == name) return value;
+	}
+	return {};
 }
 
 } // namespace
@@ -107,8 +125,12 @@ void RunBackupServiceTests(
 		"BackupService should return the committed archive path");
 	test.Expect(created.historyEntry.has_value() && history.size() == 1,
 		"BackupService should commit and return the same history entry");
-	test.Expect(!events.empty() && events.back().eventId == "backup.completed",
-		"BackupService should emit stable runtime event IDs");
+	const auto* backupStarted = FindLastEvent(events, "backup_started");
+	const auto* backupSucceeded = FindLastEvent(events, "backup_success");
+	test.Expect(backupStarted && backupSucceeded
+			&& EventField(*backupSucceeded, "world") == "world"
+			&& !EventField(*backupSucceeded, "file").empty(),
+		"BackupService should emit the companion-mod backup lifecycle");
 
 	const BackupResult unchanged = service.Run(request);
 	test.Expect(unchanged.code == OperationCode::NoChanges
@@ -116,9 +138,17 @@ void RunBackupServiceTests(
 		"BackupService should preserve the no-change outcome");
 	test.Expect(*processCount == 1 && history.size() == 1,
 		"No-change backup should not create a new archive or history entry");
+	const auto* noChanges = FindLastEvent(events, "command_completed");
+	test.Expect(noChanges
+			&& EventField(*noChanges, "command") == "BACKUP"
+			&& EventField(*noChanges, "result") == "no_changes",
+		"No-change backup should emit a terminal event that releases hot-backup state");
 
 	WriteFixture(world / "level.dat", "changed-world-data");
-	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([](const BackupRequest&, const HistoryEntry&, stop_token) {
+	events.clear();
+	bool successPublishedBeforeCloud = false;
+	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([&](const BackupRequest&, const HistoryEntry&, stop_token) {
+		successPublishedBeforeCloud = FindLastEvent(events, "backup_success") != nullptr;
 		CloudPostResult result;
 		result.status = CloudPostStatus::Failed;
 		result.diagnostics.push_back({
@@ -131,6 +161,8 @@ void RunBackupServiceTests(
 			&& partial.outcome == BackupOutcome::Created
 			&& filesystem::exists(partial.archivePath),
 		"Cloud failure should preserve the local backup and return partial success");
+	test.Expect(successPublishedBeforeCloud,
+		"Hot-backup success should release companion auto-save before cloud post-processing");
 
 	stop_source cancelled;
 	cancelled.request_stop();
@@ -138,6 +170,8 @@ void RunBackupServiceTests(
 	test.Expect(cancelledResult.code == OperationCode::Cancelled
 			&& cancelledResult.outcome == BackupOutcome::Rejected,
 		"BackupService should honor the explicit stop token before doing work");
+	test.Expect(FindLastEvent(events, "backup_failed") != nullptr,
+		"Rejected backup should emit the companion-mod failure terminal event");
 
 	request.config.cloudSyncEnabled = true;
 	NetworkDisabledCloudPostHook networkDisabledCloud;
@@ -154,6 +188,32 @@ void RunBackupServiceTests(
 			&& !degraded.diagnostics.empty()
 			&& degraded.diagnostics.front().eventId == "knotlink.network_disabled",
 		"NetworkDisabled KnotLink adapter should preserve the live-file fallback");
+
+	WriteFixture(world / "level.dat", "locked-world-fallback-data");
+	request.config.cloudSyncEnabled = false;
+	bool hotBackupAttempted = false;
+	dependencies.isFileLocked = [](const filesystem::path&) { return true; };
+	dependencies.hotBackup = make_shared<CallbackHotBackupBridge>(
+		[&](const BackupRequest&, stop_token) {
+			hotBackupAttempted = true;
+			HotBackupPreparation preparation;
+			preparation.status = HotBackupStatus::Degraded;
+			preparation.diagnostics.push_back({
+				"knotlink.hot_backup.timeout", DiagnosticSeverity::Warning,
+				"fixture"});
+			return preparation;
+		});
+	dependencies.cloudPost = make_shared<NoopCloudPostHook>();
+	const BackupResult fallback = BackupService(dependencies).Run(request);
+	test.Expect(hotBackupAttempted
+			&& fallback.code == OperationCode::Success
+			&& fallback.outcome == BackupOutcome::Created
+			&& any_of(fallback.diagnostics.begin(), fallback.diagnostics.end(),
+				[](const Diagnostic& diagnostic) {
+					return diagnostic.eventId == "knotlink.hot_backup.timeout"
+						&& diagnostic.severity == DiagnosticSeverity::Warning;
+				}),
+		"A timed-out hot-backup handshake should warn and continue with the live-file fallback");
 
 	const filesystem::path cloudRoot = temporaryRoot / "runtime-cloud-post";
 	Config cloudConfig = config;

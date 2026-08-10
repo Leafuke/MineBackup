@@ -282,7 +282,7 @@ std::string BuildManifest() {
              {"request_id", "Request correlation ID."}});
     }
     for (const auto name : {
-             "backup_started", "backup_success", "backup_failed",
+             "backup_started", "backup_warning", "backup_success", "backup_failed",
              "restore_started", "restore_success", "restore_failed"}) {
         AddSignal(
             manifest, name, "Folder operation event.",

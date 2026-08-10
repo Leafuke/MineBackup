@@ -66,5 +66,8 @@ public:
 	BackupResult Run(const BackupRequest& request, std::stop_token stopToken = {}) const;
 
 private:
+	BackupResult RunCore(
+		const BackupRequest& request,
+		std::stop_token stopToken) const;
 	BackupServiceDependencies dependencies_;
 };

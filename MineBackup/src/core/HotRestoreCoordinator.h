@@ -38,8 +38,11 @@ struct HotRestoreRequest {
 
 struct HotRestoreTimeouts {
 	std::chrono::milliseconds handshake{3000};
+	std::chrono::milliseconds postHandshake{100};
 	std::chrono::milliseconds saveAndExit{10000};
 	std::chrono::milliseconds worldRelease{15000};
+	std::chrono::milliseconds restoreFinishedDelay{100};
+	std::chrono::milliseconds postRestoreStabilize{3000};
 	std::chrono::milliseconds rejoin{30000};
 	std::chrono::milliseconds releasePoll{100};
 };

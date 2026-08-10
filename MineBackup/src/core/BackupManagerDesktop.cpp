@@ -53,17 +53,20 @@ HotBackupPreparation PrepareDesktopHotBackup(
 	BroadcastEvent("pre_hot_backup", {
 		{"config", to_string(request.legacyConfigIndex)},
 		{"config_id", wstring_to_utf8(request.config.configId)},
+		{"folder", wstring_to_utf8(request.world.relativePath)},
 		{"world", wstring_to_utf8(request.world.relativePath)}});
 	const bool saved = g_appState.knotLinkMod.waitForFlag(
 		&KnotLinkModInfo::worldSaveComplete,
 		chrono::milliseconds(10000));
 	result.status = saved && !stopToken.stop_requested()
 		? HotBackupStatus::Coordinated
-		: HotBackupStatus::Rejected;
-	if (!saved) {
+		: stopToken.stop_requested()
+			? HotBackupStatus::Rejected
+			: HotBackupStatus::Degraded;
+	if (!saved && !stopToken.stop_requested()) {
 		result.diagnostics.push_back({
-			"knotlink.hot_backup.timeout", DiagnosticSeverity::Error,
-			"The world-save handshake timed out."});
+			"knotlink.hot_backup.timeout", DiagnosticSeverity::Warning,
+			"The world-save handshake timed out; using the 7-Zip -ssw fallback."});
 	}
 	return result;
 }

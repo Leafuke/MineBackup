@@ -16,6 +16,7 @@
 #include "json.hpp"
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <algorithm>
 #include <mutex>
@@ -388,7 +389,56 @@ BackupResult MakeBackupFailure(
 
 } // namespace
 
-BackupResult BackupService::Run(const BackupRequest& request, stop_token stopToken) const {
+BackupResult BackupService::Run(
+	const BackupRequest& request,
+	stop_token stopToken) const {
+	const vector<pair<string, string>> targetFields{
+		{"config", wstring_to_utf8(request.config.configId)},
+		{"config_id", wstring_to_utf8(request.config.configId)},
+		{"folder", wstring_to_utf8(request.world.relativePath)},
+		{"world", wstring_to_utf8(request.world.relativePath)}};
+	auto publish = [&](string eventId,
+		vector<pair<string, string>> fields = {}) {
+		if (!dependencies_.eventSink) return;
+		auto merged = targetFields;
+		merged.insert(merged.end(),
+			make_move_iterator(fields.begin()), make_move_iterator(fields.end()));
+		dependencies_.eventSink->Publish({std::move(eventId), std::move(merged)});
+	};
+
+	publish("backup_started");
+	BackupResult result;
+	try {
+		result = RunCore(request, stopToken);
+	}
+	catch (const exception& error) {
+		publish("backup_failed", {
+			{"error", "exception"}, {"message", error.what()}});
+		throw;
+	}
+	catch (...) {
+		publish("backup_failed", {
+			{"error", "unknown_exception"}});
+		throw;
+	}
+
+	if (result.outcome == BackupOutcome::NoChanges) {
+		// The companion mod treats this command lifecycle event as the
+		// terminal signal that also releases a coordinated auto-save freeze.
+		publish("command_completed", {
+			{"command", "BACKUP"}, {"result", "no_changes"}});
+	}
+	else if (result.outcome != BackupOutcome::Created) {
+		publish("backup_failed", {
+			{"error", ToString(result.code)},
+			{"result", ToString(result.outcome)}});
+	}
+	return result;
+}
+
+BackupResult BackupService::RunCore(
+	const BackupRequest& request,
+	stop_token stopToken) const {
 	minebackup::logging::ScopedLogContext operationContext{{
 		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
 		{"config_id", wstring_to_utf8(request.config.configId)},
@@ -851,7 +901,13 @@ execute_backup:
                 if (fileSize < minThreshold) {
 					BACKUP_WARNING("The backup archive is unexpectedly small: %s",
 						wstring_to_utf8(filesystem::path(archivePath).filename().wstring()).c_str());
-					publish("backup.archive.small", {{"file", wstring_to_utf8(filesystem::path(archivePath).filename().wstring())}});
+					publish("backup_warning", {
+						{"config", wstring_to_utf8(config.configId)},
+						{"config_id", wstring_to_utf8(config.configId)},
+						{"folder", wstring_to_utf8(worldName)},
+						{"world", wstring_to_utf8(worldName)},
+						{"file", wstring_to_utf8(filesystem::path(archivePath).filename().wstring())},
+						{"type", "file_too_small"}});
                 }
             }
         }
@@ -913,6 +969,16 @@ execute_backup:
 			{"config_id", wstring_to_utf8(config.configId)},
 			{"world", wstring_to_utf8(storageFolderName)},
 			{"file", wstring_to_utf8(completedBackupFile)}});
+		// This is the companion-mod terminal event. Publish it immediately
+		// after the local archive and history commit so auto-save resumes before
+		// potentially slow rclone post-processing begins.
+		publish("backup_success", {
+			{"config", wstring_to_utf8(config.configId)},
+			{"config_id", wstring_to_utf8(config.configId)},
+			{"folder", wstring_to_utf8(storageFolderName)},
+			{"world", wstring_to_utf8(storageFolderName)},
+			{"file", wstring_to_utf8(completedBackupFile)},
+			{"result", "created"}});
 
 		BackupResult result;
 		result.code = OperationCode::Success;

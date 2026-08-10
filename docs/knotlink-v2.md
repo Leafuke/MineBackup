@@ -93,6 +93,24 @@ cmd=BACKUP;from=example.mod;request_id=req-43;current_save=true;comment=Live%20s
 cmd=RESTORE;from=example.mod;request_id=req-44;current_save=true
 ```
 
+Hot-backup notifications are `backup_started`, optionally `backup_warning`,
+then exactly one terminal `backup_success` or `backup_failed`. A no-change
+backup uses `command_completed;command=BACKUP;result=no_changes` as its
+terminal signal. These terminal signals release the companion mod's auto-save
+freeze and therefore must be emitted even for GUI-initiated operations.
+
+Integrated-server hot restore uses the ordered lifecycle below. Every event
+after the handshake carries the same `world` (and `request_id` when present):
+
+```text
+handshake -> pre_hot_restore -> restore_finished(status=success)
+          -> rejoin_world -> hot_restore_complete
+```
+
+The companion mod accepts `rejoin_world` only after a matching
+`restore_finished` advanced its active-world session. MineBackup retains the
+FolderRewind 100 ms post-restore delay and 3 second rejoin stabilization delay.
+
 When `RESTORE` omits `file`, MineBackup selects the latest local archive from
 history; it does not guess from filesystem timestamps or download a cloud chain.
 
@@ -185,6 +203,18 @@ FolderRewind 的命令专属内部格式：`LIST_CONFIGS` 为
 `RESTORE` 不提供 `file` 时只按本地历史选择最新且存在的备份，默认使用
 `clean`。一次性备份模式、压缩设置、黑名单和还原白名单只作用于当前任务，
 不写回配置。
+
+热备份依次发送 `backup_started`、可选的 `backup_warning`，以及唯一终态
+`backup_success`/`backup_failed`；无变化时以
+`command_completed;command=BACKUP;result=no_changes` 作为终态。这些终态
+负责解除联动模组的自动保存冻结，因此 GUI 发起的备份也必须发送。
+
+集成服务器热还原严格遵循
+`handshake -> pre_hot_restore -> restore_finished(status=success) ->
+rejoin_world -> hot_restore_complete`。握手后的每个事件都携带相同的 `world`
+（有请求 ID 时也携带 `request_id`）；联动模组只有在匹配的
+`restore_finished` 推进当前世界状态后才接受 `rejoin_world`。实现保留
+FolderRewind 的还原后 100 ms 等待和重进前 3 秒稳定窗口。
 
 `AUTO_BACKUP`、`STOP_AUTO_BACKUP` 已移除且不会出现在能力清单；调度由
 systemd timer 或 Task Scheduler 持有。
