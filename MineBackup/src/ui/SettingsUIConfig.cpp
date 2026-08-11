@@ -7,6 +7,7 @@
 #include "KnotLinkServerManager.h"
 #include "KnotLinkService.h"
 #include "MainUI.h"
+#include "PlatformCompat.h"
 #include "TaskCoordinator.h"
 
 using namespace std;

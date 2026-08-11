@@ -14,6 +14,7 @@
 #include "PathRuleSet.h"
 #include "FileName.h"
 #include "json.hpp"
+#include "PlatformCompat.h"
 #include <filesystem>
 #include <fstream>
 #include <iterator>

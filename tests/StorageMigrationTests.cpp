@@ -163,6 +163,8 @@ void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root)
     FolderRewindFormat::ChangeRecord record;
     record.archiveFileName = L"Full-World.7z";
     record.backupType = L"Full";
+    record.basedOnFullBackup = L"FULL-WORLD.7Z";
+    record.previousBackupFileName = L"full-world.7z";
     record.createdAtUtc = state.lastBackupTime;
     record.fullFileList = {L"level.dat"};
 
@@ -174,6 +176,19 @@ void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root)
     test.Expect(!loaded.recordLoadFailed, "metadata record should load");
     test.Expect(loaded.state.lastBackupFileName == state.lastBackupFileName, "state archive name should round-trip");
     test.Expect(loaded.records.count(record.archiveFileName) == 1, "record should be indexed by archive name");
+
+    const auto renamedArchive = L"Renamed-World.7z";
+    test.Expect(FolderRewindMetadataStore::RewriteRecordArchiveName(
+        metadata, record.archiveFileName, renamedArchive),
+        "metadata archive rename should succeed");
+
+    FolderRewindFormat::ChangeRecord renamedRecord;
+    test.Expect(FolderRewindMetadataStore::LoadRecord(metadata, renamedArchive, renamedRecord),
+        "renamed metadata record should load");
+    test.Expect(renamedRecord.archiveFileName == renamedArchive
+        && renamedRecord.basedOnFullBackup == renamedArchive
+        && renamedRecord.previousBackupFileName == renamedArchive,
+        "metadata archive references should be rewritten case-insensitively");
 }
 
 void TestHistoryRoundTrip(TestContext& test, const std::filesystem::path& root) {
