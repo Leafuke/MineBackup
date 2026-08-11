@@ -108,7 +108,7 @@ namespace {
 
 	void TestRemoteHistoryAnalysis(TestContext& test) {
 		Config config;
-		config.configId = L"11111111-1111-4111-8111-111111111111";
+		config.configId = L"A1111111-B111-4C11-8111-111111111111";
 		config.saveRoot = L"C:\\Minecraft\\saves";
 		config.rcloneRemotePath = L"remote:minebackup";
 		config.worlds = {
@@ -125,6 +125,7 @@ namespace {
 			RemoteEntry(config, L"Duplicate", L"", L"ambiguous.7z"),
 			RemoteEntry(config, L"Missing", L"", L"unmapped.7z"),
 			RemoteEntry(config, L"Alpha", alphaPath, L"inactive.7z")};
+		remote[1].configId = L"a1111111-b111-4c11-8111-111111111111";
 		vector<HistoryEntry> local{
 			RemoteEntry(config, L"Alpha", alphaPath, L"name.7z")};
 

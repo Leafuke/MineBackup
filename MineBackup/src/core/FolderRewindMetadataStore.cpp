@@ -2,6 +2,7 @@
 
 #include "AtomicFileWriter.h"
 #include "json.hpp"
+#include "PlatformCompat.h"
 #include "text_to_text.h"
 
 #include <algorithm>
