@@ -1,4 +1,5 @@
 #include "Platform_macos.h"
+#include "PlatformCompat.h"
 #include "AppState.h"
 #include "Globals.h"
 #include "i18n.h"

@@ -259,7 +259,7 @@ struct ProfileKnotLinkCommands::Implementation {
 	};
 
 	ProfileRuntime& runtime;
-	mutex mutex;
+	mutex stateMutex;
 	weak_ptr<HeadlessKnotLinkBridge> bridge;
 	map<string, shared_ptr<Operation>> operations;
 	bool stopping = false;
@@ -271,7 +271,7 @@ struct ProfileKnotLinkCommands::Implementation {
 	~Implementation() {
 		vector<shared_ptr<Operation>> pending;
 		{
-			lock_guard lock(mutex);
+			lock_guard lock(stateMutex);
 			stopping = true;
 			for (auto& [id, operation] : operations) {
 				(void)id;
@@ -286,7 +286,7 @@ struct ProfileKnotLinkCommands::Implementation {
 	}
 
 	void RequestStop() {
-		lock_guard lock(mutex);
+		lock_guard lock(stateMutex);
 		stopping = true;
 		for (auto& [id, operation] : operations) {
 			(void)id;
@@ -297,7 +297,7 @@ struct ProfileKnotLinkCommands::Implementation {
 	void Cleanup() {
 		vector<shared_ptr<Operation>> completed;
 		{
-			lock_guard lock(mutex);
+			lock_guard lock(stateMutex);
 			for (auto current = operations.begin(); current != operations.end();) {
 				if (!current->second->completed.load(memory_order_acquire)) {
 					++current;
@@ -315,7 +315,7 @@ struct ProfileKnotLinkCommands::Implementation {
 	void Publish(const BackupRuntimeEvent& event) {
 		shared_ptr<HeadlessKnotLinkBridge> current;
 		{
-			lock_guard lock(mutex);
+			lock_guard lock(stateMutex);
 			current = bridge.lock();
 		}
 		if (current) current->Publish(event);
@@ -330,7 +330,7 @@ struct ProfileKnotLinkCommands::Implementation {
 			: context->metadata.requestId;
 		auto operation = make_shared<Operation>();
 		{
-			lock_guard lock(mutex);
+			lock_guard lock(stateMutex);
 			if (stopping || operations.contains(id)) return false;
 			operations.emplace(id, operation);
 		}
@@ -563,7 +563,7 @@ struct ProfileKnotLinkCommands::Implementation {
 
 	size_t ActiveOperationCount() {
 		Cleanup();
-		lock_guard lock(mutex);
+		lock_guard lock(stateMutex);
 		return operations.size();
 	}
 };
@@ -577,7 +577,7 @@ ProfileKnotLinkCommands::ProfileKnotLinkCommands(
 ProfileKnotLinkCommands::~ProfileKnotLinkCommands() = default;
 
 void ProfileKnotLinkCommands::SetBridge(shared_ptr<HeadlessKnotLinkBridge> bridge) {
-	lock_guard lock(implementation_->mutex);
+	lock_guard lock(implementation_->stateMutex);
 	implementation_->bridge = std::move(bridge);
 }
 
