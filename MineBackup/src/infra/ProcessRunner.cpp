@@ -1,7 +1,6 @@
 #include "ProcessRunner.h"
 
 #include "text_to_text.h"
-#include "TaskCoordinator.h"
 
 #include <algorithm>
 #include <array>
@@ -319,7 +318,6 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
 } // namespace
 
 ProcessResult Run(const ProcessSpec& spec, stop_token stopToken) {
-    if (!stopToken.stop_possible()) stopToken = TaskCoordinator::CurrentStopToken();
     return RunPlatform(spec, stopToken);
 }
 

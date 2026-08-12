@@ -24,12 +24,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential gcc-13 g++-13 cmake ninja-build pkg-config p7zip-full \
+            build-essential gcc-13 g++-13 cmake ninja-build pkg-config \
             python3-pil unzip curl \
             libgl1-mesa-dev libcurl4-openssl-dev libglib2.0-dev \
             libgtk-3-dev libayatana-appindicator3-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
             libwayland-dev libxkbcommon-dev wayland-protocols xvfb weston
+
+      - name: Install pinned 7-Zip ZS runtime
+        run: |
+          mkdir -p build/package-inputs
+          curl --fail --location --retry 3 \
+            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.02-v1.5.7-R2/linux-gcc-x64.zip \
+            --output build/package-inputs/linux-gcc-x64.zip
+          echo 'be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3  build/package-inputs/linux-gcc-x64.zip' \
+            | sha256sum --check --status
+          unzip -p build/package-inputs/linux-gcc-x64.zip 7zz \
+            >build/package-inputs/7zz
+          chmod 0755 build/package-inputs/7zz
+          sudo install -m 0755 build/package-inputs/7zz /usr/local/bin/7zz
 
       - name: Configure, build and test
         run: |
@@ -56,15 +69,10 @@ jobs:
 
       - name: Download pinned packaging inputs
         run: |
-          mkdir -p build/package-inputs build/release
-          curl --fail --location --retry 3 \
-            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.02-v1.5.7-R2/linux-gcc-x64.zip \
-            --output build/package-inputs/linux-gcc-x64.zip
+          mkdir -p build/release
           curl --fail --location --retry 3 \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
             --output build/package-inputs/linuxdeploy-x86_64.AppImage
-          echo 'be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3  build/package-inputs/linux-gcc-x64.zip' \
-            | sha256sum --check --status
           echo 'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  build/package-inputs/linuxdeploy-x86_64.AppImage' \
             | sha256sum --check --status
 

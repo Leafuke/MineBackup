@@ -52,4 +52,20 @@ foreach(path IN LISTS runtime_contract_files)
     endif()
 endforeach()
 
+# data_core 是 runtime 的下层依赖，禁止通过 TaskCoordinator 回连 runtime。
+set(data_core_forbidden_include
+    "#[ \t]*include[ \t]*[<\"]TaskCoordinator\\.h[>\"]")
+foreach(path IN LISTS MINEBACKUP_DATA_CORE_SOURCES)
+    if(NOT EXISTS "${path}")
+        message(FATAL_ERROR "Data-core contract file is missing: ${path}")
+    endif()
+    file(READ "${path}" content)
+    string(REGEX MATCH "${data_core_forbidden_include}" violation "${content}")
+    if(violation)
+        file(RELATIVE_PATH relative "${MINEBACKUP_REPOSITORY_ROOT}" "${path}")
+        message(FATAL_ERROR
+            "Data-core boundary violation in ${relative}: ${violation}")
+    endif()
+endforeach()
+
 message(STATUS "Runtime source/header boundary audit passed")

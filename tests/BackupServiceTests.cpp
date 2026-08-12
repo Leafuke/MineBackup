@@ -145,6 +145,24 @@ void RunBackupServiceTests(
 		"No-change backup should emit a terminal event that releases hot-backup state");
 
 	WriteFixture(world / "level.dat", "changed-world-data");
+	BackupServiceDependencies unavailableDependencies = dependencies;
+	unavailableDependencies.archiveRunnerFactory = [](
+		const filesystem::path&,
+		const AppPaths&,
+		stop_token token) {
+		ExternalToolResolution resolution;
+		resolution.diagnostic = L"No supported 7zz executable was found.";
+		return ArchiveRunner(std::move(resolution), token);
+	};
+	const BackupResult unavailable = BackupService(unavailableDependencies).Run(request);
+	test.Expect(unavailable.code == OperationCode::ToolUnavailable
+			&& unavailable.outcome == BackupOutcome::Failed
+			&& any_of(unavailable.diagnostics.begin(), unavailable.diagnostics.end(),
+				[](const Diagnostic& diagnostic) {
+					return diagnostic.eventId == "backup.tool.unavailable";
+				}),
+		"BackupService should report a deterministic tool-unavailable contract through its injected archive port");
+
 	events.clear();
 	bool successPublishedBeforeCloud = false;
 	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([&](const BackupRequest&, const HistoryEntry&, stop_token) {

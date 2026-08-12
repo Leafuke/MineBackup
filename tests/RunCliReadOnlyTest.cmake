@@ -46,6 +46,7 @@ file(WRITE "${PROFILE}/config/config.ini"
 "Name=Nightly\n"
 "SpecialConfigId=special-id\n"
 "Command=echo legacy\n")
+file(SHA256 "${PROFILE}/config/config.ini" profile_config_before)
 
 function(run_json_query output_variable)
     execute_process(
@@ -90,6 +91,10 @@ endif()
 
 if(EXISTS "${PROFILE}/config/special-tasks.json")
     message(FATAL_ERROR "read-only commands must not migrate legacy special tasks")
+endif()
+file(SHA256 "${PROFILE}/config/config.ini" profile_config_after)
+if(NOT profile_config_after STREQUAL profile_config_before)
+    message(FATAL_ERROR "read-only queries must not rewrite config.ini")
 endif()
 
 set(SCRIPT_PROFILE "${TEST_ROOT}/cli-doctor-script-profile")
@@ -142,6 +147,9 @@ file(WRITE "${SCRIPT_PROFILE}/config/special-tasks.json"
 "    }]\n"
 "  }]\n"
 "}\n")
+file(SHA256 "${SCRIPT_PROFILE}/config/config.ini" script_config_before)
+file(SHA256 "${SCRIPT_PROFILE}/config/jobs.json" script_jobs_before)
+file(SHA256 "${SCRIPT_PROFILE}/config/special-tasks.json" script_tasks_before)
 execute_process(
     COMMAND "${CLI}" --data-dir "${SCRIPT_PROFILE}" --json --no-network doctor
     RESULT_VARIABLE script_doctor_result
@@ -150,7 +158,7 @@ execute_process(
 string(STRIP "${script_doctor_json}" script_doctor_json)
 string(JSON script_doctor_schema ERROR_VARIABLE script_doctor_json_error
     GET "${script_doctor_json}" schemaVersion)
-string(JSON script_doctor_code GET "${script_doctor_json}" code)
+string(JSON script_doctor_command GET "${script_doctor_json}" command)
 string(JSON ignored_sections GET "${script_doctor_json}" data legacySpecialConfigSectionsIgnored)
 string(JSON ignored_document GET "${script_doctor_json}" data legacySpecialTasksFileIgnored)
 string(JSON jobs_status GET "${script_doctor_json}" data jobs status)
@@ -160,17 +168,37 @@ string(JSON world_ready GET "${script_doctor_json}" data paths 0 worlds 0 coldRe
 string(JSON preserve_count LENGTH "${script_doctor_json}" data restorePreserve)
 string(JSON preserve_first GET "${script_doctor_json}" data restorePreserve 0)
 string(JSON preserve_second GET "${script_doctor_json}" data restorePreserve 1)
-if(NOT script_doctor_result EQUAL 8 OR script_doctor_json_error
-		OR NOT script_doctor_schema EQUAL 1
-		OR NOT script_doctor_code STREQUAL "tool_unavailable"
+string(JSON diagnostics_count LENGTH "${script_doctor_json}" diagnostics)
+set(legacy_warning_found FALSE)
+if(diagnostics_count GREATER 0)
+    math(EXPR diagnostics_last "${diagnostics_count} - 1")
+    foreach(index RANGE 0 ${diagnostics_last})
+        string(JSON diagnostic_event GET "${script_doctor_json}" diagnostics ${index} eventId)
+        if(diagnostic_event STREQUAL "special.legacy.ignored")
+            set(legacy_warning_found TRUE)
+        endif()
+    endforeach()
+endif()
+if(script_doctor_json_error OR NOT script_doctor_schema EQUAL 1
+		OR NOT script_doctor_command STREQUAL "doctor"
         OR NOT ignored_sections EQUAL 1 OR NOT ignored_document
 		OR NOT jobs_status STREQUAL "loaded" OR NOT jobs_references
 		OR NOT backup_writable OR NOT world_ready OR NOT preserve_count EQUAL 2
 		OR NOT preserve_first STREQUAL "ops-marker.txt"
-		OR NOT preserve_second STREQUAL "session.lock")
+		OR NOT preserve_second STREQUAL "session.lock"
+        OR NOT legacy_warning_found)
     message(FATAL_ERROR
         "doctor must report retained legacy special data as ignored: "
         "${script_doctor_error}\n${script_doctor_json}")
+endif()
+file(SHA256 "${SCRIPT_PROFILE}/config/config.ini" script_config_after)
+file(SHA256 "${SCRIPT_PROFILE}/config/jobs.json" script_jobs_after)
+file(SHA256 "${SCRIPT_PROFILE}/config/special-tasks.json" script_tasks_after)
+if(NOT script_config_after STREQUAL script_config_before
+        OR NOT script_jobs_after STREQUAL script_jobs_before
+        OR NOT script_tasks_after STREQUAL script_tasks_before)
+    message(FATAL_ERROR
+        "doctor must not rewrite config.ini, jobs.json, or special-tasks.json")
 endif()
 
 set(INVALID_JOB_PROFILE "${TEST_ROOT}/cli-doctor-invalid-job-profile")

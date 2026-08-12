@@ -70,7 +70,8 @@ bool RunInternalProcess(const ProcessSpec& spec) {
 		{"working_directory", spec.workingDirectory.empty() ? "default" : "custom"}};
 	MB_LOG_DEBUG(minebackup::logging::LogCategory::Process,
 		"process.started", "External process started.");
-	const auto result = ProcessRunner::Run(spec);
+	const auto result = ProcessRunner::Run(
+		spec, TaskCoordinator::CurrentStopToken());
 	if (!result.standardOutput.empty()) {
 		minebackup::logging::LogRaw(minebackup::logging::LogCategory::Process,
 			"process.stdout", result.standardOutput, minebackup::logging::LogLevel::Debug, MB_LOG_SOURCE);
