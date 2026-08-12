@@ -105,6 +105,33 @@ wstring EndpointToken(const wstring& identity) {
 	return output.str();
 }
 
+#ifndef _WIN32
+filesystem::path UserSocketDirectory(wstring& error) {
+	const uid_t userId = ::geteuid();
+	const filesystem::path directory = filesystem::path("/tmp")
+		/ ("minebackup-" + to_string(static_cast<uintmax_t>(userId)));
+	error_code fileError;
+	filesystem::create_directory(directory, fileError);
+	if (fileError && fileError != errc::file_exists) {
+		error = L"Could not create the current-user instance socket directory.";
+		return {};
+	}
+
+	struct stat status{};
+	if (::lstat(directory.c_str(), &status) != 0
+		|| !S_ISDIR(status.st_mode)
+		|| status.st_uid != userId) {
+		error = L"The current-user instance socket directory is not secure.";
+		return {};
+	}
+	if (::chmod(directory.c_str(), S_IRWXU) != 0) {
+		error = L"Could not secure the current-user instance socket directory.";
+		return {};
+	}
+	return directory;
+}
+#endif
+
 string LegacyTypeName(InstanceRequestType type) {
 	return type == InstanceRequestType::SelectConfig ? "SelectConfig" : "Activate";
 }
@@ -606,7 +633,9 @@ InstanceAcquireResult SingleInstanceService::Acquire(
 		return InstanceAcquireResult::Failed;
 	}
 	const auto lockPath = runtimeRoot / (L"instance-" + impl_->token + L".lock");
-	impl_->socketPath = runtimeRoot / (L"instance-" + impl_->token + L".sock");
+	const auto socketDirectory = UserSocketDirectory(error);
+	if (socketDirectory.empty()) return InstanceAcquireResult::Failed;
+	impl_->socketPath = socketDirectory / (L"instance-" + impl_->token + L".sock");
 	impl_->lockDescriptor = ::open(lockPath.c_str(), O_RDWR | O_CREAT, 0600);
 	if (impl_->lockDescriptor < 0) {
 		error = L"Could not open the profile instance lock.";

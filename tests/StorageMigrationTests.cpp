@@ -412,22 +412,24 @@ void TestLegacyServicePolicy(TestContext& test) {
 }
 
 void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
-#ifdef _WIN32
     const auto runtime = root / "single-instance";
+#ifndef _WIN32
+    const auto longRuntime = runtime / std::string(80, 'a') / std::string(80, 'b');
+    test.Expect(longRuntime.string().size() > 160,
+        "the Unix single-instance regression fixture should exceed socket pathname limits");
 #else
-    // sockaddr_un::sun_path is only 104 bytes on macOS.  The per-runner
-    // temporary directory is much longer than the application's real runtime
-    // path, so use a unique short POSIX test endpoint below /tmp.
-    const auto runtime = std::filesystem::path("/tmp") / root.filename();
+    const auto& longRuntime = runtime;
 #endif
+    const auto profileOne = (root / "profile-one").wstring();
+    const auto profileTwo = (root / "profile-two").wstring();
     std::wstring error;
     {
         SingleInstanceService primary;
-        test.Expect(primary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::Acquired,
+        test.Expect(primary.Acquire(profileOne, longRuntime, error) == InstanceAcquireResult::Acquired,
             "the first instance should acquire its profile lock");
 
         SingleInstanceService secondary;
-        test.Expect(secondary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::AlreadyRunning,
+        test.Expect(secondary.Acquire(profileOne, longRuntime, error) == InstanceAcquireResult::AlreadyRunning,
             "a second instance of the same profile should be rejected");
         test.Expect(secondary.Send({InstanceRequestType::SelectConfig, L"stable-config-id"}, error),
             "the second instance should deliver a bounded IPC request");
@@ -486,7 +488,7 @@ void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
             "instance IPC should reject payloads above the protocol limit");
 
         SingleInstanceService otherProfile;
-        test.Expect(otherProfile.Acquire(L"profile-two", runtime, error) == InstanceAcquireResult::Acquired,
+        test.Expect(otherProfile.Acquire(profileTwo, runtime, error) == InstanceAcquireResult::Acquired,
             "a different profile should acquire an independent lock");
     }
     std::error_code cleanupError;

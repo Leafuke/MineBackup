@@ -1,6 +1,6 @@
 # Profile Runtime IPC v2
 
-MineBackup 对每个规范 profile 身份持有一个单实例锁。Windows 使用当前用户 ACL 的 named pipe 与 `Local` mutex；Linux/macOS 使用权限 `0600` 的 Unix socket 和 lock file。协议不监听 TCP/UDP，也不允许跨用户控制。
+MineBackup 对每个规范 profile 身份持有一个单实例锁。Windows 使用当前用户 ACL 的 named pipe 与 `Local` mutex；Linux/macOS 将 lock file 保留在 profile runtime 目录，并在权限 `0700` 的 `/tmp/minebackup-<uid>` 目录中使用权限 `0600` 的短 Unix socket。socket 文件名只包含规范 profile 身份的固定长度 hash，因此不受 profile 路径长度影响。协议不监听 TCP/UDP，也不允许跨用户控制。
 
 桌面激活保留只写的 v1 `Activate`/`SelectConfig` 消息。服务器控制面使用长度前缀 JSON v2，并在同一连接返回最终响应：
 
