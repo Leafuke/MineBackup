@@ -25,7 +25,8 @@ rm -rf "$work"
 mkdir -p "$work/input"
 unzip -p "$seven_zip_archive" 7zz >"$work/input/7zz"
 chmod 0755 "$work/input/7zz"
-"$work/input/7zz" i | grep -Fq zstd
+seven_zip_info="$("$work/input/7zz" i)"
+grep -Fq zstd <<<"$seven_zip_info"
 
 stage_common() {
   local root="$1"
@@ -96,8 +97,15 @@ find "$deb_root" -type d -exec chmod 0755 {} +
 dpkg-deb --root-owner-group --build "$deb_root" \
   "$output_dir/minebackup-cli_${version}_amd64.deb"
 
-tar -tzf "$output_dir/MineBackup-CLI-$version-linux-x64.tar.gz" | grep -Fq '/bin/minebackup-cli'
-dpkg-deb --contents "$output_dir/minebackup-cli_${version}_amd64.deb" | grep -Fq 'usr/bin/minebackup-cli'
+archive_listing="$(
+  tar -tzf "$output_dir/MineBackup-CLI-$version-linux-x64.tar.gz"
+)"
+grep -Fq '/bin/minebackup-cli' <<<"$archive_listing"
+
+deb_listing="$(
+  dpkg-deb --contents "$output_dir/minebackup-cli_${version}_amd64.deb"
+)"
+grep -Fq 'usr/bin/minebackup-cli' <<<"$deb_listing"
 sha256sum "$output_dir/MineBackup-CLI-$version-linux-x64.tar.gz" \
   "$output_dir/minebackup-cli_${version}_amd64.deb"
 rm -rf "$work"
