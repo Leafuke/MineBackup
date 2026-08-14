@@ -592,8 +592,18 @@ CliResult Doctor(
 				"profile.path.not_ready", DiagnosticSeverity::Error,
 				wstring_to_utf8(config.configId)});
 		}
-		const auto sevenZip = ExternalToolManager::ResolveSevenZip(
+		auto sevenZip = ExternalToolManager::ResolveSevenZip(
 			config.zipPath, paths);
+		if (!sevenZip.available && config.zipPath.empty()) {
+			// doctor 与 backup/restore 共用首次部署语义；显式无效路径不能被内嵌工具悄悄覆盖。
+			wstring bootstrapError;
+			if (EnsureCliSevenZip(paths, {}, bootstrapError)) {
+				sevenZip = ExternalToolManager::ResolveSevenZip({}, paths);
+			}
+			else if (!bootstrapError.empty()) {
+				sevenZip.diagnostic = bootstrapError;
+			}
+		}
 		result.data["tools"].push_back({
 			{"configId", wstring_to_utf8(config.configId)},
 			{"tool", "7zip"},
