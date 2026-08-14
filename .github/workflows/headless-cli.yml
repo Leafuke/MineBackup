@@ -74,9 +74,41 @@ jobs:
             --version </dev/null
           env -u DISPLAY -u WAYLAND_DISPLAY \
             build/cli-release/deb-audit/usr/bin/minebackup-cli --version </dev/null
+          test -x "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz"
+          test -x "build/cli-release/deb-audit/usr/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz"
           test -f "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/scheduling/systemd/minebackup-serve@.service"
           test -f "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/scheduling/windows/MineBackup-Serve.xml"
           test -f build/cli-release/deb-audit/usr/lib/systemd/system/minebackup-serve@.service
+          tar_smoke_root="$RUNNER_TEMP/minebackup-tar-package-smoke"
+          deb_smoke_root="$RUNNER_TEMP/minebackup-deb-package-smoke"
+          cmake -DCLI="$PWD/build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/bin/minebackup-cli" \
+            -DTEST_ROOT="$tar_smoke_root" \
+            -P tests/RunCliPackageSmoke.cmake
+          cmake -DCLI="$PWD/build/cli-release/deb-audit/usr/bin/minebackup-cli" \
+            -DTEST_ROOT="$deb_smoke_root" \
+            -P tests/RunCliPackageSmoke.cmake
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            "$PWD/build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/bin/minebackup-cli" \
+            --data-dir "$tar_smoke_root/profile" --json --no-network doctor \
+            >"$RUNNER_TEMP/tar-package-doctor.json"
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            "$PWD/build/cli-release/deb-audit/usr/bin/minebackup-cli" \
+            --data-dir "$deb_smoke_root/profile" --json --no-network doctor \
+            >"$RUNNER_TEMP/deb-package-doctor.json"
+          python3 - "$RUNNER_TEMP/tar-package-doctor.json" \
+            "$PWD/build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz" \
+            "$RUNNER_TEMP/deb-package-doctor.json" \
+            "$PWD/build/cli-release/deb-audit/usr/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          for doctor_path, expected_path in zip(sys.argv[1::2], sys.argv[2::2]):
+              payload = json.loads(pathlib.Path(doctor_path).read_text())
+              tools = [item for item in payload["data"]["tools"] if item["tool"] == "7zip"]
+              if len(tools) != 1 or pathlib.Path(tools[0]["path"]).resolve() != pathlib.Path(expected_path).resolve():
+                  raise SystemExit(f"package selected an unexpected 7zz: {doctor_path} {payload}")
+          PY
           ldd build/cli-release/deb-audit/usr/bin/minebackup-cli | tee build/cli-release/ldd.txt
           ! grep -E 'not found|libGL|libX11|libwayland|libgtk' build/cli-release/ldd.txt
 

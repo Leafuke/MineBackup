@@ -31,8 +31,9 @@ grep -Fq zstd <<<"$seven_zip_info"
 stage_common() {
   local root="$1"
   install -Dm0755 "$binary" "$root/bin/minebackup-cli"
+  # 便携包的资源根必须与 AppPaths::ResourcesRootFor 的 share 布局一致。
   install -Dm0755 "$work/input/7zz" \
-    "$root/Resources/tools/7zip/$seven_zip_version/7zz"
+    "$root/share/MineBackup/tools/7zip/$seven_zip_version/7zz"
   install -Dm0644 "$repo_root/LICENSE.txt" "$root/LICENSE.txt"
   install -Dm0644 "$repo_root/LICENSES/7zip-zstd.txt" "$root/LICENSES/7zip-zstd.txt"
   install -Dm0644 "$repo_root/LICENSES/spdlog.txt" "$root/LICENSES/spdlog.txt"
@@ -101,11 +102,13 @@ archive_listing="$(
   tar -tzf "$output_dir/MineBackup-CLI-$version-linux-x64.tar.gz"
 )"
 grep -Fq '/bin/minebackup-cli' <<<"$archive_listing"
+grep -Fq "/share/MineBackup/tools/7zip/$seven_zip_version/7zz" <<<"$archive_listing"
 
 deb_listing="$(
   dpkg-deb --contents "$output_dir/minebackup-cli_${version}_amd64.deb"
 )"
 grep -Fq 'usr/bin/minebackup-cli' <<<"$deb_listing"
+grep -Fq "usr/share/MineBackup/tools/7zip/$seven_zip_version/7zz" <<<"$deb_listing"
 sha256sum "$output_dir/MineBackup-CLI-$version-linux-x64.tar.gz" \
   "$output_dir/minebackup-cli_${version}_amd64.deb"
 rm -rf "$work"
