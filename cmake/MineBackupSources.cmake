@@ -27,6 +27,9 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.cpp
 	${MINEBACKUP_CORE_DIR}/ArchiveRunner.cpp
 	${MINEBACKUP_CORE_DIR}/ChainSafeRetention.cpp
+	# 世界身份和作业文档只描述数据语义；链保留不得反向依赖 runtime。
+	${MINEBACKUP_CORE_DIR}/JobDocument.cpp
+	${MINEBACKUP_CORE_DIR}/WorldIdentity.cpp
 	${MINEBACKUP_CORE_DIR}/BackupChangeDetector.cpp
     ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.cpp
     ${MINEBACKUP_CORE_DIR}/PathRuleSet.cpp
@@ -43,7 +46,6 @@ set(MINEBACKUP_RUNTIME_SOURCES
 	${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
 	${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
 	${MINEBACKUP_CORE_DIR}/HotRestoreCoordinator.cpp
-	${MINEBACKUP_CORE_DIR}/JobDocument.cpp
 	${MINEBACKUP_CORE_DIR}/JobRunner.cpp
 	${MINEBACKUP_CORE_DIR}/MigrationCoordinator.cpp
 	${MINEBACKUP_CORE_DIR}/OperationResult.cpp
@@ -59,7 +61,6 @@ set(MINEBACKUP_RUNTIME_SOURCES
 	${MINEBACKUP_CORE_DIR}/RuntimeRetentionService.cpp
 	${MINEBACKUP_CORE_DIR}/RestoreService.cpp
 	${MINEBACKUP_CORE_DIR}/RestoreWorkspace.cpp
-	${MINEBACKUP_CORE_DIR}/WorldIdentity.cpp
 	${MINEBACKUP_CORE_DIR}/TaskCoordinator.cpp
 	${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.cpp
 	${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.cpp

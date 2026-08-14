@@ -52,20 +52,42 @@ foreach(path IN LISTS runtime_contract_files)
     endif()
 endforeach()
 
-# data_core 是 runtime 的下层依赖，禁止通过 TaskCoordinator 回连 runtime。
-set(data_core_forbidden_include
-    "#[ \t]*include[ \t]*[<\"]TaskCoordinator\\.h[>\"]")
+# data_core 是 runtime 的下层依赖，禁止通过运行时编排头文件回连 runtime。
+# 这项检查把库的依赖方向固化为构建期契约，避免某个平台的静态链接器
+# 恰好解析成功而掩盖了 lower layer -> higher layer 的错误依赖。
+set(data_core_forbidden_headers
+    BackupService.h
+    HistoryRepository.h
+    HotRestoreCoordinator.h
+    JobRunner.h
+    MigrationCoordinator.h
+    ProfileConfigCatalog.h
+    ProfileConfigRepository.h
+    ProfileKnotLinkCommands.h
+    ProfileManifest.h
+    ProfileRuntime.h
+    RestoreService.h
+    RestoreWorkspace.h
+    RuntimeCloudPostHook.h
+    RuntimeFileLock.h
+    RuntimeIntegration.h
+    RuntimeRetentionService.h
+    SingleInstanceService.h
+    TaskCoordinator.h)
 foreach(path IN LISTS MINEBACKUP_DATA_CORE_SOURCES)
     if(NOT EXISTS "${path}")
         message(FATAL_ERROR "Data-core contract file is missing: ${path}")
     endif()
     file(READ "${path}" content)
-    string(REGEX MATCH "${data_core_forbidden_include}" violation "${content}")
-    if(violation)
-        file(RELATIVE_PATH relative "${MINEBACKUP_REPOSITORY_ROOT}" "${path}")
-        message(FATAL_ERROR
-            "Data-core boundary violation in ${relative}: ${violation}")
-    endif()
+    foreach(header IN LISTS data_core_forbidden_headers)
+        string(REGEX MATCH
+            "#[ \t]*include[ \t]*[<\"]${header}[>\"]" violation "${content}")
+        if(violation)
+            file(RELATIVE_PATH relative "${MINEBACKUP_REPOSITORY_ROOT}" "${path}")
+            message(FATAL_ERROR
+                "Data-core boundary violation in ${relative}: ${violation}")
+        endif()
+    endforeach()
 endforeach()
 
 message(STATUS "Runtime source/header boundary audit passed")
