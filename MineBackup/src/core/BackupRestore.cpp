@@ -14,9 +14,9 @@
 #include "HotRestoreCoordinator.h"
 #include "Logging.h"
 #include "MigrationCoordinator.h"
-#include "PathRuleSet.h"
 #include "PlatformCompat.h"
 #include "RestoreService.h"
+#include "RestoreWorkspace.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "TaskCoordinator.h"
@@ -66,75 +66,6 @@ struct SmartRestorePlan {
 	vector<SmartRestoreArchiveGroup> archiveGroups;
 };
 
-filesystem::path CreateSafeRestoreTempDirectoryPath(const filesystem::path& targetDirectory) {
-	const filesystem::path normalized = targetDirectory.lexically_normal();
-	const filesystem::path parent = normalized.parent_path();
-	if (parent.empty()) throw runtime_error("Restore target has no parent directory.");
-
-	const filesystem::path base = parent / (normalized.filename().wstring() + L"-Temp");
-	filesystem::path candidate = base;
-	int suffix = 1;
-	error_code ec;
-	while (filesystem::exists(candidate, ec)) {
-		candidate = filesystem::path(base.wstring() + L"-" + to_wstring(suffix++));
-	}
-	return candidate;
-}
-
-bool TryPrepareSafeRestoreWorkspace(
-	const filesystem::path& targetDirectory,
-	filesystem::path& snapshotDirectory,
-	string& errorMessage) {
-	snapshotDirectory.clear();
-	errorMessage.clear();
-	error_code ec;
-	const bool targetExists = filesystem::exists(targetDirectory, ec);
-	if (ec) {
-		errorMessage = "Failed to inspect restore target: " + ec.message();
-		return false;
-	}
-	if (!targetExists) {
-		filesystem::create_directories(targetDirectory, ec);
-		if (ec) errorMessage = "Failed to create restore target: " + ec.message();
-		return !ec;
-	}
-
-	try {
-		snapshotDirectory = CreateSafeRestoreTempDirectoryPath(targetDirectory);
-	}
-	catch (const exception& exception) {
-		errorMessage = exception.what();
-		return false;
-	}
-
-	filesystem::rename(targetDirectory, snapshotDirectory, ec);
-	if (ec) {
-		errorMessage = "Failed to move restore target to snapshot: " + ec.message();
-		snapshotDirectory.clear();
-		return false;
-	}
-	filesystem::create_directories(targetDirectory, ec);
-	if (!ec) return true;
-
-	const string createError = ec.message();
-	error_code cleanupError;
-	if (filesystem::exists(targetDirectory, cleanupError) && !cleanupError) {
-		ClearReadonlyAttributesRecursively(targetDirectory);
-		filesystem::remove_all(targetDirectory, cleanupError);
-	}
-
-	error_code rollbackError;
-	filesystem::rename(snapshotDirectory, targetDirectory, rollbackError);
-	if (rollbackError) {
-		errorMessage = "Failed to create clean workspace (" + createError
-			+ "), rollback also failed: " + rollbackError.message();
-		return false;
-	}
-	snapshotDirectory.clear();
-	errorMessage = "Failed to create clean workspace: " + createError;
-	return false;
-}
-
 void CleanupInternalRestoreMarkers(const filesystem::path& targetDirectory) {
 	for (const wchar_t* marker : {kDeletedOnlyMarkerDirectory, L"__MineBackup_Internal"}) {
 		error_code ec;
@@ -143,104 +74,6 @@ void CleanupInternalRestoreMarkers(const filesystem::path& targetDirectory) {
 		ClearReadonlyAttributesRecursively(internalDirectory);
 		filesystem::remove_all(internalDirectory, ec);
 	}
-}
-
-void CopyRestoreWhitelistEntries(
-	const filesystem::path& sourceDirectory,
-	const filesystem::path& targetDirectory,
-	const vector<wstring>& whitelist) {
-	if (whitelist.empty()) return;
-	error_code ec;
-	if (!filesystem::exists(sourceDirectory, ec) || ec) return;
-	const PathRuleSet rules(whitelist);
-
-	for (const auto& entry : filesystem::recursive_directory_iterator(
-		sourceDirectory,
-		filesystem::directory_options::skip_permission_denied,
-		ec)) {
-		if (ec) break;
-		if (!entry.is_directory()
-			|| !rules.MatchesSelfOrAncestor(entry.path(), sourceDirectory)) {
-			continue;
-		}
-		const filesystem::path relative = filesystem::relative(entry.path(), sourceDirectory, ec);
-		if (!ec) filesystem::create_directories(targetDirectory / relative, ec);
-	}
-
-	for (const auto& entry : filesystem::recursive_directory_iterator(
-		sourceDirectory,
-		filesystem::directory_options::skip_permission_denied,
-		ec)) {
-		if (ec) break;
-		if (!entry.is_regular_file()
-			|| !rules.MatchesSelfOrAncestor(entry.path(), sourceDirectory)) {
-			continue;
-		}
-		const filesystem::path relative = filesystem::relative(entry.path(), sourceDirectory, ec);
-		if (ec) continue;
-		const filesystem::path destination = targetDirectory / relative;
-		filesystem::create_directories(destination.parent_path(), ec);
-		if (!filesystem::exists(destination, ec) || ec) {
-			ec.clear();
-			filesystem::copy_file(
-				entry.path(),
-				destination,
-				filesystem::copy_options::overwrite_existing,
-				ec);
-		}
-	}
-}
-
-bool TryCommitSafeRestoreWorkspace(
-	const filesystem::path& targetDirectory,
-	const filesystem::path& snapshotDirectory,
-	const vector<wstring>& whitelist,
-	string& errorMessage) {
-	errorMessage.clear();
-	try {
-		CleanupInternalRestoreMarkers(targetDirectory);
-		CopyRestoreWhitelistEntries(snapshotDirectory, targetDirectory, whitelist);
-		if (!snapshotDirectory.empty() && filesystem::exists(snapshotDirectory)) {
-			ClearReadonlyAttributesRecursively(snapshotDirectory);
-			filesystem::remove_all(snapshotDirectory);
-		}
-		return true;
-	}
-	catch (const exception& exception) {
-		errorMessage = exception.what();
-		return false;
-	}
-}
-
-bool TryRollbackSafeRestoreWorkspace(
-	const filesystem::path& targetDirectory,
-	const filesystem::path& snapshotDirectory,
-	string& errorMessage) {
-	errorMessage.clear();
-	if (snapshotDirectory.empty()) {
-		errorMessage = "Snapshot directory path is empty.";
-		return false;
-	}
-
-	error_code ec;
-	if (!filesystem::exists(snapshotDirectory, ec) || ec) {
-		errorMessage = "Snapshot directory is missing.";
-		return false;
-	}
-	if (filesystem::exists(targetDirectory, ec) && !ec) {
-		ClearReadonlyAttributesRecursively(targetDirectory);
-		filesystem::remove_all(targetDirectory, ec);
-		if (ec) {
-			errorMessage = "Failed to clean restore target before rollback: " + ec.message();
-			return false;
-		}
-	}
-	filesystem::rename(snapshotDirectory, targetDirectory, ec);
-	if (ec) {
-		errorMessage = "Failed to restore snapshot: " + ec.message();
-		return false;
-	}
-	return true;
 }
 
 static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config) {
@@ -651,21 +484,19 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		return failRestore("archive_integrity_check_failed");
 	}
 
-	filesystem::path safeRestoreTempDir;
+	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
-	bool safeWorkspacePrepared = false;
 	if (restoreMethod == 0) {
-		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
-			if (!safeRestoreTempDir.empty()) {
+		if (!RestoreWorkspace::Prepare(destinationFolder, restoreWorkspace, workspaceError)) {
+			if (restoreWorkspace.prepared) {
 				string rollbackError;
-				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
+				if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
 					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 				}
 			}
 			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
 			return failRestore("snapshot_prepare_failed");
 		}
-		safeWorkspacePrepared = !safeRestoreTempDir.empty();
 	}
 	else {
 		error_code ec;
@@ -675,9 +506,9 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	bool restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config);
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
-		if (safeWorkspacePrepared) {
+		if (restoreWorkspace.prepared) {
 			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
+			if (!RestoreWorkspace::Commit(restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
 				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
@@ -685,8 +516,8 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	}
 
 	if (!restoreSucceeded) {
-		if (safeWorkspacePrepared) {
-			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+		if (restoreWorkspace.prepared) {
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, workspaceError)) {
 				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
@@ -855,21 +686,19 @@ bool DoRestore(
 		}
 	}
 
-	filesystem::path safeRestoreTempDir;
+	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
-	bool safeWorkspacePrepared = false;
 	if (restoreMethod == 0) {
-		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
-			if (!safeRestoreTempDir.empty()) {
+		if (!RestoreWorkspace::Prepare(destinationFolder, restoreWorkspace, workspaceError)) {
+			if (restoreWorkspace.prepared) {
 				string rollbackError;
-				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
+				if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
 					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 				}
 			}
 			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
 			return failRestore("snapshot_prepare_failed");
 		}
-		safeWorkspacePrepared = !safeRestoreTempDir.empty();
 	}
 	else {
 		error_code ec;
@@ -886,10 +715,10 @@ bool DoRestore(
 
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
-		if (safeWorkspacePrepared) {
+		if (restoreWorkspace.prepared) {
 			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(
 				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist);
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
+			if (!RestoreWorkspace::Commit(restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
 				restoreSucceeded = false;
 				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 			}
@@ -897,8 +726,8 @@ bool DoRestore(
 	}
 
 	if (!restoreSucceeded) {
-		if (safeWorkspacePrepared) {
-			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+		if (restoreWorkspace.prepared) {
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, workspaceError)) {
 				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}
 		}

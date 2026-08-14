@@ -24,6 +24,8 @@ struct FakeArchiveState {
 	int tests = 0;
 	int extracts = 0;
 	bool failExtract = false;
+	bool cancelExtract = false;
+	shared_ptr<stop_source> cancelSource;
 };
 
 ArchiveRunner FakeRunner(const shared_ptr<FakeArchiveState>& state, stop_token token) {
@@ -50,8 +52,13 @@ ArchiveRunner FakeRunner(const shared_ptr<FakeArchiveState>& state, stop_token t
 					if (argument.rfind(L"-o", 0) == 0) destination = argument.substr(2);
 				}
 				Write(destination / "level.dat", "restored");
+				Write(destination / "session.lock", "archive-session-lock");
+				if (state->cancelExtract && state->cancelSource) {
+					state->cancelSource->request_stop();
+				}
 				result.status = state->failExtract
-					? ProcessStatus::ExitedWithError : ProcessStatus::Succeeded;
+					? ProcessStatus::ExitedWithError
+					: state->cancelExtract ? ProcessStatus::Cancelled : ProcessStatus::Succeeded;
 				result.exitCode = state->failExtract ? 2 : 0;
 				return result;
 			}
@@ -112,7 +119,7 @@ void RunRestoreServiceTests(
 			&& Read(world / "level.dat") == "restored"
 			&& !filesystem::exists(world / "old.txt")
 			&& Read(world / "session.lock") == "preserve",
-		"Clean restore should replace the world and copy configured preserved entries");
+		"Clean restore should replace the world and overwrite archive files with preserved entries");
 
 	Write(world / "level.dat", "rollback-source");
 	Write(world / "old.txt", "rollback-old");
@@ -125,6 +132,33 @@ void RunRestoreServiceTests(
 		"Clean restore should roll back the original world after extraction failure");
 	state->failExtract = false;
 
+	const filesystem::path missingWorld = root / "saves" / "missing-world";
+	Write(root / "backups" / "missing-world" / "[Full]-World.7z", "archive");
+	request.world = {request.config.configId, L"missing-world"};
+	request.archive = L"[Full]-World.7z";
+	state->failExtract = true;
+	const auto missingTargetFailed = service.Run(request, false);
+	test.Expect(missingTargetFailed.code == OperationCode::RestoreFailed
+			&& missingTargetFailed.rollbackAttempted
+			&& missingTargetFailed.rollbackSucceeded
+			&& !filesystem::exists(missingWorld),
+		"Failed clean restore must remove a newly created target when no world existed before");
+
+	const filesystem::path cancelledWorld = root / "saves" / "cancelled-world";
+	Write(root / "backups" / "cancelled-world" / "[Full]-World.7z", "archive");
+	request.world = {request.config.configId, L"cancelled-world"};
+	state->failExtract = false;
+	state->cancelExtract = true;
+	state->cancelSource = make_shared<stop_source>();
+	const auto cancelled = service.Run(request, false, state->cancelSource->get_token());
+	test.Expect(cancelled.code == OperationCode::Cancelled
+			&& cancelled.rollbackAttempted
+			&& cancelled.rollbackSucceeded
+			&& !filesystem::exists(cancelledWorld),
+		"Cancelled clean restore must remove a newly created target when no world existed before");
+	state->cancelExtract = false;
+	state->cancelSource.reset();
+
 	occupied = true;
 	const int extractsBeforeOccupied = state->extracts;
 	const auto occupiedResult = service.Run(request, false);
@@ -133,6 +167,7 @@ void RunRestoreServiceTests(
 		"Cold restore should refuse an occupied world after archive verification");
 	occupied = false;
 
+	request.world = {request.config.configId, L"world"};
 	Write(root / "backups" / "world" / "[Smart]-World.7z", "incremental");
 	request.archive = L"[Smart]-World.7z";
 	const auto missingMetadata = service.Verify(request);

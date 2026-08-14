@@ -136,6 +136,7 @@
 	<ClCompile Include="src\core\ProfileManifest.cpp" />
 	<ClCompile Include="src\core\ProfileRuntime.cpp" />
 	<ClCompile Include="src\core\RestoreService.cpp" />
+	<ClCompile Include="src\core\RestoreWorkspace.cpp" />
 	<ClCompile Include="src\core\RuntimeIntegration.cpp" />
 	<ClCompile Include="src\core\RuntimeCloudPostHook.cpp" />
 	<ClCompile Include="src\core\RuntimeFileLock.cpp" />
@@ -245,6 +246,7 @@
 	<ClInclude Include="src\core\ProfileManifest.h" />
 	<ClInclude Include="src\core\ProfileRuntime.h" />
 	<ClInclude Include="src\core\RestoreService.h" />
+	<ClInclude Include="src\core\RestoreWorkspace.h" />
 	<ClInclude Include="src\core\RuntimeIntegration.h" />
 	<ClInclude Include="src\core\RuntimeCloudPostHook.h" />
 	<ClInclude Include="src\core\RuntimeFileLock.h" />

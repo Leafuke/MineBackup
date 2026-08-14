@@ -4,7 +4,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "JobDocument.h"
-#include "PathRuleSet.h"
+#include "RestoreWorkspace.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -53,48 +53,6 @@ bool IsWithin(const filesystem::path& root, const filesystem::path& candidate) {
 	return rootPart == normalizedRoot.end();
 }
 
-filesystem::path SafeWorkspacePath(const filesystem::path& target) {
-	const filesystem::path base = target.parent_path()
-		/ (target.filename().wstring() + L"-MineBackup-Restore-Snapshot");
-	filesystem::path candidate = base;
-	error_code error;
-	for (int suffix = 1; filesystem::exists(candidate, error); ++suffix) {
-		candidate = filesystem::path(base.wstring() + L"-" + to_wstring(suffix));
-	}
-	return candidate;
-}
-
-bool PrepareCleanWorkspace(
-	const filesystem::path& target,
-	filesystem::path& snapshot,
-	string& errorText) {
-	error_code error;
-	if (!filesystem::exists(target, error)) {
-		filesystem::create_directories(target, error);
-		if (error) errorText = error.message();
-		return !error;
-	}
-	if (error) {
-		errorText = error.message();
-		return false;
-	}
-	snapshot = SafeWorkspacePath(target);
-	filesystem::rename(target, snapshot, error);
-	if (error) {
-		errorText = error.message();
-		snapshot.clear();
-		return false;
-	}
-	filesystem::create_directories(target, error);
-	if (!error) return true;
-	const string createError = error.message();
-	error.clear();
-	filesystem::rename(snapshot, target, error);
-	if (!error) snapshot.clear();
-	errorText = error ? createError + ";rollback=" + error.message() : createError;
-	return false;
-}
-
 void CleanupMarkers(const filesystem::path& target) {
 	for (const wchar_t* marker : {
 		FolderRewindFormat::kInternalRestoreMarkerDirectoryName,
@@ -105,87 +63,6 @@ void CleanupMarkers(const filesystem::path& target) {
 		ClearReadonlyAttributesRecursively(path);
 		filesystem::remove_all(path, error);
 	}
-}
-
-void CopyPreserved(
-	const filesystem::path& snapshot,
-	const filesystem::path& target,
-	vector<wstring> rules) {
-	if (none_of(rules.begin(), rules.end(), [](const wstring& item) {
-		return item == L"session.lock";
-	})) rules.push_back(L"session.lock");
-	const PathRuleSet matcher(rules);
-	error_code error;
-	for (const auto& entry : filesystem::recursive_directory_iterator(
-		snapshot, filesystem::directory_options::skip_permission_denied, error)) {
-		if (error) break;
-		if (!entry.is_directory()
-			|| !matcher.MatchesSelfOrAncestor(entry.path(), snapshot)) continue;
-		const auto relative = filesystem::relative(entry.path(), snapshot, error);
-		if (!error) filesystem::create_directories(target / relative, error);
-	}
-	error.clear();
-	for (const auto& entry : filesystem::recursive_directory_iterator(
-		snapshot, filesystem::directory_options::skip_permission_denied, error)) {
-		if (error) break;
-		if (!entry.is_regular_file()
-			|| !matcher.MatchesSelfOrAncestor(entry.path(), snapshot)) continue;
-		const auto relative = filesystem::relative(entry.path(), snapshot, error);
-		if (error) continue;
-		const auto destination = target / relative;
-		filesystem::create_directories(destination.parent_path(), error);
-		if (!filesystem::exists(destination, error) || error) {
-			error.clear();
-			filesystem::copy_file(entry.path(), destination,
-				filesystem::copy_options::overwrite_existing, error);
-		}
-	}
-}
-
-bool CommitCleanWorkspace(
-	const filesystem::path& target,
-	const filesystem::path& snapshot,
-	const vector<wstring>& preserve,
-	string& errorText) {
-	try {
-		CleanupMarkers(target);
-		if (!snapshot.empty() && filesystem::exists(snapshot)) {
-			CopyPreserved(snapshot, target, preserve);
-			ClearReadonlyAttributesRecursively(snapshot);
-			filesystem::remove_all(snapshot);
-		}
-		return true;
-	}
-	catch (const exception& error) {
-		errorText = error.what();
-		return false;
-	}
-}
-
-bool RollbackCleanWorkspace(
-	const filesystem::path& target,
-	const filesystem::path& snapshot,
-	string& errorText) {
-	if (snapshot.empty()) {
-		errorText = "snapshot path is empty";
-		return false;
-	}
-	error_code error;
-	if (!filesystem::exists(snapshot, error) || error) {
-		errorText = "snapshot is missing";
-		return false;
-	}
-	if (filesystem::exists(target, error) && !error) {
-		ClearReadonlyAttributesRecursively(target);
-		filesystem::remove_all(target, error);
-	}
-	if (error) {
-		errorText = error.message();
-		return false;
-	}
-	filesystem::rename(snapshot, target, error);
-	if (error) errorText = error.message();
-	return !error;
 }
 
 bool BuildMetadataChain(
@@ -479,12 +356,19 @@ RestoreResult RestoreService::Run(
 	}
 	const auto runner = dependencies_.archiveRunnerFactory(
 		request.config.zipPath, dependencies_.paths, stopToken);
-	filesystem::path snapshot;
+	RestoreWorkspace::State workspace;
 	string errorText;
 	if (request.mode == RestoreMode::Clean) {
-		if (!PrepareCleanWorkspace(result.plan.targetWorld, snapshot, errorText)) {
+		if (!RestoreWorkspace::Prepare(result.plan.targetWorld, workspace, errorText)) {
 			result.code = OperationCode::RestoreFailed;
 			result.diagnostics.push_back(Failure("restore.snapshot.prepare_failed", errorText));
+			if (workspace.prepared) {
+				result.rollbackAttempted = true;
+				result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
+				if (!result.rollbackSucceeded) {
+					result.diagnostics.push_back(Failure("restore.rollback.failed", errorText));
+				}
+			}
 			return result;
 		}
 	}
@@ -506,8 +390,8 @@ RestoreResult RestoreService::Run(
 		request.config.useLowPriority);
 	bool committed = extracted;
 	if (extracted && request.mode == RestoreMode::Clean) {
-		committed = CommitCleanWorkspace(result.plan.targetWorld, snapshot,
-			request.restorePreserve, errorText);
+		CleanupMarkers(result.plan.targetWorld);
+		committed = RestoreWorkspace::Commit(workspace, request.restorePreserve, errorText);
 	}
 	else if (extracted) {
 		CleanupMarkers(result.plan.targetWorld);
@@ -516,10 +400,9 @@ RestoreResult RestoreService::Run(
 		result.code = stopToken.stop_requested()
 			? OperationCode::Cancelled : OperationCode::RestoreFailed;
 		result.diagnostics.push_back(Failure("restore.extract.failed", errorText));
-		if (request.mode == RestoreMode::Clean && !snapshot.empty()) {
+		if (request.mode == RestoreMode::Clean && workspace.prepared) {
 			result.rollbackAttempted = true;
-			result.rollbackSucceeded = RollbackCleanWorkspace(
-				result.plan.targetWorld, snapshot, errorText);
+			result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
 			if (!result.rollbackSucceeded) {
 				result.diagnostics.push_back(Failure("restore.rollback.failed", errorText));
 			}
