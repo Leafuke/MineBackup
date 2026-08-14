@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <thread>
 
 using namespace std;
@@ -139,6 +140,39 @@ void RunJobTests(TestContext& test, const filesystem::path& temporaryRoot) {
 			&& maximumActive.load() == 2
 			&& laterRuns.load() == 0,
 		"Job runner should execute a Stage in parallel and skip later Stages after mixed failure");
+
+	Job exceptionJob;
+	exceptionJob.jobId = JobId;
+	exceptionJob.name = "worker exception";
+	JobStage exceptionStage;
+	exceptionStage.stageId = StageId;
+	exceptionStage.name = "exception boundary";
+	exceptionStage.steps = {
+		BackupStep(StepA, L"throw"), BackupStep(StepB, L"survive")};
+	exceptionJob.stages = {exceptionStage};
+	JobRunnerDependencies exceptionDependencies;
+	exceptionDependencies.resolveBackup = [](const JobBackupTarget& target) {
+		BackupRequest request;
+		request.world = {target.configId, target.worldPath};
+		return optional<BackupRequest>(request);
+	};
+	exceptionDependencies.runBackup = [](const BackupRequest& request, stop_token) {
+		if (request.world.relativePath == L"throw") {
+			throw runtime_error(string("worker failure \xFF"));
+		}
+		BackupResult result;
+		result.code = OperationCode::Success;
+		return result;
+	};
+	const auto exceptionRun = JobRunner(std::move(exceptionDependencies)).Run(exceptionJob);
+	const auto& exceptionStep = exceptionRun.stages.front().steps.front();
+	test.Expect(exceptionRun.code == OperationCode::PartialSuccess
+			&& exceptionRun.stages.front().steps.size() == 2
+			&& exceptionStep.code == OperationCode::JobFailed
+			&& !exceptionStep.diagnostics.empty()
+			&& exceptionStep.diagnostics.front().eventId == "job.step.exception"
+			&& exceptionStep.diagnostics.front().detail.find("\xEF\xBF\xBD") != string::npos,
+		"Job worker exceptions should become sanitized step failures without terminating the process");
 
 	Job diagnosticJob;
 	diagnosticJob.jobId = JobId;

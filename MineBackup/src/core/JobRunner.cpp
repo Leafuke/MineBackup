@@ -48,6 +48,20 @@ Diagnostic ProcessDiagnostic(const JobStep& step, const ProcessResult& process) 
 		wstring_to_utf8(step.stepId) + ";" + detail};
 }
 
+JobStepResult WorkerException(const JobStep& step, const char* message) {
+	JobStepResult result;
+	result.stepId = step.stepId;
+	result.code = OperationCode::JobFailed;
+	const auto sanitized = SanitizeUtf8(
+		message ? string(message) : string{}, kMaximumProcessDiagnosticBytes);
+	string detail = wstring_to_utf8(step.stepId) + ";exception=" + sanitized.value;
+	if (sanitized.invalidUtf8Replaced) detail += ";exceptionUtf8Replaced=true";
+	if (sanitized.truncated) detail += ";exceptionTruncated=true";
+	result.diagnostics.push_back({
+		"job.step.exception", DiagnosticSeverity::Error, std::move(detail)});
+	return result;
+}
+
 } // namespace
 
 JobRunner::JobRunner(JobRunnerDependencies dependencies)
@@ -126,7 +140,18 @@ JobRunResult JobRunner::Run(const Job& job, stop_token stopToken) const {
 		workers.reserve(stage.steps.size());
 		for (size_t index = 0; index < stage.steps.size(); ++index) {
 			workers.emplace_back([&, index](stop_token) {
-				stageResult.steps[index] = RunStep(stage.steps[index], stopToken);
+				// 异常不能越过 jthread 入口；否则一个失败步骤会直接 std::terminate 整个 serve 进程。
+				try {
+					stageResult.steps[index] = RunStep(stage.steps[index], stopToken);
+				}
+				catch (const exception& exception) {
+					stageResult.steps[index] = WorkerException(
+						stage.steps[index], exception.what());
+				}
+				catch (...) {
+					stageResult.steps[index] = WorkerException(
+						stage.steps[index], "unknown exception");
+				}
 			});
 		}
 		for (auto& worker : workers) {
