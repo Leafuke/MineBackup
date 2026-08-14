@@ -460,7 +460,7 @@ void RunBackupServiceTests(
 		"Runtime retention should atomically remove the oldest ordinary archive and history entry");
 
 	auto runSmartRetention = [&](const filesystem::path& chainRoot,
-		bool importantTail, bool failMerge, const string& message) {
+		bool importantTail, bool failMerge, bool cancelMerge, const string& message) {
 		Config chainConfig = retentionConfig;
 		chainConfig.configId = L"chain-" + chainRoot.filename().wstring();
 		chainConfig.backupPath = (chainRoot / "backups").wstring();
@@ -528,8 +528,17 @@ void RunBackupServiceTests(
 			"Smart retention fixture history should persist");
 		AppPaths chainPaths;
 		chainPaths.runtimeRoot = chainRoot / "runtime";
-		const auto process = [failMerge](const ProcessSpec& spec, stop_token) {
+		const auto cancelSource = cancelMerge ? make_shared<stop_source>()
+			: shared_ptr<stop_source>{};
+		const auto process = [failMerge, cancelMerge, cancelSource](
+			const ProcessSpec& spec, stop_token) {
 			ProcessResult result;
+			if (cancelMerge && !spec.arguments.empty()
+				&& spec.arguments.front() == L"x") {
+				cancelSource->request_stop();
+				result.status = ProcessStatus::Cancelled;
+				return result;
+			}
 			if (!spec.arguments.empty() && spec.arguments.front() == L"a") {
 				if (failMerge) {
 					result.status = ProcessStatus::ExitedWithError;
@@ -569,12 +578,17 @@ void RunBackupServiceTests(
 		BackupRequest chainRequest = request;
 		chainRequest.config = chainConfig;
 		chainRequest.world.configId = chainConfig.configId;
-		chainRetention.Enforce(chainRequest, smartTwo);
+		chainRetention.Enforce(
+			chainRequest,
+			smartTwo,
+			cancelSource ? cancelSource->get_token() : stop_token{});
 		const auto remainingEntries = chainHistory.EntriesForConfig(chainConfig.configId);
 		const int archiveCount = static_cast<int>(distance(
 			filesystem::directory_iterator(chainStorage.backupSubDir),
 			filesystem::directory_iterator{}));
-		const bool expected = importantTail
+		const bool expected = cancelMerge
+			? archiveCount == 3 && remainingEntries->size() == 3
+			: importantTail
 			? archiveCount == 2 && remainingEntries->size() == 2
 			: failMerge
 				? archiveCount == 3 && remainingEntries->size() == 3
@@ -582,7 +596,7 @@ void RunBackupServiceTests(
 					&& FolderRewindFormat::IsFullLikeBackupType(
 						remainingEntries->front().backupType);
 		test.Expect(expected, message.c_str());
-		if (!importantTail && !failMerge) {
+		if (!importantTail && !failMerge && !cancelMerge) {
 			const auto finalEntry = remainingEntries->front();
 			FolderRewindFormat::ChangeRecord finalRecord;
 			FolderRewindFormat::MetadataState finalState;
@@ -600,15 +614,24 @@ void RunBackupServiceTests(
 		temporaryRoot / "runtime-retention-smart",
 		false,
 		false,
+		false,
 		"Runtime retention should merge a Full -> Smart -> Smart chain in Smart mode");
 	runSmartRetention(
 		temporaryRoot / "runtime-retention-important",
 		true,
+		false,
 		false,
 		"Runtime retention should retain an Important Smart tail and its required predecessor");
 	runSmartRetention(
 		temporaryRoot / "runtime-retention-failed-merge",
 		false,
 		true,
+		false,
 		"Failed Smart retention merge should leave archives and history unchanged");
+	runSmartRetention(
+		temporaryRoot / "runtime-retention-cancelled-merge",
+		false,
+		false,
+		true,
+		"Cancelled Smart retention merge should leave archives and history unchanged");
 }

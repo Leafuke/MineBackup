@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <stop_token>
 #include <vector>
 
 namespace ChainSafeRetention {
@@ -19,6 +20,7 @@ struct Request {
 	std::filesystem::path metadataDirectory;
 	AppPaths paths;
 	ArchiveRunner* archiveRunner = nullptr;
+	std::stop_token stopToken;
 	std::function<bool(std::vector<HistoryEntry>)> commitHistory;
 };
 

@@ -18,6 +18,10 @@ using namespace BackupManagerInternal;
 namespace ChainSafeRetention {
 namespace {
 
+bool IsCancelled(const Request& request) {
+	return request.stopToken.stop_requested();
+}
+
 struct MetadataBackup {
 	filesystem::path source;
 	filesystem::path copy;
@@ -226,6 +230,11 @@ Result DirectRemove(Request& request) {
 		false};
 	MetadataBackup savedMetadata;
 	try {
+		if (IsCancelled(request)) {
+			result.warning = true;
+			result.detail = "retention was cancelled before archive removal";
+			return result;
+		}
 		filesystem::create_directories(tempRoot);
 		filesystem::copy_file(archive, archiveBackup,
 			filesystem::copy_options::overwrite_existing);
@@ -266,6 +275,11 @@ Result DirectRemove(Request& request) {
 
 Result Remove(Request request) {
 	Result result;
+	if (IsCancelled(request)) {
+		result.warning = true;
+		result.detail = "retention was cancelled before archive mutation";
+		return result;
+	}
 	if (request.entry.isImportant) {
 		result.warning = true;
 		result.detail = "important archive is retained";
@@ -334,6 +348,11 @@ Result Remove(Request request) {
 	bool targetReplaced = false;
 	bool deletedArchiveRemoved = false;
 	try {
+		if (IsCancelled(request)) {
+			result.warning = true;
+			result.detail = "retention was cancelled before chain merge";
+			return result;
+		}
 		filesystem::create_directories(workspace);
 		filesystem::copy_file(mergeTarget, originalTarget,
 			filesystem::copy_options::overwrite_existing);
@@ -349,6 +368,7 @@ Result Remove(Request request) {
 			{}, request.config.useLowPriority).status != ProcessStatus::Succeeded) {
 			throw runtime_error("failed to extract deleted smart archive");
 		}
+		if (IsCancelled(request)) throw runtime_error("retention was cancelled after first extraction");
 		if (request.archiveRunner->Execute(
 			{L"x", mergeTarget.wstring(), L"-o" + workspace.wstring(), L"-y"},
 			{}, request.config.useLowPriority).status != ProcessStatus::Succeeded) {
@@ -366,6 +386,7 @@ Result Remove(Request request) {
 				request.config.useLowPriority).status != ProcessStatus::Succeeded) {
 			throw runtime_error("failed to rebuild merged smart archive");
 		}
+		if (IsCancelled(request)) throw runtime_error("retention was cancelled after archive rebuild");
 		filesystem::remove(mergeTarget, error);
 		if (error) throw runtime_error("failed to replace next smart archive");
 		filesystem::rename(rebuilt, mergeTarget, error);

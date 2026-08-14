@@ -22,7 +22,8 @@ public:
 
 	void Enforce(
 		const BackupRequest& request,
-		const HistoryEntry& createdEntry);
+		const HistoryEntry& createdEntry,
+		std::stop_token stopToken = {});
 
 private:
 	HistoryRepository& history_;

@@ -27,9 +27,10 @@ RuntimeRetentionService::RuntimeRetentionService(
 
 void RuntimeRetentionService::Enforce(
 	const BackupRequest& request,
-	const HistoryEntry& createdEntry) {
+	const HistoryEntry& createdEntry,
+	stop_token stopToken) {
 	const Config& config = request.config;
-	if (config.keepCount <= 0) return;
+	if (config.keepCount <= 0 || stopToken.stop_requested()) return;
 	FolderRewindFormat::StoragePaths storage;
 	if (!FolderRewindFormat::TryResolveStoragePaths(
 			config.backupPath,
@@ -39,9 +40,10 @@ void RuntimeRetentionService::Enforce(
 
 	vector<HistoryEntry> currentHistory = *history_.EntriesForConfig(config.configId);
 	ArchiveRunner archiveRunner(
-		toolResolver_(config.zipPath, paths_, {}), {}, processExecutor_);
+		toolResolver_(config.zipPath, paths_, stopToken), stopToken, processExecutor_);
 	set<wstring> blocked;
 	for (;;) {
+		if (stopToken.stop_requested()) return;
 		vector<filesystem::directory_entry> archives;
 		error_code error;
 		for (filesystem::directory_iterator iterator(storage.backupSubDir, error), end;
@@ -54,6 +56,7 @@ void RuntimeRetentionService::Enforce(
 		});
 		bool progress = false;
 		for (const auto& archive : archives) {
+			if (stopToken.stop_requested()) return;
 			const wstring fileName = archive.path().filename().wstring();
 			if (blocked.contains(fileName)) continue;
 			const auto found = find_if(currentHistory.begin(), currentHistory.end(),
@@ -72,6 +75,7 @@ void RuntimeRetentionService::Enforce(
 			retentionRequest.metadataDirectory = storage.metadataDir;
 			retentionRequest.paths = paths_;
 			retentionRequest.archiveRunner = &archiveRunner;
+			retentionRequest.stopToken = stopToken;
 			retentionRequest.commitHistory = [&](vector<HistoryEntry> updated) {
 				const auto mutation = history_.Mutate(
 					config.configId, historyFile_, configs_, true,
