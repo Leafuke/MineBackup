@@ -80,6 +80,21 @@ void RunProfileManifestTests(
 	const auto repeated = ProfileManifest::Plan(paths, loaded.manifest, false);
 	test.Expect(repeated.code == OperationCode::Success && repeated.diff.empty(),
 		"Applying the same manifest should produce an idempotent empty diff");
+	auto mergedCollisionManifest = loaded.manifest;
+	mergedCollisionManifest.configs.front().worlds = {{L"world/nether", L"Nether"}};
+	Config existingProfileCollision = mergedCollisionManifest.configs.front();
+	existingProfileCollision.configId = FolderRewindFormat::GenerateGuidString();
+	existingProfileCollision.name = "Merged collision";
+	existingProfileCollision.worlds = {{L"world_nether", L"Flattened"}};
+	mergedCollisionManifest.configs.push_back(std::move(existingProfileCollision));
+	const auto mergedCollisionPlan = ProfileManifest::Plan(
+		paths, mergedCollisionManifest, false);
+	test.Expect(mergedCollisionPlan.code != OperationCode::Success
+			&& any_of(mergedCollisionPlan.diagnostics.begin(),
+				mergedCollisionPlan.diagnostics.end(), [](const auto& diagnostic) {
+					return diagnostic.eventId == "manifest.config.storage_collision";
+				}),
+		"Manifest planning should reject collisions introduced when merging into an existing profile");
 
 	string configText = Read(paths.ConfigFile());
 	const auto insertAt = configText.find("\n", configText.find("[Config"));

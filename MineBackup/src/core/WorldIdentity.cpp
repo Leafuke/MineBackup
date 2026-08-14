@@ -29,6 +29,13 @@ wstring PathKey(const filesystem::path& path) {
 	return value;
 }
 
+wstring StorageKey(wstring value) {
+#ifdef _WIN32
+	transform(value.begin(), value.end(), value.begin(), ::towlower);
+#endif
+	return value;
+}
+
 bool SamePath(const filesystem::path& left, const filesystem::path& right) {
 	return PathKey(left) == PathKey(right);
 }
@@ -99,12 +106,13 @@ bool TryBuildFromHistory(
 		}
 	}
 	const auto found = find_if(identities.begin(), identities.end(), [&](const Value& candidate) {
-		return candidate.storageFolderName == entry.worldName;
+		return StorageKey(candidate.storageFolderName) == StorageKey(entry.worldName);
 	});
 	if (found != identities.end()
 		&& count_if(identities.begin(), identities.end(), [&](const Value& candidate) {
 			return PathKey(candidate.backupRoot) == PathKey(found->backupRoot)
-				&& candidate.storageFolderName == found->storageFolderName;
+				&& StorageKey(candidate.storageFolderName)
+					== StorageKey(found->storageFolderName);
 		}) == 1) {
 		value = *found;
 		value.backupFile = entry.backupFile;
@@ -144,12 +152,13 @@ bool TryBuild(
 	if (TryBuildNormalized(config, normalized, value, errorText)) return true;
 	const auto identities = ConfigWorldIdentities(config);
 	const auto found = find_if(identities.begin(), identities.end(), [&](const Value& candidate) {
-		return candidate.storageFolderName == normalized;
+		return StorageKey(candidate.storageFolderName) == StorageKey(normalized);
 	});
 	if (found != identities.end()
 		&& count_if(identities.begin(), identities.end(), [&](const Value& candidate) {
 			return PathKey(candidate.backupRoot) == PathKey(found->backupRoot)
-				&& candidate.storageFolderName == found->storageFolderName;
+				&& StorageKey(candidate.storageFolderName)
+					== StorageKey(found->storageFolderName);
 		}) == 1) {
 		value = *found;
 		if (errorText) errorText->clear();
@@ -169,13 +178,14 @@ bool Matches(
 	if (!TryBuild(config, requestedWorldPath, target, nullptr)) return false;
 	if (!entry.worldPath.empty()
 		&& SamePath(filesystem::path(entry.worldPath), target.sourcePath)) return true;
-	if (entry.worldName == target.storageFolderName) return true;
+	if (StorageKey(entry.worldName) == StorageKey(target.storageFolderName)) return true;
 	if (!entry.worldPath.empty()) return false;
 	const auto identities = ConfigWorldIdentities(config);
 	const auto sameStorageCount = count_if(identities.begin(), identities.end(),
 		[&](const Value& candidate) {
 			return PathKey(candidate.backupRoot) == PathKey(target.backupRoot)
-				&& candidate.storageFolderName == target.storageFolderName;
+				&& StorageKey(candidate.storageFolderName)
+					== StorageKey(target.storageFolderName);
 		});
 	// 仅兼容没有 worldPath 的旧历史，而且必须保证 storage key 唯一。
 	return sameStorageCount == 1 && entry.worldName == target.relativeWorldPath;
@@ -191,7 +201,18 @@ bool SameHistoryEntry(
 	if (TryBuildFromHistory(config, left, identity)) {
 		return Matches(config, identity.relativeWorldPath, right, left.backupFile);
 	}
-	return left.worldName == right.worldName;
+	if (left.worldName != right.worldName) return false;
+	const auto identities = ConfigWorldIdentities(config);
+	const auto storageMatches = count_if(identities.begin(), identities.end(),
+		[&](const Value& candidate) {
+			return StorageKey(candidate.storageFolderName) == StorageKey(left.worldName);
+		});
+	const auto relativeMatches = count_if(identities.begin(), identities.end(),
+		[&](const Value& candidate) {
+			return candidate.relativeWorldPath == left.worldName;
+		});
+	// 只有旧历史的展示名在当前配置中唯一时，才允许无 worldPath 的兜底匹配。
+	return storageMatches == 1 || relativeMatches == 1;
 }
 
 vector<StorageConflict> FindStorageConflicts(const map<int, Config>& configs) {
@@ -206,7 +227,8 @@ vector<StorageConflict> FindStorageConflicts(const map<int, Config>& configs) {
 	for (const auto& [index, config] : configs) {
 		(void)index;
 		for (const auto& value : ConfigWorldIdentities(config)) {
-			const wstring key = PathKey(value.backupRoot) + L"\n" + value.storageFolderName;
+			const wstring key = PathKey(value.backupRoot) + L"\n"
+				+ StorageKey(value.storageFolderName);
 			const Occupant current{
 				value.configId, value.relativeWorldPath, value.backupRoot,
 				value.storageFolderName};

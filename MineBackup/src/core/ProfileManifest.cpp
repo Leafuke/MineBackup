@@ -692,6 +692,18 @@ ProfileApplyPlan Plan(
 			}
 		}
 	}
+	for (const auto& conflict : WorldIdentity::FindStorageConflicts(plan.configs)) {
+		plan.diagnostics.push_back(Error("manifest.config.storage_collision",
+			wstring_to_utf8(conflict.backupRoot + L":"
+				+ conflict.storageFolderName + L" ("
+				+ conflict.leftConfigId + L":" + conflict.leftWorldPath + L", "
+				+ conflict.rightConfigId + L":" + conflict.rightWorldPath + L")")));
+	}
+	if (any_of(plan.diagnostics.begin(), plan.diagnostics.end(),
+		[](const Diagnostic& item) {
+			return item.eventId == "manifest.config.storage_collision"
+				&& item.severity == DiagnosticSeverity::Error;
+		})) return plan;
 	plan.restorePreserve = manifest.restorePreserve;
 	if (current.restorePreserve != manifest.restorePreserve) {
 		plan.diff.push_back({"profile", L"restorePreserve", ProfileDiffAction::Update});
