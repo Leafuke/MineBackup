@@ -393,7 +393,8 @@ BackupResult MakeBackupFailure(
 
 BackupResult BackupService::Run(
 	const BackupRequest& request,
-	stop_token stopToken) const {
+	stop_token stopToken,
+	BackupExecutionOptions options) const {
 	const vector<pair<string, string>> targetFields{
 		{"config", wstring_to_utf8(request.config.configId)},
 		{"config_id", wstring_to_utf8(request.config.configId)},
@@ -411,7 +412,7 @@ BackupResult BackupService::Run(
 	publish("backup_started");
 	BackupResult result;
 	try {
-		result = RunCore(request, stopToken);
+		result = RunCore(request, stopToken, options);
 	}
 	catch (const exception& error) {
 		publish("backup_failed", {
@@ -440,7 +441,8 @@ BackupResult BackupService::Run(
 
 BackupResult BackupService::RunCore(
 	const BackupRequest& request,
-	stop_token stopToken) const {
+	stop_token stopToken,
+	BackupExecutionOptions options) const {
 	minebackup::logging::ScopedLogContext operationContext{{
 		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
 		{"config_id", wstring_to_utf8(request.config.configId)},
@@ -963,8 +965,8 @@ execute_backup:
 				OperationCode::BackupFailed, BackupOutcome::Failed,
 				"backup.history.commit_failed", wstring_to_utf8(completedBackupFile));
 		}
-		if (dependencies_.enforceRetention) {
-			dependencies_.enforceRetention(request, historyEntry);
+		if (dependencies_.enforceRetention && !options.deferRetention) {
+			dependencies_.enforceRetention(request, historyEntry, stopToken);
 		}
 
 		publish("backup.completed", {

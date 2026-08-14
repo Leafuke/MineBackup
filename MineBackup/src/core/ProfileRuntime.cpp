@@ -187,8 +187,9 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 		};
 		backupDependencies.enforceRetention = [state](
 			const BackupRequest& request,
-			const HistoryEntry& entry) {
-			state->retention->Enforce(request, entry);
+			const HistoryEntry& entry,
+			stop_token stopToken) {
+			state->retention->Enforce(request, entry, stopToken);
 		};
 		return make_unique<BackupService>(std::move(backupDependencies));
 	};
@@ -202,14 +203,21 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 			next->hotBackup, next->eventSink, next->cloudPost);
 	}
 
-	auto createRestore = [this](BackupService* backup) {
+	auto createRestore = [this, state](BackupService* backup) {
 		RestoreServiceDependencies restoreDependencies;
 		restoreDependencies.paths = paths_;
 		restoreDependencies.isWorldOccupied = IsRuntimeWorldOccupied;
 		restoreDependencies.backupBeforeRestore = [backup](
 			const BackupRequest& request,
+			stop_token stopToken,
+			BackupExecutionOptions options) {
+			return backup->Run(request, stopToken, options);
+		};
+		restoreDependencies.enforceRetention = [state](
+			const BackupRequest& request,
+			const HistoryEntry& entry,
 			stop_token stopToken) {
-			return backup->Run(request, stopToken);
+			state->retention->Enforce(request, entry, stopToken);
 		};
 		return make_unique<RestoreService>(std::move(restoreDependencies));
 	};

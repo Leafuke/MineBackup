@@ -48,7 +48,14 @@ struct RestoreResult {
 struct RestoreServiceDependencies {
 	AppPaths paths;
 	std::function<bool(const std::filesystem::path&)> isWorldOccupied;
-	std::function<BackupResult(const BackupRequest&, std::stop_token)> backupBeforeRestore;
+	std::function<BackupResult(
+		const BackupRequest&,
+		std::stop_token,
+		BackupExecutionOptions)> backupBeforeRestore;
+	std::function<void(
+		const BackupRequest&,
+		const HistoryEntry&,
+		std::stop_token)> enforceRetention;
 	std::function<ArchiveRunner(
 		const std::filesystem::path&,
 		const AppPaths&,

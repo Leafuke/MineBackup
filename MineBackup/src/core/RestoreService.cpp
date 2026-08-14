@@ -318,6 +318,7 @@ RestoreResult RestoreService::Run(
 	bool dryRun,
 	stop_token stopToken) const {
 	RestoreResult result;
+	optional<BackupRequest> safetyBackupRequest;
 	result.dryRun = dryRun;
 	result.plan = BuildAndVerify(request, true, stopToken);
 	result.code = result.plan.code;
@@ -335,7 +336,9 @@ RestoreResult RestoreService::Run(
 		backup.sourcePath = result.plan.targetWorld;
 		backup.displayName = request.world.relativePath;
 		backup.comment = L"Automatic backup before restore";
-		result.safetyBackup = dependencies_.backupBeforeRestore(backup, stopToken);
+		safetyBackupRequest = backup;
+		result.safetyBackup = dependencies_.backupBeforeRestore(
+			backup, stopToken, BackupExecutionOptions{.deferRetention = true});
 		if (!IsSuccessful(result.safetyBackup->code)) {
 			result.code = OperationCode::RestoreFailed;
 			result.diagnostics.push_back(Failure("restore.safety_backup.failed"));
@@ -399,6 +402,28 @@ RestoreResult RestoreService::Run(
 			}
 		}
 		return result;
+	}
+	if (safetyBackupRequest && result.safetyBackup->historyEntry
+		&& dependencies_.enforceRetention && !stopToken.stop_requested()) {
+		try {
+			// 先完成已锁定的 restore plan，再收敛安全备份的保留数量，避免 --latest 被新备份改写。
+			dependencies_.enforceRetention(
+				*safetyBackupRequest,
+				*result.safetyBackup->historyEntry,
+				stopToken);
+		}
+		catch (const exception& exception) {
+			result.diagnostics.push_back({
+				"restore.safety_backup.retention_failed",
+				DiagnosticSeverity::Warning,
+				SanitizeUtf8(exception.what(), 256u * 1024u).value});
+		}
+		catch (...) {
+			result.diagnostics.push_back({
+				"restore.safety_backup.retention_failed",
+				DiagnosticSeverity::Warning,
+				"unknown exception"});
+		}
 	}
 	result.code = OperationCode::Success;
 	return result;

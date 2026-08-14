@@ -76,7 +76,8 @@ HotBackupPreparation PrepareDesktopHotBackup(
 BackupResult RunDesktopBackup(
 	const MyFolder& folder,
 	const wstring& comment,
-	stop_token stopToken) {
+	stop_token stopToken,
+	BackupExecutionOptions options) {
 	const int configIndex = ResolveLegacyConfigIndex(folder);
 	BackupRequest request;
 	request.config = folder.config;
@@ -110,7 +111,8 @@ BackupResult RunDesktopBackup(
 	};
 	dependencies.enforceRetention = [configIndex](
 		const BackupRequest& value,
-		const HistoryEntry& entry) {
+		const HistoryEntry& entry,
+		stop_token) {
 		(void)entry;
 		FolderRewindFormat::StoragePaths storage;
 		if (!FolderRewindFormat::TryResolveStoragePaths(
@@ -160,7 +162,7 @@ BackupResult RunDesktopBackup(
 	});
 
 	BackupService service(std::move(dependencies));
-	return service.Run(request, stopToken);
+	return service.Run(request, stopToken, options);
 }
 
 BackupOutcome DoBackup(const MyFolder& folder, const wstring& comment) {

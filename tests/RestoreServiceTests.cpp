@@ -47,6 +47,11 @@ ArchiveRunner FakeRunner(const shared_ptr<FakeArchiveState>& state, stop_token t
 			}
 			if (!spec.arguments.empty() && spec.arguments.front() == L"x") {
 				++state->extracts;
+				if (spec.arguments.size() < 2
+					|| !filesystem::is_regular_file(spec.arguments[1])) {
+					result.status = ProcessStatus::FailedToStart;
+					return result;
+				}
 				filesystem::path destination;
 				for (const auto& argument : spec.arguments) {
 					if (argument.rfind(L"-o", 0) == 0) destination = argument.substr(2);
@@ -120,6 +125,39 @@ void RunRestoreServiceTests(
 			&& !filesystem::exists(world / "old.txt")
 			&& Read(world / "session.lock") == "preserve",
 		"Clean restore should replace the world and overwrite archive files with preserved entries");
+
+	bool safetyRetentionDeferred = false;
+	bool safetyRetentionRan = false;
+	RestoreServiceDependencies safetyDependencies = dependencies;
+	safetyDependencies.backupBeforeRestore = [&](
+		const BackupRequest&, stop_token, BackupExecutionOptions options) {
+			safetyRetentionDeferred = options.deferRetention;
+			if (!options.deferRetention) {
+				error_code ignored;
+				filesystem::remove(root / "backups" / "world" / "[Full]-World.7z", ignored);
+			}
+			BackupResult backup;
+			backup.code = OperationCode::Success;
+			backup.outcome = BackupOutcome::Created;
+			HistoryEntry entry;
+			entry.configId = request.config.configId;
+			entry.worldName = L"world";
+			entry.worldPath = world.wstring();
+			entry.backupFile = L"[Full]-Safety.7z";
+			backup.historyEntry = entry;
+			return backup;
+		};
+	safetyDependencies.enforceRetention = [&](const BackupRequest&, const HistoryEntry&, stop_token) {
+			safetyRetentionRan = true;
+		};
+		RestoreService safetyService(std::move(safetyDependencies));
+		request.config.backupBefore = true;
+		const auto safetyRestored = safetyService.Run(request, false);
+		test.Expect(safetyRestored.code == OperationCode::Success
+				&& safetyRetentionDeferred && safetyRetentionRan
+				&& Read(world / "level.dat") == "restored",
+			"Restore should keep the verified target while deferring safety-backup retention until commit");
+		request.config.backupBefore = false;
 
 	Write(world / "level.dat", "rollback-source");
 	Write(world / "old.txt", "rollback-old");

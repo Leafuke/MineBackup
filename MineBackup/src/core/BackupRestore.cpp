@@ -390,7 +390,7 @@ bool RunSharedManagedRestore(
 	dependencies.paths = GetAppPaths();
 	dependencies.isWorldOccupied = IsWorldOccupied;
 	dependencies.backupBeforeRestore = [config, worldName, configIndex](
-		const BackupRequest&, stop_token stopToken) {
+		const BackupRequest&, stop_token stopToken, BackupExecutionOptions options) {
 		wstring description;
 		const auto found = find_if(config.worlds.begin(), config.worlds.end(),
 			[&](const auto& world) { return world.first == worldName; });
@@ -398,7 +398,23 @@ bool RunSharedManagedRestore(
 		MyFolder world{JoinPath(config.saveRoot, worldName).wstring(), worldName,
 			description, config, configIndex, -1};
 		return RunDesktopBackup(
-			world, L"Automatic backup before restore", stopToken);
+			world, L"Automatic backup before restore", stopToken, options);
+	};
+	dependencies.enforceRetention = [configIndex](
+		const BackupRequest& value,
+		const HistoryEntry& entry,
+		stop_token) {
+		FolderRewindFormat::StoragePaths storage;
+		if (!FolderRewindFormat::TryResolveStoragePaths(
+				value.config.backupPath,
+				entry.worldName,
+				entry.worldPath,
+				storage)) return;
+		BackupManagerInternal::LimitBackupFiles(
+			value.config,
+			configIndex,
+			storage.backupSubDir.wstring(),
+			value.config.keepCount);
 	};
 
 	RESTORE_INFO(L("LOG_RESTORE_START_HEADER"));
