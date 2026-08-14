@@ -2,8 +2,11 @@
 
 #include "AppPaths.h"
 #include "FolderRewindFormat.h"
+#include "FolderRewindHistoryStore.h"
+#include "HistoryRepository.h"
 #include "ProfileConfigRepository.h"
 #include "ProfileManifest.h"
+#include "text_to_text.h"
 
 #include <fstream>
 
@@ -122,6 +125,88 @@ void RunProfileManifestTests(
 				return item.action == ProfileDiffAction::Remove;
 			}) == 2,
 		"Explicit prune should report Config and Job removals without deleting data");
+
+	// 构造一个即将被 prune 的 Config，并确认其 history 会先转换为稳定 ConfigId 再保留。
+	const auto currentProfile = ProfileConfigRepository(paths.ConfigFile()).Load();
+	Config orphanConfig = currentProfile.configs.at(1);
+	orphanConfig.configId = L"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+	orphanConfig.name = "Orphan history config";
+	orphanConfig.saveRoot = (root / "orphan-server").wstring();
+	orphanConfig.backupPath = (root / "orphan-backups").wstring();
+	map<int, Config> configsWithOrphan = currentProfile.configs;
+	configsWithOrphan.emplace(2, orphanConfig);
+	const auto configWithOrphanWrite = ProfileConfigRepository(
+		paths.ConfigFile()).Save(configsWithOrphan, currentProfile.restorePreserve, true);
+	HistoryEntry orphanEntry;
+	orphanEntry.configId = orphanConfig.configId;
+	orphanEntry.worldPath = (filesystem::path(orphanConfig.saveRoot) / L"world").wstring();
+	orphanEntry.worldName = L"world";
+	orphanEntry.backupFile = L"[Full]-Orphan.7z";
+	orphanEntry.backupType = L"Full";
+	HistoryRepository orphanHistory;
+	FolderRewindHistoryStore::HistoryByConfigId orphanItems;
+	orphanItems[orphanConfig.configId] = {orphanEntry};
+	const bool orphanHistoryWrite = orphanHistory.ReplaceAll(
+		std::move(orphanItems), paths.HistoryFile(), configsWithOrphan, true);
+	test.Expect(configWithOrphanWrite.success && orphanHistoryWrite,
+		"Prune fixture should persist an orphan Config and its history before removal");
+
+	const auto preservePlan = ProfileManifest::Plan(paths, changedManifest, true);
+	test.Expect(preservePlan.code == OperationCode::Success
+			&& any_of(preservePlan.diff.begin(), preservePlan.diff.end(), [](const auto& item) {
+				return item.kind == "config" && item.action == ProfileDiffAction::Remove
+					&& item.orphanHistoryCount == 1;
+			}),
+		"Prune planning should report history owned by the removed Config as orphan data");
+	const auto preserveApplied = ProfileManifest::Apply(paths, preservePlan);
+	HistoryRepository reloadedHistory;
+	const auto orphanReloaded = preserveApplied.code == OperationCode::Success
+			&& reloadedHistory.Load(paths.HistoryFile(), preservePlan.configs)
+			&& reloadedHistory.EntriesForConfig(orphanConfig.configId)->size() == 1;
+	HistoryEntry activeEntry;
+	activeEntry.configId = changedManifest.configs.front().configId;
+	activeEntry.worldPath = changedManifest.configs.front().saveRoot + L"/world";
+	activeEntry.worldName = L"world";
+	activeEntry.backupFile = L"[Full]-Active.7z";
+	activeEntry.backupType = L"Full";
+	const auto mutation = orphanReloaded
+		? reloadedHistory.Mutate(
+			activeEntry.configId,
+			paths.HistoryFile(),
+			preservePlan.configs,
+			true,
+			[&](vector<HistoryEntry>& entries) {
+				entries.push_back(activeEntry);
+				return true;
+			})
+		: HistoryMutationResult{};
+	HistoryRepository afterMutation;
+	test.Expect(orphanReloaded
+			&& mutation.changed && mutation.persisted
+			&& afterMutation.Load(paths.HistoryFile(), preservePlan.configs)
+			&& afterMutation.EntriesForConfig(orphanConfig.configId)->size() == 1
+			&& Read(paths.HistoryFile()).find(wstring_to_utf8(orphanConfig.configId)) != string::npos,
+		"Prune apply and runtime reload should preserve orphan history by ConfigId");
+
+	const auto profileBeforeLegacyPrune = ProfileConfigRepository(paths.ConfigFile()).Load();
+	const auto legacyConfigWrite = ProfileConfigRepository(paths.ConfigFile()).Save(
+		configsWithOrphan,
+		profileBeforeLegacyPrune.restorePreserve,
+		true);
+	Write(paths.HistoryFile(),
+		R"([{"configIndex":2,"timestamp":"2026-08-14T00:00:00",)"
+		R"("worldPath":"orphan/world","worldName":"world",)"
+		R"("backupFile":"[Full]-Legacy.7z","backupType":"Full"}])");
+	const auto legacyPrunePlan = ProfileManifest::Plan(paths, changedManifest, true);
+	const auto legacyPruneApplied = ProfileManifest::Apply(paths, legacyPrunePlan);
+	HistoryRepository legacyReloaded;
+	test.Expect(legacyConfigWrite.success
+			&& legacyPruneApplied.code == OperationCode::Success
+			&& legacyReloaded.Load(paths.HistoryFile(), legacyPrunePlan.configs)
+			&& legacyReloaded.EntriesForConfig(orphanConfig.configId)->size() == 1
+			&& Read(paths.HistoryFile()).find("\"ConfigId\": \""
+				+ wstring_to_utf8(orphanConfig.configId) + "\"") != string::npos,
+		"Prune apply should migrate legacy config-index history before removing its Config");
 
 	const auto exported = ProfileManifest::Export(paths);
 	test.Expect(exported.IsLoaded()

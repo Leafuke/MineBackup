@@ -658,7 +658,15 @@ ProfileApplyPlan Plan(
 
 	HistoryRepository history;
 	if (filesystem::exists(paths.HistoryFile())) {
-		history.Load(paths.HistoryFile(), current.configs);
+		if (!history.Load(paths.HistoryFile(), current.configs)) {
+			plan.diagnostics.push_back(Error("profile.history.load_failed",
+				wstring_to_utf8(paths.HistoryFile().wstring())));
+			return plan;
+		}
+		plan.historyPresent = true;
+		for (const auto& [configId, entries] : history.Snapshot()->byConfigId) {
+			plan.history[configId] = *entries;
+		}
 	}
 	if (prune) {
 		for (const auto& [index, config] : current.configs) {
@@ -764,6 +772,15 @@ ProfileApplyResult Apply(const AppPaths& paths, const ProfileApplyPlan& plan) {
 	}
 
 	ProfileConfigRepository repository(paths.ConfigFile());
+	if (plan.historyPresent
+		&& !FolderRewindHistoryStore::SaveHistoryFileByConfigId(
+			paths.HistoryFile(), plan.configs, plan.history)) {
+		result.code = OperationCode::InvalidProfile;
+		result.diagnostics.push_back(Error("profile.history.write_failed",
+			wstring_to_utf8(paths.HistoryFile().wstring())));
+		RemoveTransactionFiles(paths);
+		return result;
+	}
 	const auto configWrite = repository.Save(plan.configs, plan.restorePreserve, true);
 	wstring jobsError;
 	const bool jobsWrite = configWrite.success

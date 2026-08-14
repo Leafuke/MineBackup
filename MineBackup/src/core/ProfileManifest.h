@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AppPaths.h"
+#include "FolderRewindHistoryStore.h"
 #include "JobModels.h"
 #include "OperationResult.h"
 
@@ -50,6 +51,8 @@ struct ProfileApplyPlan {
 	OperationCode code = OperationCode::InvalidProfile;
 	std::map<int, Config> configs;
 	JobDocument jobs;
+	FolderRewindHistoryStore::HistoryByConfigId history;
+	bool historyPresent = false;
 	std::vector<std::wstring> restorePreserve;
 	std::vector<ProfileDiffItem> diff;
 	std::vector<Diagnostic> diagnostics;

@@ -163,7 +163,7 @@ bool LoadHistoryFileByConfigId(const filesystem::path& path, const map<int, Conf
     HistoryByConfigId loadedHistory;
     const int inputItemCount = static_cast<int>(root.size());
     int parseableItemCount = 0;
-    int mappedEntryCount = 0;
+    int unmappedLegacyEntryCount = 0;
     for (const auto& item : root) {
         HistoryEntry entry;
         wstring configId;
@@ -171,6 +171,8 @@ bool LoadHistoryFileByConfigId(const filesystem::path& path, const map<int, Conf
         if (TryParseHistoryItem(item, entry, configId)) {
             ++parseableItemCount;
             configIndex = ResolveConfigIndexByConfigId(configs, configId);
+			// 现代 history 以 ConfigId 自身为稳定归属；配置被 prune 后仍必须保留 orphan 记录。
+			if (configIndex < 0) configId = entry.configId;
         }
         else {
             int legacyConfigIndex = -1;
@@ -181,9 +183,12 @@ bool LoadHistoryFileByConfigId(const filesystem::path& path, const map<int, Conf
             if (configs.find(legacyConfigIndex) != configs.end()) {
                 configIndex = legacyConfigIndex;
             }
+			else {
+				++unmappedLegacyEntryCount;
+			}
         }
 
-        if (configIndex < 0) {
+		if (configId.empty() && configIndex < 0) {
             continue;
         }
 
@@ -196,13 +201,12 @@ bool LoadHistoryFileByConfigId(const filesystem::path& path, const map<int, Conf
         }
         if (entry.configId.empty()) continue;
         loadedHistory[entry.configId].push_back(std::move(entry));
-        ++mappedEntryCount;
     }
 
     if (inputItemCount > 0 && parseableItemCount == 0) {
         return false;
     }
-    if (inputItemCount > 0 && mappedEntryCount == 0) {
+    if (unmappedLegacyEntryCount > 0) {
         return false;
     }
 
