@@ -37,31 +37,43 @@ jobs:
       run: |
         msbuild .\MineBackup.sln /p:Configuration=Release /p:Platform=x64 /m
 
-    - name: Collect unsigned executable
+    - name: Collect unsigned executables
       shell: pwsh
       run: |
         Start-Sleep -Seconds 3
-        $candidates = @(
+        $desktopCandidates = @(
           '.\x64\Release\MineBackup.exe'
         )
 
-        $exePath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $exePath) {
+        $desktopPath = $desktopCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $desktopPath) {
           $found = Get-ChildItem -Path . -Filter MineBackup.exe -Recurse -File |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
           if ($found) {
-            $exePath = $found.FullName
+            $desktopPath = $found.FullName
           }
         }
 
-        if (-not $exePath) {
+        if (-not $desktopPath) {
           throw 'MineBackup.exe not found after build.'
         }
 
+        $cliCandidates = @(
+          '.\build\windows-msvc-x64\bin\Release\minebackup-cli.exe'
+        )
+        $cliPath = $cliCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $cliPath) {
+          throw 'minebackup-cli.exe not found after build.'
+        }
+
         New-Item -ItemType Directory -Path .\out\unsigned -Force | Out-Null
-        Copy-Item -Path $exePath -Destination .\out\unsigned\MineBackup.exe -Force
-        Write-Host "Unsigned artifact: $exePath"
+        New-Item -ItemType Directory -Path .\out\unsigned-cli -Force | Out-Null
+        Copy-Item -Path $desktopPath -Destination .\out\unsigned\MineBackup.exe -Force
+        # 复用现有 SignPath artifact configuration；签名后再恢复 CLI 的发布文件名。
+        Copy-Item -Path $cliPath -Destination .\out\unsigned-cli\MineBackup.exe -Force
+        Write-Host "Unsigned desktop artifact: $desktopPath"
+        Write-Host "Unsigned CLI artifact: $cliPath"
 
     - name: Verify unsigned executable
       shell: pwsh
@@ -75,6 +87,13 @@ jobs:
       with:
         name: minebackup-unsigned-windows
         path: .\out\unsigned\MineBackup.exe
+
+    - name: Upload unsigned CLI artifact
+      id: upload_unsigned_cli
+      uses: actions/upload-artifact@v4
+      with:
+        name: minebackup-unsigned-windows-cli
+        path: .\out\unsigned-cli\MineBackup.exe
 
     - name: Submit SignPath signing request
       id: signpath
@@ -115,11 +134,48 @@ jobs:
         Copy-Item -Path $signedExe -Destination .\out\release\MineBackup-windows-x64.exe -Force
         Write-Host "Signed artifact: $signedExe"
 
+    - name: Submit SignPath CLI signing request
+      id: signpath_cli
+      uses: signpath/github-action-submit-signing-request@v2
+      with:
+        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+        signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+        github-artifact-id: ${{ steps.upload_unsigned_cli.outputs.artifact-id }}
+        wait-for-completion: true
+        output-artifact-directory: .\out\signed-cli
+
+    - name: Collect signed CLI executable
+      shell: pwsh
+      run: |
+        $signedCli = Get-ChildItem -Path .\out\signed-cli -Filter MineBackup.exe -Recurse -File |
+          Sort-Object LastWriteTime -Descending |
+          Select-Object -First 1
+        if (-not $signedCli) {
+          throw 'Signed CLI MineBackup.exe not found in SignPath output.'
+        }
+        Copy-Item -Path $signedCli.FullName -Destination .\out\release\minebackup-cli.exe -Force
+        Write-Host "Signed CLI artifact: $($signedCli.FullName)"
+
     - name: Verify signed executable
       shell: pwsh
       run: |
         .\cmake\VerifyWindowsArtifact.ps1 -Executable .\out\release\MineBackup-windows-x64.exe
         .\cmake\SmokeTestWindowsArtifact.ps1 -Executable .\out\release\MineBackup-windows-x64.exe
+
+    - name: Verify signed CLI executable
+      shell: pwsh
+      run: |
+        $signature = Get-AuthenticodeSignature -LiteralPath .\out\release\minebackup-cli.exe
+        if ($signature.Status -ne 'Valid') {
+          throw "The packaged CLI is not Authenticode-signed: $($signature.Status)"
+        }
+        .\out\release\minebackup-cli.exe --version
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Signed CLI executable failed its version smoke test.'
+        }
 
     - name: Build headless Windows server candidate
       shell: pwsh
@@ -129,9 +185,10 @@ jobs:
           -P .\cmake\ExportMineBackupVersion.cmake
         $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
         .\packaging\cli\build-cli-windows.ps1 `
-          -Executable .\build\windows-msvc-x64\bin\Release\minebackup-cli.exe `
+          -Executable .\out\release\minebackup-cli.exe `
           -OutputDirectory .\out\release `
-          -Version $version
+          -Version $version `
+          -RequireAuthenticodeSignature
         if (-not (Test-Path ".\out\release\MineBackup-CLI-$version-windows-x64.zip")) {
           throw 'Windows CLI package was not created.'
         }
@@ -143,6 +200,9 @@ jobs:
         Write-Host "Signing Request ID: ${{ steps.signpath.outputs.signing-request-id }}"
         Write-Host "Signing Request URL: ${{ steps.signpath.outputs.signing-request-web-url }}"
         Write-Host "Signed Download URL: ${{ steps.signpath.outputs.signed-artifact-download-url }}"
+        Write-Host "CLI Signing Request ID: ${{ steps.signpath_cli.outputs.signing-request-id }}"
+        Write-Host "CLI Signing Request URL: ${{ steps.signpath_cli.outputs.signing-request-web-url }}"
+        Write-Host "CLI Signed Download URL: ${{ steps.signpath_cli.outputs.signed-artifact-download-url }}"
 
     - name: Upload signed Windows release candidate
       uses: actions/upload-artifact@v4

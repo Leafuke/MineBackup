@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
-    [Parameter(Mandatory = $true)][string]$Version
+    [Parameter(Mandatory = $true)][string]$Version,
+    [switch]$RequireAuthenticodeSignature
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,19 @@ if ([System.IO.Path]::GetPathRoot($output) -eq $output) {
 $stage = Join-Path $output ".cli-package-work-$PID"
 $packageRoot = Join-Path $stage "MineBackup-CLI-$Version-windows-x64"
 $archive = Join-Path $output "MineBackup-CLI-$Version-windows-x64.zip"
+
+function Assert-AuthenticodeSignature {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne 'Valid') {
+        throw "Executable is not Authenticode-signed: $Path ($($signature.Status))"
+    }
+}
+
+if ($RequireAuthenticodeSignature) {
+    Assert-AuthenticodeSignature -Path $binary
+}
 
 New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
 Copy-Item -LiteralPath $binary -Destination (Join-Path $packageRoot 'minebackup-cli.exe')
@@ -52,6 +66,9 @@ Expand-Archive -LiteralPath $archive -DestinationPath $verify
 $verifiedBinary = Join-Path $verify "MineBackup-CLI-$Version-windows-x64\minebackup-cli.exe"
 if (-not (Test-Path -LiteralPath $verifiedBinary -PathType Leaf)) {
     throw 'Packaged minebackup-cli.exe is missing.'
+}
+if ($RequireAuthenticodeSignature) {
+    Assert-AuthenticodeSignature -Path $verifiedBinary
 }
 & $verifiedBinary --version
 if ($LASTEXITCODE -ne 0) { throw 'Packaged CLI smoke test failed.' }
