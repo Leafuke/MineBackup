@@ -5,6 +5,7 @@
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <map>
 #include <system_error>
 

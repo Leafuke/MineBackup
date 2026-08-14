@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <iomanip>
 #include <limits>
 #include <map>
@@ -878,8 +879,22 @@ bool SingleInstanceService::Reply(
 		impl_->clients.erase(connectionId);
 	};
 
+	auto tryEncode = [&](const InstanceControlResponse& value,
+		vector<uint8_t>& output, wstring& encodeError) {
+		try {
+			return EncodeControlResponse(value, output, encodeError);
+		}
+		catch (const exception&) {
+			encodeError = L"The instance response could not be encoded.";
+		}
+		catch (...) {
+			encodeError = L"The instance response could not be encoded.";
+		}
+		return false;
+	};
+
 	vector<uint8_t> message;
-	if (!EncodeControlResponse(response, message, error)) {
+	if (!tryEncode(response, message, error)) {
 		// 将超大响应降级成一个很小的协议错误，避免客户端等待到超时。
 		InstanceControlResponse fallback = response;
 		fallback.accepted = false;
@@ -887,7 +902,7 @@ bool SingleInstanceService::Reply(
 		fallback.payload.clear();
 		fallback.error = "instance_response_too_large";
 		wstring fallbackError;
-		if (EncodeControlResponse(fallback, message, fallbackError)) {
+		if (tryEncode(fallback, message, fallbackError)) {
 			const bool success = WriteMessage(found->second, message, error);
 			(void)success;
 			closeClient();
