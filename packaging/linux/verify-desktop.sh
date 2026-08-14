@@ -39,8 +39,10 @@ run_x11() (
     local root
     root="$(mktemp -d)"
     trap 'rm -rf "${root}"' EXIT
+    # Xvfb 提供的是独立 X11 会话；清除继承的 Wayland 会话标记，避免
+    # GLFW 在自动探测时先连接不存在的 Wayland 显示而阻塞整个 smoke test。
     run_smoke X11 "${root}/MineBackup-中文/profile" "${root}/minebackup.log" \
-        xvfb-run -a env -u WAYLAND_DISPLAY
+        xvfb-run -a env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11
 )
 
 run_wayland() (
