@@ -483,6 +483,41 @@ void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
 				&& clientResponse.exitCode == 0,
 			"protocol v2 client should receive role, capabilities, operationId and final exit code");
 
+		InstanceControlResponse oversizedClientResponse;
+		std::wstring oversizedClientError;
+		bool oversizedExchanged = false;
+		std::jthread oversizedClient([&] {
+			oversizedExchanged = secondary.Exchange({
+				"request-oversized", InstanceControlRequestType::Execute,
+				{L"--json"}, {}}, oversizedClientResponse,
+				oversizedClientError, std::chrono::seconds(2));
+		});
+		controls.clear();
+		const auto oversizedDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(2);
+		while (controls.empty() && std::chrono::steady_clock::now() < oversizedDeadline) {
+			controls = primary.PollControlRequests(error);
+			if (controls.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		test.Expect(controls.size() == 1,
+			"protocol v2 should retain an accepted connection for oversized responses");
+		if (!controls.empty()) {
+			InstanceControlResponse oversizedResponse;
+			oversizedResponse.requestId = controls.front().request.requestId;
+			oversizedResponse.accepted = true;
+			oversizedResponse.role = InstanceRuntimeRole::Serve;
+			oversizedResponse.capabilities = {"execute"};
+			oversizedResponse.payload = std::string(9u * 1024u * 1024u, 'x');
+			const bool replyResult = primary.Reply(
+				controls.front().connectionId, oversizedResponse, error);
+			test.Expect(!replyResult,
+				"oversized protocol responses should report a bounded reply failure");
+		}
+		oversizedClient.join();
+		test.Expect(oversizedExchanged && !oversizedClientResponse.accepted
+				&& oversizedClientResponse.error == "instance_response_too_large",
+			"oversized protocol responses should reach the client as a compact error");
+
         const std::wstring oversizedId(70u * 1024u, L'x');
         test.Expect(!secondary.Send({InstanceRequestType::SelectConfig, oversizedId}, error),
             "instance IPC should reject payloads above the protocol limit");

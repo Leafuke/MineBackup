@@ -10,6 +10,5 @@ ExecStart=/usr/bin/minebackup-cli --data-dir ${MINEBACKUP_DATA_DIR} --json job r
 User=minecraft
 Group=minecraft
 NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only

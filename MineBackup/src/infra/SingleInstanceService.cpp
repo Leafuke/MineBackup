@@ -857,25 +857,54 @@ bool SingleInstanceService::Reply(
 	uint64_t connectionId,
 	const InstanceControlResponse& response,
 	wstring& error) {
-	vector<uint8_t> message;
-	if (!EncodeControlResponse(response, message, error)) return false;
 	const auto found = impl_->clients.find(connectionId);
 	if (found == impl_->clients.end()) {
 		error = L"The instance control connection no longer exists.";
 		return false;
 	}
+
+	// 无论编码或写入是否成功，保留的连接都必须在本次回复结束时关闭。
+	auto closeClient = [&]() {
+#ifdef _WIN32
+		const HANDLE client = found->second;
+		FlushFileBuffers(client);
+		DisconnectNamedPipe(client);
+		CloseHandle(client);
+#else
+		const int client = found->second;
+		::shutdown(client, SHUT_RDWR);
+		::close(client);
+#endif
+		impl_->clients.erase(connectionId);
+	};
+
+	vector<uint8_t> message;
+	if (!EncodeControlResponse(response, message, error)) {
+		// 将超大响应降级成一个很小的协议错误，避免客户端等待到超时。
+		InstanceControlResponse fallback = response;
+		fallback.accepted = false;
+		fallback.exitCode = 5;
+		fallback.payload.clear();
+		fallback.error = "instance_response_too_large";
+		wstring fallbackError;
+		if (EncodeControlResponse(fallback, message, fallbackError)) {
+			const bool success = WriteMessage(found->second, message, error);
+			(void)success;
+			closeClient();
+			return false;
+		}
+		closeClient();
+		if (error.empty()) error = std::move(fallbackError);
+		return false;
+	}
+
 #ifdef _WIN32
 	const HANDLE client = found->second;
 	const bool success = WriteMessage(client, message, error);
-	FlushFileBuffers(client);
-	DisconnectNamedPipe(client);
-	CloseHandle(client);
 #else
 	const int client = found->second;
 	const bool success = WriteMessage(client, message, error);
-	::shutdown(client, SHUT_RDWR);
-	::close(client);
 #endif
-	impl_->clients.erase(found);
+	closeClient();
 	return success;
 }

@@ -16,7 +16,6 @@ UMask=0077
 User=minecraft
 Group=minecraft
 NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
 
