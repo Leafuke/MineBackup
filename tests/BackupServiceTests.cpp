@@ -26,6 +26,11 @@ void WriteFixture(const filesystem::path& path, const string& content) {
 	ofstream(path, ios::binary | ios::trunc) << content;
 }
 
+string ReadFixture(const filesystem::path& path) {
+	ifstream input(path, ios::binary);
+	return string((istreambuf_iterator<char>(input)), istreambuf_iterator<char>());
+}
+
 ArchiveRunner MakeFakeArchiveRunner(
 	const shared_ptr<int>& processCount,
 	stop_token stopToken) {
@@ -263,6 +268,7 @@ void RunBackupServiceTests(
 		"Cloud post fixture history should persist");
 
 	auto copyCount = make_shared<int>(0);
+	vector<pair<wstring, string>> cloudUploads;
 	SynchronousRcloneCloudPostHook cloudHook(
 		AppPaths{
 			.configRoot = cloudRoot,
@@ -270,8 +276,12 @@ void RunBackupServiceTests(
 			.runtimeRoot = cloudRoot / "runtime"},
 		cloudHistory,
 		[cloudConfigs] { return cloudConfigs; },
-		[copyCount](const ProcessSpec&, stop_token) {
+		[copyCount, &cloudUploads](const ProcessSpec& spec, stop_token) {
 			++*copyCount;
+			if (spec.arguments.size() >= 3) {
+				cloudUploads.emplace_back(
+					spec.arguments[2], ReadFixture(filesystem::path(spec.arguments[1])));
+			}
 			ProcessResult process;
 			process.status = ProcessStatus::Succeeded;
 			process.exitCode = 0;
@@ -295,6 +305,119 @@ void RunBackupServiceTests(
 			&& cloudEntries->front().isCloudArchived
 			&& !cloudEntries->front().cloudArchiveRemotePath.empty(),
 		"Synchronous cloud hook should atomically commit cloud history state");
+	auto uploadedHistory = find_if(cloudUploads.begin(), cloudUploads.end(),
+		[](const auto& upload) {
+			return upload.first.find(L"history.json") != wstring::npos
+				&& upload.first.find(L"active-history.json") == wstring::npos;
+		});
+	test.Expect(uploadedHistory != cloudUploads.end()
+			&& uploadedHistory->second.find("\"IsCloudArchived\": true") != string::npos,
+		"Cloud history upload should include the local cloud state committed by the same backup");
+
+	cloudUploads.clear();
+	Config noRemoteHistoryConfig = cloudConfig;
+	noRemoteHistoryConfig.cloudSyncHistoryAfterUpload = false;
+	const filesystem::path noRemoteHistoryRoot = cloudRoot / "no-history";
+	HistoryEntry noRemoteHistoryEntry = cloudEntry;
+	noRemoteHistoryEntry.isCloudArchived = false;
+	HistoryRepository noRemoteHistory;
+	FolderRewindHistoryStore::HistoryByConfigId noRemoteInitialHistory;
+	noRemoteInitialHistory[noRemoteHistoryConfig.configId].push_back(noRemoteHistoryEntry);
+	test.Expect(noRemoteHistory.ReplaceAll(
+		std::move(noRemoteInitialHistory),
+		noRemoteHistoryRoot / "history.json",
+		map<int, Config>{{1, noRemoteHistoryConfig}},
+		true),
+		"Cloud history switch-off fixture should persist local history");
+	SynchronousRcloneCloudPostHook noRemoteHistoryHook(
+		AppPaths{
+			.configRoot = noRemoteHistoryRoot,
+			.dataRoot = noRemoteHistoryRoot,
+			.runtimeRoot = noRemoteHistoryRoot / "runtime"},
+		noRemoteHistory,
+		[noRemoteHistoryConfig] {
+			return map<int, Config>{{1, noRemoteHistoryConfig}};
+		},
+		[&cloudUploads](const ProcessSpec& spec, stop_token) {
+			if (spec.arguments.size() >= 3) {
+				cloudUploads.emplace_back(
+					spec.arguments[2], ReadFixture(filesystem::path(spec.arguments[1])));
+			}
+			ProcessResult process;
+			process.status = ProcessStatus::Succeeded;
+			return process;
+		},
+		[](const filesystem::path&, const AppPaths&, stop_token) {
+			ExternalToolResolution resolution;
+			resolution.available = true;
+			resolution.executable = L"fake-rclone";
+			return resolution;
+		});
+	BackupRequest noRemoteHistoryRequest = cloudRequest;
+	noRemoteHistoryRequest.config = noRemoteHistoryConfig;
+	noRemoteHistoryRequest.world.configId = noRemoteHistoryConfig.configId;
+	const CloudPostResult noRemoteHistoryResult = noRemoteHistoryHook.Run(
+		noRemoteHistoryRequest, noRemoteHistoryEntry, {});
+	const bool uploadedGlobalHistory = any_of(
+		cloudUploads.begin(), cloudUploads.end(), [](const auto& upload) {
+			return upload.first.find(L"history.json") != wstring::npos;
+		});
+	const auto noRemoteEntries = noRemoteHistory.EntriesForConfig(
+		noRemoteHistoryConfig.configId);
+	test.Expect(noRemoteHistoryResult.status == CloudPostStatus::Succeeded
+			&& cloudUploads.size() == 3
+			&& !uploadedGlobalHistory
+			&& noRemoteEntries->size() == 1
+			&& noRemoteEntries->front().isCloudArchived,
+		"cloudSyncHistoryAfterUpload=false should skip remote history while committing local state");
+
+	const filesystem::path cloudFailureRoot = cloudRoot / "history-upload-failure";
+	HistoryRepository cloudFailureHistory;
+	FolderRewindHistoryStore::HistoryByConfigId failureInitialHistory;
+	failureInitialHistory[cloudConfig.configId].push_back(cloudEntry);
+	test.Expect(cloudFailureHistory.ReplaceAll(
+		std::move(failureInitialHistory),
+		cloudFailureRoot / "history.json",
+		cloudConfigs,
+		true),
+		"Cloud history failure fixture should persist local history");
+	bool historyUploadAttempted = false;
+	SynchronousRcloneCloudPostHook cloudFailureHook(
+		AppPaths{
+			.configRoot = cloudFailureRoot,
+			.dataRoot = cloudFailureRoot,
+			.runtimeRoot = cloudFailureRoot / "runtime"},
+		cloudFailureHistory,
+		[cloudConfigs] { return cloudConfigs; },
+		[&historyUploadAttempted](const ProcessSpec& spec, stop_token) {
+			ProcessResult process;
+			if (spec.arguments.size() >= 3
+				&& spec.arguments[2].find(L"history.json") != wstring::npos
+				&& spec.arguments[2].find(L"active-history.json") == wstring::npos) {
+				historyUploadAttempted = true;
+				process.status = ProcessStatus::ExitedWithError;
+				process.exitCode = 17;
+				process.error = L"fixture history upload failure";
+				return process;
+			}
+			process.status = ProcessStatus::Succeeded;
+			process.exitCode = 0;
+			return process;
+		},
+		[](const filesystem::path&, const AppPaths&, stop_token) {
+			ExternalToolResolution resolution;
+			resolution.available = true;
+			resolution.executable = L"fake-rclone";
+			return resolution;
+		});
+	const CloudPostResult cloudFailure = cloudFailureHook.Run(
+		cloudRequest, cloudEntry, {});
+	const auto failureEntries = cloudFailureHistory.EntriesForConfig(cloudConfig.configId);
+	test.Expect(cloudFailure.status == CloudPostStatus::Failed
+			&& historyUploadAttempted
+			&& failureEntries->size() == 1
+			&& failureEntries->front().isCloudArchived,
+		"Remote history failure should preserve committed local cloud state and report failure");
 
 	const filesystem::path retentionRoot = temporaryRoot / "runtime-retention";
 	Config retentionConfig = config;

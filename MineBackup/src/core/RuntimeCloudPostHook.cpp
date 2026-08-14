@@ -3,6 +3,7 @@
 #include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
+#include "WorldIdentity.h"
 #include "json.hpp"
 #include "text_to_text.h"
 
@@ -133,44 +134,6 @@ CloudPostResult SynchronousRcloneCloudPostHook::Run(
 			result, "cloud.metadata.record_upload_failed")) return result;
 
 	const map<int, Config> configs = configSnapshot_ ? configSnapshot_() : map<int, Config>{};
-	const auto snapshot = history_.Snapshot();
-	nlohmann::json historyJson = nlohmann::json::array();
-	for (const auto& [index, candidate] : configs) {
-		(void)index;
-		const auto found = snapshot->byConfigId.find(candidate.configId);
-		if (found == snapshot->byConfigId.end()) continue;
-		for (const auto& entry : *found->second) {
-			historyJson.push_back(
-				FolderRewindHistoryStore::SerializeHistoryItem(candidate, entry));
-		}
-	}
-	vector<HistoryEntry> configEntries;
-	if (const auto found = snapshot->byConfigId.find(config.configId);
-		found != snapshot->byConfigId.end()) {
-		configEntries.assign(found->second->begin(), found->second->end());
-	}
-
-	const filesystem::path tempRoot = paths_.runtimeRoot /
-		(L"MineBackup_CloudPost_" + FolderRewindFormat::GenerateGuidString());
-	TemporaryCloudFiles cleanup(tempRoot);
-	const filesystem::path historyFile = tempRoot / L"history.json";
-	const filesystem::path manifestFile = tempRoot / L"active-history.json";
-	const AtomicFileWriter::WriteOptions writeOptions{false, true};
-	if (!AtomicFileWriter::WriteText(historyFile, historyJson.dump(2), writeOptions).success
-		|| !AtomicFileWriter::WriteText(
-			manifestFile,
-			FolderRewindHistoryStore::SerializeActiveHistoryManifest(
-				config, configEntries).dump(2),
-			writeOptions).success) {
-		return Failed("cloud.history.serialize_failed", "Cannot create the cloud history snapshot.");
-	}
-	if (!RunCopy(client, historyFile,
-			FolderRewindFormat::BuildGlobalHistoryRemotePath(config),
-			result, "cloud.history.upload_failed")) return result;
-	if (!RunCopy(client, manifestFile,
-			FolderRewindFormat::BuildActiveHistoryManifestRemotePath(config),
-			result, "cloud.manifest.upload_failed")) return result;
-
 	const wstring archiveRemote = config.cloudSyncMode
 		== static_cast<int>(CloudSyncMode::HistoryAndBackups)
 		? FolderRewindFormat::BuildArchiveRemotePath(
@@ -187,8 +150,7 @@ CloudPostResult SynchronousRcloneCloudPostHook::Run(
 		true,
 		[&](vector<HistoryEntry>& entries) {
 			for (auto& entry : entries) {
-				if (entry.worldName != historyEntry.worldName
-					|| entry.backupFile != historyEntry.backupFile) continue;
+				if (!WorldIdentity::SameHistoryEntry(config, entry, historyEntry)) continue;
 				entry.isCloudArchived = !archiveRemote.empty();
 				entry.cloudArchivedAtUtc = FolderRewindFormat::MakeUtcTimestampString();
 				entry.cloudArchiveRemotePath = archiveRemote;
@@ -202,6 +164,47 @@ CloudPostResult SynchronousRcloneCloudPostHook::Run(
 		return Failed(
 			"cloud.history.commit_failed",
 			"Cloud upload completed, but its local history state could not be committed.");
+	}
+
+	if (config.cloudSyncHistoryAfterUpload) {
+		// 本地状态提交后再生成远端快照，保证 history.json 包含刚完成的 cloud 字段。
+		const auto snapshot = history_.Snapshot();
+		nlohmann::json historyJson = nlohmann::json::array();
+		for (const auto& [index, candidate] : configs) {
+			(void)index;
+			const auto found = snapshot->byConfigId.find(candidate.configId);
+			if (found == snapshot->byConfigId.end()) continue;
+			for (const auto& entry : *found->second) {
+				historyJson.push_back(
+					FolderRewindHistoryStore::SerializeHistoryItem(candidate, entry));
+			}
+		}
+		vector<HistoryEntry> configEntries;
+		if (const auto found = snapshot->byConfigId.find(config.configId);
+			found != snapshot->byConfigId.end()) {
+			configEntries.assign(found->second->begin(), found->second->end());
+		}
+
+		const filesystem::path tempRoot = paths_.runtimeRoot /
+			(L"MineBackup_CloudPost_" + FolderRewindFormat::GenerateGuidString());
+		TemporaryCloudFiles cleanup(tempRoot);
+		const filesystem::path historyFile = tempRoot / L"history.json";
+		const filesystem::path manifestFile = tempRoot / L"active-history.json";
+		const AtomicFileWriter::WriteOptions writeOptions{false, true};
+		if (!AtomicFileWriter::WriteText(historyFile, historyJson.dump(2), writeOptions).success
+			|| !AtomicFileWriter::WriteText(
+				manifestFile,
+				FolderRewindHistoryStore::SerializeActiveHistoryManifest(
+					config, configEntries).dump(2),
+				writeOptions).success) {
+			return Failed("cloud.history.serialize_failed", "Cannot create the cloud history snapshot.");
+		}
+		if (!RunCopy(client, historyFile,
+				FolderRewindFormat::BuildGlobalHistoryRemotePath(config),
+				result, "cloud.history.upload_failed")) return result;
+		if (!RunCopy(client, manifestFile,
+				FolderRewindFormat::BuildActiveHistoryManifestRemotePath(config),
+				result, "cloud.manifest.upload_failed")) return result;
 	}
 
 	result.status = CloudPostStatus::Succeeded;
