@@ -19,6 +19,9 @@ CONFIG_ID = "51111111-1111-4111-8111-111111111111"
 JOB_ID = "52222222-2222-4222-8222-222222222222"
 STAGE_ID = "53333333-3333-4333-8333-333333333333"
 STEP_ID = "54444444-4444-4444-8444-444444444444"
+INVALID_JOB_ID = "55555555-5555-4555-8555-555555555555"
+INVALID_STAGE_ID = "56666666-6666-4666-8666-666666666666"
+INVALID_STEP_ID = "57777777-7777-4777-8777-777777777777"
 
 
 def write_profile(profile: Path) -> None:
@@ -77,7 +80,33 @@ def write_profile(profile: Path) -> None:
                         ],
                     }
                 ],
-            }
+            },
+            {
+                "jobId": INVALID_JOB_ID,
+                "name": "invalid stderr contract",
+                "stages": [
+                    {
+                        "stageId": INVALID_STAGE_ID,
+                        "name": "invalid stderr",
+                        "steps": [
+                            {
+                                "stepId": INVALID_STEP_ID,
+                                "name": "invalid stderr",
+                                "type": "process",
+                                "executable": sys.executable,
+                                "arguments": [
+                                    "-c",
+                                    "import sys; sys.stderr.buffer.write(b'\\xff' + b'x' * (2 * 1024 * 1024)); sys.exit(7)",
+                                ],
+                                "workingDirectory": "",
+                                "timeoutSeconds": 10,
+                                "maximumCapturedBytes": 64 * 1024 * 1024,
+                                "lowPriority": False,
+                            }
+                        ],
+                    }
+                ],
+            },
         ],
     }
     (profile / "config" / "jobs.json").write_text(
@@ -231,6 +260,20 @@ def main() -> int:
         applied_json = parse_single_json(applied.stdout, "forwarded profile apply")
         if applied.returncode != 0 or applied_json.get("command") != "profile.apply":
             raise AssertionError(f"profile apply did not reload serve: {applied_json!r}")
+
+        invalid = run_cli(cli, profile, environment, "job", "run", "--job", INVALID_JOB_ID)
+        invalid_json = parse_single_json(invalid.stdout, "forwarded invalid stderr")
+        if invalid.returncode != 6 or invalid_json.get("code") != "job_failed":
+            raise AssertionError(
+                f"forwarded invalid stderr returned the wrong result: {invalid.returncode} {invalid_json!r}"
+            )
+        details = json.dumps(invalid_json, ensure_ascii=False)
+        if "\ufffd" not in details or len(invalid.stdout.encode("utf-8")) >= 2 * 1024 * 1024:
+            raise AssertionError(
+                f"forwarded invalid stderr was not sanitized and bounded: {len(invalid.stdout)} {invalid_json!r}"
+            )
+        if status(cli, profile, environment).get("data", {}).get("activeOperationCount") != 0:
+            raise AssertionError("serve retained an invalid-stderr operation after its response")
 
         job_command = [
             str(cli), "--data-dir", str(profile), "--json",

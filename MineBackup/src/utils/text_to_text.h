@@ -2,6 +2,7 @@
 #ifndef TEXT_TO_TEXT_H
 #define TEXT_TO_TEXT_H
 #include <string>
+#include <string_view>
 #include <filesystem>
 #include <algorithm>
 
@@ -40,6 +41,17 @@ std::string wstring_to_utf8(const std::wstring& wstr);
 std::wstring utf8_to_wstring(const std::string& str);
 std::string gbk_to_utf8(const std::string& gbk);
 std::string utf8_to_gbk(const std::string& utf8);
+
+struct Utf8SanitizeResult {
+	std::string value;
+	bool invalidUtf8Replaced = false;
+	bool truncated = false;
+};
+
+// 将外部进程产生的任意字节流转换为可安全嵌入 JSON 的 UTF-8 文本。
+Utf8SanitizeResult SanitizeUtf8(
+	std::string_view input,
+	std::size_t maximumBytes);
 
 // Lightweight bridges when interoperating with legacy char-based APIs 为了保证imgui兼容
 const char* as_utf8(const char8_t* s) noexcept;

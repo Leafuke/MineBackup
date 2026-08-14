@@ -1,6 +1,11 @@
 #include "CliRenderer.h"
 
+#include "text_to_text.h"
+
+#include <algorithm>
+#include <exception>
 #include <iostream>
+#include <limits>
 #include <utility>
 
 using namespace std;
@@ -43,12 +48,33 @@ bool ParseSeverity(const string& value, DiagnosticSeverity& severity) {
 } // namespace
 
 nlohmann::json BuildCliEnvelope(const CliResult& result) {
+	constexpr size_t kMaximumDiagnosticDetailBytes = 256u * 1024u;
+	constexpr size_t kMaximumDiagnosticBytes = 1024u * 1024u;
 	nlohmann::json diagnostics = nlohmann::json::array();
+	size_t diagnosticBytes = 0;
+	bool diagnosticsTruncated = false;
 	for (const auto& item : result.diagnostics) {
+		if (diagnosticBytes >= kMaximumDiagnosticBytes) {
+			diagnosticsTruncated = true;
+			break;
+		}
+		const size_t remaining = kMaximumDiagnosticBytes - diagnosticBytes;
+		const auto sanitized = SanitizeUtf8(
+			item.detail, min(kMaximumDiagnosticDetailBytes, remaining));
+		string detail = sanitized.value;
+		if (sanitized.invalidUtf8Replaced) detail += ";diagnosticUtf8Replaced=true";
+		if (sanitized.truncated) detail += ";diagnosticTruncated=true";
+		diagnosticBytes += detail.size();
 		diagnostics.push_back({
-			{"eventId", item.eventId},
+			{"eventId", SanitizeUtf8(item.eventId, kMaximumDiagnosticDetailBytes).value},
 			{"severity", ToString(item.severity)},
-			{"detail", item.detail}});
+			{"detail", detail}});
+	}
+	if (diagnosticsTruncated) {
+		diagnostics.push_back({
+			{"eventId", "cli.diagnostics.truncated"},
+			{"severity", "warning"},
+			{"detail", "Diagnostic output exceeded the serialization budget."}});
 	}
 	return {
 		{"schemaVersion", 1},
@@ -57,6 +83,25 @@ nlohmann::json BuildCliEnvelope(const CliResult& result) {
 		{"code", ToString(result.code)},
 		{"data", result.data},
 		{"diagnostics", diagnostics}};
+}
+
+string SerializeCliEnvelope(const CliResult& result) {
+	try {
+		return BuildCliEnvelope(result).dump();
+	}
+	catch (const exception&) {
+		CliResult fallback{
+			result.command.empty() ? "unknown" : result.command,
+			OperationCode::JobFailed};
+		fallback.diagnostics.push_back({
+			"cli.response.serialization_failed", DiagnosticSeverity::Error, {}});
+		try {
+			return BuildCliEnvelope(fallback).dump();
+		}
+		catch (const exception&) {
+			return R"({"schemaVersion":1,"command":"unknown","ok":false,"code":"job_failed","data":{},"diagnostics":[{"eventId":"cli.response.serialization_failed","severity":"error","detail":""}]})";
+		}
+	}
 }
 
 bool ParseCliEnvelope(const string& payload, CliResult& result) {
@@ -90,7 +135,7 @@ bool ParseCliEnvelope(const string& payload, CliResult& result) {
 
 void RenderCliResult(const CliResult& result, bool jsonOutput) {
 	if (jsonOutput) {
-		cout << BuildCliEnvelope(result).dump() << '\n';
+		cout << SerializeCliEnvelope(result) << '\n';
 		return;
 	}
 	for (const auto& item : result.diagnostics) {

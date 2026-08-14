@@ -1014,7 +1014,7 @@ CliResult RunServeLoop(
 					{"capabilities", ServeCapabilities()}};
 				response.accepted = true;
 				response.exitCode = 0;
-				response.payload = BuildCliEnvelope(status).dump();
+				response.payload = SerializeCliEnvelope(status);
 				wstring replyError;
 				(void)instance.Reply(exchange.connectionId, response, replyError);
 				continue;
@@ -1029,7 +1029,7 @@ CliResult RunServeLoop(
 				stopped.data["stopping"] = true;
 				response.accepted = true;
 				response.exitCode = 0;
-				response.payload = BuildCliEnvelope(stopped).dump();
+				response.payload = SerializeCliEnvelope(stopped);
 				wstring replyError;
 				(void)instance.Reply(exchange.connectionId, response, replyError);
 				continue;
@@ -1075,16 +1075,34 @@ CliResult RunServeLoop(
 			const auto forwardedArguments = request.arguments;
 			operation->worker = jthread([
 				operation, forwardedArguments, &executionMutex, &paths, &runtime](stop_token) {
-				lock_guard lock(executionMutex);
-				auto commandResult = ForwardedCommandResult(
-					forwardedArguments, paths, runtime,
-					operation->cancellation.get_token());
-				if (operation->cancellation.stop_requested()
-					&& IsSuccessful(commandResult.code)) {
-					commandResult.code = OperationCode::Cancelled;
+				try {
+					lock_guard lock(executionMutex);
+					auto commandResult = ForwardedCommandResult(
+						forwardedArguments, paths, runtime,
+						operation->cancellation.get_token());
+					if (operation->cancellation.stop_requested()
+						&& IsSuccessful(commandResult.code)) {
+						commandResult.code = OperationCode::Cancelled;
+					}
+					operation->response.exitCode = ToExitCode(commandResult.code);
+					operation->response.payload = SerializeCliEnvelope(commandResult);
 				}
-				operation->response.exitCode = ToExitCode(commandResult.code);
-				operation->response.payload = BuildCliEnvelope(commandResult).dump();
+				catch (const exception& exception) {
+					// 工作线程不能把异常带出线程边界，否则会终止整个 serve 进程。
+					CliResult failed{"serve.execute", OperationCode::JobFailed};
+					failed.diagnostics.push_back({
+						"serve.operation.exception", DiagnosticSeverity::Error,
+						SanitizeUtf8(exception.what(), 256u * 1024u).value});
+					operation->response.exitCode = ToExitCode(failed.code);
+					operation->response.payload = SerializeCliEnvelope(failed);
+				}
+				catch (...) {
+					CliResult failed{"serve.execute", OperationCode::JobFailed};
+					failed.diagnostics.push_back({
+						"serve.operation.exception", DiagnosticSeverity::Error, {}});
+					operation->response.exitCode = ToExitCode(failed.code);
+					operation->response.payload = SerializeCliEnvelope(failed);
+				}
 				operation->completed.store(true, memory_order_release);
 			});
 			operations.emplace(operationId, std::move(operation));

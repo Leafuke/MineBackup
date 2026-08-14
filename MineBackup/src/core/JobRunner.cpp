@@ -8,6 +8,8 @@ using namespace std;
 
 namespace {
 
+constexpr size_t kMaximumProcessDiagnosticBytes = 256u * 1024u;
+
 OperationCode Aggregate(const vector<JobStepResult>& steps) {
 	bool success = false;
 	bool changed = false;
@@ -30,8 +32,11 @@ OperationCode Aggregate(const vector<JobStepResult>& steps) {
 Diagnostic ProcessDiagnostic(const JobStep& step, const ProcessResult& process) {
 	string detail = "exitCode=" + to_string(process.exitCode);
 	if (!process.error.empty()) detail += ";error=" + wstring_to_utf8(process.error);
-	if (!process.standardError.empty()) detail += ";stderr=" + process.standardError;
-	if (process.outputTruncated) detail += ";outputTruncated=true";
+	const auto sanitizedStderr = SanitizeUtf8(
+		process.standardError, kMaximumProcessDiagnosticBytes);
+	if (!sanitizedStderr.value.empty()) detail += ";stderr=" + sanitizedStderr.value;
+	if (sanitizedStderr.invalidUtf8Replaced) detail += ";stderrUtf8Replaced=true";
+	if (sanitizedStderr.truncated || process.outputTruncated) detail += ";outputTruncated=true";
 	return {
 		process.status == ProcessStatus::Succeeded ? "job.process.completed"
 			: process.status == ProcessStatus::Cancelled ? "job.step.cancelled"

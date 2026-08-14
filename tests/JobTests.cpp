@@ -2,6 +2,7 @@
 
 #include "JobDocument.h"
 #include "JobRunner.h"
+#include "json.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -137,6 +138,39 @@ void RunJobTests(TestContext& test, const filesystem::path& temporaryRoot) {
 			&& maximumActive.load() == 2
 			&& laterRuns.load() == 0,
 		"Job runner should execute a Stage in parallel and skip later Stages after mixed failure");
+
+	Job diagnosticJob;
+	diagnosticJob.jobId = JobId;
+	diagnosticJob.name = "diagnostic encoding";
+	JobStage diagnosticStage;
+	diagnosticStage.stageId = StageId;
+	diagnosticStage.name = "process";
+	JobStep diagnosticStep;
+	diagnosticStep.stepId = StepA;
+	diagnosticStep.name = "invalid stderr";
+	diagnosticStep.type = JobStepType::Process;
+	diagnosticStage.steps.push_back(diagnosticStep);
+	diagnosticJob.stages.push_back(diagnosticStage);
+	JobRunnerDependencies diagnosticDependencies;
+	diagnosticDependencies.runProcess = [](const ProcessSpec&, stop_token) {
+		ProcessResult result;
+		result.status = ProcessStatus::ExitedWithError;
+		result.exitCode = 17;
+		result.standardError.assign(300u * 1024u, 'x');
+		result.standardError[0] = static_cast<char>(0xFF);
+		result.outputTruncated = true;
+		return result;
+	};
+	const auto diagnosticRun = JobRunner(std::move(diagnosticDependencies)).Run(diagnosticJob);
+	const auto& diagnostic = diagnosticRun.stages.front().steps.front().diagnostics.front().detail;
+	test.Expect(diagnostic.find("\xEF\xBF\xBD") != string::npos
+			&& diagnostic.find("stderrUtf8Replaced=true") != string::npos
+			&& diagnostic.find("outputTruncated=true") != string::npos
+			&& diagnostic.size() < 270u * 1024u,
+		"Job process diagnostics should replace invalid UTF-8 and stay within the diagnostic budget");
+	test.Expect(nlohmann::json{{"detail", diagnostic}}.dump().find("\xEF\xBF\xBD")
+		!= string::npos,
+		"Sanitized process diagnostics should remain valid JSON strings");
 
 	const filesystem::path jobsPath = temporaryRoot / "jobs" / "jobs.json";
 	wstring writeError;
