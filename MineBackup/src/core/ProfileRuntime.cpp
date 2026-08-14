@@ -109,7 +109,7 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 		return result;
 	}
 	next->retention = make_unique<RuntimeRetentionService>(
-		next->history, paths_.HistoryFile(), next->catalog.configs);
+		next->history, paths_.HistoryFile(), next->catalog.configs, paths_);
 	if (!dependencies_.noNetwork) {
 		if (implementation_ && implementation_->knotLink && implementation_->eventSink) {
 			next->knotLink = implementation_->knotLink;

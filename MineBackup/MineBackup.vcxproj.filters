@@ -105,6 +105,9 @@
     <ClCompile Include="src\core\ArchiveRunner.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\ChainSafeRetention.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\BackupChangeDetector.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -426,6 +429,9 @@
 	  <Filter>src\app</Filter>
 	</ClInclude>
     <ClInclude Include="src\core\ArchiveRunner.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\ChainSafeRetention.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\BackupChangeDetector.h">

@@ -1,27 +1,35 @@
 #include "RuntimeRetentionService.h"
 
+#include "ChainSafeRetention.h"
 #include "FolderRewindFormat.h"
-#include "FolderRewindMetadataStore.h"
 #include "Logging.h"
+#include "WorldIdentity.h"
 
 #include <algorithm>
+#include <set>
 
 using namespace std;
 
 RuntimeRetentionService::RuntimeRetentionService(
 	HistoryRepository& history,
 	filesystem::path historyFile,
-	map<int, Config> configs)
+	map<int, Config> configs,
+	AppPaths paths,
+	ArchiveRunner::ProcessExecutor processExecutor,
+	ToolResolver toolResolver)
 	: history_(history),
 	  historyFile_(std::move(historyFile)),
-	  configs_(std::move(configs)) {
+	  configs_(std::move(configs)),
+	  paths_(std::move(paths)),
+	  processExecutor_(std::move(processExecutor)),
+	  toolResolver_(toolResolver ? std::move(toolResolver) : ExternalToolManager::ResolveSevenZip) {
 }
 
 void RuntimeRetentionService::Enforce(
 	const BackupRequest& request,
 	const HistoryEntry& createdEntry) {
 	const Config& config = request.config;
-	if (config.keepCount <= 0 || config.backupMode != 1) return;
+	if (config.keepCount <= 0) return;
 	FolderRewindFormat::StoragePaths storage;
 	if (!FolderRewindFormat::TryResolveStoragePaths(
 			config.backupPath,
@@ -29,47 +37,63 @@ void RuntimeRetentionService::Enforce(
 			createdEntry.worldPath,
 			storage)) return;
 
-	vector<filesystem::directory_entry> archives;
-	error_code error;
-	for (filesystem::directory_iterator iterator(storage.backupSubDir, error), end;
-		!error && iterator != end; iterator.increment(error)) {
-		if (iterator->is_regular_file()) archives.push_back(*iterator);
-	}
-	if (error || static_cast<int>(archives.size()) <= config.keepCount) return;
-	sort(archives.begin(), archives.end(), [](const auto& left, const auto& right) {
-		return left.last_write_time() < right.last_write_time();
-	});
-	const auto history = history_.EntriesForConfig(config.configId);
-	int remaining = static_cast<int>(archives.size());
-	for (const auto& archive : archives) {
-		if (remaining <= config.keepCount) break;
-		const wstring fileName = archive.path().filename().wstring();
-		const auto found = find_if(history->begin(), history->end(), [&](const HistoryEntry& entry) {
-			return entry.worldName == createdEntry.worldName
-				&& entry.backupFile == fileName;
-		});
-		if (found != history->end() && found->isImportant) continue;
-		error.clear();
-		if (!filesystem::remove(archive.path(), error) || error) continue;
-		FolderRewindMetadataStore::DeleteRecord(storage.metadataDir, fileName);
-		const auto mutation = history_.Mutate(
-			config.configId,
-			historyFile_,
-			configs_,
-			true,
-			[&](vector<HistoryEntry>& entries) {
-				const auto before = entries.size();
-				erase_if(entries, [&](const HistoryEntry& entry) {
-					return entry.worldName == createdEntry.worldName
-						&& entry.backupFile == fileName;
-				});
-				return entries.size() != before;
-			});
-		if (!mutation.persisted) {
-			MB_LOG_WARNING(minebackup::logging::LogCategory::Backup,
-				"backup.retention.history_failed",
-				"Retention deleted an archive but could not persist its history removal.");
+	vector<HistoryEntry> currentHistory = *history_.EntriesForConfig(config.configId);
+	ArchiveRunner archiveRunner(
+		toolResolver_(config.zipPath, paths_, {}), {}, processExecutor_);
+	set<wstring> blocked;
+	for (;;) {
+		vector<filesystem::directory_entry> archives;
+		error_code error;
+		for (filesystem::directory_iterator iterator(storage.backupSubDir, error), end;
+			!error && iterator != end; iterator.increment(error)) {
+			if (iterator->is_regular_file()) archives.push_back(*iterator);
 		}
-		--remaining;
+		if (error || static_cast<int>(archives.size()) <= config.keepCount) return;
+		sort(archives.begin(), archives.end(), [](const auto& left, const auto& right) {
+			return left.last_write_time() < right.last_write_time();
+		});
+		bool progress = false;
+		for (const auto& archive : archives) {
+			const wstring fileName = archive.path().filename().wstring();
+			if (blocked.contains(fileName)) continue;
+		const auto found = find_if(currentHistory.begin(), currentHistory.end(), [&](const HistoryEntry& entry) {
+			return WorldIdentity::Matches(config, storage.folderName, entry, fileName);
+		});
+		if (found == currentHistory.end() || found->isImportant) {
+			blocked.insert(fileName);
+			continue;
+		}
+		ChainSafeRetention::Request retentionRequest;
+		retentionRequest.config = config;
+		retentionRequest.entry = *found;
+		retentionRequest.history = currentHistory;
+		retentionRequest.backupDirectory = storage.backupSubDir;
+		retentionRequest.metadataDirectory = storage.metadataDir;
+		retentionRequest.paths = paths_;
+		retentionRequest.archiveRunner = &archiveRunner;
+		retentionRequest.commitHistory = [&](vector<HistoryEntry> updated) {
+			const auto mutation = history_.Mutate(
+				config.configId, historyFile_, configs_, true,
+				[&](vector<HistoryEntry>& entries) {
+					entries = updated;
+					return true;
+				});
+			if (mutation.changed && mutation.persisted) currentHistory = std::move(updated);
+			return mutation.changed && mutation.persisted;
+		};
+		const auto retention = ChainSafeRetention::Remove(std::move(retentionRequest));
+		if (retention.warning) {
+			MB_LOG_WARNING(minebackup::logging::LogCategory::Backup,
+				"backup.retention.warning", "%s", retention.detail.c_str());
+			// 链合并失败时停止本轮保留，不能继续删除更新的备份来掩盖不变量破坏。
+			return;
+		}
+		if (retention.changed) {
+			progress = true;
+			break;
+		}
+		blocked.insert(fileName);
+		}
+		if (!progress) return;
 	}
 }

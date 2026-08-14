@@ -4,6 +4,7 @@
 #include "ExternalToolManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
+#include "FolderRewindMetadataStore.h"
 #include "RuntimeIntegration.h"
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeRetentionService.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <stop_token>
 #include <string_view>
@@ -88,6 +90,7 @@ void RunBackupServiceTests(
 	config.zipFormat = L"7z";
 	config.backupMode = 1;
 	config.skipIfUnchanged = true;
+	config.worlds = {{L"world", L"World"}};
 
 	BackupRequest request;
 	request.config = config;
@@ -332,4 +335,157 @@ void RunBackupServiceTests(
 	test.Expect(!filesystem::exists(oldArchive) && filesystem::exists(newArchive)
 			&& retentionHistory.EntriesForConfig(retentionConfig.configId)->size() == 1,
 		"Runtime retention should atomically remove the oldest ordinary archive and history entry");
+
+	auto runSmartRetention = [&](const filesystem::path& chainRoot,
+		bool importantTail, bool failMerge, const string& message) {
+		Config chainConfig = retentionConfig;
+		chainConfig.configId = L"chain-" + chainRoot.filename().wstring();
+		chainConfig.backupPath = (chainRoot / "backups").wstring();
+		chainConfig.backupMode = 2;
+		chainConfig.keepCount = 1;
+		map<int, Config> chainConfigs{{1, chainConfig}};
+		FolderRewindFormat::StoragePaths chainStorage;
+		FolderRewindFormat::TryResolveStoragePaths(
+			chainConfig.backupPath, L"world", world.wstring(), chainStorage);
+		const wstring fullFile = L"[Full]-Chain.7z";
+		const wstring smartOneFile = L"[Smart]-Chain-1.7z";
+		const wstring smartTwoFile = L"[Smart]-Chain-2.7z";
+		WriteFixture(chainStorage.backupSubDir / fullFile, "full");
+		WriteFixture(chainStorage.backupSubDir / smartOneFile, "smart-one");
+		WriteFixture(chainStorage.backupSubDir / smartTwoFile, "smart-two");
+		HistoryEntry full = oldEntry;
+		full.configId = chainConfig.configId;
+		full.worldName = chainStorage.folderName;
+		full.backupFile = fullFile;
+		full.backupType = L"Full";
+		full.timestamp_str = L"2024-01-01T00:00:00";
+		HistoryEntry smartOne = full;
+		smartOne.backupFile = smartOneFile;
+		smartOne.backupType = L"Smart";
+		smartOne.timestamp_str = L"2024-01-01T00:01:00";
+		HistoryEntry smartTwo = smartOne;
+		smartTwo.backupFile = smartTwoFile;
+		smartTwo.timestamp_str = L"2024-01-01T00:02:00";
+		smartTwo.isImportant = importantTail;
+		FolderRewindFormat::MetadataState chainState;
+		chainState.lastBackupFileName = smartTwoFile;
+		chainState.basedOnFullBackup = fullFile;
+		test.Expect(FolderRewindMetadataStore::SaveState(
+			chainStorage.metadataDir, chainState),
+			"Smart retention fixture should write metadata state");
+		FolderRewindFormat::ChangeRecord fullRecord;
+		fullRecord.archiveFileName = fullFile;
+		fullRecord.backupType = L"Full";
+		fullRecord.basedOnFullBackup = fullFile;
+		fullRecord.fullFileList = {L"level.dat"};
+		FolderRewindFormat::ChangeRecord oneRecord;
+		oneRecord.archiveFileName = smartOneFile;
+		oneRecord.backupType = L"Smart";
+		oneRecord.previousBackupFileName = fullFile;
+		oneRecord.basedOnFullBackup = fullFile;
+		oneRecord.addedFiles = {L"one.dat"};
+		oneRecord.fullFileList = {L"level.dat", L"one.dat"};
+		FolderRewindFormat::ChangeRecord twoRecord;
+		twoRecord.archiveFileName = smartTwoFile;
+		twoRecord.backupType = L"Smart";
+		twoRecord.previousBackupFileName = smartOneFile;
+		twoRecord.basedOnFullBackup = fullFile;
+		twoRecord.addedFiles = {L"two.dat"};
+		twoRecord.fullFileList = {L"level.dat", L"one.dat", L"two.dat"};
+		test.Expect(FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, fullRecord)
+			&& FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, oneRecord)
+			&& FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, twoRecord),
+			"Smart retention fixture should write a complete metadata chain");
+		HistoryRepository chainHistory;
+		FolderRewindHistoryStore::HistoryByConfigId chainItems;
+		chainItems[chainConfig.configId] = {full, smartOne, smartTwo};
+		const auto chainHistoryFile = chainRoot / "history.json";
+		test.Expect(chainHistory.ReplaceAll(
+			std::move(chainItems), chainHistoryFile, chainConfigs, true),
+			"Smart retention fixture history should persist");
+		AppPaths chainPaths;
+		chainPaths.runtimeRoot = chainRoot / "runtime";
+		const auto process = [failMerge](const ProcessSpec& spec, stop_token) {
+			ProcessResult result;
+			if (!spec.arguments.empty() && spec.arguments.front() == L"a") {
+				if (failMerge) {
+					result.status = ProcessStatus::ExitedWithError;
+					result.exitCode = 7;
+					return result;
+				}
+				for (const auto& argument : spec.arguments) {
+					if (argument.size() > 3 && argument.rfind(L".7z") == argument.size() - 3) {
+						WriteFixture(argument, "rebuilt");
+						break;
+					}
+				}
+				result.status = ProcessStatus::Succeeded;
+				return result;
+			}
+			if (!spec.arguments.empty() && spec.arguments.front() == L"x") {
+				filesystem::path destination;
+				for (const auto& argument : spec.arguments) {
+					if (argument.rfind(L"-o", 0) == 0) destination = argument.substr(2);
+				}
+				WriteFixture(destination / "chain-state.txt", "extracted");
+				result.status = ProcessStatus::Succeeded;
+				return result;
+			}
+			result.status = ProcessStatus::FailedToStart;
+			return result;
+		};
+		const auto resolver = [](const filesystem::path&, const AppPaths&, stop_token) {
+			ExternalToolResolution resolution;
+			resolution.available = true;
+			resolution.executable = L"fake-7zz";
+			resolution.source = ExternalToolSource::Managed;
+			return resolution;
+		};
+		RuntimeRetentionService chainRetention(
+			chainHistory, chainHistoryFile, chainConfigs, chainPaths, process, resolver);
+		BackupRequest chainRequest = request;
+		chainRequest.config = chainConfig;
+		chainRequest.world.configId = chainConfig.configId;
+		chainRetention.Enforce(chainRequest, smartTwo);
+		const auto remainingEntries = chainHistory.EntriesForConfig(chainConfig.configId);
+		const int archiveCount = static_cast<int>(distance(
+			filesystem::directory_iterator(chainStorage.backupSubDir),
+			filesystem::directory_iterator{}));
+		const bool expected = importantTail
+			? archiveCount == 2 && remainingEntries->size() == 2
+			: failMerge
+				? archiveCount == 3 && remainingEntries->size() == 3
+				: archiveCount == 1 && remainingEntries->size() == 1
+					&& FolderRewindFormat::IsFullLikeBackupType(
+						remainingEntries->front().backupType);
+		test.Expect(expected, message.c_str());
+		if (!importantTail && !failMerge) {
+			const auto finalEntry = remainingEntries->front();
+			FolderRewindFormat::ChangeRecord finalRecord;
+			FolderRewindFormat::MetadataState finalState;
+			test.Expect(FolderRewindMetadataStore::LoadRecord(
+				chainStorage.metadataDir, finalEntry.backupFile, finalRecord)
+				&& FolderRewindMetadataStore::LoadState(chainStorage.metadataDir, finalState)
+				&& finalRecord.backupType == L"Full"
+				&& finalRecord.fullFileList.size() == 3
+				&& finalState.lastBackupFileName == finalEntry.backupFile,
+				"Smart retention should repair the surviving archive metadata and history references");
+		}
+	};
+
+	runSmartRetention(
+		temporaryRoot / "runtime-retention-smart",
+		false,
+		false,
+		"Runtime retention should merge a Full -> Smart -> Smart chain in Smart mode");
+	runSmartRetention(
+		temporaryRoot / "runtime-retention-important",
+		true,
+		false,
+		"Runtime retention should retain an Important Smart tail and its required predecessor");
+	runSmartRetention(
+		temporaryRoot / "runtime-retention-failed-merge",
+		false,
+		true,
+		"Failed Smart retention merge should leave archives and history unchanged");
 }

@@ -2,6 +2,7 @@
 #include "BackupManagerInternal.h"
 
 #include "AppPaths.h"
+#include "ChainSafeRetention.h"
 #include "CloudSyncService.h"
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
@@ -212,6 +213,11 @@ bool DeleteLocalArchiveOnly(const Config& config, const HistoryEntry& entry) {
 
 } // namespace
 
+void DoSafeDeleteBackupShared(
+	const Config& config,
+	const HistoryEntry& entry,
+	int configIndex);
+
 void BackupManagerInternal::LimitBackupFiles(
 	const Config& config,
 	const int& configIndex,
@@ -280,7 +286,7 @@ void BackupManagerInternal::LimitBackupFiles(
 					if (entry.worldName == file.path().parent_path().filename().wstring()
 						&& entry.backupFile == file.path().filename().wstring()) {
 						if (isSafeDelete) {
-							DoSafeDeleteBackup(config, entry, configIndex);
+							DoSafeDeleteBackupShared(config, entry, configIndex);
 						}
 						else {
 							int mutableConfigIndex = configIndex;
@@ -350,7 +356,7 @@ void DeleteBackupWithMode(
 	if (useSafeDelete
 		&& (FolderRewindFormat::IsSmartBackupType(entry.backupType)
 			|| FolderRewindFormat::IsSmartBackupType(entry.backupFile))) {
-		DoSafeDeleteBackup(config, entry, configIndex);
+		DoSafeDeleteBackupShared(config, entry, configIndex);
 	}
 	else {
 		DoDeleteBackup(config, entry, configIndex);
@@ -379,6 +385,48 @@ void DoDeleteBackup(const Config& config, const HistoryEntry& entry, int& config
 			error.what());
 	}
 	QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "backup deletion");
+}
+
+void DoSafeDeleteBackupShared(
+	const Config& config,
+	const HistoryEntry& entry,
+	int configIndex) {
+	const auto migration = MigrationCoordinator::EnsureWorldMigrated(
+		config, configIndex, entry.worldName, entry.worldPath);
+	if (migration.status == MigrationStatus::Failed
+		|| migration.status == MigrationStatus::Degraded) {
+		BACKUP_WARNING(
+			"Safe retention requires complete metadata migration: %s",
+			wstring_to_utf8(migration.message).c_str());
+		return;
+	}
+	FolderRewindFormat::StoragePaths storage;
+	if (!FolderRewindFormat::TryResolveStoragePaths(
+			config.backupPath, entry.worldName, entry.worldPath, storage)) {
+		BACKUP_WARNING("Safe retention could not resolve the world storage path.");
+		return;
+	}
+	ArchiveRunner archiveRunner = ArchiveRunner::Resolve(
+		config.zipPath, GetAppPaths());
+	ChainSafeRetention::Request request;
+	request.config = config;
+	request.entry = entry;
+	request.history = GetHistoryEntriesForConfig(configIndex);
+	request.backupDirectory = storage.backupSubDir;
+	request.metadataDirectory = storage.metadataDir;
+	request.paths = GetAppPaths();
+	request.archiveRunner = &archiveRunner;
+	request.commitHistory = [configIndex](vector<HistoryEntry> updated) {
+		return ReplaceHistoryEntriesForConfig(configIndex, std::move(updated));
+	};
+	const auto result = ChainSafeRetention::Remove(std::move(request));
+	if (result.warning) {
+		BACKUP_WARNING("Safe retention kept %s: %s",
+			wstring_to_utf8(entry.backupFile).c_str(), result.detail.c_str());
+	}
+	if (result.changed) {
+		QueueConfigurationHistorySyncAfterLocalChange(config, configIndex, "safe retention");
+	}
 }
 
 void DoSafeDeleteBackup(const Config& config, const HistoryEntry& entry, int configIndex) {

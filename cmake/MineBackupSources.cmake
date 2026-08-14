@@ -25,8 +25,9 @@ set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.cpp
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.cpp
-    ${MINEBACKUP_CORE_DIR}/ArchiveRunner.cpp
-    ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.cpp
+	${MINEBACKUP_CORE_DIR}/ArchiveRunner.cpp
+	${MINEBACKUP_CORE_DIR}/ChainSafeRetention.cpp
+	${MINEBACKUP_CORE_DIR}/BackupChangeDetector.cpp
     ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.cpp
     ${MINEBACKUP_CORE_DIR}/PathRuleSet.cpp
     ${MINEBACKUP_CORE_DIR}/RcloneClient.cpp
@@ -161,7 +162,7 @@ set(MINEBACKUP_SPDLOG_SOURCES
 
 set(MINEBACKUP_PUBLIC_HEADERS
     ${MINEBACKUP_APP_DIR}/Application.h ${MINEBACKUP_APP_DIR}/ApplicationActions.h ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.h ${MINEBACKUP_APP_DIR}/AppearanceRuntime.h ${MINEBACKUP_APP_DIR}/DesktopUiLifecycle.h ${MINEBACKUP_APP_DIR}/DesktopUiSession.h ${MINEBACKUP_APP_DIR}/AppState.h ${MINEBACKUP_APP_DIR}/ConfigSelection.h ${MINEBACKUP_APP_DIR}/DataModels.h ${MINEBACKUP_APP_DIR}/Globals.h ${MINEBACKUP_APP_DIR}/ImGuiRuntime.h ${MINEBACKUP_APP_DIR}/LaunchOptions.h ${MINEBACKUP_APP_DIR}/MainUI.h ${MINEBACKUP_APP_DIR}/legacy/LegacyServiceCleanup.h
-    ${MINEBACKUP_CORE_DIR}/ArchiveRunner.h ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.h ${MINEBACKUP_CORE_DIR}/BackupManager.h ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h ${MINEBACKUP_CORE_DIR}/BackupService.h ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.h ${MINEBACKUP_CORE_DIR}/CloudSyncInternal.h ${MINEBACKUP_CORE_DIR}/CloudSyncService.h
+    ${MINEBACKUP_CORE_DIR}/ArchiveRunner.h ${MINEBACKUP_CORE_DIR}/ChainSafeRetention.h ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.h ${MINEBACKUP_CORE_DIR}/BackupManager.h ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h ${MINEBACKUP_CORE_DIR}/BackupService.h ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.h ${MINEBACKUP_CORE_DIR}/CloudSyncInternal.h ${MINEBACKUP_CORE_DIR}/CloudSyncService.h
     ${MINEBACKUP_CORE_DIR}/CoreValidation.h ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.h ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.h ${MINEBACKUP_CORE_DIR}/HistoryRepository.h ${MINEBACKUP_CORE_DIR}/JobDocument.h ${MINEBACKUP_CORE_DIR}/JobModels.h ${MINEBACKUP_CORE_DIR}/JobRunner.h
     ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.h ${MINEBACKUP_CORE_DIR}/GameSessionManager.h ${MINEBACKUP_CORE_DIR}/HistoryManager.h ${MINEBACKUP_CORE_DIR}/LegacyMineBackup15Reader.h ${MINEBACKUP_CORE_DIR}/PathRuleSet.h
     ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.h ${MINEBACKUP_CORE_DIR}/OperationResult.h ${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.h ${MINEBACKUP_CORE_DIR}/ProfileConfigRepository.h ${MINEBACKUP_CORE_DIR}/ProfileManifest.h ${MINEBACKUP_CORE_DIR}/RestoreService.h ${MINEBACKUP_CORE_DIR}/RestoreWorkspace.h ${MINEBACKUP_CORE_DIR}/WorldIdentity.h ${MINEBACKUP_CORE_DIR}/RuntimeIntegration.h ${MINEBACKUP_CORE_DIR}/RuntimeCloudPostHook.h ${MINEBACKUP_CORE_DIR}/RuntimeFileLock.h ${MINEBACKUP_CORE_DIR}/RuntimeRetentionService.h ${MINEBACKUP_CORE_DIR}/V15MigrationAdapter.h ${MINEBACKUP_CORE_DIR}/TaskCoordinator.h ${MINEBACKUP_CORE_DIR}/RemoteContentService.h ${MINEBACKUP_CORE_DIR}/ExternalToolManager.h ${MINEBACKUP_CORE_DIR}/PortableConfigDocument.h ${MINEBACKUP_CORE_DIR}/RcloneClient.h ${MINEBACKUP_CORE_DIR}/LegacyServicePolicy.h

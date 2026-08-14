@@ -110,6 +110,7 @@
 	<ClCompile Include="src\app\legacy\LegacyServiceCleanup.cpp" />
     <ClCompile Include="src\app\MineBackup.cpp" />
     <ClCompile Include="src\core\ArchiveRunner.cpp" />
+    <ClCompile Include="src\core\ChainSafeRetention.cpp" />
     <ClCompile Include="src\core\BackupChangeDetector.cpp" />
     <ClCompile Include="src\core\BackupAuxiliary.cpp" />
     <ClCompile Include="src\core\BackupManager.cpp" />
@@ -224,6 +225,7 @@
     <ClInclude Include="src\app\MainUI.h" />
 	<ClInclude Include="src\app\legacy\LegacyServiceCleanup.h" />
     <ClInclude Include="src\core\ArchiveRunner.h" />
+    <ClInclude Include="src\core\ChainSafeRetention.h" />
     <ClInclude Include="src\core\BackupChangeDetector.h" />
     <ClInclude Include="src\core\BackupManager.h" />
     <ClInclude Include="src\core\BackupManagerInternal.h" />
