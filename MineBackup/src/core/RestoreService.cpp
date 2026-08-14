@@ -358,28 +358,20 @@ RestoreResult RestoreService::Run(
 		request.config.zipPath, dependencies_.paths, stopToken);
 	RestoreWorkspace::State workspace;
 	string errorText;
-	if (request.mode == RestoreMode::Clean) {
-		if (!RestoreWorkspace::Prepare(result.plan.targetWorld, workspace, errorText)) {
-			result.code = OperationCode::RestoreFailed;
-			result.diagnostics.push_back(Failure("restore.snapshot.prepare_failed", errorText));
-			if (workspace.prepared) {
-				result.rollbackAttempted = true;
-				result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
-				if (!result.rollbackSucceeded) {
-					result.diagnostics.push_back(Failure("restore.rollback.failed", errorText));
-				}
+	const auto workspaceMode = request.mode == RestoreMode::Clean
+		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
+	if (!RestoreWorkspace::Prepare(
+			result.plan.targetWorld, workspace, errorText, workspaceMode)) {
+		result.code = OperationCode::RestoreFailed;
+		result.diagnostics.push_back(Failure("restore.snapshot.prepare_failed", errorText));
+		if (workspace.prepared) {
+			result.rollbackAttempted = true;
+			result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
+			if (!result.rollbackSucceeded) {
+				result.diagnostics.push_back(Failure("restore.rollback.failed", errorText));
 			}
-			return result;
 		}
-	}
-	else {
-		error_code error;
-		filesystem::create_directories(result.plan.targetWorld, error);
-		if (error) {
-			result.code = OperationCode::RestoreFailed;
-			result.diagnostics.push_back(Failure("restore.target.create_failed", error.message()));
-			return result;
-		}
+		return result;
 	}
 	const bool extracted = ExtractChain(
 		result.plan,
@@ -389,18 +381,17 @@ RestoreResult RestoreService::Run(
 		dependencies_.paths,
 		request.config.useLowPriority);
 	bool committed = extracted;
-	if (extracted && request.mode == RestoreMode::Clean) {
+	if (extracted) {
 		CleanupMarkers(result.plan.targetWorld);
-		committed = RestoreWorkspace::Commit(workspace, request.restorePreserve, errorText);
-	}
-	else if (extracted) {
-		CleanupMarkers(result.plan.targetWorld);
+		const auto preserve = request.mode == RestoreMode::Clean
+			? request.restorePreserve : vector<wstring>{};
+		committed = RestoreWorkspace::Commit(workspace, preserve, errorText);
 	}
 	if (!committed) {
 		result.code = stopToken.stop_requested()
 			? OperationCode::Cancelled : OperationCode::RestoreFailed;
 		result.diagnostics.push_back(Failure("restore.extract.failed", errorText));
-		if (request.mode == RestoreMode::Clean && workspace.prepared) {
+		if (workspace.prepared) {
 			result.rollbackAttempted = true;
 			result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
 			if (!result.rollbackSucceeded) {

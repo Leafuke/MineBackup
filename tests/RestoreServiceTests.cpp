@@ -132,10 +132,23 @@ void RunRestoreServiceTests(
 		"Clean restore should roll back the original world after extraction failure");
 	state->failExtract = false;
 
+	Write(world / "level.dat", "overlay-source");
+	request.world = {request.config.configId, L"world"};
+	request.archive = L"[Full]-World.7z";
+	request.mode = RestoreMode::Overwrite;
+	state->failExtract = true;
+	const auto failedOverlay = service.Run(request, false);
+	test.Expect(failedOverlay.code == OperationCode::RestoreFailed
+			&& failedOverlay.rollbackAttempted && failedOverlay.rollbackSucceeded
+			&& Read(world / "level.dat") == "overlay-source",
+		"Failed overwrite restore should roll back the original world overlay");
+	state->failExtract = false;
+
 	const filesystem::path missingWorld = root / "saves" / "missing-world";
 	Write(root / "backups" / "missing-world" / "[Full]-World.7z", "archive");
 	request.world = {request.config.configId, L"missing-world"};
 	request.archive = L"[Full]-World.7z";
+	request.mode = RestoreMode::Clean;
 	state->failExtract = true;
 	const auto missingTargetFailed = service.Run(request, false);
 	test.Expect(missingTargetFailed.code == OperationCode::RestoreFailed
@@ -144,10 +157,25 @@ void RunRestoreServiceTests(
 			&& !filesystem::exists(missingWorld),
 		"Failed clean restore must remove a newly created target when no world existed before");
 
+	const filesystem::path missingOverlayWorld = root / "saves" / "missing-overlay-world";
+	Write(root / "backups" / "missing-overlay-world" / "[Full]-World.7z", "archive");
+	request.world = {request.config.configId, L"missing-overlay-world"};
+	request.archive = L"[Full]-World.7z";
+	request.mode = RestoreMode::Overwrite;
+	state->failExtract = true;
+	const auto missingOverlayFailed = service.Run(request, false);
+	test.Expect(missingOverlayFailed.code == OperationCode::RestoreFailed
+			&& missingOverlayFailed.rollbackAttempted
+			&& missingOverlayFailed.rollbackSucceeded
+			&& !filesystem::exists(missingOverlayWorld),
+		"Failed overwrite restore must remove a newly created target when no world existed before");
+	state->failExtract = false;
+
 	const filesystem::path cancelledWorld = root / "saves" / "cancelled-world";
 	Write(root / "backups" / "cancelled-world" / "[Full]-World.7z", "archive");
 	request.world = {request.config.configId, L"cancelled-world"};
 	state->failExtract = false;
+	request.mode = RestoreMode::Clean;
 	state->cancelExtract = true;
 	state->cancelSource = make_shared<stop_source>();
 	const auto cancelled = service.Run(request, false, state->cancelSource->get_token());

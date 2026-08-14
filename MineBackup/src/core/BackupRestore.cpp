@@ -486,32 +486,29 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 
 	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
-	if (restoreMethod == 0) {
-		if (!RestoreWorkspace::Prepare(destinationFolder, restoreWorkspace, workspaceError)) {
-			if (restoreWorkspace.prepared) {
-				string rollbackError;
-				if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
-					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
-				}
+	const auto workspaceMode = restoreMethod == 0
+		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
+	if (!RestoreWorkspace::Prepare(
+			destinationFolder, restoreWorkspace, workspaceError, workspaceMode)) {
+		if (restoreWorkspace.prepared) {
+			string rollbackError;
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
+				RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 			}
-			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
-			return failRestore("snapshot_prepare_failed");
 		}
-	}
-	else {
-		error_code ec;
-		filesystem::create_directories(destinationFolder, ec);
+		RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+		return failRestore("snapshot_prepare_failed");
 	}
 
 	bool restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config);
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
-		if (restoreWorkspace.prepared) {
-			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
-			if (!RestoreWorkspace::Commit(restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
-				restoreSucceeded = false;
-				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
-			}
+		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
+			? BuildEffectiveRestoreWhitelist(restoreWhitelist) : vector<wstring>{};
+		if (!RestoreWorkspace::Commit(
+				restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
+			restoreSucceeded = false;
+			RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 		}
 	}
 
@@ -688,21 +685,18 @@ bool DoRestore(
 
 	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
-	if (restoreMethod == 0) {
-		if (!RestoreWorkspace::Prepare(destinationFolder, restoreWorkspace, workspaceError)) {
-			if (restoreWorkspace.prepared) {
-				string rollbackError;
-				if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
-					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
-				}
+	const auto workspaceMode = restoreMethod == 0
+		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
+	if (!RestoreWorkspace::Prepare(
+			destinationFolder, restoreWorkspace, workspaceError, workspaceMode)) {
+		if (restoreWorkspace.prepared) {
+			string rollbackError;
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
+				RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 			}
-			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
-			return failRestore("snapshot_prepare_failed");
 		}
-	}
-	else {
-		error_code ec;
-		filesystem::create_directories(destinationFolder, ec);
+		RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+		return failRestore("snapshot_prepare_failed");
 	}
 
 	bool restoreSucceeded = false;
@@ -715,13 +709,14 @@ bool DoRestore(
 
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
-		if (restoreWorkspace.prepared) {
-			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(
-				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist);
-			if (!RestoreWorkspace::Commit(restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
-				restoreSucceeded = false;
-				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
-			}
+		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
+			? BuildEffectiveRestoreWhitelist(
+				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist)
+			: vector<wstring>{};
+		if (!RestoreWorkspace::Commit(
+				restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
+			restoreSucceeded = false;
+			RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 		}
 	}
 

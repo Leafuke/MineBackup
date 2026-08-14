@@ -142,11 +142,16 @@ bool CopyPreserved(
 
 } // namespace
 
-bool Prepare(const filesystem::path& target, State& state, string& errorText) {
+bool Prepare(
+	const filesystem::path& target,
+	State& state,
+	string& errorText,
+	Mode mode) {
 	state = {};
 	state.target = target;
 	errorText.clear();
 	error_code error;
+	// 新建目标没有 snapshot 路径，必须单独记录初始存在状态，不能以 snapshot.empty() 推断目标是否原本存在。
 	state.targetOriginallyExisted = filesystem::exists(target, error);
 	if (error) {
 		errorText = "failed to inspect restore target: " + error.message();
@@ -163,8 +168,34 @@ bool Prepare(const filesystem::path& target, State& state, string& errorText) {
 		state.snapshot = NextSnapshotPath(target);
 	}
 	catch (const exception& exception) {
+		state.prepared = false;
 		errorText = exception.what();
 		return false;
+	}
+	if (mode == Mode::Overlay) {
+		if (!filesystem::is_directory(target, error) || error) {
+			state.prepared = false;
+			errorText = error
+				? "failed to inspect restore target: " + error.message()
+				: "restore target is not a directory";
+			return false;
+		}
+		filesystem::copy(
+			target,
+			state.snapshot,
+			filesystem::copy_options::recursive
+				| filesystem::copy_options::overwrite_existing,
+			error);
+		if (error) {
+			error_code cleanupError;
+			filesystem::remove_all(state.snapshot, cleanupError);
+			state.snapshot.clear();
+			state.prepared = false;
+			errorText = "failed to snapshot overlay restore target: " + error.message();
+			return false;
+		}
+		state.snapshotIsCopy = true;
+		return true;
 	}
 	filesystem::rename(target, state.snapshot, error);
 	if (error) {
@@ -185,6 +216,21 @@ bool Commit(State& state, const vector<wstring>& preserve, string& errorText) {
 		return false;
 	}
 	try {
+		if (state.snapshotIsCopy) {
+			if (!state.snapshot.empty()) {
+				BackupManagerInternal::ClearReadonlyAttributesRecursively(state.snapshot);
+				error_code error;
+				filesystem::remove_all(state.snapshot, error);
+				if (error) {
+					errorText = "failed to remove overlay restore snapshot: " + error.message();
+					return false;
+				}
+			}
+			state.prepared = false;
+			state.snapshot.clear();
+			state.snapshotIsCopy = false;
+			return true;
+		}
 		if (state.targetOriginallyExisted) {
 			if (state.snapshot.empty() || !filesystem::exists(state.snapshot)) {
 				errorText = "restore snapshot is missing";
@@ -201,6 +247,7 @@ bool Commit(State& state, const vector<wstring>& preserve, string& errorText) {
 		}
 		state.prepared = false;
 		state.snapshot.clear();
+		state.snapshotIsCopy = false;
 		return true;
 	}
 	catch (const exception& exception) {
@@ -235,6 +282,39 @@ bool Rollback(State& state, string& errorText) {
 		return true;
 	}
 	error_code error;
+	if (state.snapshotIsCopy) {
+		if (filesystem::exists(state.target, error)) {
+			if (error) {
+				errorText = "failed to inspect partial overlay target: " + error.message();
+				return false;
+			}
+			BackupManagerInternal::ClearReadonlyAttributesRecursively(state.target);
+			filesystem::remove_all(state.target, error);
+			if (error) {
+				errorText = "failed to clean partial overlay target: " + error.message();
+				return false;
+			}
+		}
+		filesystem::copy(
+			state.snapshot,
+			state.target,
+			filesystem::copy_options::recursive
+				| filesystem::copy_options::overwrite_existing,
+			error);
+		if (error) {
+			errorText = "failed to restore overlay snapshot: " + error.message();
+			return false;
+		}
+		filesystem::remove_all(state.snapshot, error);
+		if (error) {
+			errorText = "failed to remove restored overlay snapshot: " + error.message();
+			return false;
+		}
+		state.snapshot.clear();
+		state.snapshotIsCopy = false;
+		state.prepared = false;
+		return true;
+	}
 	if (!filesystem::exists(state.snapshot, error)) {
 		if (error) errorText = "failed to inspect restore snapshot: " + error.message();
 		else errorText = "restore snapshot is missing";
