@@ -236,7 +236,10 @@ Result DirectRemove(Request& request) {
 		if (!filesystem::remove(archive, error) || error) {
 			throw runtime_error("failed to remove retained archive");
 		}
-		FolderRewindMetadataStore::DeleteRecord(request.metadataDirectory, request.entry.backupFile);
+		if (!FolderRewindMetadataStore::DeleteRecord(
+				request.metadataDirectory, request.entry.backupFile)) {
+			throw runtime_error("failed to remove retention metadata");
+		}
 		const auto updated = RemoveHistoryEntry(request.config, request.history, request.entry);
 		if (!request.commitHistory(updated)) throw runtime_error("failed to persist retention history");
 		filesystem::remove_all(tempRoot);
@@ -281,10 +284,14 @@ Result Remove(Request request) {
 	const HistoryEntry* next = targetIndex + 1 < chain.size() ? &chain[targetIndex + 1] : nullptr;
 	if (!next
 		|| FolderRewindFormat::IsFullLikeBackupType(next->backupType)
-		|| FolderRewindFormat::IsFullLikeBackupType(next->backupFile)
-		|| (!FolderRewindFormat::IsSmartBackupType(next->backupType)
-			&& !FolderRewindFormat::IsSmartBackupType(next->backupFile))) {
+		|| FolderRewindFormat::IsFullLikeBackupType(next->backupFile)) {
 		return DirectRemove(request);
+	}
+	if (!FolderRewindFormat::IsSmartBackupType(next->backupType)
+		&& !FolderRewindFormat::IsSmartBackupType(next->backupFile)) {
+		result.warning = true;
+		result.detail = "the next chain archive has no recognized type";
+		return result;
 	}
 	if (!FolderRewindFormat::IsSmartBackupType(request.entry.backupType)
 		&& !FolderRewindFormat::IsSmartBackupType(request.entry.backupFile)
