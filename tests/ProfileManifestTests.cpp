@@ -1,6 +1,7 @@
 #include "ProfileManifestTests.h"
 
 #include "AppPaths.h"
+#include "FolderRewindFormat.h"
 #include "ProfileConfigRepository.h"
 #include "ProfileManifest.h"
 
@@ -46,6 +47,18 @@ void RunProfileManifestTests(
 			&& filesystem::path(loaded.manifest.configs.front().saveRoot)
 				== (manifestPath.parent_path() / "server").lexically_normal(),
 		"Manifest v1 should resolve local paths relative to the manifest directory");
+
+	auto collidingManifest = templateManifest;
+	collidingManifest.configs.front().worlds = {{L"world/nether", L"Nether"}};
+	Config collidingConfig = collidingManifest.configs.front();
+	collidingConfig.configId = FolderRewindFormat::GenerateGuidString();
+	collidingConfig.name = "Colliding world";
+	collidingConfig.worlds = {{L"world_nether", L"Legacy spelling"}};
+	collidingManifest.configs.push_back(std::move(collidingConfig));
+	test.Expect(ProfileManifest::Parse(
+			ProfileManifest::Serialize(collidingManifest), manifestPath.parent_path()).status
+			== ProfileManifestStatus::Invalid,
+		"Manifest loading should reject nested and flattened worlds sharing one storage key");
 
 	string unknown = ProfileManifest::Serialize(templateManifest);
 	unknown.replace(unknown.find("\"schemaVersion\": 1"),

@@ -21,6 +21,7 @@
 #include "ProcessRunner.h"
 #include "RestoreService.h"
 #include "RuntimeIntegration.h"
+#include "WorldIdentity.h"
 #include "RuntimeFileLock.h"
 #include "SingleInstanceService.h"
 #include "text_to_text.h"
@@ -212,9 +213,7 @@ CliResult HistoryList(
 		? sharedHistory->EntriesForConfig(config->configId)
 		: localHistory.EntriesForConfig(config->configId);
 	for (const auto& entry : *entries) {
-		if (entry.worldName != normalized
-			&& filesystem::path(entry.worldPath).lexically_normal()
-				!= (filesystem::path(config->saveRoot) / normalized).lexically_normal()) continue;
+		if (!WorldIdentity::Matches(*config, normalized, entry)) continue;
 		result.data["history"].push_back({
 			{"timestamp", wstring_to_utf8(entry.timestamp_str)},
 			{"backupFile", wstring_to_utf8(entry.backupFile)},
@@ -274,9 +273,7 @@ bool MatchesWorldHistory(
 	const HistoryEntry& entry,
 	const Config& config,
 	const wstring& normalizedWorld) {
-	return entry.worldName == normalizedWorld
-		|| filesystem::path(entry.worldPath).lexically_normal()
-			== (filesystem::path(config.saveRoot) / normalizedWorld).lexically_normal();
+	return WorldIdentity::Matches(config, normalizedWorld, entry);
 }
 
 RestoreCommandContext ResolveRestoreCommand(

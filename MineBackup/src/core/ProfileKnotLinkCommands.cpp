@@ -5,6 +5,7 @@
 #include "ProfileRuntime.h"
 #include "RuntimeFileLock.h"
 #include "RuntimeIntegration.h"
+#include "WorldIdentity.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -224,9 +225,7 @@ optional<wstring> LatestLocalBackup(
 	const ResolvedTarget& target) {
 	const auto entries = runtime.HistorySnapshot(target.config.configId);
 	for (auto current = entries.rbegin(); current != entries.rend(); ++current) {
-		if (current->worldName != target.world
-			&& filesystem::path(current->worldPath).lexically_normal()
-				!= target.fullPath.lexically_normal()) continue;
+		if (!WorldIdentity::Matches(target.config, target.world, *current)) continue;
 		error_code error;
 		if (filesystem::is_regular_file(
 				LocalArchive(target, current->backupFile), error) && !error) {
@@ -430,9 +429,8 @@ struct ProfileKnotLinkCommands::Implementation {
 			if (!target) return error(targetError);
 			vector<string> backups;
 			for (const auto& entry : runtime.HistorySnapshot(target->config.configId)) {
-				if (entry.worldName != target->world
-					&& filesystem::path(entry.worldPath).lexically_normal()
-						!= target->fullPath.lexically_normal()) continue;
+				if (!WorldIdentity::Matches(
+						target->config, target->world, entry)) continue;
 				error_code fileError;
 				if (filesystem::is_regular_file(
 						LocalArchive(*target, entry.backupFile), fileError) && !fileError) {

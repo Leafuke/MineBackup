@@ -2,6 +2,7 @@
 
 #include "JobDocument.h"
 #include "LegacyIniConfigCodec.h"
+#include "WorldIdentity.h"
 #include "text_to_text.h"
 
 #include <fstream>
@@ -181,6 +182,13 @@ ProfileCatalogLoadResult ProfileConfigCatalogLoader::Load(
 			AddDiagnostic(result, "config.identity.duplicate",
 				DiagnosticSeverity::Error, wstring_to_utf8(value.configId));
 		}
+	}
+	for (const auto& conflict : WorldIdentity::FindStorageConflicts(result.catalog.configs)) {
+		invalid = true;
+		AddDiagnostic(result, "config.storage.collision", DiagnosticSeverity::Error,
+			wstring_to_utf8(conflict.backupRoot + L":" + conflict.storageFolderName
+				+ L" (" + conflict.leftConfigId + L":" + conflict.leftWorldPath
+				+ L", " + conflict.rightConfigId + L":" + conflict.rightWorldPath + L")"));
 	}
 	if (invalid) result.status = ProfileCatalogStatus::Invalid;
 	else if (identityMigration) result.status = ProfileCatalogStatus::MigrationRequired;

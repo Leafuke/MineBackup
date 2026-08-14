@@ -5,6 +5,7 @@
 #include "HistoryRepository.h"
 #include "JobDocument.h"
 #include "ProfileConfigRepository.h"
+#include "WorldIdentity.h"
 #include "json.hpp"
 #include "text_to_text.h"
 
@@ -514,6 +515,19 @@ ProfileManifestLoadResult Parse(
 			continue;
 		}
 		result.manifest.configs.push_back(std::move(config));
+	}
+	{
+		map<int, Config> parsedConfigs;
+		for (size_t index = 0; index < result.manifest.configs.size(); ++index) {
+			parsedConfigs.emplace(static_cast<int>(index + 1), result.manifest.configs[index]);
+		}
+		for (const auto& conflict : WorldIdentity::FindStorageConflicts(parsedConfigs)) {
+			result.diagnostics.push_back(Error("manifest.config.storage_collision",
+				wstring_to_utf8(conflict.backupRoot + L":"
+					+ conflict.storageFolderName + L" ("
+					+ conflict.leftConfigId + L":" + conflict.leftWorldPath + L", "
+					+ conflict.rightConfigId + L":" + conflict.rightWorldPath + L")")));
+		}
 	}
 	const auto jobs = root.find("jobs");
 	if (jobs == root.end() || !jobs->is_array()) {

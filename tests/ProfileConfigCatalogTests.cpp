@@ -2,6 +2,7 @@
 
 #include "ProfileConfigCatalog.h"
 #include "ProfileConfigRepository.h"
+#include "WorldIdentity.h"
 
 #include <fstream>
 
@@ -54,6 +55,38 @@ void RunProfileConfigCatalogTests(
 	test.Expect(loaded.catalog.configs.at(1).worlds.size() == 1
 			&& loaded.catalog.configs.at(1).worlds.front().first == L"world/subdirectory",
 		"Runtime profile catalog should preserve normalized relative world paths");
+
+	Config identityConfig = loaded.catalog.configs.at(1);
+	identityConfig.saveRoot = (root / "server").wstring();
+	identityConfig.backupPath = (root / "backups").wstring();
+	identityConfig.worlds = {{L"world/nether", L"Nether"}};
+	HistoryEntry legacyEntry;
+	legacyEntry.configId = identityConfig.configId;
+	legacyEntry.worldName = L"world_nether";
+	legacyEntry.worldPath = (filesystem::path(identityConfig.saveRoot) / L"world/nether").wstring();
+	legacyEntry.backupFile = L"[Full]-world.7z";
+	test.Expect(WorldIdentity::Matches(
+			identityConfig, L"world/nether", legacyEntry, legacyEntry.backupFile),
+		"World identity matching should map nested configuration paths to flattened storage names");
+
+	string collisionProfile = StableProfile();
+	collisionProfile +=
+		"[Config2]\n"
+		"ConfigName=Collision\n"
+		"ConfigId=config-id-two\n"
+		"SavePath=/srv/minecraft\n"
+		"WorldData=\n"
+		"world_subdirectory\n"
+		"Flattened world\n"
+		"*\n"
+		"BackupPath=/srv/backups\n";
+	WriteText(config, collisionProfile);
+	const auto collision = ProfileConfigCatalogLoader::Load(config);
+	test.Expect(collision.status == ProfileCatalogStatus::Invalid
+			&& any_of(collision.diagnostics.begin(), collision.diagnostics.end(), [](const auto& diagnostic) {
+				return diagnostic.eventId == "config.storage.collision";
+			}),
+		"Legacy config.ini loading should reject storage-key collisions across Config sections");
 	test.Expect(!filesystem::exists(tasks),
 		"Read-only catalog loading should ignore legacy special sections without writing JSON");
 

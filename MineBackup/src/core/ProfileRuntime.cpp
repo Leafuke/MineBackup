@@ -10,6 +10,7 @@
 #include "RuntimeFileLock.h"
 #include "RuntimeIntegration.h"
 #include "RuntimeRetentionService.h"
+#include "WorldIdentity.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -149,12 +150,12 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 		backupDependencies.eventSink = std::move(eventSink);
 		backupDependencies.cloudPost = std::move(cloudPost);
 		backupDependencies.addHistory = [this, state](const HistoryEntry& entry) {
+			const Config* config = state->catalog.FindConfig(entry.configId);
 			const auto mutation = state->history.Mutate(
 				entry.configId, paths_.HistoryFile(), state->catalog.configs, true,
 				[&](vector<HistoryEntry>& entries) {
 					for (auto& current : entries) {
-						if (current.worldName == entry.worldName
-							&& current.backupFile == entry.backupFile) {
+						if (config && WorldIdentity::SameHistoryEntry(*config, current, entry)) {
 							current = entry;
 							return true;
 						}
@@ -175,8 +176,8 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 					[&](vector<HistoryEntry>& entries) {
 						const auto before = entries.size();
 						erase_if(entries, [&](const HistoryEntry& entry) {
-							return entry.worldName == worldName
-								&& entry.backupFile == backupFile;
+							return WorldIdentity::Matches(
+								config, worldName, entry, backupFile);
 						});
 						return entries.size() != before;
 					});
@@ -286,7 +287,9 @@ bool ProfileRuntime::SetBackupImportant(
 		configId, paths_.HistoryFile(), implementation_->catalog.configs, true,
 		[&](vector<HistoryEntry>& entries) {
 			for (auto& entry : entries) {
-				if (entry.worldName == worldPath && entry.backupFile == backupFile) {
+				if (WorldIdentity::Matches(
+						*implementation_->catalog.FindConfig(configId),
+						worldPath, entry, backupFile)) {
 					entry.isImportant = important;
 					return true;
 				}
