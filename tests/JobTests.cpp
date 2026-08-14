@@ -3,6 +3,7 @@
 #include "JobDocument.h"
 #include "JobRunner.h"
 #include "json.hpp"
+#include "text_to_text.h"
 
 #include <atomic>
 #include <chrono>
@@ -171,6 +172,10 @@ void RunJobTests(TestContext& test, const filesystem::path& temporaryRoot) {
 	test.Expect(nlohmann::json{{"detail", diagnostic}}.dump().find("\xEF\xBF\xBD")
 		!= string::npos,
 		"Sanitized process diagnostics should remain valid JSON strings");
+	const auto validUnicode = SanitizeUtf8("\xE4\xB8\xAD\xF0\x9F\x98\x80", 16);
+	test.Expect(validUnicode.value == "\xE4\xB8\xAD\xF0\x9F\x98\x80"
+			&& !validUnicode.invalidUtf8Replaced && !validUnicode.truncated,
+		"UTF-8 sanitizer should preserve valid three- and four-byte code points");
 
 	const filesystem::path jobsPath = temporaryRoot / "jobs" / "jobs.json";
 	wstring writeError;

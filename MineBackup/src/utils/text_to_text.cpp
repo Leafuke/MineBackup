@@ -236,7 +236,7 @@ Utf8SanitizeResult SanitizeUtf8(const std::string_view input, const std::size_t 
 			&& (lead != 0xED || static_cast<unsigned char>(input[offset + 1]) <= 0x9F)) {
 			length = 3;
 			codePoint = static_cast<char32_t>(lead & 0x0F) << 12;
-			codePoint |= static_cast<unsigned char>(input[offset + 1]) << 6;
+			codePoint |= (static_cast<unsigned char>(input[offset + 1]) & 0x3F) << 6;
 			codePoint |= static_cast<unsigned char>(input[offset + 2]) & 0x3F;
 		}
 		else if (lead >= 0xF0 && lead <= 0xF4
@@ -245,8 +245,8 @@ Utf8SanitizeResult SanitizeUtf8(const std::string_view input, const std::size_t 
 			&& (lead != 0xF4 || static_cast<unsigned char>(input[offset + 1]) <= 0x8F)) {
 			length = 4;
 			codePoint = static_cast<char32_t>(lead & 0x07) << 18;
-			codePoint |= static_cast<unsigned char>(input[offset + 1]) << 12;
-			codePoint |= static_cast<unsigned char>(input[offset + 2]) << 6;
+			codePoint |= (static_cast<unsigned char>(input[offset + 1]) & 0x3F) << 12;
+			codePoint |= (static_cast<unsigned char>(input[offset + 2]) & 0x3F) << 6;
 			codePoint |= static_cast<unsigned char>(input[offset + 3]) & 0x3F;
 		}
 		else {
