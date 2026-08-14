@@ -405,6 +405,20 @@ bool WaitForDescriptor(int descriptor, short events, chrono::milliseconds timeou
 	return result > 0 && (state.revents & events) != 0;
 }
 
+bool SetBlockingDescriptor(int descriptor, wstring& error) {
+	const int flags = ::fcntl(descriptor, F_GETFL);
+	if (flags < 0) {
+		error = L"Could not inspect the accepted instance connection mode.";
+		return false;
+	}
+	if ((flags & O_NONBLOCK) == 0) return true;
+	if (::fcntl(descriptor, F_SETFL, flags & ~O_NONBLOCK) < 0) {
+		error = L"Could not switch the accepted instance connection to blocking mode.";
+		return false;
+	}
+	return true;
+}
+
 bool WriteMessage(int descriptor, const vector<uint8_t>& message, wstring& error) {
 #ifdef SO_NOSIGPIPE
 	const int suppressSignal = 1;
@@ -735,6 +749,12 @@ vector<InstanceRequest> SingleInstanceService::PollRequests(wstring& error) {
 			}
 			break;
 		}
+		// 监听端点需要非阻塞轮询；会话端点必须恢复阻塞，否则 macOS
+		// 可能继承 O_NONBLOCK，在发送大响应时把 EAGAIN 误判为连接失败。
+		if (!SetBlockingDescriptor(client, error)) {
+			::close(client);
+			continue;
+		}
 		vector<uint8_t> message;
 		if (ReadMessage(client, message, chrono::seconds(2), error)) {
 			InstanceRequest request;
@@ -838,6 +858,12 @@ vector<InstanceControlExchange> SingleInstanceService::PollControlRequests(wstri
 				error = L"The profile instance socket failed while accepting a request.";
 			}
 			break;
+		}
+		// 监听端点需要非阻塞轮询；会话端点必须恢复阻塞，否则 macOS
+		// 可能继承 O_NONBLOCK，在发送大响应时把 EAGAIN 误判为连接失败。
+		if (!SetBlockingDescriptor(client, error)) {
+			::close(client);
+			continue;
 		}
 		vector<uint8_t> message;
 		InstanceControlRequest request;

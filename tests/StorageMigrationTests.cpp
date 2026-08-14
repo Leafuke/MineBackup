@@ -483,6 +483,43 @@ void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
 				&& clientResponse.exitCode == 0,
 			"protocol v2 client should receive role, capabilities, operationId and final exit code");
 
+		InstanceControlResponse largeClientResponse;
+		std::wstring largeClientError;
+		bool largeExchanged = false;
+		std::jthread largeClient([&] {
+			largeExchanged = secondary.Exchange({
+				"request-large", InstanceControlRequestType::Execute,
+				{L"--json"}, {}}, largeClientResponse,
+				largeClientError, std::chrono::seconds(5));
+		});
+		controls.clear();
+		const auto largeDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(2);
+		while (controls.empty() && std::chrono::steady_clock::now() < largeDeadline) {
+			controls = primary.PollControlRequests(error);
+			if (controls.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		test.Expect(controls.size() == 1,
+			"protocol v2 should accept a response larger than the Unix socket buffer");
+		if (!controls.empty()) {
+			InstanceControlResponse largeResponse;
+			largeResponse.requestId = controls.front().request.requestId;
+			largeResponse.accepted = true;
+			largeResponse.role = InstanceRuntimeRole::Serve;
+			largeResponse.capabilities = {"execute"};
+			largeResponse.payload = std::string(3u * 1024u * 1024u, 'x');
+			test.Expect(primary.Reply(
+				controls.front().connectionId, largeResponse, error),
+				"protocol v2 should send a multi-megabyte response completely");
+		}
+		largeClient.join();
+		if (!largeExchanged && !largeClientError.empty()) {
+			std::wcerr << L"[DETAIL] large control IPC: " << largeClientError << L'\n';
+		}
+		test.Expect(largeExchanged && largeClientResponse.accepted
+				&& largeClientResponse.payload.size() == 3u * 1024u * 1024u,
+			"protocol v2 client should receive the complete multi-megabyte response");
+
 		InstanceControlResponse oversizedClientResponse;
 		std::wstring oversizedClientError;
 		bool oversizedExchanged = false;
