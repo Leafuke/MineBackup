@@ -431,7 +431,7 @@ bool ReplaceHistoryEntriesForConfig(int configIndex, vector<HistoryEntry> entrie
 }
 
 bool ClearHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
-    const HistoryMutationResult result = MutateHistory(
+	const HistoryMutationResult result = MutateHistory(
         configIndex,
         [&](vector<HistoryEntry>& entries) {
             const auto oldSize = entries.size();
@@ -440,6 +440,31 @@ bool ClearHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
             });
             return entries.size() != oldSize;
         });
+	return !result.changed || result.persisted || PersistenceBlocked();
+}
+
+bool RemoveHistoryEntriesIf(
+    int configIndex,
+    const function<bool(const HistoryEntry&)>& predicate,
+    size_t* removedCount) {
+    if (removedCount) *removedCount = 0;
+    if (!predicate) return false;
+
+    size_t removed = 0;
+    const HistoryMutationResult result = MutateHistory(
+        configIndex,
+        [&](vector<HistoryEntry>& entries) {
+            const size_t oldSize = entries.size();
+            erase_if(entries, [&](const HistoryEntry& entry) {
+                return predicate(entry);
+            });
+            removed = oldSize - entries.size();
+            return removed != 0;
+        });
+    if (removedCount && removed != 0
+        && (result.persisted || PersistenceBlocked())) {
+        *removedCount = removed;
+    }
     return !result.changed || result.persisted || PersistenceBlocked();
 }
 

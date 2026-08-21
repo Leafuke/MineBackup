@@ -1,6 +1,7 @@
 #include "CoreValidation.h"
 #include "TaskCoordinator.h"
 
+#include "ArchiveRunner.h"
 #include "BackupManager.h"
 #include "ConfigManager.h"
 #include "Logging.h"
@@ -16,12 +17,15 @@
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <map>
-#include <sstream>
+#include <string_view>
+#include <tuple>
 
 using namespace std;
 
@@ -30,6 +34,7 @@ using namespace std;
 
 namespace {
 	constexpr int kValidationConfigIndex = -424242;
+	constexpr const wchar_t* kValidationConfigId = L"00000000-0000-0000-0000-000000424242";
 	constexpr const wchar_t* kSmartWorldName = L"__CoreValidationSmart";
 	constexpr const wchar_t* kLimitWorldName = L"__CoreValidationLimit";
 
@@ -45,6 +50,152 @@ namespace {
 		char buffer[1024] = {};
 		std::snprintf(buffer, sizeof(buffer), L(key), value);
 		return string(buffer);
+	}
+
+	static bool AreHistoryEntriesEqual(
+		const HistoryEntry& left,
+		const HistoryEntry& right) {
+		return tie(
+			left.configId,
+			left.timestamp_str,
+			left.worldPath,
+			left.worldName,
+			left.backupFile,
+			left.backupType,
+			left.isPartialBackup,
+			left.comment,
+			left.isImportant,
+			left.isCloudArchived,
+			left.cloudArchivedAtUtc,
+			left.cloudArchiveRemotePath,
+			left.cloudMetadataRecordRemotePath,
+			left.cloudMetadataStateRemotePath)
+			== tie(
+				right.configId,
+				right.timestamp_str,
+				right.worldPath,
+				right.worldName,
+				right.backupFile,
+				right.backupType,
+				right.isPartialBackup,
+				right.comment,
+				right.isImportant,
+				right.isCloudArchived,
+				right.cloudArchivedAtUtc,
+				right.cloudArchiveRemotePath,
+				right.cloudMetadataRecordRemotePath,
+				right.cloudMetadataStateRemotePath);
+	}
+
+	static vector<wstring> GetNormalizedPathComponents(const wstring& rawPath) {
+		wstring normalized = rawPath;
+		replace(normalized.begin(), normalized.end(), L'\\', L'/');
+		const filesystem::path path = filesystem::path(normalized).lexically_normal();
+		vector<wstring> components;
+		for (const auto& component : path) {
+			const wstring value = component.wstring();
+			if (value.empty() || value == L"/" || value == L"\\") continue;
+			components.push_back(value);
+		}
+		return components;
+	}
+
+	static bool HasValidationSandboxWorldPath(
+		const wstring& worldPath,
+		const wstring& expectedWorldName) {
+		const vector<wstring> components = GetNormalizedPathComponents(worldPath);
+		for (size_t index = 0; index + 3 < components.size(); ++index) {
+			if (components[index] != L"MineBackup_CoreValidation"
+				|| components[index + 1].empty()
+				|| components[index + 2] != L"worlds"
+				|| components[index + 3] != expectedWorldName) {
+				continue;
+			}
+			if (index + 4 == components.size()) return true;
+		}
+		return false;
+	}
+
+	static bool IsKnownCoreValidationComment(const wstring& comment) {
+		static constexpr array<const wchar_t*, 8> knownComments = {
+			L"CoreValidation_Base",
+			L"CoreValidation_NoChange",
+			L"CoreValidation_Smart_Locked",
+			L"CoreValidation_Smart_Delete",
+			L"CoreValidation_DeleteOnly",
+			L"CoreValidation_Limit_1",
+			L"CoreValidation_Limit_2",
+			L"CoreValidation_Limit_3"
+		};
+		return any_of(knownComments.begin(), knownComments.end(), [&](const auto value) {
+			return comment == value;
+		});
+	}
+
+	static bool IsLegacyCoreValidationPollutionInternal(const HistoryEntry& entry) {
+		const bool isKnownWorld = entry.worldName == kSmartWorldName
+			|| entry.worldName == kLimitWorldName;
+		if (!isKnownWorld
+			|| !HasValidationSandboxWorldPath(entry.worldPath, entry.worldName)
+			|| !IsKnownCoreValidationComment(entry.comment)) {
+			return false;
+		}
+
+		const bool supportedBackupType = entry.backupType == L"Full"
+			|| entry.backupType == L"Smart"
+			|| entry.backupType == L"Overwrite";
+		return supportedBackupType
+			&& entry.backupFile.find(entry.worldName) != wstring::npos
+			&& entry.backupFile.find(entry.comment) != wstring::npos;
+	}
+
+	static bool AreHistoryVectorsEqual(
+		const vector<HistoryEntry>& left,
+		const vector<HistoryEntry>& right) {
+		return left.size() == right.size()
+			&& equal(left.begin(), left.end(), right.begin(), AreHistoryEntriesEqual);
+	}
+
+	static bool AreCoreValidationHistorySnapshotsEqualInternal(
+		const CoreValidationHistorySnapshot& before,
+		const CoreValidationHistorySnapshot& after,
+		size_t* changedConfigCount) {
+		size_t changed = 0;
+		auto beforeIt = before.begin();
+		auto afterIt = after.begin();
+		while (beforeIt != before.end() || afterIt != after.end()) {
+			if (beforeIt == before.end()) {
+				++changed;
+				++afterIt;
+				continue;
+			}
+			if (afterIt == after.end()) {
+				++changed;
+				++beforeIt;
+				continue;
+			}
+			if (beforeIt->first != afterIt->first) {
+				if (beforeIt->first < afterIt->first) ++beforeIt;
+				else ++afterIt;
+				++changed;
+				continue;
+			}
+			if (!AreHistoryVectorsEqual(beforeIt->second, afterIt->second)) ++changed;
+			++beforeIt;
+			++afterIt;
+		}
+		if (changedConfigCount) *changedConfigCount = changed;
+		return changed == 0;
+	}
+
+	static CoreValidationHistorySnapshot CaptureRealHistorySnapshot() {
+		CoreValidationHistorySnapshot result;
+		const auto snapshot = GetHistorySnapshot();
+		for (const auto& [configId, entries] : snapshot->byConfigId) {
+			if (configId == kValidationConfigId) continue;
+			result.emplace(configId, *entries);
+		}
+		return result;
 	}
 
 	static wstring ToGenericRelative(const filesystem::path& path, const filesystem::path& root) {
@@ -128,17 +279,26 @@ namespace {
 		(void)ClearHistoryEntriesForWorld(kValidationConfigIndex, worldName);
 	}
 
-	static string MakeNumericPayload(const string& label, int lineCount) {
-		ostringstream builder;
-		builder << label << '\n';
-		for (int line = 0; line < lineCount; ++line) {
-			builder << line << ':';
-			for (int digit = 0; digit < 48; ++digit) {
-				builder << ((line + digit) % 10);
-			}
-			builder << '\n';
+	static string MakeDeterministicPayload(
+		string_view label,
+		size_t byteCount,
+		uint32_t seed) {
+		string payload;
+		payload.reserve(byteCount);
+		for (const char value : label) {
+			if (payload.size() == byteCount) break;
+			payload.push_back(value);
 		}
-		return builder.str();
+		if (payload.size() < byteCount) payload.push_back('\n');
+
+		uint32_t state = seed == 0 ? 0x6d2b79f5u : seed;
+		while (payload.size() < byteCount) {
+			state ^= state << 13;
+			state ^= state >> 17;
+			state ^= state << 5;
+			payload.push_back(static_cast<char>((state >> 24) & 0xffu));
+		}
+		return payload;
 	}
 
 	static vector<HistoryEntry> GetHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
@@ -185,7 +345,7 @@ namespace {
 			{ kSmartWorldName, L"CoreValidation" },
 			{ kLimitWorldName, L"CoreValidation" }
 		};
-		cfg.configId = L"00000000-0000-0000-0000-000000424242";
+		cfg.configId = kValidationConfigId;
 		return cfg;
 	}
 
@@ -316,26 +476,129 @@ namespace {
 		vector<HistoryEntry> historySnapshot;
 		bool hadConfigSnapshot = false;
 		Config configSnapshot;
+		bool finalized = false;
 
-		~ValidationCleanupGuard() {
+		bool Finalize() noexcept {
+			bool success = true;
 			isSafeDelete = previousSafeDelete;
-			{
+			try {
 				lock_guard<mutex> lock(g_appState.configsMutex);
 				if (hadConfigSnapshot) {
 					g_appState.configs[kValidationConfigIndex] = configSnapshot;
 				}
 			}
-			(void)ReplaceHistoryEntriesForConfig(
-				kValidationConfigIndex,
-				hadHistorySnapshot ? historySnapshot : vector<HistoryEntry>{});
-			if (!hadConfigSnapshot) {
-				lock_guard<mutex> lock(g_appState.configsMutex);
-				g_appState.configs.erase(kValidationConfigIndex);
+			catch (const exception& ex) {
+				VALIDATION_ERROR("Validation cleanup could not restore the synthetic config: %s", ex.what());
+				success = false;
 			}
-			error_code ec;
-			filesystem::remove_all(sandboxRoot, ec);
+			catch (...) {
+				VALIDATION_ERROR("Validation cleanup could not restore the synthetic config.");
+				success = false;
+			}
+
+			bool syntheticConfigExists = false;
+			try {
+				lock_guard<mutex> lock(g_appState.configsMutex);
+				syntheticConfigExists = g_appState.configs.contains(kValidationConfigIndex);
+			}
+			catch (const exception& ex) {
+				VALIDATION_ERROR("Validation cleanup could not inspect the synthetic config: %s", ex.what());
+				success = false;
+			}
+			catch (...) {
+				VALIDATION_ERROR("Validation cleanup could not inspect the synthetic config.");
+				success = false;
+			}
+
+			try {
+				if (hadConfigSnapshot || hadHistorySnapshot || syntheticConfigExists) {
+					if (!ReplaceHistoryEntriesForConfig(
+						kValidationConfigIndex,
+						hadHistorySnapshot ? historySnapshot : vector<HistoryEntry>{})) {
+						VALIDATION_ERROR("Validation cleanup could not restore synthetic history.");
+						success = false;
+					}
+				}
+			}
+			catch (const exception& ex) {
+				VALIDATION_ERROR("Validation cleanup could not restore synthetic history: %s", ex.what());
+				success = false;
+			}
+			catch (...) {
+				VALIDATION_ERROR("Validation cleanup could not restore synthetic history.");
+				success = false;
+			}
+			if (!hadConfigSnapshot) {
+				try {
+					lock_guard<mutex> lock(g_appState.configsMutex);
+					g_appState.configs.erase(kValidationConfigIndex);
+				}
+				catch (const exception& ex) {
+					VALIDATION_ERROR("Validation cleanup could not remove the synthetic config: %s", ex.what());
+					success = false;
+				}
+				catch (...) {
+					VALIDATION_ERROR("Validation cleanup could not remove the synthetic config.");
+					success = false;
+				}
+			}
+			try {
+				error_code ec;
+				filesystem::remove_all(sandboxRoot, ec);
+				if (ec) {
+					VALIDATION_ERROR("Validation sandbox cleanup failed: %s", ec.message().c_str());
+					success = false;
+				}
+			}
+			catch (const exception& ex) {
+				VALIDATION_ERROR("Validation sandbox cleanup failed: %s", ex.what());
+				success = false;
+			}
+			catch (...) {
+				VALIDATION_ERROR("Validation sandbox cleanup failed.");
+				success = false;
+			}
+			if (success) finalized = true;
+			return success;
+		}
+
+		~ValidationCleanupGuard() noexcept {
+			if (!finalized) (void)Finalize();
 		}
 	};
+
+	struct LegacyValidationCleanupResult {
+		bool success = true;
+		size_t removedEntries = 0;
+		size_t affectedConfigs = 0;
+	};
+
+	static LegacyValidationCleanupResult CleanupLegacyCoreValidationHistoryPollution() {
+		LegacyValidationCleanupResult result;
+		vector<int> configIndices;
+		{
+			lock_guard<mutex> lock(g_appState.configsMutex);
+			for (const auto& [configIndex, config] : g_appState.configs) {
+				if (!config.configId.empty()) configIndices.push_back(configIndex);
+			}
+		}
+
+		for (const int configIndex : configIndices) {
+			size_t removed = 0;
+			if (!RemoveHistoryEntriesIf(
+				configIndex,
+				IsLegacyCoreValidationPollution,
+				&removed)) {
+				result.success = false;
+				continue;
+			}
+			if (removed != 0) {
+				result.removedEntries += removed;
+				++result.affectedConfigs;
+			}
+		}
+		return result;
+	}
 
 	struct TemporarySafeDeleteMode {
 		bool previousValue = true;
@@ -415,6 +678,81 @@ namespace {
 		return true;
 	}
 
+	static string DescribeBackupResult(const BackupResult& result) {
+		string description = "outcome=";
+		description += ToString(result.outcome);
+		description += ", code=";
+		description += ToString(result.code);
+		for (const auto& diagnostic : result.diagnostics) {
+			if (diagnostic.severity != DiagnosticSeverity::Error) continue;
+			description += ", diagnostic=";
+			description += diagnostic.eventId;
+			if (!diagnostic.detail.empty()) {
+				description += ": ";
+				description += diagnostic.detail;
+			}
+			break;
+		}
+		return description;
+	}
+
+	static bool RequireExpectedBackup(
+		ValidationContext& ctx,
+		const BackupResult& result,
+		BackupOutcome expected) {
+		const char* successKey = expected == BackupOutcome::NoChanges
+			? "VAL_OK_BACKUP_NO_CHANGE_OPERATION"
+			: "VAL_OK_BACKUP_CREATED_OPERATION";
+		return ctx.Require(
+			result.outcome == expected,
+			L(successKey),
+			MsgFmt("VAL_ERR_BACKUP_OPERATION", DescribeBackupResult(result)));
+	}
+
+	static bool AssertArchiveIntegrity(
+		ValidationContext& ctx,
+		const Config& cfg,
+		const filesystem::path& archivePath) {
+		error_code ec;
+		if (!ctx.Require(
+			filesystem::is_regular_file(archivePath, ec) && !ec,
+			L("VAL_OK_ARCHIVE_PRESENT"),
+			L("VAL_ERR_ARCHIVE_MISSING"))) {
+			return false;
+		}
+		const uintmax_t size = filesystem::file_size(archivePath, ec);
+		if (!ctx.Require(
+			!ec && size > 0,
+			L("VAL_OK_ARCHIVE_NONEMPTY"),
+			L("VAL_ERR_ARCHIVE_EMPTY"))) {
+			return false;
+		}
+
+		const ArchiveRunner runner = ArchiveRunner::Resolve(
+			cfg.zipPath,
+			GetAppPaths(),
+			TaskCoordinator::CurrentStopToken());
+		if (!ctx.Require(
+			runner.IsAvailable(),
+			L("VAL_OK_ARCHIVE_TOOL_AVAILABLE"),
+			MsgFmt("VAL_ERR_ARCHIVE_TOOL", wstring_to_utf8(runner.Resolution().diagnostic)))) {
+			return false;
+		}
+
+		const ProcessResult result = runner.Execute(
+			{L"t", archivePath.wstring(), L"-y"},
+			archivePath.parent_path(),
+			cfg.useLowPriority);
+		string detail = "exit_code=" + to_string(result.exitCode);
+		if (!result.error.empty()) {
+			detail += ", error=" + wstring_to_utf8(result.error);
+		}
+		return ctx.Require(
+			result.status == ProcessStatus::Succeeded,
+			L("VAL_OK_ARCHIVE_INTEGRITY"),
+			MsgFmt("VAL_ERR_ARCHIVE_INTEGRITY", detail));
+	}
+
 	static bool RunSmartBackupScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
 		ctx.Info(L("VAL_INFO_SCENARIO_SMART"));
 
@@ -434,17 +772,17 @@ namespace {
 		ClearValidationArtifactsForWorld(cfg, world.name);
 
 		WorldState state1 = {
-			{ L"notes.txt", MakeNumericPayload("base-notes", 260) },
+			{ L"notes.txt", MakeDeterministicPayload("base-notes", 128 * 1024, 0x12345678u) },
 			{ L"data/base.txt", "base-file-v1\n" },
 			{ L"region/0.0.mca", "region-v1\n" },
 			{ L"to_delete.txt", "delete-me-later\n" }
 		};
 		WorldState state2 = state1;
-		state2[L"notes.txt"] = MakeNumericPayload("smart-notes-1", 280);
+		state2[L"notes.txt"] = MakeDeterministicPayload("smart-notes-1", 160 * 1024, 0x23456789u);
 		state2[L"data/add.txt"] = "added-on-smart-backup\n";
 		state2[L"region/0.0.mca"] = "region-v2-open-for-write\n";
 		WorldState state3 = state2;
-		state3[L"notes.txt"] = MakeNumericPayload("smart-notes-2", 300);
+		state3[L"notes.txt"] = MakeDeterministicPayload("smart-notes-2", 192 * 1024, 0x3456789au);
 		state3[L"data/base.txt"] = "base-file-v2\n";
 		state3.erase(L"to_delete.txt");
 		state3[L"data/fresh.txt"] = "fresh-file-before-delete-only\n";
@@ -459,18 +797,27 @@ namespace {
 		WriteTextFile(worldPath / L"locks" / L"runtime.lock", "ignored-sub-lock\n");
 
 		world.config.skipIfUnchanged = false;
-		DoBackup(world, L"CoreValidation_Base");
+		const BackupResult initialFull = RunDesktopBackup(
+			world,
+			L"CoreValidation_Base",
+			TaskCoordinator::CurrentStopToken());
+		if (!RequireExpectedBackup(ctx, initialFull, BackupOutcome::Created)) return false;
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_INITIAL_FULL_CREATED"), L("VAL_ERR_INITIAL_FULL_NOT_CREATED"))) return false;
 		if (!ctx.Require(historyEntries[0].backupType == L"Full", L("VAL_OK_FIRST_TYPE_FULL"), L("VAL_ERR_FIRST_TYPE_NOT_FULL"))) return false;
 		const wstring fullBackupFile = historyEntries[0].backupFile;
 		if (!ctx.Require(GetBackupFilesForWorld(cfg, world.name).size() == 1, L("VAL_OK_ARCHIVE_COUNT_AFTER_FIRST"), L("VAL_ERR_ARCHIVE_COUNT_AFTER_FIRST"))) return false;
+		if (!AssertArchiveIntegrity(ctx, cfg, filesystem::path(cfg.backupPath) / world.name / fullBackupFile)) return false;
 		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, fullBackupFile, L"Full")) return false;
 		if (!AssertFolderRewindHistoryItem(ctx, cfg, world, fullBackupFile, L"Full")) return false;
 
 		world.config.skipIfUnchanged = true;
 		SleepForUniqueBackupName();
-		DoBackup(world, L"CoreValidation_NoChange");
+		const BackupResult noChange = RunDesktopBackup(
+			world,
+			L"CoreValidation_NoChange",
+			TaskCoordinator::CurrentStopToken());
+		if (!RequireExpectedBackup(ctx, noChange, BackupOutcome::NoChanges)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_SKIP_NO_CHANGE"), L("VAL_ERR_NO_CHANGE_CREATED"))) return false;
 
@@ -485,12 +832,17 @@ namespace {
 			L("VAL_OK_SHARED_LOCK_CREATED"),
 			MsgFmt("VAL_ERR_SHARED_LOCK_CREATE_FAILED", lockError)
 		)) return false;
-		DoBackup(world, L"CoreValidation_Smart_Locked");
+		const BackupResult firstSmart = RunDesktopBackup(
+			world,
+			L"CoreValidation_Smart_Locked",
+			TaskCoordinator::CurrentStopToken());
 		sharedWriteHandle.Close();
+		if (!RequireExpectedBackup(ctx, firstSmart, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_FIRST_SMART_CREATED"), L("VAL_ERR_FIRST_SMART_NOT_CREATED"))) return false;
 		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_FIRST_SMART_TYPE"), L("VAL_ERR_FIRST_SMART_TYPE"))) return false;
 		const wstring firstSmartBackupFile = historyEntries.back().backupFile;
+		if (!AssertArchiveIntegrity(ctx, cfg, filesystem::path(cfg.backupPath) / world.name / firstSmartBackupFile)) return false;
 		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, firstSmartBackupFile, L"Smart")) return false;
 
 		SleepForUniqueBackupName();
@@ -498,7 +850,11 @@ namespace {
 		WriteTextFile(worldPath / L"data" / L"base.txt", state3.at(L"data/base.txt"));
 		WriteTextFile(worldPath / L"data" / L"fresh.txt", state3.at(L"data/fresh.txt"));
 		RemoveIfExists(worldPath / L"to_delete.txt");
-		DoBackup(world, L"CoreValidation_Smart_Delete");
+		const BackupResult secondSmart = RunDesktopBackup(
+			world,
+			L"CoreValidation_Smart_Delete",
+			TaskCoordinator::CurrentStopToken());
+		if (!RequireExpectedBackup(ctx, secondSmart, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SECOND_SMART_CREATED"), L("VAL_ERR_SECOND_SMART_NOT_CREATED"))) return false;
 		const wstring secondSmartBackupFile = historyEntries.back().backupFile;
@@ -506,7 +862,11 @@ namespace {
 
 		SleepForUniqueBackupName();
 		RemoveIfExists(worldPath / L"data" / L"fresh.txt");
-		DoBackup(world, L"CoreValidation_DeleteOnly");
+		const BackupResult deletionOnly = RunDesktopBackup(
+			world,
+			L"CoreValidation_DeleteOnly",
+			TaskCoordinator::CurrentStopToken());
+		if (!RequireExpectedBackup(ctx, deletionOnly, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 4, L("VAL_OK_DELETION_ONLY_CREATED"), L("VAL_ERR_DELETION_ONLY_NOT_CREATED"))) return false;
 		const wstring latestBackupFile = historyEntries.back().backupFile;
@@ -565,22 +925,34 @@ namespace {
 
 		TemporarySafeDeleteMode noSafeDelete(false);
 
-		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v1", 240));
-		DoBackup(world, L"CoreValidation_Limit_1");
+		WriteTextFile(worldPath / L"counter.txt", MakeDeterministicPayload("limit-case-v1", 128 * 1024, 0x456789abu));
+		const BackupResult limitFirst = RunDesktopBackup(
+			world,
+			L"CoreValidation_Limit_1",
+			TaskCoordinator::CurrentStopToken());
+		if (!RequireExpectedBackup(ctx, limitFirst, BackupOutcome::Created)) return false;
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_LIMIT_FIRST_CREATED"), L("VAL_ERR_LIMIT_FIRST_FAILED"))) return false;
 		const wstring oldestBackupFile = historyEntries.front().backupFile;
 
 		SleepForUniqueBackupName();
-		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v2", 260));
-		DoBackup(world, L"CoreValidation_Limit_2");
+		WriteTextFile(worldPath / L"counter.txt", MakeDeterministicPayload("limit-case-v2", 160 * 1024, 0x56789abcu));
+		const BackupResult limitSecond = RunDesktopBackup(
+			world,
+			L"CoreValidation_Limit_2",
+			TaskCoordinator::CurrentStopToken());
+		if (!RequireExpectedBackup(ctx, limitSecond, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_LIMIT_SECOND_CREATED"), L("VAL_ERR_LIMIT_SECOND_FAILED"))) return false;
 		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_SECOND_IS_SMART"), L("VAL_ERR_LIMIT_SECOND_NOT_SMART"))) return false;
 
 		SleepForUniqueBackupName();
-		WriteTextFile(worldPath / L"counter.txt", MakeNumericPayload("limit-case-v3", 280));
-		DoBackup(world, L"CoreValidation_Limit_3");
+		WriteTextFile(worldPath / L"counter.txt", MakeDeterministicPayload("limit-case-v3", 192 * 1024, 0x6789abcdu));
+		const BackupResult limitThird = RunDesktopBackup(
+			world,
+			L"CoreValidation_Limit_3",
+			TaskCoordinator::CurrentStopToken());
+		if (!RequireExpectedBackup(ctx, limitThird, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(!historyEntries.empty() && historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_THIRD_IS_SMART"), L("VAL_ERR_LIMIT_THIRD_NOT_SMART"))) return false;
 		auto archives = GetBackupFilesForWorld(cfg, world.name);
@@ -672,6 +1044,20 @@ namespace {
 			{"task", automatic ? "automatic_validation" : "manual_validation"}};
 		ctx.Info(automatic ? L("VAL_INFO_START_AUTO") : L("VAL_INFO_START_MANUAL"));
 
+		const LegacyValidationCleanupResult legacyCleanup =
+			CleanupLegacyCoreValidationHistoryPollution();
+		if (!legacyCleanup.success) {
+			ctx.Require(false, "", L("VAL_ERR_LEGACY_HISTORY_CLEANUP"));
+			return false;
+		}
+		if (legacyCleanup.removedEntries != 0) {
+			ctx.Info(MsgFmt(
+				"VAL_INFO_LEGACY_HISTORY_CLEANED",
+				to_string(legacyCleanup.removedEntries)));
+		}
+		const CoreValidationHistorySnapshot realHistoryBefore =
+			CaptureRealHistorySnapshot();
+
 		Config templateConfig;
 		string resolveError;
 		if (!TryResolveValidationTemplate(templateConfig, resolveError)) {
@@ -706,6 +1092,19 @@ namespace {
 			ctx.Require(false, "", MsgFmt("VAL_ERR_UNEXPECTED_EXCEPTION", ex.what()));
 		}
 
+		size_t changedConfigCount = 0;
+		const bool historyIsolated = AreCoreValidationHistorySnapshotsEqual(
+			realHistoryBefore,
+			CaptureRealHistorySnapshot(),
+			&changedConfigCount);
+		ctx.Require(
+			historyIsolated,
+			L("VAL_OK_HISTORY_ISOLATION"),
+			MsgFmt("VAL_ERR_HISTORY_ISOLATION", to_string(changedConfigCount)));
+		if (!cleanup.Finalize()) {
+			ctx.Require(false, "", L("VAL_ERR_CLEANUP_FAILED"));
+		}
+
 		const bool passed = ctx.failures.empty();
 		if (passed) {
 			ctx.Info(L("VAL_INFO_COMPLETED"));
@@ -719,6 +1118,26 @@ namespace {
 
 		return passed;
 	}
+}
+
+bool IsLegacyCoreValidationPollution(const HistoryEntry& entry) {
+	return IsLegacyCoreValidationPollutionInternal(entry);
+}
+
+size_t RemoveLegacyCoreValidationPollution(vector<HistoryEntry>& entries) {
+	const size_t oldSize = entries.size();
+	erase_if(entries, [](const HistoryEntry& entry) {
+		return IsLegacyCoreValidationPollutionInternal(entry);
+	});
+	return oldSize - entries.size();
+}
+
+bool AreCoreValidationHistorySnapshotsEqual(
+	const CoreValidationHistorySnapshot& before,
+	const CoreValidationHistorySnapshot& after,
+	size_t* changedConfigCount) {
+	return AreCoreValidationHistorySnapshotsEqualInternal(
+		before, after, changedConfigCount);
 }
 
 bool StartCoreValidationAsync(bool automatic) {
