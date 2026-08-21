@@ -41,7 +41,7 @@ For Windows 10 and above users, it is recommended to prioritize the combination 
 ### 1️⃣ Download & Run
 1. Go to the [latest release](https://github.com/Leafuke/MineBackup/releases).
 2. Download `MineBackup-windows-x64.exe`, the Ubuntu `.deb`, the Linux
-   AppImage, or `MineBackup-1.16.0-macos-arm64.dmg`.
+   AppImage, or `MineBackup-1.16.2-macos-arm64.dmg`.
 3. Verify the asset against `SHA256SUMS`, then install or run it normally.
 
 See the [platform support matrix](docs/platform-support.md) for supported OS
@@ -61,9 +61,13 @@ available, MineBackup falls back to `backups` under the application data
 directory. You can also add a Minecraft directory manually, or use the advanced
 fallback to protect a regular custom folder. PCL2 is not guaranteed to
 enumerate every historical custom directory, so run PCL2 and rescan when needed.
-HMCL automatic discovery is not supported in this iteration; add its directory
-manually. Later, use **Settings → Application** to scan again. Closing the
-wizard before completing setup does not write `config.ini`.
+When rescanning, MineBackup also uses the directory structure of existing
+Minecraft Configs to infer their owning `.minecraft` root and discover other
+standard or version-isolated instances in the same game directory. HMCL
+automatic discovery is not supported in this iteration; add its directory
+manually. Later, use **Settings → Application** to scan again. Exiting
+first-time setup before confirming configuration creation does not persist a
+new Config.
 
 ### 3️⃣ Basic actions
 | Feature      | How to Use |

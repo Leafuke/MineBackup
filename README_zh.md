@@ -37,7 +37,7 @@
 ### 1️⃣ 下载 & 运行
 1. 前往 [最新发布页](https://github.com/Leafuke/MineBackup/releases)。
 2. 下载 `MineBackup-windows-x64.exe`、Ubuntu `.deb`、Linux AppImage 或
-   `MineBackup-1.16.0-macos-arm64.dmg`。
+   `MineBackup-1.16.2-macos-arm64.dmg`。
 3. 使用 `SHA256SUMS` 核对文件后再正常安装或运行。
 
 各系统版本与 Linux 桌面能力降级规则见[平台支持矩阵](docs/platform-support.md)。
@@ -51,9 +51,10 @@ Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 
 默认备份根为 `Documents/MineBackup-Backups`；如果 Documents 不可用，则回退到应用数据目录下的
 `backups`。也可以手动添加 Minecraft 目录，或通过高级入口保护普通自定义文件夹。PCL2 不保证枚举
-所有历史自定义目录，需要时请先运行 PCL2，再次
-执行扫描。HMCL 自动发现本轮尚未支持，请手动添加其目录。之后可在 **设置 → 应用** 中重新扫描。
-在完成设置前关闭向导不会写入 `config.ini`。
+所有历史自定义目录，需要时请先运行 PCL2，再次执行扫描。重新扫描时，MineBackup 还会利用已有
+Minecraft 配置的目录结构识别所属 `.minecraft`，从而发现同一游戏目录中的其他标准或版本隔离实例。
+HMCL 自动发现本轮尚未支持，请手动添加其目录。之后可在 **设置 → 应用** 中重新扫描。
+在确认创建配置前退出首次设置不会写入新的配置。
 
 ### 3️⃣ 基础操作
 | 功能       | 操作方式 |
