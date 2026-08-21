@@ -183,6 +183,93 @@ std::wstring utf8_to_wstring(const std::string& str) {
     return u8string_to_wstring(u8);
 }
 
+Utf8SanitizeResult SanitizeUtf8(const std::string_view input, const std::size_t maximumBytes) {
+	Utf8SanitizeResult result;
+	if (input.empty()) return result;
+	if (maximumBytes == 0) {
+		result.truncated = true;
+		return result;
+	}
+
+	auto appendCodePoint = [](char32_t codePoint, std::string& output) {
+		if (codePoint <= 0x7F) {
+			output.push_back(static_cast<char>(codePoint));
+		}
+		else if (codePoint <= 0x7FF) {
+			output.push_back(static_cast<char>(0xC0 | ((codePoint >> 6) & 0x1F)));
+			output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+		}
+		else if (codePoint <= 0xFFFF) {
+			output.push_back(static_cast<char>(0xE0 | ((codePoint >> 12) & 0x0F)));
+			output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+			output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+		}
+		else {
+			output.push_back(static_cast<char>(0xF0 | ((codePoint >> 18) & 0x07)));
+			output.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+			output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+			output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+		}
+	};
+
+	auto continuation = [&](const std::size_t index) {
+		return index < input.size()
+			&& (static_cast<unsigned char>(input[index]) & 0xC0) == 0x80;
+	};
+
+	for (std::size_t offset = 0; offset < input.size();) {
+		const unsigned char lead = static_cast<unsigned char>(input[offset]);
+		std::size_t length = 1;
+		char32_t codePoint = 0xFFFD;
+		bool valid = true;
+		if (lead <= 0x7F) {
+			codePoint = lead;
+		}
+		else if (lead >= 0xC2 && lead <= 0xDF && continuation(offset + 1)) {
+			length = 2;
+			codePoint = static_cast<char32_t>(lead & 0x1F) << 6;
+			codePoint |= static_cast<unsigned char>(input[offset + 1]) & 0x3F;
+		}
+		else if (lead >= 0xE0 && lead <= 0xEF
+			&& continuation(offset + 1) && continuation(offset + 2)
+			&& (lead != 0xE0 || static_cast<unsigned char>(input[offset + 1]) >= 0xA0)
+			&& (lead != 0xED || static_cast<unsigned char>(input[offset + 1]) <= 0x9F)) {
+			length = 3;
+			codePoint = static_cast<char32_t>(lead & 0x0F) << 12;
+			codePoint |= (static_cast<unsigned char>(input[offset + 1]) & 0x3F) << 6;
+			codePoint |= static_cast<unsigned char>(input[offset + 2]) & 0x3F;
+		}
+		else if (lead >= 0xF0 && lead <= 0xF4
+			&& continuation(offset + 1) && continuation(offset + 2) && continuation(offset + 3)
+			&& (lead != 0xF0 || static_cast<unsigned char>(input[offset + 1]) >= 0x90)
+			&& (lead != 0xF4 || static_cast<unsigned char>(input[offset + 1]) <= 0x8F)) {
+			length = 4;
+			codePoint = static_cast<char32_t>(lead & 0x07) << 18;
+			codePoint |= (static_cast<unsigned char>(input[offset + 1]) & 0x3F) << 12;
+			codePoint |= (static_cast<unsigned char>(input[offset + 2]) & 0x3F) << 6;
+			codePoint |= static_cast<unsigned char>(input[offset + 3]) & 0x3F;
+		}
+		else {
+			valid = false;
+		}
+
+		if (!valid) {
+			result.invalidUtf8Replaced = true;
+			codePoint = 0xFFFD;
+			length = 1;
+		}
+		std::string encoded;
+		appendCodePoint(codePoint, encoded);
+		if (encoded.size() > maximumBytes - result.value.size()) {
+			result.truncated = true;
+			break;
+		}
+		result.value += encoded;
+		offset += length;
+	}
+	return result;
+}
+
 std::string gbk_to_utf8(const std::string& gbk) {
 #ifdef _WIN32
     if (gbk.empty()) return {};

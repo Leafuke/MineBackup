@@ -6,6 +6,7 @@
 // 数据模型定义在 DataModels.h，跨平台兼容层在 PlatformCompat.h
 
 #include "DataModels.h"
+#include "JobModels.h"
 #include <vector>
 #include <string>
 #include <map>
@@ -32,15 +33,12 @@ struct AppState {
 
 	// UI State
 	bool showMainApp = false;
-	bool specialConfigMode = false; // 用来开启简单UI
 
 
 	// Data
 	int currentConfigIndex = 1;
-	std::atomic<int> realConfigIndex{-1}; // 如果realConfigIndex不为-1，说明是特殊配置
 	std::map<int, Config> configs;
-	std::map<int, std::vector<HistoryEntry>> g_history;
-	std::map<int, SpecialConfig> specialConfigs;
+	JobDocument jobs;
 
 	std::map<std::pair<int, int>, AutoBackupTask> g_active_auto_backups; // Key: {configIdx, worldIdx}
 

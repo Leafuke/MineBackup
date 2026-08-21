@@ -124,8 +124,6 @@ void TestQueriesAndTargetResolution(KnotLinkService& service) {
     Check(status.values.at("data").starts_with("enabled=") &&
               status.values.at("data").find(";initialized=") !=
                   std::string::npos &&
-              status.values.at("data").find(";active_auto_backups=") !=
-                  std::string::npos &&
               status.values.at("data").find(";active_tasks=") !=
                   std::string::npos &&
               !status.values.at("data").starts_with("{"),
@@ -184,7 +182,8 @@ void TestLegacyCommandsHaveNoDispatch(
 
     for (const std::string command : {
              "SEND", "SET_CONFIG", "BACKUP_MODS", "SHUTDOWN_WORLD_SUCCESS",
-             "RESTORE_CURRENT", "LIST_WORLDS"}) {
+             "RESTORE_CURRENT", "LIST_WORLDS",
+             "AUTO_BACKUP", "STOP_AUTO_BACKUP"}) {
         const auto response = ParseResponse(service.HandlePayload(
             "cmd=" + command + ";from=test;request_id=legacy"));
         Check(response.values.at("status") == "error" &&

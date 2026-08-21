@@ -1,4 +1,5 @@
 #include "Platform_linux.h"
+#include "PlatformCompat.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "AppState.h"
@@ -191,7 +192,7 @@ static std::wstring TimePointToString(const fs::file_time_type& tp) {
             tp - fs::file_time_type::clock::now() + chrono::system_clock::now());
         time_t cftime = chrono::system_clock::to_time_t(sctp);
         struct tm buf;
-        if (localtime_s(&buf, &cftime) == 0) {
+        if (localtime_r(&cftime, &buf) != nullptr) {
             wchar_t out[64];
             wcsftime(out, sizeof(out) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &buf);
             return out;
@@ -223,7 +224,7 @@ std::wstring GetLastBackupTime(const std::wstring& backupDir) {
         }
         if (latest == 0) return L"/";
         struct tm buf;
-        if (localtime_s(&buf, &latest) == 0) {
+        if (localtime_r(&latest, &buf) != nullptr) {
             wchar_t out[64];
             wcsftime(out, sizeof(out) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &buf);
             return out;

@@ -129,9 +129,6 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 			duplicates++;
 		}
 	}
-	if (imported > 0) {
-		SaveHistory();
-	}
 
 	int recoveredCount = 0;
 	if (mode == CloudSyncMode::HistoryAndBackups) {
@@ -290,7 +287,6 @@ bool EnsureRestoreChainAvailable(const Config& config, int configIndex, const Hi
 				UpsertHistoryEntry(configIndex, remoteEntry, false);
 			}
 		}
-		SaveHistory();
 	}
 
 	vector<HistoryEntry> worldEntries = GetHistoryEntriesForWorld(configIndex, targetEntry.worldName);
@@ -384,19 +380,24 @@ CloudCommandResult ImportHistoryFromCloud(const Config& config, int configIndex,
 		}
 
 		if (result.success) {
+			vector<HistoryEntry> mappedEntries;
+			mappedEntries.reserve(remoteEntries.size());
+			for (auto entry : remoteEntries) {
+				if (!BelongsToConfiguration(config, entry)) continue;
+				entry.configId = config.configId;
+				mappedEntries.push_back(std::move(entry));
+			}
 			if (!mergeExisting) {
-				g_appState.g_history[configIndex].clear();
+				(void)ReplaceHistoryEntriesForConfig(
+					configIndex, std::move(mappedEntries));
 			}
 			bool changed = false;
-			for (const auto& entry : remoteEntries) {
-				if (!BelongsToConfiguration(config, entry)) {
-					continue;
+			if (mergeExisting) {
+				for (const auto& entry : mappedEntries) {
+					changed = UpsertHistoryEntry(configIndex, entry, false) || changed;
 				}
-				changed = UpsertHistoryEntry(configIndex, entry, false) || changed;
 			}
-			if (changed || !mergeExisting) {
-				SaveHistory();
-			}
+			(void)changed;
 			result.message = utf8_to_wstring(L("CLOUD_HISTORY_IMPORT_SUCCEEDED"));
 		}
 		else {

@@ -1,0 +1,23 @@
+[Unit]
+Description=MineBackup profile runtime for %i
+Documentation=https://github.com/Leafuke/MineBackup
+Wants=network-online.target
+After=local-fs.target network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/minebackup/%i.env
+ExecStart=/usr/bin/minebackup-cli --data-dir ${MINEBACKUP_DATA_DIR} --json serve
+ExecStop=/usr/bin/minebackup-cli --data-dir ${MINEBACKUP_DATA_DIR} --json serve stop
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+UMask=0077
+User=minecraft
+Group=minecraft
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

@@ -26,9 +26,8 @@
 #include "LogPanel.h"
 #include "Logging.h"
 #include "RemoteContentService.h"
-#include "SpecialConfigPolicy.h"
+#include "PlatformCompat.h"
 #include "TaskCoordinator.h"
-#include "TaskSystem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -86,11 +85,7 @@ namespace {
 std::vector<DisplayWorld> BuildDisplayWorldsForSelection()
 {
 	std::lock_guard<std::mutex> lock(g_appState.configsMutex);
-	return BuildDisplayWorlds(
-		g_appState.configs,
-		g_appState.specialConfigs,
-		g_appState.currentConfigIndex,
-		specialSetting);
+	return BuildDisplayWorlds(g_appState.configs, g_appState.currentConfigIndex);
 }
 
 void DrawWorldListUiFrame(const MainUiFrameContext& context)
@@ -124,7 +119,6 @@ auto& lastTimeCacheRefresh = worldUi.lastTimeCacheRefresh;
 auto& cachedTaskRunning = worldUi.cachedTaskRunning;
 auto& showAddConfigPopup = worldUi.showAddConfigPopup;
 auto& showDeleteConfigPopup = worldUi.showDeleteConfigPopup;
-auto& config_type = worldUi.configType;
 auto& tempExportConfig = worldUi.temporaryExportConfig;
 auto& selectedBlacklistItem = worldUi.selectedBlacklistItem;
 auto& selectedFormat = worldUi.selectedFormat;
@@ -203,10 +197,7 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 	ImGui::SeparatorText(L("QUICK_CONFIG_SWITCHER"));
 	ImGui::SetNextItemWidth(-1);
 	string current_config_label = "None";
-	if (specialSetting && g_appState.specialConfigs.count(g_appState.currentConfigIndex)) {
-		current_config_label = "[Sp." + to_string(g_appState.currentConfigIndex) + "] " + g_appState.specialConfigs[g_appState.currentConfigIndex].name;
-	}
-	else if (!specialSetting && g_appState.configs.count(g_appState.currentConfigIndex)) {
+	if (g_appState.configs.count(g_appState.currentConfigIndex)) {
 		current_config_label = "[No." + to_string(g_appState.currentConfigIndex) + "] " + g_appState.configs[g_appState.currentConfigIndex].name;
 	}
 
@@ -225,23 +216,12 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 			}
 		}
 		ImGui::Separator();
-		// 特殊配置
-		for (auto const& [idx, val] : g_appState.specialConfigs) {
-			const bool is_selected = (g_appState.currentConfigIndex == (idx));
-			string label = "[Sp." + to_string((idx)) + "] " + val.name;
-			if (ImGui::Selectable(label.c_str(), is_selected)) {
-				g_appState.currentConfigIndex = (idx);
-				specialSetting = true;
-			}
-			if (is_selected) ImGui::SetItemDefaultFocus();
-		}
-		ImGui::Separator();
 		if (ImGui::Selectable(L("BUTTON_ADD_CONFIG"))) {
 			showAddConfigPopup = true;
 		}
 
 		if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
-			if ((!specialSetting && g_appState.configs.size() > 1) || (specialSetting && !g_appState.specialConfigs.empty())) { // 至少保留一个
+			if (g_appState.configs.size() > 1) { // 至少保留一个
 				showDeleteConfigPopup = true;
 			}
 		}
@@ -256,27 +236,13 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 	ImGui::SetNextWindowViewport(viewport->ID);
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		showDeleteConfigPopup = false;
-		if (specialSetting) {
-			ImGui::TextUnformatted(L("SPECIAL_CONFIG_BADGE"));
-			ImGui::SameLine();
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.specialConfigs[g_appState.currentConfigIndex].name.c_str());
-		}
-		else {
-			ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
-		}
+		ImGui::Text(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, g_appState.configs[g_appState.currentConfigIndex].name.c_str());
 		ImGui::Separator();
 		float delConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(delConfirmBtnWidth, 0))) {
-			if (specialSetting) {
-				g_appState.specialConfigs.erase(g_appState.currentConfigIndex);
-				g_appState.specialConfigMode = false;
-				g_appState.currentConfigIndex = g_appState.configs.empty() ? 0 : g_appState.configs.begin()->first;
-			}
-			else {
-				g_appState.configs.erase(g_appState.currentConfigIndex);
-				g_appState.currentConfigIndex = g_appState.configs.begin()->first;
-			}
+			g_appState.configs.erase(g_appState.currentConfigIndex);
+			g_appState.currentConfigIndex = g_appState.configs.begin()->first;
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
@@ -296,16 +262,7 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 	{
 		showAddConfigPopup = false;
 
-		ImGui::TextUnformatted(L("CONFIG_TYPE_LABEL"));
-		ImGui::RadioButton(L("CONFIG_TYPE_NORMAL"), &config_type, 0); ImGui::SameLine();
-		ImGui::RadioButton(L("CONFIG_TYPE_SPECIAL"), &config_type, 1);
-
-		if (config_type == 0) {
-			ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));
-		}
-		else {
-			ImGui::TextWrapped("%s", L("CONFIG_TYPE_SPECIAL_DESC"));
-		}
+		ImGui::TextWrapped("%s", L("CONFIG_TYPE_NORMAL_DESC"));
 
 		ImGui::InputText(L("NEW_CONFIG_NAME_LABEL"), new_config_name, IM_ARRAYSIZE(new_config_name));
 		ImGui::Separator();
@@ -313,27 +270,20 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 		float createBtnWidth = CalcPairButtonWidth(L("CREATE_BUTTON"), L("BUTTON_CANCEL"));
 		if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(createBtnWidth, 0))) {
 			if (strlen(new_config_name) > 0) {
-				if (config_type == 0) {
-					int new_index = CreateNewNormalConfig(new_config_name);
-					// 继承当前配置（如果有），但保留路径为空
-					if (g_appState.configs.count(g_appState.currentConfigIndex)) {
-						g_appState.configs[new_index] = g_appState.configs[g_appState.currentConfigIndex];
-						AssignFreshNormalConfigId(new_index);
-						g_appState.configs[new_index].name = new_config_name;
-						g_appState.configs[new_index].saveRoot.clear();
-						g_appState.configs[new_index].backupPath.clear();
-						g_appState.configs[new_index].worlds.clear();
-						EnsureDefaultBackupBlacklist(g_appState.configs[new_index].blacklist);
-						EnsureDefaultRestoreWhitelist();
-					}
-					g_appState.currentConfigIndex = new_index;
-					specialSetting = false;
+				int new_index = CreateNewNormalConfig(new_config_name);
+				// 继承当前配置（如果有），但保留路径为空
+				if (g_appState.configs.count(g_appState.currentConfigIndex)) {
+					g_appState.configs[new_index] = g_appState.configs[g_appState.currentConfigIndex];
+					AssignFreshNormalConfigId(new_index);
+					g_appState.configs[new_index].name = new_config_name;
+					g_appState.configs[new_index].saveRoot.clear();
+					g_appState.configs[new_index].backupPath.clear();
+					g_appState.configs[new_index].worlds.clear();
+					EnsureDefaultBackupBlacklist(g_appState.configs[new_index].blacklist);
+					EnsureDefaultRestoreWhitelist();
 				}
-				else { // Special
-					int new_index = CreateNewSpecialConfig(new_config_name);
-					g_appState.currentConfigIndex = new_index;
-					specialSetting = true;
-				}
+				g_appState.currentConfigIndex = new_index;
+				specialSetting = false;
 				showSettings = true; // Open detailed settings for the new config
 				ImGui::CloseCurrentPopup();
 			}

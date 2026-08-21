@@ -26,12 +26,3 @@ int FindConfigByStableId(
 	}
 	return -1;
 }
-
-int FindSpecialConfigByStableId(
-	const map<int, SpecialConfig>& configs,
-	const wstring& stableId) {
-	for (const auto& [index, config] : configs) {
-		if (EqualStableId(config.specialConfigId, stableId)) return index;
-	}
-	return -1;
-}

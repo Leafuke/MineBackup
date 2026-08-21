@@ -28,8 +28,8 @@ upgrade diagnostic and never executes.
 
 Responses always begin with `status=ok` or `status=error`. Once a request is
 parsed, its response and events inherit `from` and `request_id`. The mutating
-commands `BACKUP`, `RESTORE`, `BACKUP_ALL`, `AUTO_BACKUP`,
-`STOP_AUTO_BACKUP`, and `MARK_IMPORTANT` require both fields.
+commands `BACKUP`, `RESTORE`, `BACKUP_ALL`, and `MARK_IMPORTANT` require both
+fields.
 
 Query `data` is a single outer percent-encoded scalar and deliberately uses
 the same command-specific payloads as FolderRewind:
@@ -38,7 +38,7 @@ the same command-specific payloads as FolderRewind:
 - `LIST_FOLDERS`: `folder-name;folder-name`
 - `LIST_BACKUPS`: `archive.7z;archive.zip`
 - `GET_CONFIG`: `name=...;backup_mode=...;format=...;keep_count=...`
-- `GET_STATUS`: `enabled=...;initialized=...;active_auto_backups=...;active_tasks=...`
+- `GET_STATUS`: `enabled=...;initialized=...;active_tasks=...`
 
 The separators above are part of the decoded `data` value. They are encoded
 as `%2C`, `%3B`, and `%3D` on the wire; `data` is not a JSON array or object.
@@ -51,9 +51,8 @@ event=command_completed;from=example.mod;request_id=req-42;command=BACKUP;messag
 ```
 
 Background work emits `command_accepted`, `command_started`, then
-`command_completed` or `command_failed`. Backup, restore, backup-all,
-auto-backup, and importance-change business events carry the same correlation
-metadata.
+`command_completed` or `command_failed`. Backup, restore, backup-all, and
+importance-change business events carry the same correlation metadata.
 
 ## Commands
 
@@ -72,8 +71,6 @@ Operations:
 - `BACKUP`
 - `RESTORE`
 - `BACKUP_ALL`
-- `AUTO_BACKUP`
-- `STOP_AUTO_BACKUP`
 - `MARK_IMPORTANT`
 
 Mod callbacks:
@@ -96,14 +93,33 @@ cmd=BACKUP;from=example.mod;request_id=req-43;current_save=true;comment=Live%20s
 cmd=RESTORE;from=example.mod;request_id=req-44;current_save=true
 ```
 
-When `RESTORE` omits `file`, MineBackup selects the latest archive.
+Hot-backup notifications are `backup_started`, optionally `backup_warning`,
+then exactly one terminal `backup_success` or `backup_failed`. A no-change
+backup uses `command_completed;command=BACKUP;result=no_changes` as its
+terminal signal. These terminal signals release the companion mod's auto-save
+freeze and therefore must be emitted even for GUI-initiated operations.
+
+Integrated-server hot restore uses the ordered lifecycle below. Every event
+after the handshake carries the same `world` (and `request_id` when present):
+
+```text
+handshake -> pre_hot_restore -> restore_finished(status=success)
+          -> rejoin_world -> hot_restore_complete
+```
+
+The companion mod accepts `rejoin_world` only after a matching
+`restore_finished` advanced its active-world session. MineBackup retains the
+FolderRewind 100 ms post-restore delay and 3 second rejoin stabilization delay.
+
+When `RESTORE` omits `file`, MineBackup selects the latest local archive from
+history; it does not guess from filesystem timestamps or download a cloud chain.
 
 One-shot backup overrides are never persisted. `backup_mode` accepts `full`
 or `incremental`. `compression_method` accepts `LZMA2`, `Deflate`, `BZip2`,
 or `zstd`; levels are 0-9 for LZMA2/Deflate, 1-9 for BZip2, and 1-22 for
 zstd. `backup_blacklist` is merged into a runtime configuration copy.
 
-Restore `mode` defaults to `overwrite` and also accepts `clean`.
+Restore `mode` defaults to `clean` and also accepts `overwrite`.
 `restore_whitelist` applies only to that operation. Clean restore from a
 partial backup requires `confirm_partial_clean=true`.
 
@@ -113,9 +129,11 @@ data preservation. A non-empty `backup_whitelist`, `backup_scope`, or
 `unsupported_parameter` error. These fields are absent from the capability
 manifest. Other unknown extension keys are ignored.
 
-Removed commands and aliases include `SET_CONFIG`, `BACKUP_MODS`, `ADD_TO_WE`,
-`SEND`, `SHUTDOWN_WORLD_SUCCESS`, `LIST_WORLDS`, and every `*_CURRENT`
-command. Local console business commands also use v2 payloads; `HELP`,
+Removed commands and aliases include `AUTO_BACKUP`, `STOP_AUTO_BACKUP`,
+`SET_CONFIG`, `BACKUP_MODS`, `ADD_TO_WE`, `SEND`,
+`SHUTDOWN_WORLD_SUCCESS`, `LIST_WORLDS`, and every `*_CURRENT` command.
+Scheduling belongs to the operating system. Local console business commands
+also use v2 payloads; `HELP`,
 `CLEAR`, and `HISTORY` remain local controls.
 
 ## Capability manifest
@@ -177,13 +195,29 @@ FolderRewind 的命令专属内部格式：`LIST_CONFIGS` 为
 
 查询命令为 `PING`、`GET_CAPABILITIES`、`GET_STATUS`、`LIST_CONFIGS`、
 `LIST_FOLDERS`、`LIST_BACKUPS`、`GET_CONFIG`。操作命令为 `BACKUP`、
-`RESTORE`、`BACKUP_ALL`、`AUTO_BACKUP`、`STOP_AUTO_BACKUP`、
-`MARK_IMPORTANT`。模组回调为 `HANDSHAKE_RESPONSE`、`WORLD_SAVED`、
+`RESTORE`、`BACKUP_ALL`、`MARK_IMPORTANT`。模组回调为
+`HANDSHAKE_RESPONSE`、`WORLD_SAVED`、
 `WORLD_SAVE_AND_EXIT_COMPLETE`、`REJOIN_RESULT`。
 
 `current_save=true` 让 `BACKUP`、`LIST_BACKUPS`、`RESTORE` 操作当前世界；
-`RESTORE` 不提供 `file` 时选择最新备份。一次性备份模式、压缩设置、黑名单
-和还原白名单只作用于当前任务，不写回配置。
+`RESTORE` 不提供 `file` 时只按本地历史选择最新且存在的备份，默认使用
+`clean`。一次性备份模式、压缩设置、黑名单和还原白名单只作用于当前任务，
+不写回配置。
+
+热备份依次发送 `backup_started`、可选的 `backup_warning`，以及唯一终态
+`backup_success`/`backup_failed`；无变化时以
+`command_completed;command=BACKUP;result=no_changes` 作为终态。这些终态
+负责解除联动模组的自动保存冻结，因此 GUI 发起的备份也必须发送。
+
+集成服务器热还原严格遵循
+`handshake -> pre_hot_restore -> restore_finished(status=success) ->
+rejoin_world -> hot_restore_complete`。握手后的每个事件都携带相同的 `world`
+（有请求 ID 时也携带 `request_id`）；联动模组只有在匹配的
+`restore_finished` 推进当前世界状态后才接受 `rejoin_world`。实现保留
+FolderRewind 的还原后 100 ms 等待和重进前 3 秒稳定窗口。
+
+`AUTO_BACKUP`、`STOP_AUTO_BACKUP` 已移除且不会出现在能力清单；调度由
+systemd timer 或 Task Scheduler 持有。
 
 联动模组最低版本为 3.0.0。KnotLinkService 推荐最低版本为 3.2.0.0。
 Windows 读取注册表和文件版本，Linux 读取 dpkg 包信息，macOS 读取 Installer

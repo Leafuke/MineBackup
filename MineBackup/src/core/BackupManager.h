@@ -3,16 +3,17 @@
 #define _BACKUP_MANAGER_H
 #include <filesystem>
 #include <atomic>
-#include "AppState.h"
-
-enum class BackupOutcome {
-	Created,
-	NoChanges,
-	Failed,
-	Rejected
-};
+#include <stop_token>
+#include "DataModels.h"
+#include "OperationResult.h"
+#include "BackupService.h"
 
 BackupOutcome DoBackup(const MyFolder& folder, const std::wstring& comment = L"");
+BackupResult RunDesktopBackup(
+	const MyFolder& folder,
+	const std::wstring& comment,
+	std::stop_token stopToken,
+	BackupExecutionOptions options = {});
 bool DoRestore2(const Config& config, const std::wstring& worldName, const std::filesystem::path& fullBackupPath, int restoreMethod);
 bool DoRestore(
 	const Config& config,

@@ -11,10 +11,12 @@
 #include "GameSessionManager.h"
 #include "Globals.h"
 #include "HistoryManager.h"
+#include "HotRestoreCoordinator.h"
 #include "Logging.h"
 #include "MigrationCoordinator.h"
-#include "PathRuleSet.h"
 #include "PlatformCompat.h"
+#include "RestoreService.h"
+#include "RestoreWorkspace.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "TaskCoordinator.h"
@@ -64,75 +66,6 @@ struct SmartRestorePlan {
 	vector<SmartRestoreArchiveGroup> archiveGroups;
 };
 
-filesystem::path CreateSafeRestoreTempDirectoryPath(const filesystem::path& targetDirectory) {
-	const filesystem::path normalized = targetDirectory.lexically_normal();
-	const filesystem::path parent = normalized.parent_path();
-	if (parent.empty()) throw runtime_error("Restore target has no parent directory.");
-
-	const filesystem::path base = parent / (normalized.filename().wstring() + L"-Temp");
-	filesystem::path candidate = base;
-	int suffix = 1;
-	error_code ec;
-	while (filesystem::exists(candidate, ec)) {
-		candidate = filesystem::path(base.wstring() + L"-" + to_wstring(suffix++));
-	}
-	return candidate;
-}
-
-bool TryPrepareSafeRestoreWorkspace(
-	const filesystem::path& targetDirectory,
-	filesystem::path& snapshotDirectory,
-	string& errorMessage) {
-	snapshotDirectory.clear();
-	errorMessage.clear();
-	error_code ec;
-	const bool targetExists = filesystem::exists(targetDirectory, ec);
-	if (ec) {
-		errorMessage = "Failed to inspect restore target: " + ec.message();
-		return false;
-	}
-	if (!targetExists) {
-		filesystem::create_directories(targetDirectory, ec);
-		if (ec) errorMessage = "Failed to create restore target: " + ec.message();
-		return !ec;
-	}
-
-	try {
-		snapshotDirectory = CreateSafeRestoreTempDirectoryPath(targetDirectory);
-	}
-	catch (const exception& exception) {
-		errorMessage = exception.what();
-		return false;
-	}
-
-	filesystem::rename(targetDirectory, snapshotDirectory, ec);
-	if (ec) {
-		errorMessage = "Failed to move restore target to snapshot: " + ec.message();
-		snapshotDirectory.clear();
-		return false;
-	}
-	filesystem::create_directories(targetDirectory, ec);
-	if (!ec) return true;
-
-	const string createError = ec.message();
-	error_code cleanupError;
-	if (filesystem::exists(targetDirectory, cleanupError) && !cleanupError) {
-		ClearReadonlyAttributesRecursively(targetDirectory);
-		filesystem::remove_all(targetDirectory, cleanupError);
-	}
-
-	error_code rollbackError;
-	filesystem::rename(snapshotDirectory, targetDirectory, rollbackError);
-	if (rollbackError) {
-		errorMessage = "Failed to create clean workspace (" + createError
-			+ "), rollback also failed: " + rollbackError.message();
-		return false;
-	}
-	snapshotDirectory.clear();
-	errorMessage = "Failed to create clean workspace: " + createError;
-	return false;
-}
-
 void CleanupInternalRestoreMarkers(const filesystem::path& targetDirectory) {
 	for (const wchar_t* marker : {kDeletedOnlyMarkerDirectory, L"__MineBackup_Internal"}) {
 		error_code ec;
@@ -141,104 +74,6 @@ void CleanupInternalRestoreMarkers(const filesystem::path& targetDirectory) {
 		ClearReadonlyAttributesRecursively(internalDirectory);
 		filesystem::remove_all(internalDirectory, ec);
 	}
-}
-
-void CopyRestoreWhitelistEntries(
-	const filesystem::path& sourceDirectory,
-	const filesystem::path& targetDirectory,
-	const vector<wstring>& whitelist) {
-	if (whitelist.empty()) return;
-	error_code ec;
-	if (!filesystem::exists(sourceDirectory, ec) || ec) return;
-	const PathRuleSet rules(whitelist);
-
-	for (const auto& entry : filesystem::recursive_directory_iterator(
-		sourceDirectory,
-		filesystem::directory_options::skip_permission_denied,
-		ec)) {
-		if (ec) break;
-		if (!entry.is_directory()
-			|| !rules.MatchesSelfOrAncestor(entry.path(), sourceDirectory)) {
-			continue;
-		}
-		const filesystem::path relative = filesystem::relative(entry.path(), sourceDirectory, ec);
-		if (!ec) filesystem::create_directories(targetDirectory / relative, ec);
-	}
-
-	for (const auto& entry : filesystem::recursive_directory_iterator(
-		sourceDirectory,
-		filesystem::directory_options::skip_permission_denied,
-		ec)) {
-		if (ec) break;
-		if (!entry.is_regular_file()
-			|| !rules.MatchesSelfOrAncestor(entry.path(), sourceDirectory)) {
-			continue;
-		}
-		const filesystem::path relative = filesystem::relative(entry.path(), sourceDirectory, ec);
-		if (ec) continue;
-		const filesystem::path destination = targetDirectory / relative;
-		filesystem::create_directories(destination.parent_path(), ec);
-		if (!filesystem::exists(destination, ec) || ec) {
-			ec.clear();
-			filesystem::copy_file(
-				entry.path(),
-				destination,
-				filesystem::copy_options::overwrite_existing,
-				ec);
-		}
-	}
-}
-
-bool TryCommitSafeRestoreWorkspace(
-	const filesystem::path& targetDirectory,
-	const filesystem::path& snapshotDirectory,
-	const vector<wstring>& whitelist,
-	string& errorMessage) {
-	errorMessage.clear();
-	try {
-		CleanupInternalRestoreMarkers(targetDirectory);
-		CopyRestoreWhitelistEntries(snapshotDirectory, targetDirectory, whitelist);
-		if (!snapshotDirectory.empty() && filesystem::exists(snapshotDirectory)) {
-			ClearReadonlyAttributesRecursively(snapshotDirectory);
-			filesystem::remove_all(snapshotDirectory);
-		}
-		return true;
-	}
-	catch (const exception& exception) {
-		errorMessage = exception.what();
-		return false;
-	}
-}
-
-bool TryRollbackSafeRestoreWorkspace(
-	const filesystem::path& targetDirectory,
-	const filesystem::path& snapshotDirectory,
-	string& errorMessage) {
-	errorMessage.clear();
-	if (snapshotDirectory.empty()) {
-		errorMessage = "Snapshot directory path is empty.";
-		return false;
-	}
-
-	error_code ec;
-	if (!filesystem::exists(snapshotDirectory, ec) || ec) {
-		errorMessage = "Snapshot directory is missing.";
-		return false;
-	}
-	if (filesystem::exists(targetDirectory, ec) && !ec) {
-		ClearReadonlyAttributesRecursively(targetDirectory);
-		filesystem::remove_all(targetDirectory, ec);
-		if (ec) {
-			errorMessage = "Failed to clean restore target before rollback: " + ec.message();
-			return false;
-		}
-	}
-	filesystem::rename(snapshotDirectory, targetDirectory, ec);
-	if (ec) {
-		errorMessage = "Failed to restore snapshot: " + ec.message();
-		return false;
-	}
-	return true;
 }
 
 static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config) {
@@ -497,6 +332,118 @@ static bool ApplySmartRestorePlan(const SmartRestorePlan& plan, const filesystem
 	return true;
 }
 
+bool RunSharedManagedRestore(
+	const Config& config,
+	const wstring& worldName,
+	const wstring& backupFile,
+	RestoreMode mode,
+	const vector<wstring>* restoreWhitelistOverride,
+	const string& requestId) {
+	const string operationId = requestId.empty()
+		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
+	minebackup::logging::ScopedLogContext operationContext{{
+		{"operation_id", operationId},
+		{"config_id", wstring_to_utf8(config.configId)},
+		{"world", wstring_to_utf8(worldName)}}};
+	auto fail = [&](string reason) {
+		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId)
+			+ ";world=" + wstring_to_utf8(worldName) + ";error=" + reason
+			+ (requestId.empty() ? "" : ";request_id=" + requestId));
+		return false;
+	};
+	if (config.pendingLocalBinding) {
+		RESTORE_WARNING("Restore is disabled until local paths are bound.");
+		return fail("binding_required");
+	}
+
+	const filesystem::path destination = JoinPath(config.saveRoot, worldName);
+	if (IsWorldOccupied(destination)) {
+		RESTORE_WARNING(L("LOG_RESTORE_ACTIVE_WORLD_BLOCKED"),
+			wstring_to_utf8(worldName).c_str());
+		return fail("world_occupied");
+	}
+	const int configIndex = ResolveConfigIndexForCloud(config);
+	const MigrationUnitResult migration = MigrationCoordinator::EnsureWorldMigrated(
+		config, configIndex, worldName, destination.wstring());
+	if ((migration.status == MigrationStatus::Failed
+			|| migration.status == MigrationStatus::Degraded)
+		&& FolderRewindFormat::IsSmartBackupType(backupFile)) {
+		RESTORE_ERROR("Exact Smart restore is unavailable until metadata migration succeeds: %s",
+			wstring_to_utf8(migration.message).c_str());
+		return fail("legacy_metadata_migration_incomplete");
+	}
+	HistoryEntry historyEntry;
+	if (configIndex >= 0
+		&& TryGetHistoryEntry(configIndex, worldName, backupFile, historyEntry)
+		&& config.cloudAutoDownloadBeforeRestore) {
+		EnsureRestoreChainAvailable(config, configIndex, historyEntry);
+	}
+
+	RestoreRequest request;
+	request.config = config;
+	request.world = {config.configId, worldName};
+	request.archive = backupFile;
+	request.mode = mode;
+	request.restorePreserve = restoreWhitelistOverride
+		? *restoreWhitelistOverride : restoreWhitelist;
+	RestoreServiceDependencies dependencies;
+	dependencies.paths = GetAppPaths();
+	dependencies.isWorldOccupied = IsWorldOccupied;
+	dependencies.backupBeforeRestore = [config, worldName, configIndex](
+		const BackupRequest&, stop_token stopToken, BackupExecutionOptions options) {
+		wstring description;
+		const auto found = find_if(config.worlds.begin(), config.worlds.end(),
+			[&](const auto& world) { return world.first == worldName; });
+		if (found != config.worlds.end()) description = found->second;
+		MyFolder world{JoinPath(config.saveRoot, worldName).wstring(), worldName,
+			description, config, configIndex, -1};
+		return RunDesktopBackup(
+			world, L"Automatic backup before restore", stopToken, options);
+	};
+	dependencies.enforceRetention = [configIndex](
+		const BackupRequest& value,
+		const HistoryEntry& entry,
+		stop_token) {
+		FolderRewindFormat::StoragePaths storage;
+		if (!FolderRewindFormat::TryResolveStoragePaths(
+				value.config.backupPath,
+				entry.worldName,
+				entry.worldPath,
+				storage)) return;
+		BackupManagerInternal::LimitBackupFiles(
+			value.config,
+			configIndex,
+			storage.backupSubDir.wstring(),
+			value.config.keepCount);
+	};
+
+	RESTORE_INFO(L("LOG_RESTORE_START_HEADER"));
+	RESTORE_INFO(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
+	RESTORE_INFO(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
+	RestoreService service(std::move(dependencies));
+	const auto restored = service.Run(
+		request, false, TaskCoordinator::CurrentStopToken());
+	for (const auto& diagnostic : restored.diagnostics) {
+		if (diagnostic.severity == DiagnosticSeverity::Error) {
+			RESTORE_ERROR("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+		}
+		else if (diagnostic.severity == DiagnosticSeverity::Warning) {
+			RESTORE_WARNING("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+		}
+		else {
+			RESTORE_INFO("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+		}
+	}
+	if (!IsSuccessful(restored.code)) return fail(ToString(restored.code));
+
+	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
+	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId)
+		+ ";world=" + wstring_to_utf8(worldName) + ";backup="
+		+ wstring_to_utf8(backupFile)
+		+ (requestId.empty() ? "" : ";request_id=" + requestId));
+	return true;
+}
+
 } // namespace
 
 bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, int restoreMethod) {
@@ -553,42 +500,37 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		return failRestore("archive_integrity_check_failed");
 	}
 
-	filesystem::path safeRestoreTempDir;
+	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
-	bool safeWorkspacePrepared = false;
-	if (restoreMethod == 0) {
-		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
-			if (!safeRestoreTempDir.empty()) {
-				string rollbackError;
-				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
-					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
-				}
+	const auto workspaceMode = restoreMethod == 0
+		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
+	if (!RestoreWorkspace::Prepare(
+			destinationFolder, restoreWorkspace, workspaceError, workspaceMode)) {
+		if (restoreWorkspace.prepared) {
+			string rollbackError;
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
+				RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 			}
-			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
-			return failRestore("snapshot_prepare_failed");
 		}
-		safeWorkspacePrepared = !safeRestoreTempDir.empty();
-	}
-	else {
-		error_code ec;
-		filesystem::create_directories(destinationFolder, ec);
+		RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+		return failRestore("snapshot_prepare_failed");
 	}
 
 	bool restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config);
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
-		if (safeWorkspacePrepared) {
-			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(restoreWhitelist);
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
-				restoreSucceeded = false;
-				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
-			}
+		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
+			? BuildEffectiveRestoreWhitelist(restoreWhitelist) : vector<wstring>{};
+		if (!RestoreWorkspace::Commit(
+				restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
+			restoreSucceeded = false;
+			RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 		}
 	}
 
 	if (!restoreSucceeded) {
-		if (safeWorkspacePrepared) {
-			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+		if (restoreWorkspace.prepared) {
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, workspaceError)) {
 				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
@@ -608,6 +550,11 @@ bool DoRestore(
 	const string& customRestoreList,
 	const vector<wstring>* restoreWhitelistOverride,
 	const string& requestId) {
+	if (restoreMethod == 0 || restoreMethod == 1) {
+		return RunSharedManagedRestore(config, worldName, backupFile,
+			restoreMethod == 0 ? RestoreMode::Clean : RestoreMode::Overwrite,
+			restoreWhitelistOverride, requestId);
+	}
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
 	minebackup::logging::ScopedLogContext operationContext{{
@@ -752,25 +699,20 @@ bool DoRestore(
 		}
 	}
 
-	filesystem::path safeRestoreTempDir;
+	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
-	bool safeWorkspacePrepared = false;
-	if (restoreMethod == 0) {
-		if (!TryPrepareSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
-			if (!safeRestoreTempDir.empty()) {
-				string rollbackError;
-				if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, rollbackError)) {
-					RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
-				}
+	const auto workspaceMode = restoreMethod == 0
+		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
+	if (!RestoreWorkspace::Prepare(
+			destinationFolder, restoreWorkspace, workspaceError, workspaceMode)) {
+		if (restoreWorkspace.prepared) {
+			string rollbackError;
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
+				RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
 			}
-			RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
-			return failRestore("snapshot_prepare_failed");
 		}
-		safeWorkspacePrepared = !safeRestoreTempDir.empty();
-	}
-	else {
-		error_code ec;
-		filesystem::create_directories(destinationFolder, ec);
+		RESTORE_ERROR("Failed to prepare safe restore workspace: %s", workspaceError.c_str());
+		return failRestore("snapshot_prepare_failed");
 	}
 
 	bool restoreSucceeded = false;
@@ -783,19 +725,20 @@ bool DoRestore(
 
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
-		if (safeWorkspacePrepared) {
-			const vector<wstring> effectiveRestoreWhitelist = BuildEffectiveRestoreWhitelist(
-				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist);
-			if (!TryCommitSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, effectiveRestoreWhitelist, workspaceError)) {
-				restoreSucceeded = false;
-				RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
-			}
+		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
+			? BuildEffectiveRestoreWhitelist(
+				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist)
+			: vector<wstring>{};
+		if (!RestoreWorkspace::Commit(
+				restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
+			restoreSucceeded = false;
+			RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 		}
 	}
 
 	if (!restoreSucceeded) {
-		if (safeWorkspacePrepared) {
-			if (!TryRollbackSafeRestoreWorkspace(destinationFolder, safeRestoreTempDir, workspaceError)) {
+		if (restoreWorkspace.prepared) {
+			if (!RestoreWorkspace::Rollback(restoreWorkspace, workspaceError)) {
 				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}
 		}
@@ -818,7 +761,6 @@ bool DoHotRestore(
 	const string& customRestoreList,
 	const string& requestId) {
 	(void)deleteBackup;
-	Config config = world.config;
 	auto& mod = g_appState.knotLinkMod;
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
@@ -826,139 +768,73 @@ bool DoHotRestore(
 		"operation_id", operationId},
 		{"config_id", wstring_to_utf8(world.config.configId)},
 		{"world", wstring_to_utf8(world.name)}};
-	auto broadcastLifecycle = [&](string_view eventName,
-		minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields = {}) {
-		if (!requestId.empty()) fields.emplace_back("request_id", requestId);
-		BroadcastEvent(eventName, fields);
-	};
 	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_START"), wstring_to_utf8(world.name).c_str());
-
-	mod.resetForOperation();
-	broadcastLifecycle("pre_hot_restore", {
-		{"config", to_string(world.configIndex)}, {"world", wstring_to_utf8(world.name)}});
-	RESTORE_INFO(L("KNOTLINK_WAITING_WORLD_SAVE_EXIT"));
-	const bool exitComplete = mod.waitForFlag(
-		&KnotLinkModInfo::worldSaveAndExitComplete,
-		chrono::milliseconds(10000));
-	if (!exitComplete) {
-		RESTORE_WARNING(L("KNOTLINK_HOT_RESTORE_TIMEOUT"));
-		broadcastLifecycle("restore_cancelled", {
-			{"reason", "timeout"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	RESTORE_INFO(L("KNOTLINK_MOD_EXIT_CONFIRMED"));
-	const auto releaseDeadline = chrono::steady_clock::now() + chrono::seconds(15);
-	bool worldReleased = false;
-	while (chrono::steady_clock::now() < releaseDeadline) {
-		if (!IsWorldOccupied(world.path)) {
-			worldReleased = true;
-			break;
+	HotRestoreDependencies dependencies;
+	dependencies.transport.reset = [&] { mod.resetForOperation(); };
+	dependencies.transport.emit = [](string_view eventName,
+		const vector<pair<string, string>>& fields) {
+		BroadcastEvent(eventName, fields);
+		return true;
+	};
+	dependencies.transport.waitHandshake = [&mod](chrono::milliseconds, stop_token) {
+		return mod.versionCompatible.load()
+			? HotRestoreHandshakeStatus::Compatible
+			: HotRestoreHandshakeStatus::Incompatible;
+	};
+	dependencies.transport.waitSaveAndExit = [&mod](
+		chrono::milliseconds timeout, stop_token) {
+		return mod.waitForFlag(&KnotLinkModInfo::worldSaveAndExitComplete, timeout);
+	};
+	dependencies.transport.waitRejoin = [&mod](
+		chrono::milliseconds timeout, stop_token) -> optional<bool> {
+		if (!mod.waitForFlag(&KnotLinkModInfo::rejoinResponseReceived, timeout)) {
+			return nullopt;
 		}
-		this_thread::sleep_for(chrono::milliseconds(500));
-	}
-	if (!worldReleased) {
-		RESTORE_WARNING(L("KNOTLINK_HOT_RESTORE_WORLD_OCCUPIED"));
-		broadcastLifecycle("restore_cancelled", {
-			{"reason", "world_occupied"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	const filesystem::path levelDat = filesystem::path(world.path) / L"level.dat";
-	const auto lockDeadline = chrono::steady_clock::now() + chrono::seconds(10);
-	while (chrono::steady_clock::now() < lockDeadline && IsFileLocked(levelDat.wstring())) {
-		this_thread::sleep_for(chrono::milliseconds(200));
-	}
-	this_thread::sleep_for(chrono::milliseconds(500));
-
-	g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
-	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_PROCEEDING"));
-
-	const filesystem::path backupDirectory = JoinPath(config.backupPath, world.name);
-	filesystem::path targetBackup;
-	if (!backupFile.empty()) {
-		targetBackup = backupDirectory / backupFile;
-	}
-	else if (filesystem::exists(backupDirectory)) {
-		auto latestTime = filesystem::file_time_type{};
-		for (const auto& entry : filesystem::directory_iterator(backupDirectory)) {
-			const wstring fileName = entry.path().filename().wstring();
-			if (entry.is_regular_file()
-				&& (FolderRewindFormat::IsSmartBackupType(fileName)
-					|| FolderRewindFormat::IsFullLikeBackupType(fileName))
-				&& entry.last_write_time() > latestTime) {
-				latestTime = entry.last_write_time();
-				targetBackup = entry.path();
+		lock_guard<mutex> lock(mod.mtx);
+		return mod.rejoinSuccess;
+	};
+	dependencies.isWorldOccupied = [](const filesystem::path& path) {
+		return IsWorldOccupied(path.wstring());
+	};
+	dependencies.executeRestore = [&, pinnedBackup = backupFile](stop_token) {
+		g_appState.hotkeyRestoreState = HotRestoreState::RESTORING;
+		RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_PROCEEDING"));
+		RestoreResult result;
+		wstring selected = pinnedBackup;
+		if (selected.empty()) {
+			FolderRewindFormat::StoragePaths storage;
+			if (FolderRewindFormat::TryResolveStoragePaths(
+					world.config.backupPath, world.name, world.path, storage)) {
+				const auto history = GetHistoryEntriesForWorld(
+					world.configIndex, world.name);
+				for (auto current = history.rbegin(); current != history.rend(); ++current) {
+					error_code error;
+					if (filesystem::is_regular_file(
+							storage.backupSubDir / current->backupFile, error) && !error) {
+						selected = current->backupFile;
+						break;
+					}
+				}
 			}
 		}
-	}
-
-	if (targetBackup.empty()) {
-		RESTORE_WARNING(L("LOG_NO_BACKUP_FOUND"));
-		broadcastLifecycle("restore_finished", {{"status", "failure"},
-			{"reason", "no_backup_found"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	RESTORE_INFO(
-		L("LOG_RESTORE_USING_FILE"),
-		wstring_to_utf8(targetBackup.filename().wstring()).c_str());
-	if (!DoRestore(
-		config,
-		world.name,
-		targetBackup.filename().wstring(),
-		restoreMethod,
-		customRestoreList,
-		restoreWhitelistOverride,
-		requestId)) {
-		broadcastLifecycle("restore_finished", {{"status", "failure"},
-			{"reason", "restore_failed"}, {"world", wstring_to_utf8(world.name)}});
-		g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
-		g_appState.isRespond = false;
-		return false;
-	}
-
-	this_thread::sleep_for(chrono::milliseconds(100));
-	broadcastLifecycle("restore_finished", {{"status", "success"},
-		{"config", to_string(world.configIndex)}, {"world", wstring_to_utf8(world.name)}});
-	RESTORE_INFO(L("KNOTLINK_HOT_RESTORE_DONE"));
-	this_thread::sleep_for(chrono::milliseconds(3000));
-
-	broadcastLifecycle("rejoin_world", {{"world", wstring_to_utf8(world.name)}});
-	RESTORE_INFO(L("KNOTLINK_REJOIN_SENT"));
-	const bool responseReceived = mod.waitForFlag(
-		&KnotLinkModInfo::rejoinResponseReceived,
-		chrono::milliseconds(30000));
-	if (responseReceived) {
-		bool rejoinSucceeded = false;
-		{
-			lock_guard<mutex> lock(mod.mtx);
-			rejoinSucceeded = mod.rejoinSuccess;
+		if (selected.empty()) {
+			result.code = OperationCode::TargetNotFound;
+			return result;
 		}
-		if (rejoinSucceeded) {
-			RESTORE_INFO(L("KNOTLINK_REJOIN_OK"));
-			broadcastLifecycle("hot_restore_complete", {{"status", "full_success"},
-				{"world", wstring_to_utf8(world.name)}});
-		}
-		else {
-			RESTORE_WARNING(L("KNOTLINK_REJOIN_FAIL"));
-			broadcastLifecycle("hot_restore_complete", {{"status", "restore_ok_rejoin_failed"},
-				{"world", wstring_to_utf8(world.name)}});
-		}
-	}
-	else {
-		RESTORE_WARNING(L("KNOTLINK_REJOIN_TIMEOUT"));
-		broadcastLifecycle("hot_restore_complete", {{"status", "restore_ok_rejoin_timeout"},
-			{"world", wstring_to_utf8(world.name)}});
-	}
-
+		result.code = DoRestore(
+			world.config, world.name, selected, restoreMethod,
+			customRestoreList, restoreWhitelistOverride, requestId)
+			? OperationCode::Success : OperationCode::RestoreFailed;
+		return result;
+	};
+	HotRestoreRequest request;
+	request.configId = world.config.configId;
+	request.worldPath = world.name;
+	request.fullWorldPath = world.path;
+	request.requestId = requestId;
+	request.handshakeComplete = true;
+	const auto result = HotRestoreCoordinator(std::move(dependencies)).Run(request);
 	g_appState.hotkeyRestoreState = HotRestoreState::IDLE;
 	g_appState.isRespond = false;
-	return true;
+	return IsSuccessful(result.code);
 }

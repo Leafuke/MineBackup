@@ -1,6 +1,7 @@
 
 #include "CloudSyncService.h"
 #include "CloudSyncInternal.h"
+#include "AppState.h"
 
 #include "ConfigManager.h"
 #include "AppPaths.h"
@@ -15,6 +16,7 @@
 #include "RcloneClient.h"
 #include "i18n.h"
 #include "json.hpp"
+#include "PlatformCompat.h"
 #include "text_to_text.h"
 
 #include <algorithm>

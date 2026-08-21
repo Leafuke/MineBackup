@@ -96,10 +96,16 @@
     <ClCompile Include="src\app\ImGuiRuntime.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
+	<ClCompile Include="src\app\legacy\LegacyServiceCleanup.cpp">
+	  <Filter>src\app</Filter>
+	</ClCompile>
     <ClCompile Include="src\app\MineBackup.cpp">
       <Filter>src\app</Filter>
     </ClCompile>
     <ClCompile Include="src\core\ArchiveRunner.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\ChainSafeRetention.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\BackupChangeDetector.cpp">
@@ -109,6 +115,9 @@
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\BackupManager.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\BackupManagerDesktop.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\BackupRestore.cpp">
@@ -144,7 +153,25 @@
 	<ClCompile Include="src\core\LegacyMineBackup15Reader.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
-	<ClCompile Include="src\core\MigrationCoordinator.cpp">
+    <ClCompile Include="src\core\MigrationCoordinator.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+	<ClCompile Include="src\core\OperationResult.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileConfigCatalog.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RuntimeIntegration.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RuntimeCloudPostHook.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RuntimeFileLock.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RuntimeRetentionService.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
 	<ClCompile Include="src\core\V15MigrationAdapter.cpp">
@@ -156,13 +183,40 @@
     <ClCompile Include="src\core\HistoryManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\HistoryRepository.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+	<ClCompile Include="src\core\HotRestoreCoordinator.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\JobDocument.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\JobRunner.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileConfigRepository.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileKnotLinkCommands.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileManifest.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ProfileRuntime.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RestoreService.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\RestoreWorkspace.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\WorldIdentity.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
     <ClCompile Include="src\core\PathRuleSet.cpp">
-      <Filter>src\core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\core\SpecialMode.cpp">
-      <Filter>src\core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\core\TaskSystem.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\TaskCoordinator.cpp">
@@ -178,9 +232,6 @@
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\RcloneClient.cpp">
-      <Filter>src\core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\core\SpecialConfigPolicy.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\LegacyServicePolicy.cpp">
@@ -205,6 +256,9 @@
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\LegacyLocationMigration.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infra\LegacyIniConfigCodec.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
     <ClCompile Include="src\infra\ProcessRunner.cpp">
@@ -234,6 +288,9 @@
     <ClCompile Include="src\infra\KnotLinkProtocol.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
+	<ClCompile Include="src\infra\KnotLinkCommandDispatcher.cpp">
+	  <Filter>src\infra</Filter>
+	</ClCompile>
     <ClCompile Include="src\infra\KnotLinkServerManager.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -368,7 +425,13 @@
     <ClInclude Include="src\app\MainUI.h">
       <Filter>src\app</Filter>
     </ClInclude>
+	<ClInclude Include="src\app\legacy\LegacyServiceCleanup.h">
+	  <Filter>src\app</Filter>
+	</ClInclude>
     <ClInclude Include="src\core\ArchiveRunner.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\ChainSafeRetention.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\BackupChangeDetector.h">
@@ -378,6 +441,9 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\BackupManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\BackupService.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\CloudSyncService.h">
@@ -404,7 +470,58 @@
 	<ClInclude Include="src\core\LegacyMineBackup15Reader.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
-	<ClInclude Include="src\core\MigrationCoordinator.h">
+    <ClInclude Include="src\core\MigrationCoordinator.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+	<ClInclude Include="src\core\OperationResult.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileConfigCatalog.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\HotRestoreCoordinator.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\JobDocument.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\JobModels.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\JobRunner.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileConfigRepository.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileKnotLinkCommands.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileManifest.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ProfileRuntime.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RestoreService.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RestoreWorkspace.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\WorldIdentity.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RuntimeIntegration.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RuntimeCloudPostHook.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RuntimeFileLock.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\RuntimeRetentionService.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\V15MigrationAdapter.h">
@@ -413,7 +530,7 @@
     <ClInclude Include="src\core\HistoryManager.h">
       <Filter>src\core</Filter>
     </ClInclude>
-    <ClInclude Include="src\core\TaskSystem.h">
+    <ClInclude Include="src\core\HistoryRepository.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\TaskCoordinator.h">
@@ -426,9 +543,6 @@
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\PortableConfigDocument.h">
-      <Filter>src\core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\core\SpecialConfigPolicy.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\LegacyServicePolicy.h">
@@ -450,6 +564,9 @@
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\LegacyLocationMigration.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infra\LegacyIniConfigCodec.h">
       <Filter>src\infra</Filter>
     </ClInclude>
     <ClInclude Include="src\infra\ProcessRunner.h">
@@ -476,6 +593,9 @@
     <ClInclude Include="src\infra\KnotLinkProtocol.h">
       <Filter>src\infra</Filter>
     </ClInclude>
+	<ClInclude Include="src\infra\KnotLinkCommandDispatcher.h">
+	  <Filter>src\infra</Filter>
+	</ClInclude>
     <ClInclude Include="src\infra\KnotLinkServerManager.h">
       <Filter>src\infra</Filter>
     </ClInclude>

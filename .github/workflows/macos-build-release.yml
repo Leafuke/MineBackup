@@ -24,6 +24,18 @@ jobs:
       - name: Install validation tools
         run: brew install ninja
 
+      - name: Build pinned 7-Zip ZS runtime
+        run: |
+          test "$(uname -m)" = arm64
+          git init build/7zip-zstd
+          git -C build/7zip-zstd remote add origin https://github.com/mcmilk/7-Zip-zstd.git
+          git -C build/7zip-zstd fetch --depth 1 origin 2dcb6815c0e6877988171c47e1824b86172ff3b2
+          git -C build/7zip-zstd checkout --detach FETCH_HEAD
+          bash packaging/macos/build-sevenzip.sh \
+            build/7zip-zstd build/package-inputs/7zz
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 0755 build/package-inputs/7zz /usr/local/bin/7zz
+
       - name: Configure, build and test arm64 candidate
         run: |
           test "$(uname -m)" = arm64
@@ -55,16 +67,6 @@ jobs:
           lipo -info "$app/Contents/MacOS/MineBackup" | tee build/macos-arm64/lipo.txt
           grep -Fq 'arm64' build/macos-arm64/lipo.txt
           ! grep -Fq 'x86_64' build/macos-arm64/lipo.txt
-
-      - name: Build pinned 7-Zip ZS for packaging
-        if: matrix.runner == 'macos-15'
-        run: |
-          git init build/7zip-zstd
-          git -C build/7zip-zstd remote add origin https://github.com/mcmilk/7-Zip-zstd.git
-          git -C build/7zip-zstd fetch --depth 1 origin 2dcb6815c0e6877988171c47e1824b86172ff3b2
-          git -C build/7zip-zstd checkout --detach FETCH_HEAD
-          bash packaging/macos/build-sevenzip.sh \
-            build/7zip-zstd build/package-inputs/7zz
 
       - name: Build ad-hoc signed DMG candidate
         if: matrix.runner == 'macos-15'

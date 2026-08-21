@@ -1,8 +1,7 @@
 #pragma once
 
-#include "LaunchOptions.h"
-
 #include <filesystem>
+#include <optional>
 #include <string>
 
 enum class AppPathMode {
@@ -24,12 +23,18 @@ struct AppPaths {
     AppPathMode mode = AppPathMode::Installed;
 
     std::filesystem::path ConfigFile() const { return configRoot / L"config.ini"; }
+    std::filesystem::path SpecialTasksFile() const { return configRoot / L"special-tasks.json"; }
+    std::filesystem::path JobsFile() const { return configRoot / L"jobs.json"; }
     std::filesystem::path HistoryFile() const { return dataRoot / L"history.json"; }
+};
+
+struct AppPathRequest {
+    std::optional<std::filesystem::path> dataDirectory;
 };
 
 std::filesystem::path GetExecutablePath();
 bool ResolveAppPaths(
-    const LaunchOptions& options,
+	const AppPathRequest& request,
     const std::filesystem::path& executablePath,
     AppPaths& paths,
     std::wstring& error);

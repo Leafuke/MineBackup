@@ -101,6 +101,7 @@ public:
     static constexpr std::string_view AppId = "0x00000020";
     static constexpr std::string_view OpenSocketId = "0x00000010";
     static constexpr std::string_view SignalId = "0x00000020";
+    static constexpr std::string_view MinimumModVersion = "3.0.0";
 
     static std::string_view ManifestJson();
 };

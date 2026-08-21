@@ -1,7 +1,6 @@
 #include "ProcessRunner.h"
 
 #include "text_to_text.h"
-#include "TaskCoordinator.h"
 
 #include <algorithm>
 #include <array>
@@ -319,30 +318,7 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
 } // namespace
 
 ProcessResult Run(const ProcessSpec& spec, stop_token stopToken) {
-    if (!stopToken.stop_possible()) stopToken = TaskCoordinator::CurrentStopToken();
     return RunPlatform(spec, stopToken);
-}
-
-ProcessResult RunShellTask(const ShellTaskSpec& spec, stop_token stopToken) {
-    ProcessSpec process;
-#ifdef _WIN32
-    wchar_t systemDirectory[MAX_PATH] = {};
-    if (GetSystemDirectoryW(systemDirectory, MAX_PATH) == 0) {
-        ProcessResult result;
-        result.error = L"Could not locate cmd.exe.";
-        return result;
-    }
-    process.executable = filesystem::path(systemDirectory) / L"cmd.exe";
-    process.arguments = {L"/D", L"/S", L"/C", spec.command};
-#else
-    process.executable = L"/bin/sh";
-    process.arguments = {L"-c", spec.command};
-#endif
-    process.workingDirectory = spec.workingDirectory;
-    process.timeout = spec.timeout;
-    process.maximumCapturedBytes = spec.maximumCapturedBytes;
-    process.useLowPriority = spec.useLowPriority;
-    return Run(process, stopToken);
 }
 
 } // namespace ProcessRunner

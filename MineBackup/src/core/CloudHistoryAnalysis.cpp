@@ -2,6 +2,7 @@
 
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
+#include "PlatformCompat.h"
 
 #include <algorithm>
 #include <cwctype>

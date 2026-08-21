@@ -156,41 +156,40 @@ inline int _wcsicmp(const wchar_t* a, const wchar_t* b) {
 	return ::wcscasecmp(a, b);
 }
 
-inline termios& _mb_saved_termios() {
-	static termios saved{};
-	return saved;
-}
-inline bool& _mb_termios_saved() {
-	static bool saved = false;
-	return saved;
-}
-inline void _mb_restore_termios() {
-	if (_mb_termios_saved()) {
-		tcsetattr(STDIN_FILENO, TCSANOW, &_mb_saved_termios());
+struct _mb_terminal_state {
+	termios saved{};
+	bool attempted = false;
+	bool active = false;
+
+	~_mb_terminal_state() {
+		if (active) (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved);
 	}
+};
+
+inline _mb_terminal_state& _mb_stdin_terminal_state() {
+	static _mb_terminal_state state;
+	return state;
 }
+
 inline int _kbhit() {
-	static bool initialized = false;
-	static termios newt;
-	if (!initialized) {
-		termios oldt;
-		tcgetattr(STDIN_FILENO, &oldt);
-		_mb_saved_termios() = oldt;
-		_mb_termios_saved() = true;
-		newt = oldt;
+	auto& state = _mb_stdin_terminal_state();
+	if (!state.attempted) {
+		state.attempted = true;
+		if (::isatty(STDIN_FILENO) != 1) return 0;
+		if (tcgetattr(STDIN_FILENO, &state.saved) != 0) return 0;
+		termios newt = state.saved;
 		newt.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
-		tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-		setbuf(stdin, NULL);
-		std::atexit(_mb_restore_termios);
-		initialized = true;
+		if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) != 0) return 0;
+		state.active = true;
 	}
+	if (!state.active) return 0;
 	fd_set set;
 	FD_ZERO(&set);
 	FD_SET(STDIN_FILENO, &set);
 	struct timeval tv;
 	tv.tv_sec = 0;
 	tv.tv_usec = 0;
-	int res = select(STDIN_FILENO + 1, &set, nullptr, nullptr, &tv);
+	const int res = select(STDIN_FILENO + 1, &set, nullptr, nullptr, &tv);
 	return res > 0;
 }
 

@@ -121,8 +121,6 @@ void TestCapabilities() {
              {"backup", "BACKUP"},
              {"restore", "RESTORE"},
              {"backup_all", "BACKUP_ALL"},
-             {"auto_backup", "AUTO_BACKUP"},
-             {"stop_auto_backup", "STOP_AUTO_BACKUP"},
              {"mark_important", "MARK_IMPORTANT"}}) {
         const auto& function = document.at("openSocket").at(functionName);
         Check(function.at("args").is_object() &&
@@ -135,8 +133,11 @@ void TestCapabilities() {
     }
     Check(!document.at("openSocket").at("list_configs").contains("command"),
           "funcList functions should not use the non-standard command property");
+    Check(document.at("signal").contains("backup_warning"),
+          "funcList should advertise the backup warning notification");
     for (const std::string unsupported : {
              "backup_whitelist", "backup_scope", "preserve_player_data",
+             "AUTO_BACKUP", "STOP_AUTO_BACKUP",
              "RESTORE_CURRENT", "LIST_WORLDS", "SEND"}) {
         Check(manifest.find(unsupported) == std::string::npos,
               "funcList must not advertise unsupported feature " + unsupported);

@@ -1,9 +1,17 @@
 #include "BackupPipelineTest.h"
+#include "BackupServiceTests.h"
 #include "CloudSyncTests.h"
 #include "ExternalToolManager.h"
+#include "HistoryRepositoryTests.h"
+#include "JobTests.h"
+#include "LegacyIniConfigCodecTests.h"
 #include "ProcessRunner.h"
 #include "ProcessToolTests.h"
+#include "ProfileConfigCatalogTests.h"
+#include "ProfileManifestTests.h"
+#include "OperationResultTests.h"
 #include "RuntimeInfrastructureTests.h"
+#include "RestoreServiceTests.h"
 #include "StorageMigrationTests.h"
 #include "TestSupport.h"
 #include "text_to_text.h"
@@ -100,7 +108,15 @@ int main(int argc, char** argv) {
     RunStorageMigrationTests(test, temporary.path);
     RunProcessToolTests(test, executable, temporary.path);
     RunBackupPipelineTests(test, temporary.path);
+	RunHistoryRepositoryTests(test, temporary.path);
+	RunJobTests(test, temporary.path);
+    RunLegacyIniConfigCodecTests(test);
+	RunOperationResultTests(test);
+	RunProfileConfigCatalogTests(test, temporary.path);
+	RunProfileManifestTests(test, temporary.path);
     RunRuntimeInfrastructureTests(test, temporary.path);
+	RunRestoreServiceTests(test, temporary.path);
+	RunBackupServiceTests(test, temporary.path);
     RunCloudSyncTests(test);
 
     if (test.failures == 0) {

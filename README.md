@@ -111,6 +111,16 @@ switch Off/Info/Debug at runtime, and the Log panel can export a diagnostic copy
 with known paths redacted. See [logging and diagnostics](docs/logging-and-diagnostics.md)
 for locations, retention, privacy boundaries and troubleshooting.
 
+### Headless server CLI
+
+`minebackup-cli` can initialize a profile from a manifest, run staged Jobs,
+create Full/Smart backups, verify archive chains and perform confirmed cold
+restores without starting the GUI. Windows ZIP and Linux tar/deb server assets
+include examples and external-scheduler templates. The removed SpecialConfig
+and built-in scheduler are not migrated or executed. See the
+[headless server guide](docs/headless-cli.md) for deployment, JSON, restore and
+systemd/Task Scheduler operations.
+
 ---
 
 ## Sponsor

@@ -40,7 +40,4 @@ void ShowHistoryWindow(int configIndex,
 void ResetHistoryWindowRuntimeState();
 void ReleaseHistoryWindowCaches();
 
-// SpecialMode.cpp — 特殊模式执行
-void RunSpecialMode(int configId);
-
 #endif // MAIN_UI_H

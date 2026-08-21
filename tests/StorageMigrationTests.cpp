@@ -1,5 +1,6 @@
 #include "AtomicFileWriter.h"
 #include "AppPaths.h"
+#include "LaunchOptions.h"
 #include "DiagnosticLogExporter.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
@@ -19,7 +20,6 @@
 #include "ExternalToolManager.h"
 #include "PortableConfigDocument.h"
 #include "DesktopServices.h"
-#include "SpecialConfigPolicy.h"
 #include "LegacyServicePolicy.h"
 #include "text_to_text.h"
 #include "BackupPipelineTest.h"
@@ -163,6 +163,8 @@ void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root)
     FolderRewindFormat::ChangeRecord record;
     record.archiveFileName = L"Full-World.7z";
     record.backupType = L"Full";
+    record.basedOnFullBackup = L"FULL-WORLD.7Z";
+    record.previousBackupFileName = L"full-world.7z";
     record.createdAtUtc = state.lastBackupTime;
     record.fullFileList = {L"level.dat"};
 
@@ -174,6 +176,19 @@ void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root)
     test.Expect(!loaded.recordLoadFailed, "metadata record should load");
     test.Expect(loaded.state.lastBackupFileName == state.lastBackupFileName, "state archive name should round-trip");
     test.Expect(loaded.records.count(record.archiveFileName) == 1, "record should be indexed by archive name");
+
+    const auto renamedArchive = L"Renamed-World.7z";
+    test.Expect(FolderRewindMetadataStore::RewriteRecordArchiveName(
+        metadata, record.archiveFileName, renamedArchive),
+        "metadata archive rename should succeed");
+
+    FolderRewindFormat::ChangeRecord renamedRecord;
+    test.Expect(FolderRewindMetadataStore::LoadRecord(metadata, renamedArchive, renamedRecord),
+        "renamed metadata record should load");
+    test.Expect(renamedRecord.archiveFileName == renamedArchive
+        && renamedRecord.basedOnFullBackup == renamedArchive
+        && renamedRecord.previousBackupFileName == renamedArchive,
+        "metadata archive references should be rewritten case-insensitively");
 }
 
 void TestHistoryRoundTrip(TestContext& test, const std::filesystem::path& root) {
@@ -246,16 +261,19 @@ void TestMigrationCoordinator(TestContext& test, const std::filesystem::path& ro
 }
 
 void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path& root) {
-    LaunchOptions options;
+	LaunchOptions options;
+	LaunchOptions rejected;
     std::wstring error;
     const auto profile = std::filesystem::absolute(root / "explicit-profile");
-    test.Expect(ParseLaunchOptions(
-        {L"MineBackup", L"--data-dir", profile.wstring(), L"--autostart",
-            L"--select-config", L"config-id", L"--run-special", L"special-id"},
-        options, error), "known launch options should parse");
-    test.Expect(options.autostart && options.selectConfigId == L"config-id"
-        && options.runSpecialId == L"special-id", "launch option values should be retained");
-    LaunchOptions rejected;
+	test.Expect(ParseLaunchOptions(
+		{L"MineBackup", L"--data-dir", profile.wstring(), L"--autostart",
+			L"--select-config", L"config-id"},
+		options, error), "known launch options should parse");
+	test.Expect(options.autostart && options.selectConfigId == L"config-id",
+		"launch option values should be retained");
+	test.Expect(!ParseLaunchOptions(
+		{L"MineBackup", L"--run-special", L"special-id"}, rejected, error),
+		"removed special-run launch options should be rejected");
     test.Expect(!ParseLaunchOptions({L"MineBackup", L"--data-dir"}, rejected, error),
         "a launch option with a missing value should be rejected");
     test.Expect(!ParseLaunchOptions({L"MineBackup", L"--unknown"}, rejected, error),
@@ -278,7 +296,8 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     std::filesystem::create_directories(appDirectory);
     const auto executable = appDirectory / "MineBackup.exe";
     AppPaths paths;
-    test.Expect(ResolveAppPaths(options, executable, paths, error), "an absolute --data-dir should resolve");
+    const AppPathRequest explicitPathRequest{options.dataDirectory};
+    test.Expect(ResolveAppPaths(explicitPathRequest, executable, paths, error), "an absolute --data-dir should resolve");
     test.Expect(paths.mode == AppPathMode::Explicit, "--data-dir should take precedence over other modes");
     ExpectSamePath(test, paths.ConfigFile(), profile / "config" / "config.ini",
         "the explicit profile should own the config root");
@@ -292,13 +311,14 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     std::filesystem::create_directories(unrelatedWorkingDirectory);
     std::filesystem::current_path(unrelatedWorkingDirectory);
     AppPaths pathsFromAnotherDirectory;
-    const bool resolvedFromAnotherDirectory = ResolveAppPaths(options, executable, pathsFromAnotherDirectory, error);
+    const bool resolvedFromAnotherDirectory = ResolveAppPaths(
+		explicitPathRequest, executable, pathsFromAnotherDirectory, error);
     std::filesystem::current_path(previousWorkingDirectory);
     test.Expect(resolvedFromAnotherDirectory
         && SamePath(pathsFromAnotherDirectory.ConfigFile(), paths.ConfigFile()),
         "the profile should not depend on the process working directory");
 
-    LaunchOptions invalid;
+	AppPathRequest invalid;
     invalid.dataDirectory = std::filesystem::path("relative-profile");
     test.Expect(!ResolveAppPaths(invalid, executable, paths, error),
         "a relative explicit profile should fail instead of falling back");
@@ -312,7 +332,7 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
 #ifdef _WIN32
     test.Expect(AtomicFileWriter::WriteText(appDirectory / "portable.flag", "").success,
         "the portable marker should be created for the test");
-    LaunchOptions portable;
+	AppPathRequest portable;
     test.Expect(ResolveAppPaths(portable, executable, paths, error), "the Windows portable profile should resolve");
     test.Expect(paths.mode == AppPathMode::Portable
         && SamePath(paths.configRoot, appDirectory / "MineBackupData" / "config"),
@@ -323,7 +343,7 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     const std::wstring previousLocalAppData = previousLocalAppDataValue ? previousLocalAppDataValue : L"";
     const auto localAppData = std::filesystem::absolute(root / "local-app-data");
     _wputenv_s(L"LOCALAPPDATA", localAppData.wstring().c_str());
-    LaunchOptions installed;
+	AppPathRequest installed;
     test.Expect(ResolveAppPaths(installed, executable, paths, error), "the Windows installed profile should resolve");
     test.Expect(paths.mode == AppPathMode::Installed
         && SamePath(paths.configRoot, localAppData / "MineBackup" / "config"),
@@ -334,7 +354,7 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     setenv("APPIMAGE", fakeAppImage.c_str(), 1);
     test.Expect(AtomicFileWriter::WriteText(appDirectory / "portable.flag", "").success,
         "the AppImage portable marker should be created for the test");
-    LaunchOptions portable;
+	AppPathRequest portable;
     test.Expect(ResolveAppPaths(portable, executable, paths, error), "the AppImage portable profile should resolve");
     test.Expect(paths.mode == AppPathMode::Portable
         && SamePath(paths.configRoot, appDirectory / "MineBackupData" / "config"),
@@ -349,14 +369,14 @@ void TestLaunchOptionsAndAppPaths(TestContext& test, const std::filesystem::path
     setenv("XDG_STATE_HOME", "relative-state", 1);
     setenv("XDG_CACHE_HOME", "relative-cache", 1);
     unsetenv("XDG_RUNTIME_DIR");
-    LaunchOptions installed;
+	AppPathRequest installed;
     test.Expect(ResolveAppPaths(installed, executable, paths, error), "invalid relative XDG roots should fall back safely");
     test.Expect(SamePath(paths.configRoot, fakeHome / ".config" / "MineBackup")
         && SamePath(paths.runtimeRoot, fakeHome / ".local" / "state" / "MineBackup" / "runtime"),
         "invalid XDG and absent runtime roots should use the documented fallbacks");
 #endif
 
-    test.Expect(ResolveAppPaths(options, executable, paths, error) && paths.mode == AppPathMode::Explicit,
+    test.Expect(ResolveAppPaths(explicitPathRequest, executable, paths, error) && paths.mode == AppPathMode::Explicit,
         "--data-dir should remain authoritative when a portable marker is present");
 }
 
@@ -392,22 +412,24 @@ void TestLegacyServicePolicy(TestContext& test) {
 }
 
 void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
-#ifdef _WIN32
     const auto runtime = root / "single-instance";
+#ifndef _WIN32
+    const auto longRuntime = runtime / std::string(80, 'a') / std::string(80, 'b');
+    test.Expect(longRuntime.string().size() > 160,
+        "the Unix single-instance regression fixture should exceed socket pathname limits");
 #else
-    // sockaddr_un::sun_path is only 104 bytes on macOS.  The per-runner
-    // temporary directory is much longer than the application's real runtime
-    // path, so use a unique short POSIX test endpoint below /tmp.
-    const auto runtime = std::filesystem::path("/tmp") / root.filename();
+    const auto& longRuntime = runtime;
 #endif
+    const auto profileOne = (root / "profile-one").wstring();
+    const auto profileTwo = (root / "profile-two").wstring();
     std::wstring error;
     {
         SingleInstanceService primary;
-        test.Expect(primary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::Acquired,
+        test.Expect(primary.Acquire(profileOne, longRuntime, error) == InstanceAcquireResult::Acquired,
             "the first instance should acquire its profile lock");
 
         SingleInstanceService secondary;
-        test.Expect(secondary.Acquire(L"profile-one", runtime, error) == InstanceAcquireResult::AlreadyRunning,
+        test.Expect(secondary.Acquire(profileOne, longRuntime, error) == InstanceAcquireResult::AlreadyRunning,
             "a second instance of the same profile should be rejected");
         test.Expect(secondary.Send({InstanceRequestType::SelectConfig, L"stable-config-id"}, error),
             "the second instance should deliver a bounded IPC request");
@@ -418,12 +440,127 @@ void TestSingleInstance(TestContext& test, const std::filesystem::path& root) {
         test.Expect(requests.size() == 1 && requests.front().type == InstanceRequestType::SelectConfig
             && requests.front().stableId == L"stable-config-id", "the primary instance should decode the IPC request");
 
+		InstanceControlResponse clientResponse;
+		std::wstring clientError;
+		bool exchanged = false;
+		std::jthread client([&] {
+			exchanged = secondary.Exchange({
+				"request-1", InstanceControlRequestType::Execute,
+				{L"--json", L"世界"}, {}},
+				clientResponse, clientError, std::chrono::seconds(5));
+		});
+		std::vector<InstanceControlExchange> controls;
+		const auto controlDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(2);
+		while (controls.empty() && std::chrono::steady_clock::now() < controlDeadline) {
+			controls = primary.PollControlRequests(error);
+			if (controls.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		test.Expect(controls.size() == 1
+				&& controls.front().request.requestId == "request-1"
+				&& controls.front().request.arguments == std::vector<std::wstring>{L"--json", L"世界"},
+			"protocol v2 should preserve request identity and Unicode argument vectors");
+		if (!controls.empty()) {
+			InstanceControlResponse serverResponse;
+			serverResponse.requestId = controls.front().request.requestId;
+			serverResponse.accepted = true;
+			serverResponse.role = InstanceRuntimeRole::Serve;
+			serverResponse.capabilities = {"execute", "cancel", "status", "stop"};
+			serverResponse.operationId = "operation-1";
+			serverResponse.exitCode = 0;
+			serverResponse.payload = R"({"schemaVersion":1,"code":"success"})";
+			test.Expect(primary.Reply(
+				controls.front().connectionId, serverResponse, error),
+				"protocol v2 server should send a final response on the accepted connection");
+		}
+		client.join();
+		if (!exchanged && !clientError.empty()) {
+			std::wcerr << L"[DETAIL] control IPC: " << clientError << L'\n';
+		}
+		test.Expect(exchanged && clientResponse.accepted
+				&& clientResponse.role == InstanceRuntimeRole::Serve
+				&& clientResponse.operationId == "operation-1"
+				&& clientResponse.exitCode == 0,
+			"protocol v2 client should receive role, capabilities, operationId and final exit code");
+
+		InstanceControlResponse largeClientResponse;
+		std::wstring largeClientError;
+		bool largeExchanged = false;
+		std::jthread largeClient([&] {
+			largeExchanged = secondary.Exchange({
+				"request-large", InstanceControlRequestType::Execute,
+				{L"--json"}, {}}, largeClientResponse,
+				largeClientError, std::chrono::seconds(5));
+		});
+		controls.clear();
+		const auto largeDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(2);
+		while (controls.empty() && std::chrono::steady_clock::now() < largeDeadline) {
+			controls = primary.PollControlRequests(error);
+			if (controls.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		test.Expect(controls.size() == 1,
+			"protocol v2 should accept a response larger than the Unix socket buffer");
+		if (!controls.empty()) {
+			InstanceControlResponse largeResponse;
+			largeResponse.requestId = controls.front().request.requestId;
+			largeResponse.accepted = true;
+			largeResponse.role = InstanceRuntimeRole::Serve;
+			largeResponse.capabilities = {"execute"};
+			largeResponse.payload = std::string(3u * 1024u * 1024u, 'x');
+			test.Expect(primary.Reply(
+				controls.front().connectionId, largeResponse, error),
+				"protocol v2 should send a multi-megabyte response completely");
+		}
+		largeClient.join();
+		if (!largeExchanged && !largeClientError.empty()) {
+			std::wcerr << L"[DETAIL] large control IPC: " << largeClientError << L'\n';
+		}
+		test.Expect(largeExchanged && largeClientResponse.accepted
+				&& largeClientResponse.payload.size() == 3u * 1024u * 1024u,
+			"protocol v2 client should receive the complete multi-megabyte response");
+
+		InstanceControlResponse oversizedClientResponse;
+		std::wstring oversizedClientError;
+		bool oversizedExchanged = false;
+		std::jthread oversizedClient([&] {
+			oversizedExchanged = secondary.Exchange({
+				"request-oversized", InstanceControlRequestType::Execute,
+				{L"--json"}, {}}, oversizedClientResponse,
+				oversizedClientError, std::chrono::seconds(2));
+		});
+		controls.clear();
+		const auto oversizedDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(2);
+		while (controls.empty() && std::chrono::steady_clock::now() < oversizedDeadline) {
+			controls = primary.PollControlRequests(error);
+			if (controls.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		test.Expect(controls.size() == 1,
+			"protocol v2 should retain an accepted connection for oversized responses");
+		if (!controls.empty()) {
+			InstanceControlResponse oversizedResponse;
+			oversizedResponse.requestId = controls.front().request.requestId;
+			oversizedResponse.accepted = true;
+			oversizedResponse.role = InstanceRuntimeRole::Serve;
+			oversizedResponse.capabilities = {"execute"};
+			oversizedResponse.payload = std::string(9u * 1024u * 1024u, 'x');
+			const bool replyResult = primary.Reply(
+				controls.front().connectionId, oversizedResponse, error);
+			test.Expect(!replyResult,
+				"oversized protocol responses should report a bounded reply failure");
+		}
+		oversizedClient.join();
+		test.Expect(oversizedExchanged && !oversizedClientResponse.accepted
+				&& oversizedClientResponse.error == "instance_response_too_large",
+			"oversized protocol responses should reach the client as a compact error");
+
         const std::wstring oversizedId(70u * 1024u, L'x');
         test.Expect(!secondary.Send({InstanceRequestType::SelectConfig, oversizedId}, error),
             "instance IPC should reject payloads above the protocol limit");
 
         SingleInstanceService otherProfile;
-        test.Expect(otherProfile.Acquire(L"profile-two", runtime, error) == InstanceAcquireResult::Acquired,
+        test.Expect(otherProfile.Acquire(profileTwo, runtime, error) == InstanceAcquireResult::Acquired,
             "a different profile should acquire an independent lock");
     }
     std::error_code cleanupError;

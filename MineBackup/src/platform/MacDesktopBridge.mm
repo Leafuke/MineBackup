@@ -4,12 +4,10 @@
 #include "text_to_text.h"
 
 #import <AppKit/AppKit.h>
-#import <Carbon/Carbon.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <ServiceManagement/ServiceManagement.h>
 #import <UserNotifications/UserNotifications.h>
 
-#include <atomic>
 #include <mutex>
 
 using namespace std;
@@ -432,43 +430,6 @@ CapabilityStatus MacActivateApplication() {
         [NSApp activateIgnoringOtherApps:YES];
         return CapabilityStatus::Ready();
     });
-}
-
-namespace {
-
-atomic_bool g_launchObservationInstalled{false};
-atomic_bool g_launchedAsLoginItem{false};
-id g_launchObservation = nil;
-
-void InspectLoginItemLaunchEvent() {
-    NSAppleEventDescriptor* event =
-        [[NSAppleEventManager sharedAppleEventManager] currentAppleEvent];
-    NSAppleEventDescriptor* attribute =
-        [event attributeDescriptorForKeyword:keyAELaunchedAsLogInItem];
-    if (attribute && attribute.booleanValue) {
-        g_launchedAsLoginItem.store(true, memory_order_release);
-    }
-}
-
-} // namespace
-
-void MacBeginLaunchObservation() {
-    if (g_launchObservationInstalled.exchange(true, memory_order_acq_rel)) return;
-    void (^install)(void) = ^{
-        g_launchObservation = [[NSNotificationCenter defaultCenter]
-            addObserverForName:NSApplicationWillFinishLaunchingNotification
-                        object:nil
-                         queue:nil
-                    usingBlock:^(NSNotification*) {
-                        InspectLoginItemLaunchEvent();
-                    }];
-    };
-    if ([NSThread isMainThread]) install();
-    else dispatch_sync(dispatch_get_main_queue(), install);
-}
-
-bool MacWasLaunchedAsLoginItem() noexcept {
-    return g_launchedAsLoginItem.load(memory_order_acquire);
 }
 
 namespace {

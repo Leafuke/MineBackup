@@ -32,24 +32,8 @@ bool ParseLaunchOptions(const vector<wstring>& arguments, LaunchOptions& options
         else if (argument == L"--select-config") {
             if (!ReadValue(arguments, index, L"--select-config", options.selectConfigId, error)) return false;
         }
-        else if (argument == L"--run-special") {
-            if (!ReadValue(arguments, index, L"--run-special", options.runSpecialId, error)) return false;
-        }
         else if (argument == L"--cleanup-legacy-service") {
             if (!ReadValue(arguments, index, L"--cleanup-legacy-service", options.legacyServiceCleanup, error)) return false;
-        }
-        else if (argument == L"-specialcfg") {
-            if (!ReadValue(arguments, index, L"-specialcfg", value, error)) return false;
-            try {
-                size_t consumed = 0;
-                const int parsed = stoi(value, &consumed);
-                if (consumed != value.size() || parsed < 0) throw invalid_argument("invalid index");
-                options.legacySpecialConfigIndex = parsed;
-            }
-            catch (...) {
-                error = L"-specialcfg requires a non-negative numeric configuration index.";
-                return false;
-            }
         }
         else if (argument == L"--service") options.legacyServiceMode = true;
         else {
@@ -59,8 +43,7 @@ bool ParseLaunchOptions(const vector<wstring>& arguments, LaunchOptions& options
     }
     const bool hasProfileLaunchOptions = options.dataDirectory.has_value()
         || options.autostart || options.silentStartup
-        || !options.selectConfigId.empty() || !options.runSpecialId.empty()
-        || options.legacySpecialConfigIndex.has_value();
+		|| !options.selectConfigId.empty();
     if (!options.legacyServiceCleanup.empty()
         && (hasProfileLaunchOptions || options.legacyServiceMode)) {
         error = L"--cleanup-legacy-service must be used by itself.";

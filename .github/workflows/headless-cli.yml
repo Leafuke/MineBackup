@@ -1,0 +1,230 @@
+name: Headless CLI Validation
+
+on:
+  pull_request:
+  push:
+    branches: [develop, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-cli-only:
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install CLI-only build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-13 g++-13 cmake ninja-build python3 unzip curl
+
+      - name: Install pinned headless 7-Zip runtime
+        run: |
+          mkdir -p build/headless-inputs
+          curl --fail --location --retry 3 \
+            https://github.com/mcmilk/7-Zip-zstd/releases/download/v26.02-v1.5.7-R2/linux-gcc-x64.zip \
+            --output build/headless-inputs/linux-gcc-x64.zip
+          echo 'be246e5a284d3b5e738bad5cbb24c2662996ddb9776e09575b5099ab53fa0ba3  build/headless-inputs/linux-gcc-x64.zip' \
+            | sha256sum --check --status
+          unzip -p build/headless-inputs/linux-gcc-x64.zip 7zz >build/headless-inputs/7zz
+          chmod 0755 build/headless-inputs/7zz
+          sudo install -m 0755 build/headless-inputs/7zz /usr/local/bin/7zz
+
+      - name: Configure and build without desktop development packages
+        run: |
+          cmake --preset linux-x64-cli-only -DBUILD_TESTING=ON
+          cmake --build build/linux-x64-cli-only --parallel
+          cmake --build build/linux-x64-cli-only --target check_runtime_boundaries
+
+      - name: Test without display or terminal input
+        run: |
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            build/linux-x64-cli-only/bin/minebackup-cli --version </dev/null
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            ctest --preset linux-x64-cli-only --output-on-failure
+
+      - name: Reject desktop dynamic dependencies
+        run: |
+          cmake -DCLI="$PWD/build/linux-x64-cli-only/bin/minebackup-cli" \
+            -P cmake/VerifyHeadlessCliDependencies.cmake
+
+      - name: Build and audit Linux server assets
+        run: |
+          version_file="$RUNNER_TEMP/minebackup-version.txt"
+          cmake -DMINEBACKUP_VERSION_OUTPUT="$version_file" \
+            -P cmake/ExportMineBackupVersion.cmake
+          version="$(tr -d '\r\n' <"$version_file")"
+          bash packaging/cli/build-cli-linux.sh \
+            build/linux-x64-cli-only/bin/minebackup-cli \
+            build/cli-release build/headless-inputs/linux-gcc-x64.zip "$version"
+          mkdir -p build/cli-release/tar-audit build/cli-release/deb-audit
+          tar -xzf "build/cli-release/MineBackup-CLI-$version-linux-x64.tar.gz" \
+            -C build/cli-release/tar-audit
+          dpkg-deb --extract "build/cli-release/minebackup-cli_${version}_amd64.deb" \
+            build/cli-release/deb-audit
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/bin/minebackup-cli" \
+            --version </dev/null
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            build/cli-release/deb-audit/usr/bin/minebackup-cli --version </dev/null
+          test -x "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz"
+          test -x "build/cli-release/deb-audit/usr/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz"
+          test -f "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/scheduling/systemd/minebackup-serve@.service"
+          test -f "build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/scheduling/windows/MineBackup-Serve.xml"
+          test -f build/cli-release/deb-audit/usr/lib/systemd/system/minebackup-serve@.service
+          tar_smoke_root="$RUNNER_TEMP/minebackup-tar-package-smoke"
+          deb_smoke_root="$RUNNER_TEMP/minebackup-deb-package-smoke"
+          cmake -DCLI="$PWD/build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/bin/minebackup-cli" \
+            -DTEST_ROOT="$tar_smoke_root" \
+            -P tests/RunCliPackageSmoke.cmake
+          cmake -DCLI="$PWD/build/cli-release/deb-audit/usr/bin/minebackup-cli" \
+            -DTEST_ROOT="$deb_smoke_root" \
+            -P tests/RunCliPackageSmoke.cmake
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            "$PWD/build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/bin/minebackup-cli" \
+            --data-dir "$tar_smoke_root/profile" --json --no-network doctor \
+            >"$RUNNER_TEMP/tar-package-doctor.json"
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            "$PWD/build/cli-release/deb-audit/usr/bin/minebackup-cli" \
+            --data-dir "$deb_smoke_root/profile" --json --no-network doctor \
+            >"$RUNNER_TEMP/deb-package-doctor.json"
+          python3 - "$RUNNER_TEMP/tar-package-doctor.json" \
+            "$PWD/build/cli-release/tar-audit/MineBackup-CLI-$version-linux-x64/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz" \
+            "$RUNNER_TEMP/deb-package-doctor.json" \
+            "$PWD/build/cli-release/deb-audit/usr/share/MineBackup/tools/7zip/26.02-zs-v1.5.7-r2/7zz" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          for doctor_path, expected_path in zip(sys.argv[1::2], sys.argv[2::2]):
+              payload = json.loads(pathlib.Path(doctor_path).read_text())
+              tools = [item for item in payload["data"]["tools"] if item["tool"] == "7zip"]
+              if len(tools) != 1 or pathlib.Path(tools[0]["path"]).resolve() != pathlib.Path(expected_path).resolve():
+                  raise SystemExit(f"package selected an unexpected 7zz: {doctor_path} {payload}")
+          PY
+          ldd build/cli-release/deb-audit/usr/bin/minebackup-cli | tee build/cli-release/ldd.txt
+          ! grep -E 'not found|libGL|libX11|libwayland|libgtk' build/cli-release/ldd.txt
+
+      - name: Upload Linux CLI candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-cli-linux-candidates
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/cli-release/MineBackup-CLI-*-linux-x64.tar.gz
+            build/cli-release/minebackup-cli_*_amd64.deb
+
+  macos-cli-only:
+    runs-on: macos-15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Build pinned headless 7-Zip runtime
+        run: |
+          test "$(uname -m)" = arm64
+          git init build/7zip-zstd
+          git -C build/7zip-zstd remote add origin https://github.com/mcmilk/7-Zip-zstd.git
+          git -C build/7zip-zstd fetch --depth 1 origin 2dcb6815c0e6877988171c47e1824b86172ff3b2
+          git -C build/7zip-zstd checkout --detach FETCH_HEAD
+          bash packaging/macos/build-sevenzip.sh \
+            build/7zip-zstd build/headless-inputs/7zz
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 0755 build/headless-inputs/7zz /usr/local/bin/7zz
+
+      - name: Configure and build without desktop dependencies
+        run: |
+          cmake --preset macos-arm64-cli-only -DBUILD_TESTING=ON
+          cmake --build build/macos-arm64-cli-only --parallel
+          cmake --build build/macos-arm64-cli-only --target check_runtime_boundaries
+
+      - name: Test without display or terminal input
+        run: |
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            build/macos-arm64-cli-only/bin/minebackup-cli --version </dev/null
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            ctest --preset macos-arm64-cli-only --output-on-failure
+
+      - name: Reject desktop framework dependencies
+        run: |
+          cmake -DCLI="$PWD/build/macos-arm64-cli-only/bin/minebackup-cli" \
+            -P cmake/VerifyHeadlessCliDependencies.cmake
+
+  windows-cli-only:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Verify tracked Windows 7-Zip resource
+        shell: pwsh
+        run: .\cmake\VerifyWindowsSevenZip.ps1
+
+      - name: Configure and build console-only candidate
+        shell: pwsh
+        run: |
+          cmake -S . -B build/headless-windows -A x64 `
+            -DMINEBACKUP_BUILD_GUI=OFF `
+            -DMINEBACKUP_BUILD_CLI=ON `
+            -DMINEBACKUP_ENABLE_V15_MIGRATION=OFF `
+            -DBUILD_TESTING=ON
+          cmake --build build/headless-windows --config Release --parallel
+
+      - name: Run CLI and process-contract tests
+        shell: pwsh
+        run: |
+          ctest --test-dir build/headless-windows -C Release --output-on-failure
+          cmake --build build/headless-windows --config Release `
+            --target check_msbuild_source_parity
+          cmake --build build/headless-windows --config Release `
+            --target check_runtime_boundaries
+
+      - name: Reject GUI subsystem and desktop imports
+        shell: pwsh
+        run: |
+          .\cmake\VerifyWindowsCliBinary.ps1 `
+            -Executable .\build\headless-windows\bin\Release\minebackup-cli.exe
+
+      - name: Build and audit Windows server asset
+        shell: pwsh
+        run: |
+          $versionFile = Join-Path $env:RUNNER_TEMP 'minebackup-version.txt'
+          cmake "-DMINEBACKUP_VERSION_OUTPUT=$versionFile" `
+            -P .\cmake\ExportMineBackupVersion.cmake
+          $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+          .\packaging\cli\build-cli-windows.ps1 `
+            -Executable .\build\headless-windows\bin\Release\minebackup-cli.exe `
+            -OutputDirectory .\build\cli-release `
+            -Version $version
+          Expand-Archive `
+            -LiteralPath ".\build\cli-release\MineBackup-CLI-$version-windows-x64.zip" `
+            -DestinationPath .\build\cli-release\audit
+          .\cmake\VerifyWindowsCliBinary.ps1 `
+            -Executable ".\build\cli-release\audit\MineBackup-CLI-$version-windows-x64\minebackup-cli.exe"
+          $packageRoot = ".\build\cli-release\audit\MineBackup-CLI-$version-windows-x64"
+          if (-not (Test-Path "$packageRoot\scheduling\systemd\minebackup-serve@.service")) {
+            throw 'Packaged systemd serve template is missing.'
+          }
+          if (-not (Test-Path "$packageRoot\scheduling\windows\MineBackup-Serve.xml")) {
+            throw 'Packaged Task Scheduler serve template is missing.'
+          }
+
+      - name: Upload Windows CLI candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: minebackup-cli-windows-candidate
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          path: .\build\cli-release\MineBackup-CLI-*-windows-x64.zip

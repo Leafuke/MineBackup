@@ -192,60 +192,31 @@ namespace {
 	void TestWorldModels() {
 		Config first;
 		first.name = "First";
+		first.configId = L"11111111-1111-4111-8111-111111111111";
 		first.zipLevel = 2;
 		first.worlds = {{L"Visible", L"description"}, {L"Hidden", L"#"}};
 		Config second;
 		second.name = "Second";
+		second.configId = L"22222222-2222-4222-8222-222222222222";
 		second.worlds = {{L"TaskWorld", L"task"}};
 		map<int, Config> configs{{1, first}, {2, second}};
 
-		const auto normal = BuildDisplayWorlds(configs, {}, 1, false);
+		const auto normal = BuildDisplayWorlds(configs, 1);
 		Expect(normal.size() == 1
 			&& normal[0].baseConfigIndex == 1
 			&& normal[0].baseWorldIndex == 0,
 			"normal world model should hide marker entries and preserve stable source indices");
 
-		SpecialConfig unified;
-		unified.zipLevel = 8;
-		unified.keepCount = 4;
-		UnifiedTaskV2 backup;
-		backup.type = TaskTypeV2::Backup;
-		backup.configIndex = 2;
-		backup.worldIndex = 0;
-		unified.unifiedTasks.push_back(backup);
-		const auto special = BuildDisplayWorlds(configs, {{9, unified}}, 9, true);
-		Expect(special.size() == 1
-			&& special[0].name == L"TaskWorld"
-			&& special[0].effectiveConfig.zipLevel == 8
-			&& special[0].effectiveConfig.keepCount == 4,
-			"unified special tasks should reuse the common world construction and override policy");
-
-		SpecialConfig legacy;
-		AutomatedTask oldTask;
-		oldTask.configIndex = 2;
-		oldTask.worldIndex = 0;
-		legacy.tasks.push_back(oldTask);
-		const auto oldSpecial = BuildDisplayWorlds(configs, {{10, legacy}}, 10, true);
-		Expect(oldSpecial.size() == 1
-			&& WorldSelectionKey{oldSpecial[0].baseConfigIndex,
-				oldSpecial[0].baseWorldIndex} == WorldSelectionKey{2, 0},
-			"legacy special tasks should produce the same stable world selection key");
 	}
 
 	void TestStableConfigSelection() {
 		Config normal;
 		normal.configId = L"normal-stable-id";
-		SpecialConfig special;
-		special.specialConfigId = L"special-stable-id";
 		const map<int, Config> configs{{42, normal}};
-		const map<int, SpecialConfig> specialConfigs{{73, special}};
 
 		Expect(FindConfigByStableId(configs, L"NORMAL-STABLE-ID") == 42,
 			"normal startup selection should resolve stable IDs case-insensitively");
-		Expect(FindSpecialConfigByStableId(specialConfigs, L"SPECIAL-STABLE-ID") == 73,
-			"special startup selection should not treat the map index as persisted identity");
-		Expect(FindConfigByStableId(configs, L"missing") == -1
-			&& FindSpecialConfigByStableId(specialConfigs, L"missing") == -1,
+		Expect(FindConfigByStableId(configs, L"missing") == -1,
 			"unknown stable IDs should produce an explicit not-found result");
 	}
 }

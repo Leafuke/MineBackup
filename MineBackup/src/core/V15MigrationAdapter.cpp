@@ -1,10 +1,12 @@
 #include "V15MigrationAdapter.h"
 
 #include "AtomicFileWriter.h"
+#include "AppState.h"
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
+#include "HistoryManager.h"
 #include "LegacyMineBackup15Reader.h"
 #include "MigrationCoordinator.h"
 #include "PlatformCompat.h"
@@ -250,9 +252,9 @@ wstring InferLastBackupTime(const Config& config, int configIndex, const wstring
 		const auto archiveTime = filesystem::last_write_time(archive, ec);
 		if (!ec) return FolderRewindFormat::FormatFileTimeUtc(archiveTime);
 	}
-	auto historyIt = g_appState.g_history.find(configIndex);
-	if (historyIt != g_appState.g_history.end()) {
-		for (auto it = historyIt->second.rbegin(); it != historyIt->second.rend(); ++it) {
+	const vector<HistoryEntry> history = GetHistoryEntriesForConfig(configIndex);
+	if (!history.empty()) {
+		for (auto it = history.rbegin(); it != history.rend(); ++it) {
 			if (it->worldName == folderName && it->backupFile == summary.lastBackupFileName && !it->timestamp_str.empty())
 				return NormalizeHistoryTimestamp(it->timestamp_str);
 		}
@@ -414,11 +416,6 @@ MigrationReport RunStartupMigration() {
 		changed = true;
 		configUnit.migratedItems++;
 	}
-	for (auto& [index, config] : g_appState.specialConfigs) {
-		if (!config.legacySpecialConfigIdGenerated) continue;
-		changed = true;
-		configUnit.migratedItems++;
-	}
 	if (changed) {
 		filesystem::path snapshot;
 		const auto configPath = MigrationCoordinator::GetPaths().configFile;
@@ -428,7 +425,6 @@ MigrationReport RunStartupMigration() {
 				configUnit.status = MigrationStatus::Succeeded;
 				configUnit.message = L"Stable ConfigId values were persisted for 1.15 configurations.";
 				for (auto& [index, config] : g_appState.configs) config.legacyConfigIdGenerated = false;
-				for (auto& [index, config] : g_appState.specialConfigs) config.legacySpecialConfigIdGenerated = false;
 			}
 			else {
 				configUnit.status = MigrationStatus::Failed;

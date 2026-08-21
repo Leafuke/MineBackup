@@ -4,10 +4,11 @@
 #include "AppPaths.h"
 #include "AtomicFileWriter.h"
 #include "FolderRewindFormat.h"
+#include "JobDocument.h"
 #include "MigrationCoordinator.h"
-#include "SpecialConfigPolicy.h"
 #include "Globals.h"
 #include "Logging.h"
+#include "LegacyIniConfigCodec.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "PlatformCompat.h"
@@ -19,7 +20,66 @@
 #include <cmath>
 #include <set>
 #include <optional>
+#include <limits>
 using namespace std;
+
+namespace {
+
+vector<LegacyIniConfigCodec::Diagnostic> g_configLoadDiagnostics;
+
+filesystem::path JobsPathForConfig(const filesystem::path& configFile) {
+	return configFile.parent_path() / L"jobs.json";
+}
+
+string ReadIgnoredSpecialSections(const filesystem::path& configFile) {
+	ifstream input(configFile, ios::binary);
+	if (!input.is_open()) return {};
+	string output;
+	bool capture = false;
+	for (string line; getline(input, line);) {
+		string normalized = line;
+		if (!normalized.empty() && normalized.back() == '\r') normalized.pop_back();
+		if (normalized.size() >= 2 && normalized.front() == '[' && normalized.back() == ']') {
+			capture = normalized.rfind("[SpCfg", 0) == 0;
+		}
+		if (capture) output += line + "\n";
+	}
+	return output;
+}
+
+void RecordConfigDiagnostic(
+	LegacyIniConfigCodec::DiagnosticSeverity severity,
+	size_t line,
+	const wstring& section,
+	const wstring& key,
+	const string& detail) {
+	const char* eventId = severity == LegacyIniConfigCodec::DiagnosticSeverity::Fatal
+		? "config.parse.invalid_operational_value"
+		: "config.parse.invalid_optional_value";
+	g_configLoadDiagnostics.push_back({severity, line, section, key, eventId, detail});
+	const string sectionUtf8 = wstring_to_utf8(section);
+	const string keyUtf8 = wstring_to_utf8(key);
+	if (severity == LegacyIniConfigCodec::DiagnosticSeverity::Fatal) {
+		MB_LOG_ERROR(minebackup::logging::LogCategory::Migration, eventId,
+			"Invalid configuration value at line {} [{}] {}: {}",
+			line, sectionUtf8, keyUtf8, detail);
+	}
+	else {
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Migration, eventId,
+			"Invalid optional configuration value at line {} [{}] {}: {}",
+			line, sectionUtf8, keyUtf8, detail);
+	}
+}
+
+} // namespace
+
+const vector<LegacyIniConfigCodec::Diagnostic>& GetLastConfigLoadDiagnostics() {
+	return g_configLoadDiagnostics;
+}
+
+bool LastConfigLoadHasFatalDiagnostics() {
+	return LegacyIniConfigCodec::HasFatalDiagnostics(g_configLoadDiagnostics);
+}
 
 static wstring GetDefaultFontPath() {
 #ifdef _WIN32
@@ -146,17 +206,6 @@ vector<wstring> BuildEffectiveRestoreWhitelist(const vector<wstring>& userWhitel
 	return effective;
 }
 
-int CreateNewSpecialConfig(const string& name_hint) {
-	int newId = nextConfigId++;
-	SpecialConfig sp;
-	sp.name = name_hint;
-	sp.specialConfigId = FolderRewindFormat::GenerateGuidString();
-	EnsureDefaultBackupBlacklist(sp.blacklist);
-	EnsureDefaultRestoreWhitelist();
-	g_appState.specialConfigs[newId] = sp;
-	return newId;
-}
-
 int CreateNewNormalConfig(const string& name_hint) {
 	int newId = nextConfigId++;
 	Config new_cfg;
@@ -190,9 +239,9 @@ void LoadConfigs() {
 
 void LoadConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
+	g_configLoadDiagnostics.clear();
 	g_appState.configs.clear();
-	g_appState.specialConfigs.clear();
-	g_appState.specialConfigMode = false;
+	g_appState.jobs = JobDocument{};
 	g_theme = static_cast<int>(ThemeId::ImGuiLight);
 	g_lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
 	Fontss.clear();
@@ -224,24 +273,27 @@ void LoadConfigs(const filesystem::path& filename) {
 	wstring line, section;
 	// cur作为一个指针，指向 g_appState.configs 这个全局 map<int, Config> 中的元素 Config
 	Config* cur = nullptr;
-	SpecialConfig* spCur = nullptr;
+	size_t lineNumber = 0;
 
 	while (getline(in, line1)) {
+		++lineNumber;
 		line = utf8_to_wstring(line1);
 		if (line.empty() || line.front() == L'#') continue;
 		if (line.front() == L'[' && line.back() == L']') {
 			section = line.substr(1, line.size() - 2);
-			spCur = nullptr;
 			cur = nullptr;
 			if (section.find(L"Config", 0) == 0) {
-				int idx = stoi(section.substr(6));
+				int idx = 0;
+				if (!LegacyIniConfigCodec::TryParseInt(
+						section.substr(6), 1, (numeric_limits<int>::max)(), idx)) {
+					RecordConfigDiagnostic(
+						LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+						lineNumber, section, L"section", "invalid Config section index");
+					section.clear();
+					continue;
+				}
 				g_appState.configs[idx] = Config();
 				cur = &g_appState.configs[idx];
-			}
-			else if (section.find(L"SpCfg", 0) == 0) {
-				int idx = stoi(section.substr(5));
-				g_appState.specialConfigs[idx] = SpecialConfig();
-				spCur = &g_appState.specialConfigs[idx];
 			}
 		}
 		else {
@@ -249,6 +301,32 @@ void LoadConfigs(const filesystem::path& filename) {
 			if (pos == wstring::npos) continue;
 			wstring key = line.substr(0, pos);
 			wstring val = line.substr(pos + 1);
+			auto readInt = [&](int& target, int minimum, int maximum, bool fatal) {
+				int parsed = 0;
+				if (LegacyIniConfigCodec::TryParseInt(val, minimum, maximum, parsed)) {
+					target = parsed;
+					return true;
+				}
+				RecordConfigDiagnostic(
+					fatal ? LegacyIniConfigCodec::DiagnosticSeverity::Fatal
+						: LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+					lineNumber, section, key,
+					"expected an integer in the supported range");
+				return false;
+			};
+			auto readFloat = [&](float& target, float minimum, float maximum, bool fatal) {
+				float parsed = 0.0f;
+				if (LegacyIniConfigCodec::TryParseFloat(val, minimum, maximum, parsed)) {
+					target = parsed;
+					return true;
+				}
+				RecordConfigDiagnostic(
+					fatal ? LegacyIniConfigCodec::DiagnosticSeverity::Fatal
+						: LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+					lineNumber, section, key,
+					"expected a finite number in the supported range");
+				return false;
+			};
 
 			if (cur) { // Inside a [ConfigN] section
 				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
@@ -259,131 +337,100 @@ void LoadConfigs(const filesystem::path& filename) {
 				}
 				else if (key == L"WorldData") {
 					while (getline(in, line1) && line1 != "*") {
+						++lineNumber;
 						line = utf8_to_wstring(line1);
 						wstring name = line;
-						if (!getline(in, line1) || line1 == "*") break;
+						if (!getline(in, line1)) {
+							RecordConfigDiagnostic(
+								LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+								lineNumber, section, key, "truncated WorldData entry");
+							break;
+						}
+						++lineNumber;
+						if (line1 == "*") {
+							RecordConfigDiagnostic(
+								LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
+								lineNumber, section, key, "world description is missing");
+							break;
+						}
 						line = utf8_to_wstring(line1);
 						wstring desc = line;
 						cur->worlds.push_back({ name, desc });
 					}
 					if (filesystem::exists(cur->saveRoot)) {
-						for (auto& entry : filesystem::directory_iterator(cur->saveRoot)) {
+						error_code scanError;
+						for (filesystem::directory_iterator it(cur->saveRoot, scanError), end;
+							!scanError && it != end; it.increment(scanError)) {
+							const auto& entry = *it;
 							if (entry.is_directory() && IsWorldNameAvailable(entry.path().filename().wstring(), cur->worlds))
 								cur->worlds.push_back({ entry.path().filename().wstring(), L"" });
+						}
+						if (scanError) {
+							RecordConfigDiagnostic(
+								LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+								lineNumber, section, key, "world directory scan failed");
 						}
 					}
 				}
 				else if (key == L"BackupPath") cur->backupPath = val;
 				else if (key == L"ZipProgram") cur->zipPath = val;
 				else if (key == L"ZipFormat") cur->zipFormat = val;
-				else if (key == L"ZipLevel") cur->zipLevel = stoi(val);
+				else if (key == L"ZipLevel") readInt(cur->zipLevel, 0, 22, true);
 				else if (key == L"ZipMethod") cur->zipMethod = val;
-				else if (key == L"KeepCount") cur->keepCount = stoi(val);
-				else if (key == L"SmartBackup") cur->backupMode = stoi(val);
+				else if (key == L"KeepCount") readInt(cur->keepCount, 0, 100000, true);
+				else if (key == L"SmartBackup") readInt(cur->backupMode, 0, 2, true);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
 				else if (key == L"SilenceMode") { /* ignored legacy setting */ }
-				else if (key == L"CpuThreads") cur->cpuThreads = stoi(val);
+				else if (key == L"CpuThreads") readInt(cur->cpuThreads, 0, 1024, true);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
-				else if (key == L"MaxSmartBackups") cur->maxSmartBackupsPerFull = stoi(val);
+				else if (key == L"MaxSmartBackups") readInt(cur->maxSmartBackupsPerFull, 0, 100000, true);
 				else if (key == L"BackupOnStart") cur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") cur->blacklist.push_back(val);
 				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
 				else if (key == L"RclonePath") cur->rclonePath = val;
 				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
-				else if (key == L"CloudSyncMode") cur->cloudSyncMode = stoi(val);
+				else if (key == L"CloudSyncMode") readInt(cur->cloudSyncMode, 0, 1, true);
 				else if (key == L"CloudWorkingDirectory") cur->cloudWorkingDirectory = val;
-				else if (key == L"CloudTimeoutSeconds") cur->cloudTimeoutSeconds = stoi(val);
-				else if (key == L"CloudRetryCount") cur->cloudRetryCount = stoi(val);
+				else if (key == L"CloudTimeoutSeconds") readInt(cur->cloudTimeoutSeconds, 1, 86400, true);
+				else if (key == L"CloudRetryCount") readInt(cur->cloudRetryCount, 0, 100, true);
 				else if (key == L"CloudSyncHistoryAfterUpload") cur->cloudSyncHistoryAfterUpload = (val != L"0");
 				else if (key == L"CloudAutoDownloadBeforeRestore") cur->cloudAutoDownloadBeforeRestore = (val != L"0");
 				else if (key == L"CloudLastRunUtc") cur->cloudLastRunUtc = val;
-				else if (key == L"CloudLastExitCode") cur->cloudLastExitCode = stoi(val);
+				else if (key == L"CloudLastExitCode") readInt(cur->cloudLastExitCode, (numeric_limits<int>::min)(), (numeric_limits<int>::max)(), false);
 				else if (key == L"CloudLastErrorMessage") cur->cloudLastErrorMessage = val;
 				else if (key == L"SnapshotPath") cur->snapshotPath = val;
 				else if (key == L"OtherPath") cur->othersPath = val;
 				else if (key == L"EnableWEIntegration") cur->enableWEIntegration = (val != L"0");
 				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
 				else if (key == L"Theme") {
-					cur->theme = stoi(val);
+					readInt(cur->theme, -1, 32, false);
 				}
 				else if (key == L"Font") {
 					cur->fontPath = val;
 				}
 			}
-			else if (spCur) { // Inside a [SpCfgN] section
-				if (key == L"Name") spCur->name = wstring_to_utf8(val);
-				else if (key == L"SpecialConfigId") spCur->specialConfigId = FolderRewindFormat::EnsureConfigId(val);
-				else if (key == L"AutoExecute") {
-					spCur->autoExecute = (val != L"0");
-				}
-				else if (key == L"ExitAfter") spCur->exitAfterExecution = (val != L"0");
-				else if (key == L"Theme") spCur->theme = stoi(val);
-				else if (key == L"HideWindow") spCur->hideWindow = (val != L"0");
-				else if (key == L"RunOnStartup") spCur->runOnStartup = (val != L"0");
-				else if (key == L"Command") spCur->commands.push_back(val);
-				else if (key == L"AutoBackupTask") {
-					wstringstream ss(val);
-					AutomatedTask task;
-					wchar_t delim;
-					ss >> task.configIndex >> delim >> task.worldIndex >> delim >> task.backupType >> delim >> task.intervalMinutes >> delim >> task.schedMonth >> delim >> task.schedDay >> delim >> task.schedHour >> delim >> task.schedMinute;
-					spCur->tasks.push_back(task);
-				}
-				else if (key == L"ZipLevel") spCur->zipLevel = stoi(val);
-				else if (key == L"KeepCount") spCur->keepCount = stoi(val);
-				else if (key == L"CpuThreads") spCur->cpuThreads = stoi(val);
-				else if (key == L"UseLowPriority") spCur->useLowPriority = (val != L"0");
-				else if (key == L"BackupOnStart") spCur->backupOnGameStart = (val != L"0");
-				else if (key == L"BlacklistItem") spCur->blacklist.push_back(val);
-				// 新版统一任务系统
-				else if (key == L"UnifiedTask") {
-					wstringstream ss(val);
-					wstring token;
-					UnifiedTaskV2 task;
-					int idx = 0;
-					while (getline(ss, token, L',')) {
-						switch (idx++) {
-							case 0: task.id = stoi(token); break;
-							case 1: task.name = wstring_to_utf8(token); break;
-							case 2: task.type = static_cast<TaskTypeV2>(stoi(token)); break;
-							case 3: task.executionMode = static_cast<TaskExecMode>(stoi(token)); break;
-							case 4: task.triggerMode = static_cast<TaskTrigger>(stoi(token)); break;
-							case 5: task.enabled = (stoi(token) != 0); break;
-							case 6: task.configIndex = stoi(token); break;
-							case 7: task.worldIndex = stoi(token); break;
-							case 8: task.command = token; break;
-							case 9: task.workingDirectory = token; break;
-							case 10: task.intervalMinutes = stoi(token); break;
-							case 11: task.schedMonth = stoi(token); break;
-							case 12: task.schedDay = stoi(token); break;
-							case 13: task.schedHour = stoi(token); break;
-							case 14: task.schedMinute = stoi(token); break;
-						}
-					}
-					spCur->unifiedTasks.push_back(task);
-				}
-				// 服务模式配置
-				else if (key == L"UseServiceMode") spCur->useServiceMode = (val != L"0");
-				else if (key == L"ServiceName") spCur->serviceConfig.serviceName = val;
-				else if (key == L"ServiceDisplayName") spCur->serviceConfig.serviceDisplayName = val;
-				else if (key == L"ServiceAutoStart") spCur->serviceConfig.startWithSystem = (val != L"0");
-				else if (key == L"ServiceDelayedStart") spCur->serviceConfig.delayedStart = (val != L"0");
-			}
 			else if (section == L"General") { // Inside [General] section
 				if (key == L"CurrentConfig") {
-					g_appState.currentConfigIndex = stoi(val);
+					readInt(g_appState.currentConfigIndex, 1, (numeric_limits<int>::max)(), false);
 				}
 				else if (key == L"NextConfigId") {
-					nextConfigId = stoi(val);
+					readInt(nextConfigId, 2, (numeric_limits<int>::max)(), false);
 					int maxId = 0;
 					for (auto& kv : g_appState.configs) if (kv.first > maxId) maxId = kv.first;
-					for (auto& kv : g_appState.specialConfigs) if (kv.first > maxId) maxId = kv.first;
 					if (nextConfigId <= maxId) nextConfigId = maxId + 1;
 				}
 				else if (key == L"Language") {
-					if (val[2] == L'-')
+					if (val.size() >= 3 && val[2] == L'-')
 						val[2] = L'_';
-					SetLanguage(wstring_to_utf8(val));
+					if (val.size() >= 2) {
+						SetLanguage(wstring_to_utf8(val));
+					}
+					else {
+						RecordConfigDiagnostic(
+							LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+							lineNumber, section, key, "language identifier is too short");
+					}
 				}
 				else if (key == L"CheckForUpdates") {
 					g_CheckForUpdates = (val != L"0");
@@ -407,7 +454,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					isSafeDelete = (val != L"0");
 				}
 				else if (key == L"AutoBackupInterval") {
-					last_interval = stoi(val);
+					readInt(last_interval, 1, 525600, true);
 				}
 				else if (key == L"StopAutoBackupOnExit") {
 					g_StopAutoBackupOnExit = (val != L"0");
@@ -419,30 +466,28 @@ void LoadConfigs(const filesystem::path& filename) {
 					restoreWhitelist.push_back(val);
 				}
 				else if (key == L"WindowWidth") {
-					if (stoi(val) > 10) {
-						g_windowWidth = stoi(val);
-					}
+					readInt(g_windowWidth, 11, 32768, false);
 				}
 				else if (key == L"WindowHeight") {
-					if (stoi(val) > 10) {
-						g_windowHeight = stoi(val);
-					}
+					readInt(g_windowHeight, 11, 32768, false);
 				}
 				else if (key == L"UIScale") {
-					g_uiScale = stof(val);
-					configuredUiScaleFound = true;
+					configuredUiScaleFound = readFloat(g_uiScale, 0.25f, 4.0f, false);
 				}
 				else if (key == L"UIScaleMode") {
 					configuredUiScaleV2 = (val == L"UserMultiplierV2");
 				}
 				else if (key == L"AppearanceSchema") {
-					configuredAppearanceSchema = stoi(val);
+					int parsed = 1;
+					if (readInt(parsed, 1, 100, false)) configuredAppearanceSchema = parsed;
 				}
 				else if (key == L"Theme") {
-					configuredGlobalTheme = stoi(val);
+					int parsed = 0;
+					if (readInt(parsed, -1, 32, false)) configuredGlobalTheme = parsed;
 				}
 				else if (key == L"ThemeFallback") {
-					configuredThemeFallback = stoi(val);
+					int parsed = 0;
+					if (readInt(parsed, -1, 32, false)) configuredThemeFallback = parsed;
 				}
 				else if (key == L"Font") {
 					configuredGlobalFont = val;
@@ -451,10 +496,10 @@ void LoadConfigs(const filesystem::path& filename) {
 					g_AutoScanForWorlds = (val != L"0");
 				}
 				else if (key == L"HotkeyBackup") {
-					g_hotKeyBackupId = stoi(val);
+					readInt(g_hotKeyBackupId, 0, 100000, false);
 				}
 				else if (key == L"HotkeyRestore") {
-					g_hotKeyRestoreId = stoi(val);
+					readInt(g_hotKeyRestoreId, 0, 100000, false);
 				}
 				else if (key == L"LogFileLevel") {
 					configuredLogFileLevel = val;
@@ -481,7 +526,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					g_CoreValidationPassed.store(val != L"0");
 				}
 				else if (key == L"CloseAction") {
-					g_closeAction = stoi(val);
+					readInt(g_closeAction, 0, 2, false);
 				}
 				else if (key == L"RememberCloseAction") {
 					g_rememberCloseAction = (val != L"0");
@@ -555,41 +600,15 @@ void LoadConfigs(const filesystem::path& filename) {
 		}
 	}
 
-	set<wstring> usedSpecialConfigIds;
-	for (auto& kv : g_appState.specialConfigs) {
-		SpecialConfig& spCfg = kv.second;
-		if (spCfg.specialConfigId.empty()) {
-			spCfg.specialConfigId = FolderRewindFormat::GenerateGuidString();
-			spCfg.legacySpecialConfigIdGenerated = true;
-		}
-		wstring identity = spCfg.specialConfigId;
-		transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
-		if (!usedSpecialConfigIds.insert(identity).second) {
-			do {
-				spCfg.specialConfigId = FolderRewindFormat::GenerateGuidString();
-				identity = spCfg.specialConfigId;
-				transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
-			} while (!usedSpecialConfigIds.insert(identity).second);
-			spCfg.legacySpecialConfigIdGenerated = true;
-		}
-		if (spCfg.zipLevel < 1) spCfg.zipLevel = 1;
-		if (spCfg.zipLevel > 22) spCfg.zipLevel = 22;
+	const auto jobs = JobStorage::Load(JobsPathForConfig(filename));
+	if (jobs.status == JobStorage::LoadStatus::Loaded) {
+		g_appState.jobs = jobs.document;
 	}
-
-	const auto executionPolicy = NormalizeSpecialConfigExecutionPolicy(g_appState.specialConfigs);
-	if (executionPolicy.autoExecuteIndex) {
-		g_appState.specialConfigMode = true;
-		g_appState.currentConfigIndex = *executionPolicy.autoExecuteIndex;
-	}
-	if (executionPolicy.disabledDuplicateAutoExecute > 0
-		|| executionPolicy.disabledDuplicateRunOnStartup > 0) {
-		MigrationUnitResult normalized;
-		normalized.unitId = L"startup:special-config-exclusivity";
-		normalized.status = MigrationStatus::Succeeded;
-		normalized.message = L"Duplicate special startup selections were disabled deterministically; the lowest configuration index was retained.";
-		normalized.migratedItems = executionPolicy.disabledDuplicateAutoExecute
-			+ executionPolicy.disabledDuplicateRunOnStartup;
-		MigrationCoordinator::RecordUnit(normalized);
+	else if (jobs.status != JobStorage::LoadStatus::Missing) {
+		for (const auto& diagnostic : jobs.diagnostics) {
+			MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
+				diagnostic.eventId, "{}", diagnostic.detail);
+		}
 	}
 
 	auto validFontPath = [](const wstring& value) {
@@ -601,12 +620,8 @@ void LoadConfigs(const filesystem::path& filename) {
 	}
 	else {
 		auto normal = g_appState.configs.find(g_appState.currentConfigIndex);
-		auto special = g_appState.specialConfigs.find(g_appState.currentConfigIndex);
 		if (normal != g_appState.configs.end() && IsValidThemeId(normal->second.theme)) {
 			g_theme = normal->second.theme;
-		}
-		else if (special != g_appState.specialConfigs.end() && IsValidThemeId(special->second.theme)) {
-			g_theme = special->second.theme;
 		}
 	}
 	if (configuredThemeFallback
@@ -665,7 +680,17 @@ bool SaveConfigs() {
 bool SaveConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	const filesystem::path target(filename);
-
+	for (auto& [index, config] : g_appState.configs) {
+		(void)index;
+		config.configId = FolderRewindFormat::EnsureConfigId(config.configId);
+	}
+	wstring jobsWriteError;
+	if (!JobStorage::Save(JobsPathForConfig(target), g_appState.jobs, jobsWriteError)) {
+		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
+			"jobs.write_failed", "{}", wstring_to_utf8(jobsWriteError));
+		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
+		return false;
+	}
 	std::wostringstream buffer;
 	buffer << L"[General]\n";
 	buffer << L"CurrentConfig=" << g_appState.currentConfigIndex << L"\n";
@@ -757,61 +782,9 @@ bool SaveConfigs(const filesystem::path& filename) {
 		buffer << L"\n";
 	}
 
-	for (auto& kv : g_appState.specialConfigs) {
-		int idx = kv.first;
-		SpecialConfig& sc = kv.second;
-		buffer << L"[SpCfg" << idx << L"]\n";
-		buffer << L"Name=" << utf8_to_wstring(sc.name) << L"\n";
-		sc.specialConfigId = FolderRewindFormat::EnsureConfigId(sc.specialConfigId);
-		buffer << L"SpecialConfigId=" << sc.specialConfigId << L"\n";
-		buffer << L"AutoExecute=" << (sc.autoExecute ? 1 : 0) << L"\n";
-		for (const auto& cmd : sc.commands) buffer << L"Command=" << cmd << L"\n";
-		for (const auto& task : sc.tasks) {
-			buffer << L"AutoBackupTask=" << task.configIndex << L"," << task.worldIndex << L"," << task.backupType
-				<< L"," << task.intervalMinutes << L"," << task.schedMonth << L"," << task.schedDay
-				<< L"," << task.schedHour << L"," << task.schedMinute << L"\n";
-		}
-		// 新版统一任务系统
-		for (const auto& task : sc.unifiedTasks) {
-			buffer << L"UnifiedTask=" << task.id << L"," 
-				<< utf8_to_wstring(task.name) << L","
-				<< static_cast<int>(task.type) << L","
-				<< static_cast<int>(task.executionMode) << L","
-				<< static_cast<int>(task.triggerMode) << L","
-				<< (task.enabled ? 1 : 0) << L","
-				<< task.configIndex << L","
-				<< task.worldIndex << L","
-				<< task.command << L","
-				<< task.workingDirectory << L","
-				<< task.intervalMinutes << L","
-				<< task.schedMonth << L","
-				<< task.schedDay << L","
-				<< task.schedHour << L","
-				<< task.schedMinute << L"\n";
-		}
-		buffer << L"ExitAfter=" << (sc.exitAfterExecution ? 1 : 0) << L"\n";
-		buffer << L"HideWindow=" << (sc.hideWindow ? 1 : 0) << L"\n";
-		buffer << L"RunOnStartup=" << (sc.runOnStartup ? 1 : 0) << L"\n";
-		buffer << L"ZipLevel=" << sc.zipLevel << L"\n";
-		buffer << L"KeepCount=" << sc.keepCount << L"\n";
-		buffer << L"CpuThreads=" << sc.cpuThreads << L"\n";
-		buffer << L"UseLowPriority=" << (sc.useLowPriority ? 1 : 0) << L"\n";
-		buffer << L"BackupOnStart=" << (sc.backupOnGameStart ? 1 : 0) << L"\n";
-		// 1.16 preserves these local, read-only values solely so a custom-named
-		// legacy service remains discoverable until the user removes it. They are
-		// excluded from portable configuration and are removed from the model in 1.17.
-		buffer << L"UseServiceMode=" << (sc.useServiceMode ? 1 : 0) << L"\n";
-		buffer << L"ServiceName=" << sc.serviceConfig.serviceName << L"\n";
-		buffer << L"ServiceDisplayName=" << sc.serviceConfig.serviceDisplayName << L"\n";
-		buffer << L"ServiceAutoStart=" << (sc.serviceConfig.startWithSystem ? 1 : 0) << L"\n";
-		buffer << L"ServiceDelayedStart=" << (sc.serviceConfig.delayedStart ? 1 : 0) << L"\n";
-		for (const auto& item : sc.blacklist) {
-			buffer << L"BlacklistItem=" << item << L"\n";
-		}
-		buffer << L"\n\n";
-	}
-
-	const string utf8 = wstring_to_utf8(buffer.str());
+	string utf8 = wstring_to_utf8(buffer.str());
+	const string ignoredSpecial = ReadIgnoredSpecialSections(target);
+	if (!ignoredSpecial.empty()) utf8 += "\n" + ignoredSpecial;
 	if (!AtomicFileWriter::WriteText(target, utf8).success) {
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
 		return false;

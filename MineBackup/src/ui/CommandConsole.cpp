@@ -20,8 +20,7 @@ public:
             "HELP", "HISTORY", "CLEAR", "cmd=PING", "cmd=GET_CAPABILITIES",
             "cmd=GET_STATUS", "cmd=LIST_CONFIGS", "cmd=LIST_FOLDERS",
             "cmd=LIST_BACKUPS", "cmd=GET_CONFIG", "cmd=BACKUP", "cmd=RESTORE",
-            "cmd=BACKUP_ALL", "cmd=AUTO_BACKUP", "cmd=STOP_AUTO_BACKUP",
-            "cmd=MARK_IMPORTANT"} {}
+            "cmd=BACKUP_ALL", "cmd=MARK_IMPORTANT"} {}
 
     void Draw() {
         ImGui::TextWrapped("%s", L("COMMAND_CONSOLE_HELP"));

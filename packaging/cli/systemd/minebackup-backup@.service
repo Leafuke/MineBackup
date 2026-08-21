@@ -1,0 +1,14 @@
+[Unit]
+Description=MineBackup job for profile %i
+Documentation=https://github.com/Leafuke/MineBackup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/minebackup/%i.env
+ExecStart=/usr/bin/minebackup-cli --data-dir ${MINEBACKUP_DATA_DIR} --json job run --job ${MINEBACKUP_JOB_ID}
+User=minecraft
+Group=minecraft
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
