@@ -458,6 +458,26 @@ if(BUILD_TESTING)
     add_test(NAME minebackup.known_minecraft_locations
         COMMAND minebackup_known_minecraft_location_tests)
 
+    add_executable(minebackup_process_inspection_tests
+        tests/ProcessInspectionServiceTests.cpp)
+    target_link_libraries(minebackup_process_inspection_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_process_inspection_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.process_inspection
+        COMMAND minebackup_process_inspection_tests)
+
+    add_executable(minebackup_pcl2_discovery_tests
+        tests/Pcl2ProcessDiscoveryProviderTests.cpp)
+    target_link_libraries(minebackup_pcl2_discovery_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_pcl2_discovery_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.pcl2_discovery
+        COMMAND minebackup_pcl2_discovery_tests)
+
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_config_batch_tests
             tests/ConfigBatchCreationServiceTests.cpp)
