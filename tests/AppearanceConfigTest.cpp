@@ -52,6 +52,7 @@ int main() {
 		std::ofstream output(legacy, std::ios::binary);
 		output << "[General]\n"
 			<< "CurrentConfig=2\n"
+			<< "AutoScanForWorlds=0\n"
 			<< "UIScale=1.5\n"
 			<< "[Config2]\n"
 			<< "Name=Active\n"
@@ -66,6 +67,8 @@ int main() {
 		"active valid legacy font migrates to application appearance");
 	Check(g_uiScaleMigrationPending,
 		"legacy scale is pending semantic migration");
+	Check(!g_AutoScanForWorlds,
+		"legacy AutoScanForWorlds remains readable for compatibility");
 	Check(std::filesystem::path(g_defaultBackupRootPath)
 			== KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(appPaths),
 		"legacy INI without a default backup root receives the in-memory recommendation");
@@ -100,6 +103,8 @@ int main() {
 	Check(saved.find("DefaultBackupRootPath=" + customBackupRoot.string())
 			!= std::string::npos,
 		"default backup root is persisted");
+	Check(saved.find("AutoScanForWorlds=0") != std::string::npos,
+		"legacy AutoScanForWorlds remains writable for compatibility");
 	Check(saved.find("\nTheme=5\n") != std::string::npos,
 		"global theme is persisted");
 	Check(saved.find("\nFont=" + font.string() + "\n") != std::string::npos,
@@ -125,6 +130,8 @@ int main() {
 		"global appearance round-trips without a second migration");
 	Check(std::filesystem::path(g_defaultBackupRootPath) == customBackupRoot,
 		"default backup root round-trips without changing existing configs");
+	Check(!g_AutoScanForWorlds,
+		"legacy AutoScanForWorlds round-trips without activating discovery");
 	Check(g_appState.jobs.jobs.size() == 1
 			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments.size() == 2
 			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments[1] == L"with spaces",

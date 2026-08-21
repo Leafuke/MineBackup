@@ -517,6 +517,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					configuredGlobalFont = val;
 				}
 				else if (key == L"AutoScanForWorlds") {
+					// 仅保留旧字段的兼容读写；世界发现必须由显式发现流程触发。
 					g_AutoScanForWorlds = (val != L"0");
 				}
 				else if (key == L"DefaultBackupRootPath") {

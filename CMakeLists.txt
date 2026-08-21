@@ -478,6 +478,26 @@ if(BUILD_TESTING)
     add_test(NAME minebackup.pcl2_discovery
         COMMAND minebackup_pcl2_discovery_tests)
 
+    add_executable(minebackup_minecraft_discovery_service_tests
+        tests/MinecraftInstanceDiscoveryServiceTests.cpp)
+    target_link_libraries(minebackup_minecraft_discovery_service_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_minecraft_discovery_service_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.minecraft_discovery_service
+        COMMAND minebackup_minecraft_discovery_service_tests)
+
+    add_executable(minebackup_batch_readiness_tests
+        tests/BatchReadinessServiceTests.cpp)
+    target_link_libraries(minebackup_batch_readiness_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_batch_readiness_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.batch_readiness
+        COMMAND minebackup_batch_readiness_tests)
+
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_config_batch_tests
             tests/ConfigBatchCreationServiceTests.cpp)

@@ -544,8 +544,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	APP_PRINTF_INFO("application.welcome", L("CONSOLE_WELCOME"));
 
-	AutoDiscoverWorldConfigurations();
-
 	if (isFirstRun && uiSession.IsActive())
 	{
 		ImGuiTheme::ApplyNord(false);
