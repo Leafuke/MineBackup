@@ -84,6 +84,7 @@ struct AppSettingsState {
 	bool runOnStartup = false;
 	bool silentStartupToTray = false;
 	bool autoScanForWorlds = false;
+	std::wstring defaultBackupRootPath;
 	minebackup::logging::LogFileLevel logFileLevel = minebackup::logging::LogFileLevel::Info;
 	minebackup::logging::LogLevel logViewLevel = minebackup::logging::LogLevel::Info;
 	bool logViewAutoTail = true;
@@ -168,6 +169,7 @@ inline bool& g_StopAutoBackupOnExit = g_globals.settings.stopAutoBackupOnExit;
 inline bool& g_RunOnStartup = g_globals.settings.runOnStartup;
 inline bool& g_SilentStartupToTray = g_globals.settings.silentStartupToTray;
 inline bool& g_AutoScanForWorlds = g_globals.settings.autoScanForWorlds;
+inline std::wstring& g_defaultBackupRootPath = g_globals.settings.defaultBackupRootPath;
 inline minebackup::logging::LogFileLevel& g_logFileLevel = g_globals.settings.logFileLevel;
 inline minebackup::logging::LogLevel& g_logViewLevel = g_globals.settings.logViewLevel;
 inline bool& g_logViewAutoTail = g_globals.settings.logViewAutoTail;

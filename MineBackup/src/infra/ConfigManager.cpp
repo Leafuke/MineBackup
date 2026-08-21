@@ -9,6 +9,7 @@
 #include "Globals.h"
 #include "Logging.h"
 #include "LegacyIniConfigCodec.h"
+#include "KnownUserFolders.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "PlatformCompat.h"
@@ -26,6 +27,16 @@ using namespace std;
 namespace {
 
 vector<LegacyIniConfigCodec::Diagnostic> g_configLoadDiagnostics;
+
+filesystem::path RecommendedBackupRoot() {
+	try {
+		return KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(GetAppPaths());
+	}
+	catch (const logic_error&) {
+		// 独立配置解析测试可能尚未初始化 AppPaths；禁止用当前工作目录作为隐式回退。
+		return {};
+	}
+}
 
 filesystem::path JobsPathForConfig(const filesystem::path& configFile) {
 	return configFile.parent_path() / L"jobs.json";
@@ -249,6 +260,7 @@ void LoadConfigs(const filesystem::path& filename) {
 	g_uiScaleV2 = true;
 	g_uiScaleMigrationPending = false;
 	restoreWhitelist.clear();
+	g_defaultBackupRootPath = RecommendedBackupRoot().wstring();
 	g_logFileLevel = minebackup::logging::LogFileLevel::Info;
 	g_logViewLevel = minebackup::logging::LogLevel::Info;
 	g_logViewAutoTail = true;
@@ -495,6 +507,9 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"AutoScanForWorlds") {
 					g_AutoScanForWorlds = (val != L"0");
 				}
+				else if (key == L"DefaultBackupRootPath") {
+					g_defaultBackupRootPath = val;
+				}
 				else if (key == L"HotkeyBackup") {
 					readInt(g_hotKeyBackupId, 0, 100000, false);
 				}
@@ -707,6 +722,7 @@ bool SaveConfigs(const filesystem::path& filename) {
 	buffer << L"StopAutoBackupOnExit=" << (g_StopAutoBackupOnExit ? 1 : 0) << L"\n";
 	buffer << L"SilentStartupToTray=" << (g_SilentStartupToTray ? 1 : 0) << L"\n";
 	buffer << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
+	buffer << L"DefaultBackupRootPath=" << g_defaultBackupRootPath << L"\n";
 	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
 	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
 	buffer << L"UIScale=" << g_uiScale << L"\n";

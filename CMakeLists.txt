@@ -153,6 +153,9 @@ target_include_directories(minebackup_data_core PUBLIC ${MINEBACKUP_COMMON_INCLU
 target_include_directories(minebackup_runtime PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
 target_link_libraries(minebackup_data_core PUBLIC Threads::Threads minebackup_third_party_spdlog)
 target_link_libraries(minebackup_runtime PUBLIC minebackup_data_core)
+if(APPLE)
+    target_link_libraries(minebackup_data_core PUBLIC "-framework CoreServices")
+endif()
 if(NOT WIN32)
     target_link_libraries(minebackup_data_core PUBLIC Iconv::Iconv)
 endif()
@@ -407,6 +410,7 @@ if(BUILD_TESTING)
 		tests/JobTests.cpp
         tests/LegacyIniConfigCodecTests.cpp
 		tests/OperationResultTests.cpp
+        tests/PathIdentityTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
         tests/ProfileConfigCatalogTests.cpp
@@ -423,6 +427,16 @@ if(BUILD_TESTING)
         target_link_libraries(minebackup_data_tests PRIVATE shell32)
     endif()
     add_test(NAME minebackup.data_core COMMAND minebackup_data_tests)
+
+    add_executable(minebackup_known_user_folders_tests
+        tests/KnownUserFoldersTests.cpp)
+    target_link_libraries(minebackup_known_user_folders_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_known_user_folders_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.known_user_folders
+        COMMAND minebackup_known_user_folders_tests)
 
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_ui_model_tests tests/UiModelTests.cpp)
