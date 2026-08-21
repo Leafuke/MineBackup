@@ -103,6 +103,11 @@ const char* EvidenceLabel(const InspectedMinecraftInstance& instance) {
 		}
 	}
 	for (const auto& evidence : instance.evidence) {
+		if (evidence.kind == DiscoveryEvidenceKind::ExistingConfig) {
+			return L("WIZARD_SOURCE_EXISTING_CONFIG");
+		}
+	}
+	for (const auto& evidence : instance.evidence) {
 		if (evidence.kind == DiscoveryEvidenceKind::Manual) {
 			return L("WIZARD_SOURCE_MANUAL");
 		}

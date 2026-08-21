@@ -14,6 +14,7 @@ enum class DiscoveryEvidenceKind {
 	LauncherProcess,
 	LauncherSettings,
 	WorkspaceProbe,
+	ExistingConfig,
 	Manual
 };
 

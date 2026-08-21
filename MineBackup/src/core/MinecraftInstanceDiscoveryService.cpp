@@ -39,11 +39,52 @@ int EvidenceRank(const DiscoveryEvidence& evidence) {
 	switch (evidence.kind) {
 	case DiscoveryEvidenceKind::LauncherSettings: return 0;
 	case DiscoveryEvidenceKind::LauncherProcess:
-	case DiscoveryEvidenceKind::WorkspaceProbe: return 1;
+	case DiscoveryEvidenceKind::WorkspaceProbe:
+	case DiscoveryEvidenceKind::ExistingConfig: return 1;
 	case DiscoveryEvidenceKind::KnownLocation: return 2;
 	case DiscoveryEvidenceKind::Manual: return 3;
 	}
 	return 4;
+}
+
+filesystem::path InferMinecraftRootFromSaveRoot(const filesystem::path& saveRoot) {
+	if (saveRoot.empty() || !saveRoot.is_absolute()) return {};
+
+	const filesystem::path normalizedSaveRoot =
+		PathIdentity::NormalizeExistingOrProspectivePath(saveRoot);
+	if (Lower(normalizedSaveRoot.filename().wstring()) != L"saves") return {};
+
+	const filesystem::path instanceParent = normalizedSaveRoot.parent_path();
+	if (Lower(instanceParent.filename().wstring()) == L".minecraft") {
+		return instanceParent;
+	}
+
+	const filesystem::path versionsRoot = instanceParent.parent_path();
+	const filesystem::path minecraftRoot = versionsRoot.parent_path();
+	if (Lower(versionsRoot.filename().wstring()) != L"versions"
+		|| Lower(minecraftRoot.filename().wstring()) != L".minecraft") {
+		return {};
+	}
+	return minecraftRoot;
+}
+
+vector<DiscoveryLocation> BuildExistingConfigDiscoveryLocations(
+	const map<int, Config>& existingConfigs) {
+	vector<DiscoveryLocation> locations;
+	for (const auto& [index, config] : existingConfigs) {
+		(void)index;
+		const filesystem::path saveRoot(config.saveRoot);
+		const filesystem::path minecraftRoot =
+			InferMinecraftRootFromSaveRoot(saveRoot);
+		if (minecraftRoot.empty()) continue;
+
+		locations.push_back({
+			minecraftRoot,
+			DiscoveryLocationKind::MinecraftRoot,
+			{{DiscoveryEvidenceKind::ExistingConfig,
+				"existing-config", saveRoot}}});
+	}
+	return locations;
 }
 
 tuple<int, string, wstring> EvidenceKey(const DiscoveryEvidence& evidence) {
@@ -104,6 +145,10 @@ MinecraftDiscoveryResult MinecraftInstanceDiscoveryService::Discover(
 	stop_token stopToken) const {
 	MinecraftDiscoveryResult result;
 	vector<DiscoveryLocation> locations = std::move(additionalLocations);
+	const auto existingConfigLocations =
+		BuildExistingConfigDiscoveryLocations(existingConfigs);
+	locations.insert(locations.end(), existingConfigLocations.begin(),
+		existingConfigLocations.end());
 	MB_LOG_INFO(minebackup::logging::LogCategory::Application,
 		"minecraft.discovery.started", "providers={}", providers_.size());
 
