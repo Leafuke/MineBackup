@@ -55,6 +55,20 @@ int main() {
         "TAB_COMMAND_CONSOLE",
         "LOG_EXPORT_DIAGNOSTICS",
         "LOG_EXPORT_DIAGNOSTICS_WARNING",
+        "SETTINGS_MINECRAFT_TITLE",
+        "SETTINGS_MINECRAFT_DESC",
+        "SETTINGS_MINECRAFT_RESCAN",
+        "SETTINGS_MINECRAFT_SCANNING",
+        "SETTINGS_MINECRAFT_CHECKING",
+        "SETTINGS_MINECRAFT_EMPTY",
+        "SETTINGS_MINECRAFT_NEW",
+        "SETTINGS_MINECRAFT_ADDED",
+        "SETTINGS_MINECRAFT_ALREADY_ADDED",
+        "SETTINGS_MINECRAFT_ADDED_SUCCESS",
+        "SETTINGS_MINECRAFT_TASK_FAILED",
+        "SETTINGS_MINECRAFT_SELECT_REQUIRED",
+        "SETTINGS_MINECRAFT_COMMIT_FAILED",
+        "SETTINGS_MINECRAFT_ADD_SELECTED",
         "WIZARD_DISCOVER_TITLE",
         "WIZARD_DISCOVER_DESC",
         "WIZARD_RESCAN",
@@ -120,6 +134,8 @@ int main() {
             "CONFIRM_DELETE_MSG", 7, "Profile");
         const auto sizeValue = MineFormatMessage(
             "LOG_BACKUP_SMART_INFO", static_cast<std::size_t>(42));
+        const auto minecraftCount = MineFormatMessage(
+            "SETTINGS_MINECRAFT_ADDED_SUCCESS", static_cast<std::size_t>(2));
         Check(!stringAndInteger.empty()
                 && stringAndInteger.find(L"%d") == std::wstring::npos
                 && stringAndInteger.find(L"%s") == std::wstring::npos,
@@ -129,6 +145,10 @@ int main() {
                 && sizeValue.find(L"%zu") == std::wstring::npos,
             std::string(language)
                 + " printf translation should format size_t arguments");
+        Check(!minecraftCount.empty()
+				&& minecraftCount.find(L"%zu") == std::wstring::npos,
+			std::string(language)
+				+ " Minecraft result translation should format size_t arguments");
     }
 
     if (failures == 0) {

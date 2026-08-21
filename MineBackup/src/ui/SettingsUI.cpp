@@ -44,6 +44,7 @@ constexpr CategoryItem kNormalCategories[] = {
 SettingsAutoSaveController g_settingsAutoSave;
 SettingsCategory g_selectedCategory = SettingsCategory::Application;
 bool g_settingsNeedsInitialViewport = true;
+bool g_suppressSettingsAutoSaveThisFrame = false;
 
 const char* CapabilityStateLabel(CapabilityState state) {
 	switch (state) {
@@ -265,6 +266,15 @@ bool CanSaveSettings() {
 
 } // namespace
 
+void NotifySettingsPersistenceCompleted() {
+	// 批量创建服务已经一次性保存了全局设置和 Config，避免自动保存再次写盘。
+	g_settingsAutoSave.AcknowledgeSaved();
+}
+
+void SuppressSettingsAutoSaveForCurrentFrame() {
+	g_suppressSettingsAutoSaveThisFrame = true;
+}
+
 void ResetSettingsWindowRuntimeState() {
 	g_settingsNeedsInitialViewport = true;
 }
@@ -335,9 +345,11 @@ void ShowSettingsWindowV2() {
 	ImGuiContext* context = ImGui::GetCurrentContext();
 	const bool settingsClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left)
 		&& ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
-	if ((context && context->AnyIdHasBeenEditedThisFrame) || settingsClicked) {
+	if (!g_suppressSettingsAutoSaveThisFrame
+		&& ((context && context->AnyIdHasBeenEditedThisFrame) || settingsClicked)) {
 		g_settingsAutoSave.MarkDirty();
 	}
+	g_suppressSettingsAutoSaveThisFrame = false;
 	g_settingsAutoSave.Tick([] {
 		return CanSaveSettings() && SaveConfigs();
 	});

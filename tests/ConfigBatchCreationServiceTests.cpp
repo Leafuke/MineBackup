@@ -185,6 +185,30 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 		"successful onboarding commit should persist the default root and pending validation state");
 }
 
+void TestSettingsCommitPreservesValidationState(
+	TestContext& test,
+	const std::filesystem::path& root) {
+	GlobalSnapshot restore;
+	g_appState.configs.clear();
+	g_appState.currentConfigIndex = 1;
+	RestoreNormalConfigIndexAllocator({1});
+	g_CoreValidationPending.store(false);
+	g_CoreValidationPassed.store(true);
+
+	ConfigBatchCreationRequest request;
+	request.defaultBackupRoot = root / "settings-root";
+	request.drafts = ResolveUniqueConfigDrafts(
+		{Draft("Settings", root)}, request.defaultBackupRoot, {});
+	request.markCoreValidationPending = false;
+	int saveCalls = 0;
+	int refreshCalls = 0;
+	const auto result = ConfigBatchCreationService(
+		Dependencies(saveCalls, true, refreshCalls)).Commit(request);
+	test.Expect(result.success && saveCalls == 1 && refreshCalls == 1
+			&& !g_CoreValidationPending.load() && g_CoreValidationPassed.load(),
+		"Settings batch creation should save once without scheduling onboarding validation");
+}
+
 } // namespace
 
 int main() {
@@ -197,6 +221,7 @@ int main() {
 	TestCompatibilityCreationEntry(test);
 	TestNaming(test, root);
 	TestBuildAndSaveRollback(test, root);
+	TestSettingsCommitPreservesValidationState(test, root);
 	std::error_code error;
 	std::filesystem::remove_all(root, error);
 	if (test.failures != 0) {

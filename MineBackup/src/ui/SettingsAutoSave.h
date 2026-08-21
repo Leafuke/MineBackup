@@ -35,6 +35,11 @@ public:
 		return SaveNow(save);
 	}
 
+	void AcknowledgeSaved() {
+		dirty_ = false;
+		state_ = SettingsSaveState::Saved;
+	}
+
 	SettingsSaveState State() const { return state_; }
 	bool IsDirty() const { return dirty_; }
 
