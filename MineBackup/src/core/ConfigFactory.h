@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -24,6 +25,9 @@ struct ConfigFactoryContext {
 Config BuildRecommendedConfig(
 	const ConfigDraft& draft,
 	const ConfigFactoryContext& context);
+
+std::optional<ConfigDraft> BuildCustomFolderDraft(
+	const std::filesystem::path& folder);
 
 std::vector<ConfigDraft> ResolveUniqueConfigDrafts(
 	const std::vector<ConfigDraft>& drafts,

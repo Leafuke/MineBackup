@@ -68,6 +68,29 @@ Config BuildRecommendedConfig(
 	return config;
 }
 
+optional<ConfigDraft> BuildCustomFolderDraft(const filesystem::path& folder) {
+	if (folder.empty()) return nullopt;
+	const auto normalized =
+		PathIdentity::NormalizeExistingOrProspectivePath(folder);
+	const auto parent = normalized.parent_path();
+	const auto relative = normalized.lexically_relative(parent);
+	if (parent.empty() || parent == normalized || relative.empty()
+		|| relative == L"." || relative.is_absolute()) {
+		return nullopt;
+	}
+	for (const auto& component : relative) {
+		if (component == L"." || component == L"..") return nullopt;
+	}
+
+	ConfigDraft draft;
+	draft.name = wstring_to_utf8(normalized.filename().wstring());
+	if (draft.name.empty()) draft.name = "Custom Folder";
+	draft.edition = MinecraftEdition::Unknown;
+	draft.saveRoot = parent;
+	draft.worlds.emplace_back(relative.wstring(), normalized.filename().wstring());
+	return draft;
+}
+
 vector<ConfigDraft> ResolveUniqueConfigDrafts(
 	const vector<ConfigDraft>& drafts,
 	const filesystem::path& defaultBackupRoot,

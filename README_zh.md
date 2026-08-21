@@ -50,7 +50,8 @@ Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 `Config` 条目和备份子目录。
 
 默认备份根为 `Documents/MineBackup-Backups`；如果 Documents 不可用，则回退到应用数据目录下的
-`backups`。也可以手动添加目录。PCL2 不保证枚举所有历史自定义目录，需要时请先运行 PCL2，再次
+`backups`。也可以手动添加 Minecraft 目录，或通过高级入口保护普通自定义文件夹。PCL2 不保证枚举
+所有历史自定义目录，需要时请先运行 PCL2，再次
 执行扫描。HMCL 自动发现本轮尚未支持，请手动添加其目录。之后可在 **设置 → 应用** 中重新扫描。
 在完成设置前关闭向导不会写入 `config.ini`。
 

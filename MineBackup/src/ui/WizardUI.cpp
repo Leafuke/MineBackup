@@ -61,6 +61,7 @@ struct WizardRuntime {
 	WizardSession session;
 	shared_ptr<WizardMailbox> mailbox = make_shared<WizardMailbox>();
 	vector<DiscoveryLocation> manualLocations;
+	optional<ConfigDraft> advancedCustomDraft;
 	array<char, kWizardPathCapacity> backupRootBuffer{};
 	uint64_t readinessGeneration = 0;
 	wstring scanTaskName;
@@ -118,6 +119,7 @@ void BeginDiscovery(WizardRuntime& runtime) {
 		TaskCoordinator::Instance().RequestStop(runtime.scanTaskName);
 	}
 	const uint64_t generation = BeginWizardDiscovery(runtime.session);
+	runtime.advancedCustomDraft.reset();
 	runtime.scanTaskName = L"onboarding-discovery-" + to_wstring(generation);
 	runtime.scanning = true;
 	runtime.errorKey.clear();
@@ -148,6 +150,18 @@ void BeginDiscovery(WizardRuntime& runtime) {
 		runtime.scanning = false;
 		runtime.errorKey = "WIZARD_TASK_SUBMIT_FAILED";
 	}
+}
+
+const vector<ConfigDraft>& RebuildRuntimeDrafts(WizardRuntime& runtime) {
+	if (!runtime.advancedCustomDraft) {
+		return RebuildWizardDrafts(runtime.session, ConfigSnapshot());
+	}
+	runtime.session.drafts = ResolveUniqueConfigDrafts(
+		{*runtime.advancedCustomDraft},
+		runtime.session.defaultBackupRoot,
+		ConfigSnapshot());
+	InvalidateWizardReadiness(runtime.session);
+	return runtime.session.drafts;
 }
 
 void BeginReadiness(WizardRuntime& runtime, ReadinessPurpose purpose) {
@@ -288,6 +302,22 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 		ImGui::Spacing();
 		ImGui::TextWrapped("%s", L("WIZARD_DISCOVERY_EMPTY"));
 		ImGui::TextWrapped("%s", L("WIZARD_PCL2_HINT"));
+		ImGui::TextWrapped("%s", L("WIZARD_ADVANCED_CUSTOM_DESC"));
+		if (ImGui::Button(L("WIZARD_ADVANCED_CUSTOM"), ImVec2(-1, 0))) {
+			const auto selected = GetDesktopServices()->SelectFolder();
+			if (!selected.path.empty()) {
+				runtime.advancedCustomDraft = BuildCustomFolderDraft(selected.path);
+				if (runtime.advancedCustomDraft) {
+					runtime.session.selectedInstanceKeys.clear();
+					RebuildRuntimeDrafts(runtime);
+					runtime.session.stage = WizardStage::BackupLocation;
+					runtime.errorKey.clear();
+				}
+				else {
+					runtime.errorKey = "WIZARD_ADVANCED_CUSTOM_INVALID";
+				}
+			}
+		}
 	}
 	if (!runtime.errorKey.empty()) {
 		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
@@ -330,7 +360,8 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 	ImGui::BeginDisabled(runtime.scanning
 		|| runtime.session.selectedInstanceKeys.empty());
 	if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(-1, 0))) {
-		RebuildWizardDrafts(runtime.session, ConfigSnapshot());
+		runtime.advancedCustomDraft.reset();
+		RebuildRuntimeDrafts(runtime);
 		if (!runtime.session.drafts.empty()) {
 			runtime.session.stage = WizardStage::BackupLocation;
 		}
@@ -348,7 +379,7 @@ void DrawBackupStage(WizardRuntime& runtime) {
 		if (!selected.path.empty()) {
 			SetWizardDefaultBackupRoot(runtime.session, selected.path);
 			SetPathBuffer(runtime.backupRootBuffer, selected.path);
-			RebuildWizardDrafts(runtime.session, ConfigSnapshot());
+			RebuildRuntimeDrafts(runtime);
 		}
 	}
 	ImGui::SameLine();
@@ -356,7 +387,7 @@ void DrawBackupStage(WizardRuntime& runtime) {
 		const auto recommended = RecommendedBackupRoot();
 		SetWizardDefaultBackupRoot(runtime.session, recommended);
 		SetPathBuffer(runtime.backupRootBuffer, recommended);
-		RebuildWizardDrafts(runtime.session, ConfigSnapshot());
+		RebuildRuntimeDrafts(runtime);
 	}
 	ImGui::SetNextItemWidth(-1.0f);
 	if (ImGui::InputText(
@@ -364,7 +395,7 @@ void DrawBackupStage(WizardRuntime& runtime) {
 		runtime.backupRootBuffer.size())) {
 		SetWizardDefaultBackupRoot(runtime.session,
 			filesystem::path(utf8_to_wstring(runtime.backupRootBuffer.data())));
-		RebuildWizardDrafts(runtime.session, ConfigSnapshot());
+		RebuildRuntimeDrafts(runtime);
 	}
 
 	const bool rootValid = !runtime.session.defaultBackupRoot.empty()
@@ -384,6 +415,9 @@ void DrawBackupStage(WizardRuntime& runtime) {
 
 	const float width = CalcPairButtonWidth(L("BUTTON_PREVIOUS"), L("BUTTON_NEXT"));
 	if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(width, 0))) {
+		runtime.advancedCustomDraft.reset();
+		runtime.session.drafts.clear();
+		InvalidateWizardReadiness(runtime.session);
 		runtime.session.stage = WizardStage::Discover;
 	}
 	ImGui::SameLine();

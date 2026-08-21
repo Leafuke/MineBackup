@@ -250,7 +250,9 @@ BatchReadinessResult BatchReadinessService::CheckBatch(
 					world, ErrorDetail(error));
 				continue;
 			}
-			if (!filesystem::is_regular_file(world / L"level.dat", error) || error) {
+			// 高级自定义文件夹不冒充 Minecraft 世界；仍执行目录、路径、写入和工具检查。
+			if (draft.edition != MinecraftEdition::Unknown
+				&& (!filesystem::is_regular_file(world / L"level.dat", error) || error)) {
 				AddIssue(result.report,
 					draft.edition == MinecraftEdition::Bedrock
 						? "bedrock_world_invalid" : "java_world_invalid",

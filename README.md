@@ -58,7 +58,8 @@ and backup subdirectory.
 
 The default backup root is `Documents/MineBackup-Backups`. If Documents is not
 available, MineBackup falls back to `backups` under the application data
-directory. You can also add a directory manually. PCL2 is not guaranteed to
+directory. You can also add a Minecraft directory manually, or use the advanced
+fallback to protect a regular custom folder. PCL2 is not guaranteed to
 enumerate every historical custom directory, so run PCL2 and rescan when needed.
 HMCL automatic discovery is not supported in this iteration; add its directory
 manually. Later, use **Settings → Application** to scan again. Closing the

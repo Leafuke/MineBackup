@@ -71,6 +71,22 @@ int main() {
 	Expect(!std::filesystem::exists(valid.backupPath),
 		"a successful write probe should remove its file and newly-created empty directories");
 
+	const auto customFolder = root / "custom" / "Server Data";
+	std::filesystem::create_directories(customFolder);
+	auto custom = BuildCustomFolderDraft(customFolder);
+	Expect(custom.has_value() && custom->edition == MinecraftEdition::Unknown
+			&& custom->saveRoot == customFolder.parent_path()
+			&& custom->worlds.size() == 1,
+		"the advanced fallback should model a regular folder without a Minecraft candidate");
+	if (custom) {
+		custom->backupPath = root / "custom-backups" / "Server Data";
+		const auto customResult = service.CheckBatch({*custom}, {});
+		Expect(customResult.report.ready,
+			"a regular custom folder should pass full readiness without level.dat");
+	}
+	Expect(!BuildCustomFolderDraft(customFolder.root_path()).has_value(),
+		"a filesystem root should not become an unsafe custom draft");
+
 	resolves = 0;
 	auto missing = ValidDraft(root / "missing-source");
 	std::filesystem::remove_all(missing.saveRoot);
