@@ -438,6 +438,26 @@ if(BUILD_TESTING)
     add_test(NAME minebackup.known_user_folders
         COMMAND minebackup_known_user_folders_tests)
 
+    add_executable(minebackup_minecraft_inspector_tests
+        tests/MinecraftInstanceInspectorTests.cpp)
+    target_link_libraries(minebackup_minecraft_inspector_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_minecraft_inspector_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.minecraft_inspector
+        COMMAND minebackup_minecraft_inspector_tests)
+
+    add_executable(minebackup_known_minecraft_location_tests
+        tests/KnownMinecraftLocationProviderTests.cpp)
+    target_link_libraries(minebackup_known_minecraft_location_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_known_minecraft_location_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.known_minecraft_locations
+        COMMAND minebackup_known_minecraft_location_tests)
+
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_config_batch_tests
             tests/ConfigBatchCreationServiceTests.cpp)
