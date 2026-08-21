@@ -4,6 +4,7 @@
 #include "AtomicFileWriter.h"
 #include "BackupService.h"
 #include "CliArguments.h"
+#include "CliJobResult.h"
 #include "CliRenderer.h"
 #include "CliSignalHandler.h"
 #include "CliToolBootstrap.h"
@@ -460,27 +461,7 @@ CliResult JobRunCommand(
 	result.code = run.code;
 	result.diagnostics.insert(result.diagnostics.end(),
 		run.diagnostics.begin(), run.diagnostics.end());
-	result.data["jobId"] = wstring_to_utf8(run.jobId);
-	result.data["stages"] = nlohmann::json::array();
-	for (const auto& stage : run.stages) {
-		nlohmann::json stageValue{
-			{"stageId", wstring_to_utf8(stage.stageId)},
-			{"code", ToString(stage.code)},
-			{"skipped", stage.skipped},
-			{"steps", nlohmann::json::array()}};
-		for (const auto& step : stage.steps) {
-			nlohmann::json diagnostics = nlohmann::json::array();
-			for (const auto& item : step.diagnostics) {
-				diagnostics.push_back({{"eventId", item.eventId},
-					{"severity", ToString(item.severity)}, {"detail", item.detail}});
-			}
-			stageValue["steps"].push_back({
-				{"stepId", wstring_to_utf8(step.stepId)},
-				{"code", ToString(step.code)},
-				{"diagnostics", std::move(diagnostics)}});
-		}
-		result.data["stages"].push_back(std::move(stageValue));
-	}
+	result.data = BuildJobRunData(run);
 	return result;
 }
 
@@ -1021,7 +1002,7 @@ CliResult RunServeLoop(
 					{"capabilities", ServeCapabilities()}};
 				response.accepted = true;
 				response.exitCode = 0;
-				response.payload = SerializeCliEnvelope(status);
+				response.payload = SerializeCliEnvelopeForControlChannel(status);
 				wstring replyError;
 				(void)instance.Reply(exchange.connectionId, response, replyError);
 				continue;
@@ -1036,7 +1017,7 @@ CliResult RunServeLoop(
 				stopped.data["stopping"] = true;
 				response.accepted = true;
 				response.exitCode = 0;
-				response.payload = SerializeCliEnvelope(stopped);
+				response.payload = SerializeCliEnvelopeForControlChannel(stopped);
 				wstring replyError;
 				(void)instance.Reply(exchange.connectionId, response, replyError);
 				continue;
@@ -1092,7 +1073,7 @@ CliResult RunServeLoop(
 						commandResult.code = OperationCode::Cancelled;
 					}
 					operation->response.exitCode = ToExitCode(commandResult.code);
-					operation->response.payload = SerializeCliEnvelope(commandResult);
+					operation->response.payload = SerializeCliEnvelopeForControlChannel(commandResult);
 				}
 				catch (const exception& exception) {
 					// 工作线程不能把异常带出线程边界，否则会终止整个 serve 进程。
@@ -1101,14 +1082,14 @@ CliResult RunServeLoop(
 						"serve.operation.exception", DiagnosticSeverity::Error,
 						SanitizeUtf8(exception.what(), 256u * 1024u).value});
 					operation->response.exitCode = ToExitCode(failed.code);
-					operation->response.payload = SerializeCliEnvelope(failed);
+					operation->response.payload = SerializeCliEnvelopeForControlChannel(failed);
 				}
 				catch (...) {
 					CliResult failed{"serve.execute", OperationCode::JobFailed};
 					failed.diagnostics.push_back({
 						"serve.operation.exception", DiagnosticSeverity::Error, {}});
 					operation->response.exitCode = ToExitCode(failed.code);
-					operation->response.payload = SerializeCliEnvelope(failed);
+					operation->response.payload = SerializeCliEnvelopeForControlChannel(failed);
 				}
 				operation->completed.store(true, memory_order_release);
 			});

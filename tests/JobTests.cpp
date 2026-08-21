@@ -1,5 +1,6 @@
 #include "JobTests.h"
 
+#include "CliJobResult.h"
 #include "JobDocument.h"
 #include "JobRunner.h"
 #include "json.hpp"
@@ -210,6 +211,90 @@ void RunJobTests(TestContext& test, const filesystem::path& temporaryRoot) {
 	test.Expect(validUnicode.value == "\xE4\xB8\xAD\xF0\x9F\x98\x80"
 			&& !validUnicode.invalidUtf8Replaced && !validUnicode.truncated,
 		"UTF-8 sanitizer should preserve valid three- and four-byte code points");
+
+	JobRunResult smallProjection;
+	smallProjection.jobId = JobId;
+	smallProjection.code = OperationCode::Success;
+	JobStageResult smallStage;
+	smallStage.stageId = StageId;
+	smallStage.code = OperationCode::Success;
+	JobStepResult smallStep;
+	smallStep.stepId = StepA;
+	smallStep.code = OperationCode::Success;
+	smallStep.diagnostics.push_back({
+		"job.step.invalid", DiagnosticSeverity::Warning, "bad\xFF\"\\\n"});
+	smallStage.steps.push_back(smallStep);
+	smallProjection.stages.push_back(smallStage);
+	const auto smallData = BuildJobRunData(smallProjection);
+	test.Expect(smallData.size() == 2
+			&& smallData.contains("jobId") && smallData.contains("stages")
+			&& !smallData.contains("diagnosticsTruncated")
+			&& smallData["stages"].at(0)["steps"].at(0).contains("diagnostics")
+			&& smallData["stages"].at(0)["steps"].at(0)["diagnostics"].at(0)
+				["detail"].get<string>().find("\xEF\xBF\xBD") != string::npos
+			&& smallData.dump().find("\\n") != string::npos,
+		"Small Job projections should preserve their schema while sanitizing diagnostics");
+
+	JobRunResult aggregateProjection;
+	aggregateProjection.jobId = JobId;
+	aggregateProjection.code = OperationCode::JobFailed;
+	JobStageResult aggregateStage;
+	aggregateStage.stageId = StageId;
+	aggregateStage.code = OperationCode::JobFailed;
+	for (size_t index = 0; index < 40; ++index) {
+		JobStepResult step;
+		step.stepId = L"aggregate-step-" + to_wstring(index);
+		step.code = index % 2 == 0
+			? OperationCode::BackupFailed : OperationCode::JobFailed;
+		step.diagnostics.push_back({
+			"job.step.output", DiagnosticSeverity::Error,
+			string(kMaximumSingleJobDiagnosticDetailBytes, 'x')});
+		aggregateStage.steps.push_back(std::move(step));
+	}
+	aggregateProjection.stages.push_back(std::move(aggregateStage));
+	const auto aggregateData = BuildJobRunData(aggregateProjection);
+	size_t aggregateDetailBytes = 0;
+	bool aggregateStepsPreserved = aggregateData["stages"].size() == 1
+		&& aggregateData["stages"].at(0)["steps"].size() == 40;
+	if (aggregateStepsPreserved) {
+		for (size_t index = 0; index < 40; ++index) {
+			const auto& step = aggregateData["stages"].at(0)["steps"].at(index);
+			for (const auto& diagnostic : step["diagnostics"]) {
+				aggregateDetailBytes += diagnostic.value("detail", string{}).size();
+			}
+			aggregateStepsPreserved &= step["stepId"].get<string>()
+				== "aggregate-step-" + to_string(index)
+				&& step["code"].get<string>() == ToString(index % 2 == 0
+					? OperationCode::BackupFailed : OperationCode::JobFailed);
+		}
+	}
+	test.Expect(aggregateProjection.code == OperationCode::JobFailed
+			&& aggregateStepsPreserved
+			&& aggregateData.value("diagnosticsTruncated", false)
+			&& aggregateDetailBytes <= kMaximumJobDiagnosticBytes,
+		"Job projections should bound aggregate diagnostics while preserving every step outcome");
+	test.Expect(!nlohmann::json::parse(aggregateData.dump(), nullptr, false).is_discarded(),
+		"Bounded Job projections should remain valid JSON");
+
+	JobRunResult boundaryProjection;
+	boundaryProjection.jobId = JobId;
+	JobStageResult boundaryStage;
+	boundaryStage.stageId = StageId;
+	JobStepResult boundaryFirst;
+	boundaryFirst.stepId = StepA;
+	boundaryFirst.diagnostics.push_back({
+		"job.step.first", DiagnosticSeverity::Error,
+		string(kMaximumJobDiagnosticBytes - 3u, 'a')});
+	JobStepResult boundaryLast;
+	boundaryLast.stepId = StepB;
+	boundaryLast.diagnostics.push_back({
+		"job.step.last", DiagnosticSeverity::Error, "abcd"});
+	boundaryStage.steps = {std::move(boundaryFirst), std::move(boundaryLast)};
+	boundaryProjection.stages.push_back(std::move(boundaryStage));
+	const auto boundaryData = BuildJobRunData(boundaryProjection);
+	test.Expect(boundaryData.value("diagnosticsTruncated", false)
+			&& boundaryData["stages"].at(0)["steps"].size() == 2,
+		"A diagnostic exceeding the final aggregate remainder should be marked even without later diagnostics");
 
 	const filesystem::path jobsPath = temporaryRoot / "jobs" / "jobs.json";
 	wstring writeError;

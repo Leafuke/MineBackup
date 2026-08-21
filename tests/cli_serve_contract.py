@@ -22,6 +22,8 @@ STEP_ID = "54444444-4444-4444-8444-444444444444"
 INVALID_JOB_ID = "55555555-5555-4555-8555-555555555555"
 INVALID_STAGE_ID = "56666666-6666-4666-8666-666666666666"
 INVALID_STEP_ID = "57777777-7777-4777-8777-777777777777"
+AGGREGATE_JOB_ID = "58888888-8888-4888-8888-888888888888"
+AGGREGATE_STAGE_ID = "59999999-9999-4999-8999-999999999999"
 
 
 def write_profile(profile: Path) -> None:
@@ -55,6 +57,23 @@ def write_profile(profile: Path) -> None:
         ]
     )
     (profile / "config" / "config.ini").write_text(config, encoding="utf-8")
+    aggregate_steps = [
+        {
+            "stepId": f"60000000-0000-4000-8000-{index:012d}",
+            "name": f"aggregate process {index}",
+            "type": "process",
+            "executable": sys.executable,
+            "arguments": [
+                "-c",
+                "import sys; sys.stderr.buffer.write(b'x' * (300 * 1024)); sys.exit(7)",
+            ],
+            "workingDirectory": "",
+            "timeoutSeconds": 30,
+            "maximumCapturedBytes": 64 * 1024 * 1024,
+            "lowPriority": False,
+        }
+        for index in range(34)
+    ]
     jobs = {
         "schemaVersion": 1,
         "jobs": [
@@ -107,6 +126,17 @@ def write_profile(profile: Path) -> None:
                     }
                 ],
             },
+            {
+                "jobId": AGGREGATE_JOB_ID,
+                "name": "aggregate diagnostic contract",
+                "stages": [
+                    {
+                        "stageId": AGGREGATE_STAGE_ID,
+                        "name": "aggregate diagnostics",
+                        "steps": aggregate_steps,
+                    }
+                ],
+            },
         ],
     }
     (profile / "config" / "jobs.json").write_text(
@@ -127,7 +157,13 @@ def parse_single_json(stdout: str, context: str) -> dict:
     return value
 
 
-def run_cli(cli: Path, profile: Path, environment: dict[str, str], *arguments: str) -> subprocess.CompletedProcess[str]:
+def run_cli(
+    cli: Path,
+    profile: Path,
+    environment: dict[str, str],
+    *arguments: str,
+    timeout: float = 10,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(cli), "--data-dir", str(profile), "--json", *arguments],
         stdin=subprocess.DEVNULL,
@@ -137,7 +173,7 @@ def run_cli(cli: Path, profile: Path, environment: dict[str, str], *arguments: s
         encoding="utf-8",
         errors="replace",
         env=environment,
-        timeout=10,
+        timeout=timeout,
         check=False,
     )
 
@@ -274,6 +310,55 @@ def main() -> int:
             )
         if status(cli, profile, environment).get("data", {}).get("activeOperationCount") != 0:
             raise AssertionError("serve retained an invalid-stderr operation after its response")
+
+        aggregate = run_cli(
+            cli,
+            profile,
+            environment,
+            "job",
+            "run",
+            "--job",
+            AGGREGATE_JOB_ID,
+            timeout=30,
+        )
+        aggregate_json = parse_single_json(aggregate.stdout, "forwarded aggregate diagnostics")
+        if (
+            aggregate.returncode != 6
+            or aggregate_json.get("command") != "job.run"
+            or aggregate_json.get("code") != "job_failed"
+        ):
+            raise AssertionError(
+                f"forwarded aggregate diagnostics returned the wrong result: "
+                f"{aggregate.returncode} {aggregate_json!r}"
+            )
+        aggregate_data = aggregate_json.get("data", {})
+        if (
+            aggregate_data.get("diagnosticsTruncated") is not True
+            or aggregate_data.get("responseTruncated") is True
+            or len(aggregate.stdout.encode("utf-8")) >= 3 * 1024 * 1024
+        ):
+            raise AssertionError(
+                f"forwarded aggregate diagnostics were not bounded at the Job layer: "
+                f"{len(aggregate.stdout.encode('utf-8'))} {aggregate_json!r}"
+            )
+        aggregate_stages = aggregate_data.get("stages", [])
+        aggregate_steps = aggregate_stages[0].get("steps", []) if aggregate_stages else []
+        if (
+            len(aggregate_stages) != 1
+            or len(aggregate_steps) != 34
+            or {
+                step.get("stepId")
+                for step in aggregate_steps
+            }
+            != {f"60000000-0000-4000-8000-{index:012d}" for index in range(34)}
+            or any(step.get("code") != "job_failed" for step in aggregate_steps)
+        ):
+            raise AssertionError(
+                f"forwarded aggregate diagnostics did not preserve all step outcomes: "
+                f"{aggregate_json!r}"
+            )
+        if status(cli, profile, environment).get("data", {}).get("activeOperationCount") != 0:
+            raise AssertionError("serve retained an aggregate-diagnostics operation after its response")
 
         job_command = [
             str(cli), "--data-dir", str(profile), "--json",

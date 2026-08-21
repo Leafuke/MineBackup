@@ -12,6 +12,8 @@ using namespace std;
 
 namespace {
 
+constexpr size_t kMaximumControlCliFallbackCommandBytes = 256u;
+
 bool ParseCode(const string& value, OperationCode& code) {
 	const pair<const char*, OperationCode> values[]{
 		{"success", OperationCode::Success},
@@ -102,6 +104,31 @@ string SerializeCliEnvelope(const CliResult& result) {
 			return R"({"schemaVersion":1,"command":"unknown","ok":false,"code":"job_failed","data":{},"diagnostics":[{"eventId":"cli.response.serialization_failed","severity":"error","detail":""}]})";
 		}
 	}
+}
+
+string SerializeCliEnvelopeForControlChannel(const CliResult& result) {
+	try {
+		const string normal = BuildCliEnvelope(result).dump();
+		if (normal.size() <= kMaximumControlCliEnvelopeBytes) return normal;
+	}
+	catch (...) {
+		// 畸形 UTF-8 或其他 JSON 编码异常也必须保留原业务 code，转入受控降级。
+	}
+
+	const CliResult fallback{
+		SanitizeUtf8(result.command, kMaximumControlCliFallbackCommandBytes).value,
+		result.code,
+		nlohmann::json{{"responseTruncated", true}},
+		{{"cli.response.truncated", DiagnosticSeverity::Warning,
+			"CLI response exceeded the control-channel serialization budget."}}};
+	try {
+		const string serialized = BuildCliEnvelope(fallback).dump();
+		if (serialized.size() <= kMaximumControlCliEnvelopeBytes) return serialized;
+	}
+	catch (...) {
+		// fallback 只包含固定字段和已清洗 command；保留最后一道非空兜底。
+	}
+	return R"({"schemaVersion":1,"command":"","ok":false,"code":"job_failed","data":{"responseTruncated":true},"diagnostics":[{"eventId":"cli.response.truncated","severity":"warning","detail":"CLI response exceeded the control-channel serialization budget."}]})";
 }
 
 bool ParseCliEnvelope(const string& payload, CliResult& result) {

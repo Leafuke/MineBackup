@@ -3,6 +3,7 @@ set(MINEBACKUP_MAIN_SOURCES ${MINEBACKUP_APP_DIR}/MineBackup.cpp)
 set(MINEBACKUP_CLI_SOURCES
 	${MINEBACKUP_SRC_DIR}/cli/CliArguments.cpp
 	${MINEBACKUP_SRC_DIR}/cli/CliApplication.cpp
+	${MINEBACKUP_SRC_DIR}/cli/CliJobResult.cpp
 	${MINEBACKUP_SRC_DIR}/cli/CliRenderer.cpp
 	${MINEBACKUP_SRC_DIR}/cli/CliSignalHandler.cpp
 	${MINEBACKUP_SRC_DIR}/cli/CliToolBootstrap.cpp

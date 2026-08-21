@@ -32,6 +32,6 @@ MineBackup 对每个规范 profile 身份持有一个单实例锁。Windows 使�
 
 `requestId` 关联一次 IPC 往返，`operationId` 标识服务端可取消操作。参数保持 Unicode 数组语义，不经 shell。客户端必须验证响应 `requestId`、runtime role 与 capability；连接到 GUI、收到未知版本、超长/畸形消息或超时都不得降级为不受认证的旁路执行。
 
-v2 payload 上限为 8 MiB；旧桌面消息继续限制为 64 KiB。服务端接收连接后保留回复通道，因此可以在执行工作线程结束时返回与直接 CLI 相同的最终结果和退出码；取消与停机请求使用独立连接，不依赖正在运行的命令连接。服务端编码或写入响应失败时也会关闭保留的连接；可编码的超限响应会降级为简短的协议错误，客户端不会无限等待。
+v2 JSON frame payload 上限仍为 8 MiB；旧桌面消息继续限制为 64 KiB。`job.run` 的嵌套 step diagnostics 采用有界聚合；达到预算后保留 Job/Stage/Step 结果结构并显式标记 diagnostics 截断。serve 在进入 control protocol 前还会执行最终 transport-safe envelope 检查，以保证普通业务结果不会依赖 protocol-level oversized fallback。服务端接收连接后保留回复通道，因此可以在执行工作线程结束时返回与直接 CLI 相同的最终结果和退出码；取消与停机请求使用独立连接，不依赖正在运行的命令连接。服务端编码或写入响应失败时也会关闭保留的连接；可编码的超限响应会降级为简短的协议错误，客户端不会无限等待。
 
 `status` 的 envelope 数据包含正在执行的 IPC operationId/命令/取消状态、KnotLink 活动操作数量、网络与 listener 状态和运行时间。客户端 Ctrl+C 发送对应 operationId 的 `cancel`；连接意外断开不会扩大权限或切换到旁路执行。`stop`/SIGTERM 先停止接单，再取消并收尾 IPC 与 KnotLink 工作，最后释放 profile 锁。

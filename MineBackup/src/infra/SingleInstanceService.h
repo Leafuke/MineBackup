@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+inline constexpr std::uint32_t kInstanceMaximumFramePayloadBytes =
+	8u * 1024u * 1024u;
+
 enum class InstanceRequestType {
 	Activate,
 	SelectConfig

@@ -37,7 +37,6 @@ namespace {
 constexpr uint32_t kLegacyProtocolVersion = 1;
 constexpr uint32_t kControlProtocolVersion = 2;
 constexpr uint32_t kMaximumLegacyPayloadBytes = 64u * 1024u;
-constexpr uint32_t kMaximumPayloadBytes = 8u * 1024u * 1024u;
 
 #ifdef _WIN32
 class CurrentUserSecurity {
@@ -175,7 +174,7 @@ InstanceRuntimeRole ParseRole(const string& value) {
 
 bool FrameJson(const nlohmann::json& root, vector<uint8_t>& message, wstring& error) {
 	const string payload = root.dump();
-	if (payload.empty() || payload.size() > kMaximumPayloadBytes) {
+	if (payload.empty() || payload.size() > kInstanceMaximumFramePayloadBytes) {
 		error = L"The instance message exceeds the protocol size limit.";
 		return false;
 	}
@@ -193,7 +192,7 @@ bool ParseFrame(const vector<uint8_t>& message, nlohmann::json& root, wstring& e
 	}
 	uint32_t length = 0;
 	memcpy(&length, message.data(), sizeof(length));
-	if (length == 0 || length > kMaximumPayloadBytes
+	if (length == 0 || length > kInstanceMaximumFramePayloadBytes
 		|| message.size() != sizeof(length) + length) {
 		error = L"The instance message has an invalid length prefix.";
 		return false;
@@ -375,7 +374,7 @@ bool ReadMessage(
 	const BOOL headerRead = ReadFile(
 		handle, &length, sizeof(length), &read, nullptr);
 	if ((!headerRead && GetLastError() != ERROR_MORE_DATA)
-		|| read != sizeof(length) || length == 0 || length > kMaximumPayloadBytes) {
+		|| read != sizeof(length) || length == 0 || length > kInstanceMaximumFramePayloadBytes) {
 		error = L"The instance message header is invalid.";
 		return false;
 	}
@@ -479,7 +478,7 @@ bool ReadMessage(
 	uint32_t length = 0;
 	if (!ReadExact(descriptor, reinterpret_cast<uint8_t*>(&length),
 			sizeof(length), deadline, error)
-		|| length == 0 || length > kMaximumPayloadBytes) {
+		|| length == 0 || length > kInstanceMaximumFramePayloadBytes) {
 		if (error.empty()) error = L"The instance message header is invalid.";
 		return false;
 	}

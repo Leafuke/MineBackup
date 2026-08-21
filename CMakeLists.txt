@@ -398,6 +398,8 @@ if(BUILD_TESTING)
         tests/TestMain.cpp
 		${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
 		${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
+		${MINEBACKUP_SRC_DIR}/cli/CliJobResult.cpp
+		${MINEBACKUP_SRC_DIR}/cli/CliRenderer.cpp
         tests/BackupPipelineTest.cpp
         tests/BackupServiceTests.cpp
         tests/CloudSyncTests.cpp
@@ -412,6 +414,8 @@ if(BUILD_TESTING)
 		tests/RestoreServiceTests.cpp
         tests/RuntimeInfrastructureTests.cpp)
     target_link_libraries(minebackup_data_tests PRIVATE minebackup_runtime)
+	target_include_directories(minebackup_data_tests PRIVATE
+		${MINEBACKUP_SRC_DIR}/cli)
     if(MSVC)
         target_compile_options(minebackup_data_tests PRIVATE /utf-8 /FS)
     endif()
