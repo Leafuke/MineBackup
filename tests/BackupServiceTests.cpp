@@ -1,6 +1,7 @@
 #include "BackupServiceTests.h"
 
 #include "BackupService.h"
+#include "ChainSafeRetention.h"
 #include "ExternalToolManager.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
@@ -16,6 +17,16 @@
 #include <map>
 #include <stop_token>
 #include <string_view>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 using namespace std;
 
@@ -76,6 +87,227 @@ string EventField(const BackupRuntimeEvent& event, string_view name) {
 		if (key == name) return value;
 	}
 	return {};
+}
+
+#ifdef _WIN32
+class ScopedCleanupHandle {
+public:
+	~ScopedCleanupHandle() { Release(); }
+
+	bool Open(const filesystem::path& path) {
+		Release();
+		handle_ = CreateFileW(
+			path.c_str(),
+			GENERIC_READ,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr);
+		return handle_ != INVALID_HANDLE_VALUE;
+	}
+
+	bool Release() {
+		if (handle_ == INVALID_HANDLE_VALUE) return true;
+		const bool closed = CloseHandle(handle_) != FALSE;
+		handle_ = INVALID_HANDLE_VALUE;
+		return closed;
+	}
+
+private:
+	HANDLE handle_ = INVALID_HANDLE_VALUE;
+};
+#else
+class ScopedDirectoryPermissions {
+public:
+	~ScopedDirectoryPermissions() { Restore(); }
+
+	bool Protect(const filesystem::path& path) {
+		Restore();
+		struct stat status {};
+		if (::stat(path.c_str(), &status) != 0) return false;
+		originalMode_ = status.st_mode;
+		if (::chmod(path.c_str(), status.st_mode & ~S_IWUSR) != 0) return false;
+		path_ = path;
+		active_ = true;
+		return true;
+	}
+
+	bool Restore() {
+		if (!active_) return true;
+		const bool restored = ::chmod(path_.c_str(), originalMode_) == 0;
+		if (restored) {
+			path_.clear();
+			active_ = false;
+		}
+		return restored;
+	}
+
+private:
+	filesystem::path path_;
+	mode_t originalMode_ = 0;
+	bool active_ = false;
+};
+#endif
+
+void RunDirectRemoveTransactionTests(
+	TestContext& test,
+	const filesystem::path& temporaryRoot) {
+	auto runCase = [&](const filesystem::path& caseRoot,
+		bool commitSucceeds,
+		bool injectCleanupFailure) {
+		Config config;
+		config.configId = L"direct-remove-" + caseRoot.filename().wstring();
+		config.saveRoot = (caseRoot / "saves").wstring();
+		config.worlds = {{L"world", L"World"}};
+		config.backupPath = (caseRoot / "backups").wstring();
+		config.zipFormat = L"7z";
+		const filesystem::path world = caseRoot / "saves" / "world";
+		FolderRewindFormat::StoragePaths storage;
+		const bool storageResolved = FolderRewindFormat::TryResolveStoragePaths(
+			config.backupPath, L"world", world.wstring(), storage);
+		test.Expect(storageResolved, "DirectRemove fixture should resolve storage paths");
+		if (!storageResolved) return;
+
+		const wstring targetFile = L"[Full]-DirectRemove-A.7z";
+		const wstring survivorFile = L"[Full]-DirectRemove-B.7z";
+		WriteFixture(world / "level.dat", "direct-remove-world");
+		WriteFixture(storage.backupSubDir / targetFile, "target archive");
+		WriteFixture(storage.backupSubDir / survivorFile, "survivor archive");
+
+		HistoryEntry target;
+		target.configId = config.configId;
+		target.worldName = storage.folderName;
+		target.worldPath = world.wstring();
+		target.backupFile = targetFile;
+		target.backupType = L"Full";
+		target.timestamp_str = L"2024-01-01T00:00:00";
+		HistoryEntry survivor = target;
+		survivor.backupFile = survivorFile;
+		survivor.timestamp_str = L"2024-01-01T00:01:00";
+
+		FolderRewindFormat::MetadataState metadataState;
+		metadataState.lastBackupFileName = survivorFile;
+		metadataState.basedOnFullBackup = survivorFile;
+		FolderRewindFormat::ChangeRecord targetRecord;
+		targetRecord.archiveFileName = targetFile;
+		targetRecord.backupType = L"Full";
+		targetRecord.basedOnFullBackup = targetFile;
+		targetRecord.fullFileList = {L"level.dat"};
+		FolderRewindFormat::ChangeRecord survivorRecord = targetRecord;
+		survivorRecord.archiveFileName = survivorFile;
+		survivorRecord.basedOnFullBackup = survivorFile;
+		test.Expect(FolderRewindMetadataStore::SaveState(
+				storage.metadataDir, metadataState)
+				&& FolderRewindMetadataStore::SaveRecord(
+					storage.metadataDir, targetRecord)
+				&& FolderRewindMetadataStore::SaveRecord(
+					storage.metadataDir, survivorRecord),
+			"DirectRemove fixture should persist archive metadata");
+
+		const filesystem::path runtimeRoot = caseRoot / "runtime";
+		AppPaths paths;
+		paths.runtimeRoot = runtimeRoot;
+		vector<HistoryEntry> currentHistory{target, survivor};
+		bool commitCalled = false;
+		bool cleanupFailureInjected = false;
+#ifdef _WIN32
+		ScopedCleanupHandle cleanupHandle;
+#else
+		ScopedDirectoryPermissions protectedTempRoot;
+#endif
+
+		ChainSafeRetention::Request request;
+		request.config = config;
+		request.entry = target;
+		request.history = currentHistory;
+		request.backupDirectory = storage.backupSubDir;
+		request.metadataDirectory = storage.metadataDir;
+		request.paths = paths;
+		request.commitHistory = [&](vector<HistoryEntry> updated) {
+			commitCalled = true;
+			if (!commitSucceeds) return false;
+			currentHistory = std::move(updated);
+			if (!injectCleanupFailure) return true;
+
+			error_code scanError;
+			for (filesystem::directory_iterator iterator(runtimeRoot, scanError), end;
+				!scanError && iterator != end; iterator.increment(scanError)) {
+				error_code entryError;
+				if (!iterator->is_directory(entryError) || entryError) continue;
+				const wstring name = iterator->path().filename().wstring();
+				if (name.rfind(L"MineBackup_Retention_", 0) != 0) continue;
+				const filesystem::path tempRoot = iterator->path();
+#ifdef _WIN32
+				cleanupFailureInjected = cleanupHandle.Open(tempRoot / targetFile);
+#else
+				cleanupFailureInjected = protectedTempRoot.Protect(tempRoot);
+#endif
+				break;
+			}
+			return true;
+		};
+
+		const auto result = ChainSafeRetention::Remove(request);
+		// The exact temporary directory is generated by production code; find it
+		// again so the assertion observes the injected residue without guessing its GUID.
+		bool retentionResidue = false;
+		if (injectCleanupFailure && cleanupFailureInjected) {
+			error_code scanError;
+			for (filesystem::directory_iterator iterator(runtimeRoot, scanError), end;
+				!scanError && iterator != end; iterator.increment(scanError)) {
+				if (iterator->path().filename().wstring().rfind(
+						L"MineBackup_Retention_", 0) == 0) {
+					retentionResidue = true;
+					break;
+				}
+			}
+		}
+		FolderRewindFormat::ChangeRecord loadedTarget;
+		const bool targetMetadataExists = FolderRewindMetadataStore::LoadRecord(
+			storage.metadataDir, targetFile, loadedTarget);
+		const bool targetHistoryExists = any_of(
+			currentHistory.begin(), currentHistory.end(),
+			[&](const HistoryEntry& entry) {
+				return entry.backupFile == targetFile;
+			});
+		if (injectCleanupFailure) {
+			test.Expect(commitCalled && cleanupFailureInjected
+					&& result.changed && !result.warning
+					&& !filesystem::exists(storage.backupSubDir / targetFile)
+					&& !targetMetadataExists && !targetHistoryExists
+					&& retentionResidue,
+				"Committed DirectRemove must not rollback data when temp cleanup fails");
+		}
+		else {
+			test.Expect(commitCalled && !result.changed && result.warning
+					&& filesystem::exists(storage.backupSubDir / targetFile)
+					&& targetMetadataExists && targetHistoryExists,
+				"DirectRemove must rollback archive, metadata, and history on commit failure");
+		}
+
+#ifdef _WIN32
+		test.Expect(cleanupHandle.Release(),
+			"DirectRemove test should release the temporary archive handle");
+#else
+		test.Expect(protectedTempRoot.Restore(),
+			"DirectRemove test should restore temporary-directory permissions");
+#endif
+		error_code cleanupError;
+		filesystem::remove_all(caseRoot, cleanupError);
+		test.Expect(!cleanupError, "DirectRemove fixture should clean up after the transaction test");
+	};
+
+#ifndef _WIN32
+	if (::geteuid() == 0) {
+		cout << "[SKIP] DirectRemove cleanup-failure injection requires a non-root POSIX test user\n";
+	}
+	else
+#endif
+	{
+		runCase(temporaryRoot / "direct-remove-cleanup-failure", true, true);
+	}
+	runCase(temporaryRoot / "direct-remove-commit-failure", false, false);
 }
 
 } // namespace
@@ -458,6 +690,7 @@ void RunBackupServiceTests(
 	test.Expect(!filesystem::exists(oldArchive) && filesystem::exists(newArchive)
 			&& retentionHistory.EntriesForConfig(retentionConfig.configId)->size() == 1,
 		"Runtime retention should atomically remove the oldest ordinary archive and history entry");
+	RunDirectRemoveTransactionTests(test, temporaryRoot / "direct-remove-transactions");
 
 	auto runSmartRetention = [&](const filesystem::path& chainRoot,
 		bool importantTail, bool failMerge, bool cancelMerge, const string& message) {

@@ -250,10 +250,10 @@ Result DirectRemove(Request& request) {
 			throw runtime_error("failed to remove retention metadata");
 		}
 		const auto updated = RemoveHistoryEntry(request.config, request.history, request.entry);
-		if (!request.commitHistory(updated)) throw runtime_error("failed to persist retention history");
-		filesystem::remove_all(tempRoot);
-		result.changed = true;
-		return result;
+		if (!request.commitHistory(updated)) {
+			throw runtime_error("failed to persist retention history");
+		}
+		// history 已成功持久化，此处是事务提交点；提交后的清理不得重新进入回滚路径。
 	}
 	catch (const exception& exception) {
 		error_code restoreError;
@@ -269,6 +269,11 @@ Result DirectRemove(Request& request) {
 		result.warning = true;
 		return result;
 	}
+
+	result.changed = true;
+	error_code cleanupError;
+	filesystem::remove_all(tempRoot, cleanupError);
+	return result;
 }
 
 } // namespace
