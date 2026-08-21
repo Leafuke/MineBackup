@@ -48,14 +48,19 @@ int main() {
 		fontFile << "test";
 	}
 	const std::filesystem::path legacy = root / "legacy.ini";
+	const std::filesystem::path legacySaveRoot = root / "legacy-saves";
+	const std::filesystem::path legacyBackupRoot = root / "legacy-backups";
 	{
 		std::ofstream output(legacy, std::ios::binary);
 		output << "[General]\n"
 			<< "CurrentConfig=2\n"
-			<< "AutoScanForWorlds=0\n"
+			<< "AutoScanForWorlds=1\n"
 			<< "UIScale=1.5\n"
 			<< "[Config2]\n"
 			<< "Name=Active\n"
+			<< "SavePath=" << legacySaveRoot.string() << "\n"
+			<< "BackupPath=" << legacyBackupRoot.string() << "\n"
+			<< "KeepCount=0\n"
 			<< "Theme=5\n"
 			<< "Font=" << font.string() << "\n";
 	}
@@ -67,8 +72,12 @@ int main() {
 		"active valid legacy font migrates to application appearance");
 	Check(g_uiScaleMigrationPending,
 		"legacy scale is pending semantic migration");
-	Check(!g_AutoScanForWorlds,
-		"legacy AutoScanForWorlds remains readable for compatibility");
+	Check(g_AutoScanForWorlds && g_appState.configs.size() == 1,
+		"legacy AutoScanForWorlds=1 remains readable without creating configurations");
+	Check(g_appState.configs.at(2).keepCount == 0
+			&& std::filesystem::path(g_appState.configs.at(2).backupPath)
+				== legacyBackupRoot,
+		"legacy keepCount and backupPath remain unchanged during onboarding upgrade");
 	Check(std::filesystem::path(g_defaultBackupRootPath)
 			== KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(appPaths),
 		"legacy INI without a default backup root receives the in-memory recommendation");
@@ -103,7 +112,7 @@ int main() {
 	Check(saved.find("DefaultBackupRootPath=" + customBackupRoot.string())
 			!= std::string::npos,
 		"default backup root is persisted");
-	Check(saved.find("AutoScanForWorlds=0") != std::string::npos,
+	Check(saved.find("AutoScanForWorlds=1") != std::string::npos,
 		"legacy AutoScanForWorlds remains writable for compatibility");
 	Check(saved.find("\nTheme=5\n") != std::string::npos,
 		"global theme is persisted");
@@ -130,8 +139,12 @@ int main() {
 		"global appearance round-trips without a second migration");
 	Check(std::filesystem::path(g_defaultBackupRootPath) == customBackupRoot,
 		"default backup root round-trips without changing existing configs");
-	Check(!g_AutoScanForWorlds,
-		"legacy AutoScanForWorlds round-trips without activating discovery");
+	Check(g_AutoScanForWorlds && g_appState.configs.size() == 1,
+		"legacy AutoScanForWorlds=1 round-trips without activating discovery");
+	Check(g_appState.configs.at(2).keepCount == 0
+			&& std::filesystem::path(g_appState.configs.at(2).backupPath)
+				== legacyBackupRoot,
+		"default backup root changes do not rewrite an existing configuration");
 	Check(g_appState.jobs.jobs.size() == 1
 			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments.size() == 2
 			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments[1] == L"with spaces",

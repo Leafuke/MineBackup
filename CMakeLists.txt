@@ -518,6 +518,16 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME minebackup.config_batch
             COMMAND minebackup_config_batch_tests)
+
+        add_executable(minebackup_onboarding_flow_tests
+            tests/OnboardingFlowTests.cpp)
+        target_link_libraries(minebackup_onboarding_flow_tests PRIVATE
+            minebackup_desktop)
+        if(MSVC)
+            target_compile_options(minebackup_onboarding_flow_tests PRIVATE /utf-8 /FS)
+        endif()
+        add_test(NAME minebackup.onboarding_flow
+            COMMAND minebackup_onboarding_flow_tests)
     endif()
 
     if(MINEBACKUP_BUILD_GUI)
