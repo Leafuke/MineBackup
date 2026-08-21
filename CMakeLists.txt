@@ -439,6 +439,18 @@ if(BUILD_TESTING)
         COMMAND minebackup_known_user_folders_tests)
 
     if(MINEBACKUP_BUILD_GUI)
+        add_executable(minebackup_config_batch_tests
+            tests/ConfigBatchCreationServiceTests.cpp)
+        target_link_libraries(minebackup_config_batch_tests PRIVATE
+            minebackup_desktop)
+        if(MSVC)
+            target_compile_options(minebackup_config_batch_tests PRIVATE /utf-8 /FS)
+        endif()
+        add_test(NAME minebackup.config_batch
+            COMMAND minebackup_config_batch_tests)
+    endif()
+
+    if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_ui_model_tests tests/UiModelTests.cpp)
         target_link_libraries(minebackup_ui_model_tests PRIVATE minebackup_desktop)
         if(MSVC)

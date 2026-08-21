@@ -3,6 +3,7 @@
 #include "UIHelpers.h"
 #include "AppPaths.h"
 #include "AtomicFileWriter.h"
+#include "ConfigFactory.h"
 #include "FolderRewindFormat.h"
 #include "JobDocument.h"
 #include "MigrationCoordinator.h"
@@ -174,13 +175,7 @@ static bool ContainsRuleIgnoreCase(const vector<wstring>& rules, const wstring& 
 }
 
 vector<wstring> DefaultBackupBlacklist() {
-	return {
-		L"session.lock",
-		L"voxy",
-		L"DistantHorizons.sqlite",
-		L"DistantHorizons.sqlite-shm",
-		L"DistantHorizons.sqlite-wal"
-	};
+	return RecommendedConfigBackupBlacklist();
 }
 
 vector<wstring> DefaultRestoreWhitelist() {
@@ -218,18 +213,31 @@ vector<wstring> BuildEffectiveRestoreWhitelist(const vector<wstring>& userWhitel
 }
 
 int CreateNewNormalConfig(const string& name_hint) {
-	int newId = nextConfigId++;
-	Config new_cfg;
-	new_cfg.name = name_hint;
+	const int newId = AllocateNormalConfigIndex();
+	ConfigDraft draft;
+	draft.name = name_hint;
+	Config new_cfg = BuildRecommendedConfig(draft, {});
 	new_cfg.configId = FolderRewindFormat::GenerateGuidString();
-	// 默认空的路径/世界
-	new_cfg.saveRoot.clear();
-	new_cfg.backupPath.clear();
-	new_cfg.worlds.clear();
-	EnsureDefaultBackupBlacklist(new_cfg.blacklist);
-	EnsureDefaultRestoreWhitelist();
 	g_appState.configs[newId] = new_cfg;
 	return newId;
+}
+
+NormalConfigIndexAllocatorState SnapshotNormalConfigIndexAllocator() {
+	return {nextConfigId};
+}
+
+void RestoreNormalConfigIndexAllocator(NormalConfigIndexAllocatorState state) {
+	nextConfigId = (max)(state.nextIndex, 2);
+}
+
+int AllocateNormalConfigIndex() {
+	if (nextConfigId == (numeric_limits<int>::max)()
+		&& g_appState.configs.contains(nextConfigId)) {
+		throw overflow_error("No normal configuration index remains");
+	}
+	const int allocated = nextConfigId;
+	if (nextConfigId < (numeric_limits<int>::max)()) ++nextConfigId;
+	return allocated;
 }
 
 void AssignFreshNormalConfigId(int configIndex) {
@@ -251,6 +259,7 @@ void LoadConfigs() {
 void LoadConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_configLoadDiagnostics.clear();
+	nextConfigId = 2;
 	g_appState.configs.clear();
 	g_appState.jobs = JobDocument{};
 	g_theme = static_cast<int>(ThemeId::ImGuiLight);
@@ -269,8 +278,10 @@ void LoadConfigs(const filesystem::path& filename) {
 	optional<wstring> configuredLogFileLevel;
 	optional<wstring> configuredLogViewLevel;
 	optional<bool> legacyAutoLog;
+	bool configuredRestoreWhitelist = false;
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) {
+		EnsureDefaultRestoreWhitelist();
 		Fontss = GetDefaultFontPath();
 		minebackup::logging::SetFileLevel(g_logFileLevel);
 		return;
@@ -475,6 +486,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					g_SilentStartupToTray = (val != L"0");
 				}
 				else if (key == L"RestoreWhitelistItem") {
+					configuredRestoreWhitelist = true;
 					restoreWhitelist.push_back(val);
 				}
 				else if (key == L"WindowWidth") {
@@ -579,7 +591,15 @@ void LoadConfigs(const filesystem::path& filename) {
 		}
 	}
 	minebackup::logging::SetFileLevel(g_logFileLevel);
+	if (!configuredRestoreWhitelist) EnsureDefaultRestoreWhitelist();
 	set<wstring> usedConfigIds;
+	if (!g_appState.configs.empty()) {
+		const int maximumIndex = g_appState.configs.rbegin()->first;
+		if (nextConfigId <= maximumIndex) {
+			nextConfigId = maximumIndex == (numeric_limits<int>::max)()
+				? maximumIndex : maximumIndex + 1;
+		}
+	}
 	for (auto& kv : g_appState.configs) {
 		Config& cfg = kv.second;
 		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);

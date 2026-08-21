@@ -6,6 +6,11 @@
 #include <string>
 #include <vector>
 #include "LegacyIniConfigCodec.h"
+
+struct NormalConfigIndexAllocatorState {
+	int nextIndex = 2;
+};
+
 void LoadConfigs();
 void LoadConfigs(const std::filesystem::path& filename);
 bool SaveConfigs();
@@ -13,6 +18,9 @@ bool SaveConfigs(const std::filesystem::path& filename);
 void AddHistoryEntry(int configIndex, const std::wstring& worldName, const std::wstring& backupFile, const std::wstring& backupType, const std::wstring& comment, const std::wstring& worldPath = L"");
 void RemoveHistoryEntry(int configIndex, const std::wstring& backupFileToRemove);
 int CreateNewNormalConfig(const std::string& name_hint = "None");
+NormalConfigIndexAllocatorState SnapshotNormalConfigIndexAllocator();
+void RestoreNormalConfigIndexAllocator(NormalConfigIndexAllocatorState state);
+int AllocateNormalConfigIndex();
 void AssignFreshNormalConfigId(int configIndex);
 void EnsureConfigIds();
 std::vector<std::wstring> DefaultBackupBlacklist();
