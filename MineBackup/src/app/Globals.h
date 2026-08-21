@@ -73,6 +73,7 @@ struct AppUiState {
 	int closeAction = 0;
 	bool rememberCloseAction = false;
 	bool showCloseConfirmDialog = false;
+	bool onboardingActive = false;
 	std::wstring worldToFocusInHistory;
 };
 
@@ -160,6 +161,7 @@ inline bool& specialSetting = g_globals.ui.specialSetting;
 inline int& g_closeAction = g_globals.ui.closeAction;
 inline bool& g_rememberCloseAction = g_globals.ui.rememberCloseAction;
 inline bool& g_showCloseConfirmDialog = g_globals.ui.showCloseConfirmDialog;
+inline bool& g_OnboardingActive = g_globals.ui.onboardingActive;
 inline std::wstring& g_worldToFocusInHistory = g_globals.ui.worldToFocusInHistory;
 
 inline bool& isSafeDelete = g_globals.settings.safeDelete;

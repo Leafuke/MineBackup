@@ -721,11 +721,11 @@ namespace {
 	}
 }
 
-void StartCoreValidationAsync(bool automatic) {
+bool StartCoreValidationAsync(bool automatic) {
 	bool expected = false;
 	if (!g_CoreValidationRunning.compare_exchange_strong(expected, true)) {
 		VALIDATION_INFO("%s", L("VAL_INFO_ALREADY_RUNNING"));
-		return;
+		return true;
 	}
 
 	VALIDATION_INFO("%s", automatic ? L("VAL_INFO_QUEUED_AUTO") : L("VAL_INFO_QUEUED_MANUAL"));
@@ -751,5 +751,7 @@ void StartCoreValidationAsync(bool automatic) {
 	})) {
 		g_CoreValidationRunning.store(false);
 		VALIDATION_ERROR("Task coordinator is shutting down.");
+		return false;
 	}
+	return true;
 }

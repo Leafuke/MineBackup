@@ -21,8 +21,7 @@ struct MainUiFrameContext {
 };
 
 // WizardUI.cpp — 首次启动配置向导
-void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtracted,
-	const std::wstring& sevenZipTemporaryPath);
+void ShowConfigWizard(bool& showConfigWizard);
 
 // 主界面与世界列表按帧渲染，显式上下文避免重新引入跨翻译单元全局别名。
 void DrawMainUiFrame(const MainUiFrameContext& context);

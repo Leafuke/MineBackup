@@ -498,6 +498,16 @@ if(BUILD_TESTING)
     add_test(NAME minebackup.batch_readiness
         COMMAND minebackup_batch_readiness_tests)
 
+    add_executable(minebackup_wizard_session_tests
+        tests/WizardSessionTests.cpp)
+    target_link_libraries(minebackup_wizard_session_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_wizard_session_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.wizard_session
+        COMMAND minebackup_wizard_session_tests)
+
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_config_batch_tests
             tests/ConfigBatchCreationServiceTests.cpp)

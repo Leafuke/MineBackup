@@ -88,6 +88,11 @@ static void glfw_error_callback(int error, const char* description)
 
 static void main_window_close_callback(GLFWwindow* window)
 {
+	if (g_OnboardingActive) {
+		// 首次引导关闭时直接退出；提交前不得因通用关闭逻辑生成 config.ini。
+		g_appState.done = true;
+		return;
+	}
 	if (g_closeAction == 1) {
 		glfwSetWindowShouldClose(window, GLFW_FALSE);
 		auto services = GetDesktopServices();
@@ -442,9 +447,9 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
 	FinalizeUiScaleMigration(main_scale);
-	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
+	g_OnboardingActive = isFirstRun;
 	bool showKnotLinkUpdateReminder =
 		!isFirstRun && knotLinkStartupNeedsUpdate;
 	bool knotLinkUpdateReminderOpened = false;
@@ -781,7 +786,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		}
 
 		if (showConfigWizard) {
-			ShowConfigWizard(showConfigWizard, errorShow, sevenZipExtracted, g_7zTempPath);
+			ShowConfigWizard(showConfigWizard);
 		}
 		else if (g_appState.showMainApp) {
 			DrawMainUiFrame({desktopServices.get(), wc, &paths, currentGlobalHotkeys});
