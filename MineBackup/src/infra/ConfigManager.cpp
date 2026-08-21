@@ -33,7 +33,7 @@ filesystem::path RecommendedBackupRoot() {
 	try {
 		return KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(GetAppPaths());
 	}
-	catch (const logic_error&) {
+	catch (...) {
 		// 独立配置解析测试可能尚未初始化 AppPaths；禁止用当前工作目录作为隐式回退。
 		return {};
 	}
@@ -84,6 +84,19 @@ void RecordConfigDiagnostic(
 }
 
 } // namespace
+
+filesystem::path GetEffectiveDefaultBackupRoot() {
+	const filesystem::path configured(g_defaultBackupRootPath);
+	if (!configured.empty() && configured.is_absolute()) {
+		return configured.lexically_normal();
+	}
+
+	const filesystem::path recommended = RecommendedBackupRoot();
+	if (!recommended.empty() && recommended.is_absolute()) {
+		return recommended.lexically_normal();
+	}
+	return {};
+}
 
 const vector<LegacyIniConfigCodec::Diagnostic>& GetLastConfigLoadDiagnostics() {
 	return g_configLoadDiagnostics;
@@ -213,9 +226,13 @@ vector<wstring> BuildEffectiveRestoreWhitelist(const vector<wstring>& userWhitel
 }
 
 int CreateNewNormalConfig(const string& name_hint) {
-	const int newId = AllocateNormalConfigIndex();
 	ConfigDraft draft;
 	draft.name = name_hint;
+	const auto resolved = ResolveUniqueConfigDrafts(
+		{draft}, GetEffectiveDefaultBackupRoot(), g_appState.configs);
+	if (!resolved.empty()) draft = resolved.front();
+
+	const int newId = AllocateNormalConfigIndex();
 	Config new_cfg = BuildRecommendedConfig(draft, {});
 	new_cfg.configId = FolderRewindFormat::GenerateGuidString();
 	g_appState.configs[newId] = new_cfg;

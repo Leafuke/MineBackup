@@ -95,6 +95,9 @@ vector<ConfigDraft> ResolveUniqueConfigDrafts(
 	const vector<ConfigDraft>& drafts,
 	const filesystem::path& defaultBackupRoot,
 	const map<int, Config>& existingConfigs) {
+	const filesystem::path effectiveBackupRoot =
+		!defaultBackupRoot.empty() && defaultBackupRoot.is_absolute()
+		? defaultBackupRoot.lexically_normal() : filesystem::path{};
 	set<wstring> occupiedNames;
 	set<wstring> occupiedBackupPaths;
 	for (const auto& [index, config] : existingConfigs) {
@@ -116,16 +119,17 @@ vector<ConfigDraft> ResolveUniqueConfigDrafts(
 		for (size_t suffix = 1;; ++suffix) {
 			const string candidateName = suffix == 1
 				? baseName : baseName + " (" + to_string(suffix) + ")";
-			const filesystem::path candidateBackup =
-				defaultBackupRoot / BackupSegmentForName(candidateName);
+			const filesystem::path candidateBackup = effectiveBackupRoot.empty()
+				? filesystem::path{}
+				: effectiveBackupRoot / BackupSegmentForName(candidateName);
 			const wstring nameKey = NameKey(candidateName);
-			const wstring backupKey =
-				PathIdentity::BuildPathIdentityKey(candidateBackup);
+			const wstring backupKey = candidateBackup.empty()
+				? wstring{} : PathIdentity::BuildPathIdentityKey(candidateBackup);
 
 			// 名称和真实路径同时判重，避免不同显示名清理后落入同一目录。
 			if (occupiedNames.contains(nameKey)
-				|| occupiedBackupPaths.contains(backupKey)
-				|| ExistsAtPath(candidateBackup)) {
+				|| (!backupKey.empty() && occupiedBackupPaths.contains(backupKey))
+				|| (!candidateBackup.empty() && ExistsAtPath(candidateBackup))) {
 				continue;
 			}
 
@@ -133,7 +137,7 @@ vector<ConfigDraft> ResolveUniqueConfigDrafts(
 			candidate.name = candidateName;
 			candidate.backupPath = candidateBackup;
 			occupiedNames.insert(std::move(nameKey));
-			occupiedBackupPaths.insert(std::move(backupKey));
+			if (!backupKey.empty()) occupiedBackupPaths.insert(std::move(backupKey));
 			resolved.push_back(std::move(candidate));
 			break;
 		}

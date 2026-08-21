@@ -13,6 +13,7 @@ struct NormalConfigIndexAllocatorState {
 
 void LoadConfigs();
 void LoadConfigs(const std::filesystem::path& filename);
+std::filesystem::path GetEffectiveDefaultBackupRoot();
 bool SaveConfigs();
 bool SaveConfigs(const std::filesystem::path& filename);
 void AddHistoryEntry(int configIndex, const std::wstring& worldName, const std::wstring& backupFile, const std::wstring& backupType, const std::wstring& comment, const std::wstring& worldPath = L"");
