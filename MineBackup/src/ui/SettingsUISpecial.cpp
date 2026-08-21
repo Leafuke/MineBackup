@@ -6,6 +6,10 @@ using namespace std;
 
 namespace {
 
+string LocalizedLabel(const char* key, const char* id) {
+	return string(L(key)) + "##" + id;
+}
+
 bool EditString(const char* label, string& value, size_t capacity = 256) {
 	vector<char> buffer((max)(capacity, value.size() + 2), '\0');
 	copy_n(value.data(), (min)(value.size(), buffer.size() - 1), buffer.data());
@@ -41,7 +45,7 @@ vector<wstring> SplitArguments(const wstring& text) {
 JobStep MakeBackupStep() {
 	JobStep step;
 	step.stepId = FolderRewindFormat::GenerateGuidString();
-	step.name = "Backup";
+	step.name = L("JOB_DEFAULT_BACKUP_STEP_NAME");
 	step.type = JobStepType::Backup;
 	if (!g_appState.configs.empty()) {
 		const Config& config = g_appState.configs.begin()->second;
@@ -54,7 +58,7 @@ JobStep MakeBackupStep() {
 JobStep MakeProcessStep() {
 	JobStep step;
 	step.stepId = FolderRewindFormat::GenerateGuidString();
-	step.name = "Process";
+	step.name = L("JOB_DEFAULT_PROCESS_STEP_NAME");
 	step.type = JobStepType::Process;
 	step.process.maximumCapturedBytes = 4u * 1024u * 1024u;
 	return step;
@@ -63,7 +67,7 @@ JobStep MakeProcessStep() {
 JobStage MakeStage() {
 	JobStage stage;
 	stage.stageId = FolderRewindFormat::GenerateGuidString();
-	stage.name = "Stage";
+	stage.name = L("JOB_DEFAULT_STAGE_NAME");
 	stage.steps.push_back(MakeBackupStep());
 	return stage;
 }
@@ -71,14 +75,16 @@ JobStage MakeStage() {
 Job MakeJob() {
 	Job job;
 	job.jobId = FolderRewindFormat::GenerateGuidString();
-	job.name = "New Job";
+	job.name = L("JOB_DEFAULT_NAME");
 	job.stages.push_back(MakeStage());
 	return job;
 }
 
 void DrawBackupStep(JobStep& step) {
-	ImGui::TextDisabled("ConfigId: %s", wstring_to_utf8(step.backup.configId).c_str());
-	if (ImGui::BeginCombo("Config##JobBackupConfig",
+	ImGui::TextDisabled("%s: %s", L("JOB_BACKUP_CONFIG"),
+		wstring_to_utf8(step.backup.configId).c_str());
+	const string configLabel = LocalizedLabel("JOB_BACKUP_CONFIG", "JobBackupConfig");
+	if (ImGui::BeginCombo(configLabel.c_str(),
 		wstring_to_utf8(step.backup.configId).c_str())) {
 		for (const auto& [index, config] : g_appState.configs) {
 			(void)index;
@@ -97,7 +103,8 @@ void DrawBackupStep(JobStep& step) {
 		if (config.configId == step.backup.configId) selectedConfig = &config;
 	}
 	const string worldPreview = wstring_to_utf8(step.backup.worldPath);
-	if (ImGui::BeginCombo("World##JobBackupWorld", worldPreview.c_str())) {
+	const string worldLabel = LocalizedLabel("JOB_BACKUP_WORLD", "JobBackupWorld");
+	if (ImGui::BeginCombo(worldLabel.c_str(), worldPreview.c_str())) {
 		if (selectedConfig) {
 			for (const auto& [world, description] : selectedConfig->worlds) {
 				const bool selected = world == step.backup.worldPath;
@@ -108,12 +115,15 @@ void DrawBackupStep(JobStep& step) {
 		}
 		ImGui::EndCombo();
 	}
-	EditWideString("Comment##JobBackupComment", step.backup.comment);
+	const string commentLabel = LocalizedLabel("JOB_BACKUP_COMMENT", "JobBackupComment");
+	EditWideString(commentLabel.c_str(), step.backup.comment);
 }
 
 void DrawProcessStep(JobStep& step) {
 	wstring executable = step.process.executable.wstring();
-	if (EditWideString("Executable##JobProcessExecutable", executable)) {
+	const string executableLabel =
+		LocalizedLabel("JOB_PROCESS_EXECUTABLE", "JobProcessExecutable");
+	if (EditWideString(executableLabel.c_str(), executable)) {
 		step.process.executable = executable;
 	}
 	wstring arguments = JoinArguments(step.process.arguments);
@@ -121,20 +131,27 @@ void DrawProcessStep(JobStep& step) {
 	vector<char> argumentBuffer((max)(size_t{4096}, utf8Arguments.size() + 2), '\0');
 	copy_n(utf8Arguments.data(),
 		(min)(utf8Arguments.size(), argumentBuffer.size() - 1), argumentBuffer.data());
-	if (ImGui::InputTextMultiline("Arguments (one per line)##JobProcessArguments",
+	const string argumentsLabel =
+		LocalizedLabel("JOB_PROCESS_ARGUMENTS", "JobProcessArguments");
+	if (ImGui::InputTextMultiline(argumentsLabel.c_str(),
 		argumentBuffer.data(), argumentBuffer.size(), ImVec2(-1.0f, GetUiMetrics().Em(5.0f)))) {
 		step.process.arguments = SplitArguments(utf8_to_wstring(argumentBuffer.data()));
 	}
 	wstring workingDirectory = step.process.workingDirectory.wstring();
-	if (EditWideString("Working directory##JobProcessWorking", workingDirectory)) {
+	const string workingDirectoryLabel =
+		LocalizedLabel("JOB_PROCESS_WORKING_DIRECTORY", "JobProcessWorking");
+	if (EditWideString(workingDirectoryLabel.c_str(), workingDirectory)) {
 		step.process.workingDirectory = workingDirectory;
 	}
 	int timeoutSeconds = static_cast<int>(step.process.timeout.count() / 1000);
-	if (ImGui::InputInt("Timeout seconds##JobProcessTimeout", &timeoutSeconds)) {
+	const string timeoutLabel = LocalizedLabel("JOB_PROCESS_TIMEOUT", "JobProcessTimeout");
+	if (ImGui::InputInt(timeoutLabel.c_str(), &timeoutSeconds)) {
 		timeoutSeconds = (max)(0, timeoutSeconds);
 		step.process.timeout = chrono::seconds(timeoutSeconds);
 	}
-	ImGui::Checkbox("Low priority##JobProcessPriority", &step.process.useLowPriority);
+	const string priorityLabel =
+		LocalizedLabel("JOB_PROCESS_LOW_PRIORITY", "JobProcessPriority");
+	ImGui::Checkbox(priorityLabel.c_str(), &step.process.useLowPriority);
 }
 
 void DrawStep(JobStage& stage, size_t stepIndex) {
@@ -142,13 +159,16 @@ void DrawStep(JobStage& stage, size_t stepIndex) {
 	ImGui::PushID(static_cast<int>(stepIndex));
 	const string header = step.name + "##JobStep";
 	if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::TextDisabled("StepId: %s", wstring_to_utf8(step.stepId).c_str());
-		EditString("Name##JobStepName", step.name);
+		ImGui::TextDisabled("%s: %s", L("JOB_STEP_ID"),
+			wstring_to_utf8(step.stepId).c_str());
+		const string nameLabel = LocalizedLabel("JOB_STEP_NAME", "JobStepName");
+		EditString(nameLabel.c_str(), step.name);
 		ImGui::TextUnformatted(step.type == JobStepType::Backup
-			? "Type: Backup" : "Type: Process");
+			? L("JOB_STEP_TYPE_BACKUP") : L("JOB_STEP_TYPE_PROCESS"));
 		if (step.type == JobStepType::Backup) DrawBackupStep(step);
 		else DrawProcessStep(step);
-		if (ImGui::Button("Delete step")) {
+		const string deleteLabel = LocalizedLabel("JOB_STEP_DELETE", "JobStepDelete");
+		if (ImGui::Button(deleteLabel.c_str())) {
 			stage.steps.erase(stage.steps.begin() + static_cast<ptrdiff_t>(stepIndex));
 			ImGui::PopID();
 			return;
@@ -165,15 +185,16 @@ void DrawJobSettings() {
 	static size_t selectedStage = 0;
 	if (selectedJob >= jobs.size()) selectedJob = jobs.empty() ? 0 : jobs.size() - 1;
 
-	ImGui::SeparatorText("Jobs");
-	ImGui::TextWrapped("Stages execute in order. Steps in one stage execute in parallel. Scheduling is owned by systemd or Task Scheduler.");
-	if (ImGui::Button("Add job")) {
+	ImGui::SeparatorText(L("JOB_SETTINGS_TITLE"));
+	ImGui::TextWrapped("%s", L("JOB_SETTINGS_DESCRIPTION"));
+	const string addJobLabel = LocalizedLabel("JOB_ADD", "JobAdd");
+	if (ImGui::Button(addJobLabel.c_str())) {
 		jobs.push_back(MakeJob());
 		selectedJob = jobs.size() - 1;
 		selectedStage = 0;
 	}
 	if (jobs.empty()) {
-		ImGui::TextDisabled("No jobs configured.");
+		ImGui::TextDisabled("%s", L("JOB_EMPTY"));
 		return;
 	}
 
@@ -189,26 +210,30 @@ void DrawJobSettings() {
 	}
 
 	Job& job = jobs[selectedJob];
-	ImGui::TextDisabled("JobId: %s", wstring_to_utf8(job.jobId).c_str());
-	EditString("Job name##JobName", job.name);
-	if (ImGui::Button("Delete job")) {
+	ImGui::TextDisabled("%s: %s", L("JOB_ID"),
+		wstring_to_utf8(job.jobId).c_str());
+	const string jobNameLabel = LocalizedLabel("JOB_NAME", "JobName");
+	EditString(jobNameLabel.c_str(), job.name);
+	const string deleteJobLabel = LocalizedLabel("JOB_DELETE", "JobDelete");
+	if (ImGui::Button(deleteJobLabel.c_str())) {
 		jobs.erase(jobs.begin() + static_cast<ptrdiff_t>(selectedJob));
 		selectedJob = 0;
 		selectedStage = 0;
 		return;
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Add stage")) {
+	const string addStageLabel = LocalizedLabel("JOB_STAGE_ADD", "JobStageAdd");
+	if (ImGui::Button(addStageLabel.c_str())) {
 		job.stages.push_back(MakeStage());
 		selectedStage = job.stages.size() - 1;
 	}
 	if (job.stages.empty()) {
-		ImGui::TextDisabled("A job needs at least one stage.");
+		ImGui::TextDisabled("%s", L("JOB_STAGE_EMPTY"));
 		return;
 	}
 	if (selectedStage >= job.stages.size()) selectedStage = job.stages.size() - 1;
 
-	ImGui::SeparatorText("Stages (sequential)");
+	ImGui::SeparatorText(L("JOB_STAGE_TITLE"));
 	if (ImGui::BeginCombo("##StageSelector", job.stages[selectedStage].name.c_str())) {
 		for (size_t index = 0; index < job.stages.size(); ++index) {
 			if (ImGui::Selectable(job.stages[index].name.c_str(), index == selectedStage)) {
@@ -218,19 +243,27 @@ void DrawJobSettings() {
 		ImGui::EndCombo();
 	}
 	JobStage& stage = job.stages[selectedStage];
-	ImGui::TextDisabled("StageId: %s", wstring_to_utf8(stage.stageId).c_str());
-	EditString("Stage name##JobStageName", stage.name);
-	if (ImGui::Button("Delete stage")) {
+	ImGui::TextDisabled("%s: %s", L("JOB_STAGE_ID"),
+		wstring_to_utf8(stage.stageId).c_str());
+	const string stageNameLabel = LocalizedLabel("JOB_STAGE_NAME", "JobStageName");
+	EditString(stageNameLabel.c_str(), stage.name);
+	const string deleteStageLabel =
+		LocalizedLabel("JOB_STAGE_DELETE", "JobStageDelete");
+	if (ImGui::Button(deleteStageLabel.c_str())) {
 		job.stages.erase(job.stages.begin() + static_cast<ptrdiff_t>(selectedStage));
 		selectedStage = 0;
 		return;
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Add backup step")) stage.steps.push_back(MakeBackupStep());
+	const string addBackupLabel =
+		LocalizedLabel("JOB_STEP_ADD_BACKUP", "JobStepAddBackup");
+	if (ImGui::Button(addBackupLabel.c_str())) stage.steps.push_back(MakeBackupStep());
 	ImGui::SameLine();
-	if (ImGui::Button("Add process step")) stage.steps.push_back(MakeProcessStep());
+	const string addProcessLabel =
+		LocalizedLabel("JOB_STEP_ADD_PROCESS", "JobStepAddProcess");
+	if (ImGui::Button(addProcessLabel.c_str())) stage.steps.push_back(MakeProcessStep());
 
-	ImGui::SeparatorText("Steps (parallel)");
+	ImGui::SeparatorText(L("JOB_STEP_TITLE"));
 	for (size_t index = 0; index < stage.steps.size();) {
 		const size_t before = stage.steps.size();
 		DrawStep(stage, index);
