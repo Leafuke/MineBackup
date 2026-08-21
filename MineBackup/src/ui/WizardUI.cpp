@@ -298,6 +298,19 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 			BeginDiscovery(runtime);
 		}
 	}
+	ImGui::SameLine();
+	ImGui::BeginDisabled(runtime.scanning);
+	const string selectAllNewLabel =
+		string(L("WIZARD_SELECT_ALL_NEW")) + "##WizardSelectAllNew";
+	if (ImGui::Button(selectAllNewLabel.c_str())) {
+		for (const auto& candidate : runtime.session.discovery.instances) {
+			if (candidate.alreadyConfigured) continue;
+			SetWizardInstanceSelected(
+				runtime.session,
+				BuildWizardInstanceKey(candidate.instance), true);
+		}
+	}
+	ImGui::EndDisabled();
 
 	if (runtime.scanning) {
 		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
