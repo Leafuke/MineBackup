@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Existing annotated tag that points at this workflow commit
         required: true
-        default: v1.16.1
+        default: v1.16.2
         type: string
       omit_platform:
         description: Security-only waiver; normal releases must use none
