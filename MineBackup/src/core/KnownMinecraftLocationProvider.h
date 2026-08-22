@@ -19,7 +19,10 @@ enum class MinecraftHostPlatform {
 
 struct KnownMinecraftLocationDependencies {
 	MinecraftHostPlatform platform = MinecraftHostPlatform::Current;
-	std::function<std::optional<std::string>(std::string_view)> readEnvironment;
+	// 直接返回文件系统路径，避免 Windows 原生 UTF-16 环境路径
+	// 被降级为当前 ANSI 代码页的窄字符串。
+	std::function<std::optional<std::filesystem::path>(
+		std::string_view)> readEnvironmentPath;
 	std::function<bool(const std::filesystem::path&, std::error_code&)> isDirectory;
 	std::function<std::vector<std::filesystem::path>(
 		const std::filesystem::path&, std::error_code&)> listChildDirectories;

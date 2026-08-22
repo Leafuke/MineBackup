@@ -7,14 +7,31 @@
 #include <set>
 #include <utility>
 
+#ifdef _WIN32
+#include <wchar.h>
+#endif
+
 using namespace std;
 
 namespace {
 
-optional<string> ReadEnvironment(string_view name) {
+optional<filesystem::path> ReadEnvironmentPath(string_view name) {
+#ifdef _WIN32
+	// Windows 环境变量原生值是 UTF-16；_wgetenv 全程保持宽字符，
+	// 直接构造 filesystem::path，不经任何窄字符串/代码页转换。
+	// APPDATA / LOCALAPPDATA / HOME 变量名均为 ASCII，宽字符名无需 locale 逻辑。
+	const wstring wideName(name.begin(), name.end());
+	const wchar_t* value = _wgetenv(wideName.c_str());
+	return value && *value
+		? optional<filesystem::path>(filesystem::path(value))
+		: nullopt;
+#else
 	const string variable(name);
 	const char* value = getenv(variable.c_str());
-	return value && *value ? optional<string>(value) : nullopt;
+	return value && *value
+		? optional<filesystem::path>(filesystem::path(value))
+		: nullopt;
+#endif
 }
 
 bool IsDirectory(const filesystem::path& path, error_code& error) {
@@ -81,7 +98,9 @@ KnownMinecraftLocationProvider::KnownMinecraftLocationProvider(
 	if (dependencies_.platform == MinecraftHostPlatform::Current) {
 		dependencies_.platform = CurrentPlatform();
 	}
-	if (!dependencies_.readEnvironment) dependencies_.readEnvironment = ReadEnvironment;
+	if (!dependencies_.readEnvironmentPath) {
+		dependencies_.readEnvironmentPath = ReadEnvironmentPath;
+	}
 	if (!dependencies_.isDirectory) dependencies_.isDirectory = IsDirectory;
 	if (!dependencies_.listChildDirectories) {
 		dependencies_.listChildDirectories = ListChildDirectories;
@@ -111,9 +130,10 @@ vector<DiscoveryLocation> KnownMinecraftLocationProvider::DiscoverLocations(
 		locations.push_back({path, kind, {{
 			DiscoveryEvidenceKind::KnownLocation, Id(), path}}});
 	};
+	// 依赖注入已直接返回 filesystem::path；这里不再有窄字符串二次转换。
 	const auto environmentPath = [&](string_view name) -> filesystem::path {
-		const auto value = dependencies_.readEnvironment(name);
-		return value ? filesystem::path(*value) : filesystem::path{};
+		const auto value = dependencies_.readEnvironmentPath(name);
+		return value ? *value : filesystem::path{};
 	};
 
 	if (dependencies_.platform == MinecraftHostPlatform::Windows) {
