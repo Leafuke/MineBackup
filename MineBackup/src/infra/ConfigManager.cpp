@@ -727,11 +727,23 @@ void FinalizeUiScaleMigration(float primaryDpiScale) {
 }
 
 bool SaveConfigs() {
-	return SaveConfigs(GetAppPaths().ConfigFile());
+	// 布尔契约：只要逻辑 commit 已发生（含“已替换但持久化未确认”）即返回 true。
+	return SaveConfigsDetailed().Committed();
 }
 
 bool SaveConfigs(const filesystem::path& filename) {
+	return SaveConfigsDetailed(filename).Committed();
+}
+
+ConfigSaveResult SaveConfigsDetailed() {
+	return SaveConfigsDetailed(GetAppPaths().ConfigFile());
+}
+
+ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
+	// 内部全程使用 error_code 明确状态的实现，不在 replacement 之后抛出
+	// 无法分类的异常；文件系统错误都转换为对应的 ConfigSaveState。
 	lock_guard<mutex> lock(g_appState.configsMutex);
+	ConfigSaveResult result;
 	const filesystem::path target(filename);
 	for (auto& [index, config] : g_appState.configs) {
 		(void)index;
@@ -742,7 +754,8 @@ bool SaveConfigs(const filesystem::path& filename) {
 		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
 			"jobs.write_failed", "{}", wstring_to_utf8(jobsWriteError));
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		return false;
+		result.detail = jobsWriteError;
+		return result; // NotCommitted
 	}
 	std::wostringstream buffer;
 	buffer << L"[General]\n";
@@ -839,11 +852,27 @@ bool SaveConfigs(const filesystem::path& filename) {
 	string utf8 = wstring_to_utf8(buffer.str());
 	const string ignoredSpecial = ReadIgnoredSpecialSections(target);
 	if (!ignoredSpecial.empty()) utf8 += "\n" + ignoredSpecial;
-	if (!AtomicFileWriter::WriteText(target, utf8).success) {
+	const auto write = AtomicFileWriter::WriteText(target, utf8);
+	if (write.commitState == AtomicFileWriter::WriteCommitState::NotReplaced) {
+		// config.ini 从未被替换：这次保存逻辑上什么都没有发生。
+		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
+			"config.write_not_committed", "{}", wstring_to_utf8(write.error));
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		return false;
+		result.detail = write.error;
+		return result; // NotCommitted
 	}
-	return true;
+	if (!write.IsDurable()) {
+		// config.ini 已替换（commit point 已越过），仅目录同步未确认。
+		// 不显示误导性的“写入失败”，不尝试用 .bak 反向覆盖，
+		// 更不允许业务层按“未提交”回滚内存状态。
+		result.state = ConfigSaveState::CommittedNotDurable;
+		result.detail = write.error;
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Application,
+			"config.write_committed_not_durable", "{}", wstring_to_utf8(write.error));
+		return result;
+	}
+	result.state = ConfigSaveState::CommittedDurably;
+	return result;
 }
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口

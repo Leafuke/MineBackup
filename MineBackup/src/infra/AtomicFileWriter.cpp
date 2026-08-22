@@ -334,13 +334,26 @@ WriteResult WriteText(const filesystem::path& requestedTarget, const string& con
             replacement.error,
             replacement.attempts);
         RemoveQuietly(temporary);
+        // commitState 保持 NotReplaced：target 仍是旧内容。
         return result;
     }
-    if (!SyncDirectory(parent)) {
+    // replace 已成功：commit point 已越过，target 从此是新内容，
+    // 任何后续失败都不允许上层按“未发生”处理。
+    result.commitState = WriteCommitState::ReplacedNotDurable;
+
+    // 测试注入的 directorySyncOverride 仅用于确定性地模拟目录同步失败；
+    // 生产路径下为空，调用真正的 SyncDirectory。
+    const bool directorySynced = options.directorySyncOverride
+        ? options.directorySyncOverride(parent)
+        : SyncDirectory(parent);
+    if (!directorySynced) {
         result.error = L"The target was replaced but its parent directory could not be synchronized.";
+        // success 仍为 false，但 commitState = ReplacedNotDurable 让上层
+        // 能够区分“replace 未发生”与“已替换但持久化未确认”。
         return result;
     }
 
+    result.commitState = WriteCommitState::Durable;
     result.success = true;
     return result;
 }

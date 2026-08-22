@@ -120,8 +120,15 @@ void ExpectSamePath(TestContext& test, const std::filesystem::path& actual,
 
 void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
     const auto target = root / "atomic" / "value.txt";
-    test.Expect(AtomicFileWriter::WriteText(target, "first").success, "first atomic write should succeed");
-    test.Expect(AtomicFileWriter::WriteText(target, "second").success, "replacement atomic write should succeed");
+    const auto firstWrite = AtomicFileWriter::WriteText(target, "first");
+    test.Expect(firstWrite.success
+            && firstWrite.commitState == AtomicFileWriter::WriteCommitState::Durable
+            && firstWrite.IsDurable(),
+        "first atomic write should complete durably");
+    const auto replacementWrite = AtomicFileWriter::WriteText(target, "second");
+    test.Expect(replacementWrite.success
+            && replacementWrite.commitState == AtomicFileWriter::WriteCommitState::Durable,
+        "replacement atomic write should complete durably");
     test.Expect(ReadFile(target) == "second", "atomic target should contain the replacement");
     test.Expect(ReadFile(target.wstring() + L".bak") == "first", "atomic backup should contain the previous value");
 
@@ -152,6 +159,37 @@ void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
     test.Expect(finalValue.rfind("writer-", 0) == 0, "the concurrent target should contain one complete transaction");
     test.Expect(backupValue == "seed" || backupValue.rfind("writer-", 0) == 0,
         "the concurrent backup should contain one complete previous transaction");
+
+    // replace 成功后、目录同步失败的确定性注入：
+    // 必须报告 ReplacedNotDurable，且新内容已经落盘、无临时文件残留。
+    const auto syncFailureTarget = root / "atomic" / "sync-failure.txt";
+    test.Expect(AtomicFileWriter::WriteText(syncFailureTarget, "old").success,
+        "the directory-sync failure fixture should be initialized");
+    AtomicFileWriter::WriteOptions syncFailureOptions;
+    syncFailureOptions.directorySyncOverride =
+        [](const std::filesystem::path&) { return false; };
+    const auto syncFailureResult = AtomicFileWriter::WriteText(
+        syncFailureTarget, "new", syncFailureOptions);
+    test.Expect(!syncFailureResult.success
+            && syncFailureResult.commitState
+                == AtomicFileWriter::WriteCommitState::ReplacedNotDurable
+            && syncFailureResult.WasReplaced() && !syncFailureResult.IsDurable(),
+        "a post-replacement directory sync failure must report ReplacedNotDurable");
+    test.Expect(syncFailureResult.error.find(L"could not be synchronized")
+            != std::wstring::npos,
+        "a post-replacement sync failure should explain the persistence warning");
+    test.Expect(ReadFile(syncFailureTarget) == "new",
+        "a post-replacement sync failure must keep the replaced target");
+    int syncFailureTemporaryFiles = 0;
+    std::error_code syncFailureIterationError;
+    for (const auto& entry : std::filesystem::directory_iterator(
+             syncFailureTarget.parent_path(), syncFailureIterationError)) {
+        if (entry.path().filename().wstring().find(L".tmp.") != std::wstring::npos) {
+            ++syncFailureTemporaryFiles;
+        }
+    }
+    test.Expect(!syncFailureIterationError && syncFailureTemporaryFiles == 0,
+        "a post-replacement sync failure should not leave temporary files");
 
 #ifdef _WIN32
     const auto contentionRoot = root / "atomic-contention";
@@ -212,6 +250,9 @@ void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
         const auto permanentResult = AtomicFileWriter::WriteText(
             permanentTarget, "new", {false, true});
         test.Expect(!permanentResult.success
+                && permanentResult.commitState
+                    == AtomicFileWriter::WriteCommitState::NotReplaced
+                && !permanentResult.WasReplaced()
                 && permanentResult.error.find(L"Could not atomically replace the target") != std::wstring::npos
                 && (permanentResult.error.find(L"win32=5") != std::wstring::npos
                     || permanentResult.error.find(L"win32=32") != std::wstring::npos
@@ -236,6 +277,8 @@ void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
         const auto readOnlyResult = AtomicFileWriter::WriteText(
             readOnlyTarget, "new", {false, true});
         test.Expect(!readOnlyResult.success
+                && readOnlyResult.commitState
+                    == AtomicFileWriter::WriteCommitState::NotReplaced
                 && readOnlyResult.error.find(L"win32=5") != std::wstring::npos
                 && readOnlyResult.error.find(L"attempts=1") != std::wstring::npos,
             "a read-only target should fail Access Denied without transient retry");
