@@ -4,6 +4,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "WorldIdentity.h"
+#include "text_to_text.h"
 
 #include <algorithm>
 #include <chrono>
@@ -30,6 +31,17 @@ struct MetadataBackup {
 
 vector<wstring> Sorted(const set<wstring>& values) {
 	return {values.begin(), values.end()};
+}
+
+string SaveFailureDetail(
+	const char* operation,
+	const FolderRewindMetadataStore::SaveResult& result) {
+	string detail(operation);
+	if (!result.error.empty()) {
+		detail += ": ";
+		detail += wstring_to_utf8(result.error);
+	}
+	return detail;
 }
 
 bool BackupMetadata(const filesystem::path& source, const filesystem::path& copy, MetadataBackup& backup) {
@@ -123,8 +135,11 @@ bool RepairMetadata(
 		repaired.modifiedFiles.clear();
 	}
 	repaired.fullFileList = Sorted(fullAfterMerged);
-	if (!FolderRewindMetadataStore::SaveRecord(metadataDirectory, repaired)) {
-		errorText = "failed to save repaired chain metadata";
+	const auto repairedSave = FolderRewindMetadataStore::SaveRecordDetailed(
+		metadataDirectory, repaired);
+	if (!repairedSave.success) {
+		errorText = SaveFailureDetail(
+			"failed to save repaired chain metadata", repairedSave);
 		return false;
 	}
 	if (!FolderRewindMetadataStore::DeleteRecord(metadataDirectory, deletedFile)) {
@@ -153,8 +168,11 @@ bool RepairMetadata(
 				&& record.basedOnFullBackup == mergedOldFile)) {
 			record.basedOnFullBackup = mergedFinalFile;
 		}
-		if (!FolderRewindMetadataStore::SaveRecord(metadataDirectory, record)) {
-			errorText = "failed to repair references in chain metadata";
+		const auto referenceSave = FolderRewindMetadataStore::SaveRecordDetailed(
+			metadataDirectory, record);
+		if (!referenceSave.success) {
+			errorText = SaveFailureDetail(
+				"failed to repair references in chain metadata", referenceSave);
 			return false;
 		}
 	}
@@ -167,8 +185,11 @@ bool RepairMetadata(
 			|| (mergedOldFile != mergedFinalFile && state.basedOnFullBackup == mergedOldFile)) {
 			state.basedOnFullBackup = mergedFinalFile;
 		}
-		if (!FolderRewindMetadataStore::SaveState(metadataDirectory, state)) {
-			errorText = "failed to repair chain metadata state";
+		const auto stateSave = FolderRewindMetadataStore::SaveStateDetailed(
+			metadataDirectory, state);
+		if (!stateSave.success) {
+			errorText = SaveFailureDetail(
+				"failed to repair chain metadata state", stateSave);
 			return false;
 		}
 	}

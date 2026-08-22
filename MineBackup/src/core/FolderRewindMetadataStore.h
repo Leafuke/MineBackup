@@ -12,6 +12,11 @@
 
 namespace FolderRewindMetadataStore {
 
+struct SaveResult {
+    bool success = false;
+    std::wstring error;
+};
+
 struct LoadResult {
     FolderRewindFormat::MetadataState state;
     std::map<std::wstring, FolderRewindFormat::ChangeRecord> records;
@@ -34,6 +39,8 @@ std::optional<std::filesystem::path> TryGetRecordPath(const std::filesystem::pat
 bool LoadState(const std::filesystem::path& metadataDir, FolderRewindFormat::MetadataState& outState);
 bool LoadRecord(const std::filesystem::path& metadataDir, const std::wstring& archiveFileName, FolderRewindFormat::ChangeRecord& outRecord);
 LoadResult Load(const std::filesystem::path& metadataDir, const std::vector<std::wstring>& requestedArchiveFileNames = {});
+SaveResult SaveStateDetailed(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state);
+SaveResult SaveRecordDetailed(const std::filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record);
 bool SaveState(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state);
 bool SaveRecord(const std::filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record);
 bool Save(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state, const FolderRewindFormat::ChangeRecord& record);

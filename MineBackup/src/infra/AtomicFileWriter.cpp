@@ -1,12 +1,17 @@
 #include "AtomicFileWriter.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <fstream>
 #include <limits>
 #include <mutex>
 #include <system_error>
+#include <thread>
+
+#include "text_to_text.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -23,12 +28,22 @@ namespace {
 atomic<unsigned long long> g_counter{0};
 mutex g_writeMutex;
 
-wstring ErrorText(const wchar_t* operation, const error_code& error = {}) {
+wstring ErrorText(
+    const wchar_t* operation,
+    const error_code& error = {},
+    size_t attempts = 0) {
     wstring text(operation);
     if (error) {
-        const string message = error.message();
-        text += L": ";
-        text.append(message.begin(), message.end());
+        text += L" (";
+#ifdef _WIN32
+        text += L"win32=";
+#else
+        text += L"native=";
+#endif
+        text += to_wstring(error.value());
+        if (attempts > 0) text += L", attempts=" + to_wstring(attempts);
+        text += L"): ";
+        text += utf8_to_wstring(error.message());
     }
     return text;
 }
@@ -88,17 +103,72 @@ bool SyncDirectory(const filesystem::path& path) {
 #endif
 }
 
-bool Replace(const filesystem::path& source, const filesystem::path& target, error_code& error) {
+struct ReplaceResult {
+    bool success = false;
+    error_code error;
+    size_t attempts = 0;
+};
+
 #ifdef _WIN32
-    if (MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        error.clear();
-        return true;
+bool IsSharingViolation(DWORD error) {
+    return error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION;
+}
+
+bool TargetHasIncompatibleDeleteSharing(const filesystem::path& target) {
+    HANDLE probe = CreateFileW(
+        target.c_str(),
+        DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (probe != INVALID_HANDLE_VALUE) {
+        CloseHandle(probe);
+        return false;
     }
-    error = error_code(static_cast<int>(GetLastError()), system_category());
-    return false;
+    return IsSharingViolation(GetLastError());
+}
+
+bool IsTransientReplaceError(DWORD error, const filesystem::path& target) {
+    if (IsSharingViolation(error)) return true;
+    // MoveFileExW reports ERROR_ACCESS_DENIED for some handles that do not
+    // share DELETE. Confirm that specific sharing condition before retrying;
+    // ordinary permission and read-only failures remain non-transient.
+    return error == ERROR_ACCESS_DENIED && TargetHasIncompatibleDeleteSharing(target);
+}
+#endif
+
+ReplaceResult Replace(
+    const filesystem::path& source,
+    const filesystem::path& target,
+    const function<void(const error_code&, size_t)>& failureObserver = {}) {
+    ReplaceResult result;
+#ifdef _WIN32
+    constexpr array<DWORD, 6> retryDelaysMs{5, 10, 20, 40, 80, 160};
+    for (size_t attempt = 0;; ++attempt) {
+        result.attempts = attempt + 1;
+        if (MoveFileExW(source.c_str(), target.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            result.success = true;
+            return result;
+        }
+
+        const DWORD nativeError = GetLastError();
+        result.error = error_code(static_cast<int>(nativeError), system_category());
+        const bool transient = IsTransientReplaceError(nativeError, target);
+        if (failureObserver) failureObserver(result.error, result.attempts);
+        if (!transient || attempt >= retryDelaysMs.size()) {
+            return result;
+        }
+        this_thread::sleep_for(chrono::milliseconds(retryDelaysMs[attempt]));
+    }
 #else
-    filesystem::rename(source, target, error);
-    return !error;
+    ++result.attempts;
+    filesystem::rename(source, target, result.error);
+    if (result.error && failureObserver) failureObserver(result.error, result.attempts);
+    result.success = !result.error;
+    return result;
 #endif
 }
 
@@ -245,16 +315,24 @@ WriteResult WriteText(const filesystem::path& requestedTarget, const string& con
             RemoveQuietly(temporary);
             return result;
         }
-        if (!Replace(backupTemporary, result.backupPath, error)) {
-            result.error = ErrorText(L"Could not commit the previous-file backup", error);
+        const auto backupReplacement = Replace(backupTemporary, result.backupPath);
+        if (!backupReplacement.success) {
+            result.error = ErrorText(
+                L"Could not commit the previous-file backup",
+                backupReplacement.error,
+                backupReplacement.attempts);
             RemoveQuietly(backupTemporary);
             RemoveQuietly(temporary);
             return result;
         }
     }
 
-    if (!Replace(temporary, target, error)) {
-        result.error = ErrorText(L"Could not atomically replace the target", error);
+    const auto replacement = Replace(temporary, target, options.replaceFailureObserver);
+    if (!replacement.success) {
+        result.error = ErrorText(
+            L"Could not atomically replace the target",
+            replacement.error,
+            replacement.attempts);
         RemoveQuietly(temporary);
         return result;
     }

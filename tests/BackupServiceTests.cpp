@@ -886,13 +886,25 @@ void RunBackupServiceTests(
 			const auto finalEntry = remainingEntries->front();
 			FolderRewindFormat::ChangeRecord finalRecord;
 			FolderRewindFormat::MetadataState finalState;
+			const vector<wstring> expectedFullFiles = {
+				L"level.dat", L"one.dat", L"two.dat"};
 			test.Expect(FolderRewindMetadataStore::LoadRecord(
 				chainStorage.metadataDir, finalEntry.backupFile, finalRecord)
 				&& FolderRewindMetadataStore::LoadState(chainStorage.metadataDir, finalState)
+				&& finalEntry.backupFile == L"[Full]-Chain-2.7z"
+				&& finalEntry.backupType == L"Full"
+				&& finalRecord.archiveFileName == finalEntry.backupFile
 				&& finalRecord.backupType == L"Full"
-				&& finalRecord.fullFileList.size() == 3
-				&& finalState.lastBackupFileName == finalEntry.backupFile,
-				"Smart retention should repair the surviving archive metadata and history references");
+				&& finalRecord.basedOnFullBackup == finalEntry.backupFile
+				&& finalRecord.previousBackupFileName.empty()
+				&& finalRecord.fullFileList == expectedFullFiles
+				&& finalRecord.addedFiles == expectedFullFiles
+				&& finalRecord.modifiedFiles.empty()
+				&& finalRecord.deletedFiles.empty()
+				&& finalState.lastBackupFileName == finalEntry.backupFile
+				&& finalState.basedOnFullBackup == finalEntry.backupFile
+				&& filesystem::exists(chainStorage.backupSubDir / finalEntry.backupFile),
+				"Smart retention should repair the surviving archive metadata, history, and full-file lists");
 		}
 	};
 
