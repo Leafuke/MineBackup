@@ -10,6 +10,7 @@
 #include "ProfileConfigCatalogTests.h"
 #include "ProfileManifestTests.h"
 #include "OperationResultTests.h"
+#include "PathIdentityTests.h"
 #include "RuntimeInfrastructureTests.h"
 #include "RestoreServiceTests.h"
 #include "StorageMigrationTests.h"
@@ -112,6 +113,7 @@ int main(int argc, char** argv) {
 	RunJobTests(test, temporary.path);
     RunLegacyIniConfigCodecTests(test);
 	RunOperationResultTests(test);
+	RunPathIdentityTests(test, temporary.path);
 	RunProfileConfigCatalogTests(test, temporary.path);
 	RunProfileManifestTests(test, temporary.path);
     RunRuntimeInfrastructureTests(test, temporary.path);

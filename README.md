@@ -41,7 +41,7 @@ For Windows 10 and above users, it is recommended to prioritize the combination 
 ### 1️⃣ Download & Run
 1. Go to the [latest release](https://github.com/Leafuke/MineBackup/releases).
 2. Download `MineBackup-windows-x64.exe`, the Ubuntu `.deb`, the Linux
-   AppImage, or `MineBackup-1.16.0-macos-arm64.dmg`.
+   AppImage, or `MineBackup-1.16.2-macos-arm64.dmg`.
 3. Verify the asset against `SHA256SUMS`, then install or run it normally.
 
 See the [platform support matrix](docs/platform-support.md) for supported OS
@@ -49,7 +49,27 @@ versions and honest Linux desktop degradation. The macOS build is not notarized;
 use **Privacy & Security → Open Anyway** if prompted, without disabling
 Gatekeeper or running `xattr` commands.
 
-### 2️⃣ Basic Actions - Basic
+### 2️⃣ First-time setup
+On the first launch, the setup wizard asynchronously scans standard Java and
+Bedrock locations, plus bounded clues from PCL2's current active directory or
+workspace. Scanning only produces candidates; configurations are created only
+after you select candidates and confirm. Each instance gets its own Config entry
+and backup subdirectory.
+
+The default backup root is `Documents/MineBackup-Backups`. If Documents is not
+available, MineBackup falls back to `backups` under the application data
+directory. You can also add a Minecraft directory manually, or use the advanced
+fallback to protect a regular custom folder. PCL2 is not guaranteed to
+enumerate every historical custom directory, so run PCL2 and rescan when needed.
+When rescanning, MineBackup also uses the directory structure of existing
+Minecraft Configs to infer their owning `.minecraft` root and discover other
+standard or version-isolated instances in the same game directory. HMCL
+automatic discovery is not supported in this iteration; add its directory
+manually. Later, use **Settings → Application** to scan again. Exiting
+first-time setup before confirming configuration creation does not persist a
+new Config.
+
+### 3️⃣ Basic actions
 | Feature      | How to Use |
 |--------------|------------|
 | Back up a world | Select a world → click **Backup** |
@@ -57,7 +77,7 @@ Gatekeeper or running `xattr` commands.
 | Change backup location | Open **Settings** → choose your path |
 | Switch language | Settings → Language |
 
-### 3️⃣ Power Features
+### 4️⃣ Power Features
 - **Hotkey Backup** — Press **Alt+Ctrl+S** in-game to trigger a live backup.
 - **Exit Detection** — Enable *DetectOnExit* to back up automatically when Minecraft closes.
 - **KnotLink Integration** — Let MineBackup talk to mods or other tools to trigger “save before backup.” An example mod is [here](https://modrinth.com/mod/minebackup).

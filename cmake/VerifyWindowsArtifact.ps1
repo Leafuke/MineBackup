@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $resolved = (Resolve-Path -LiteralPath $Executable).Path
 $version = (Get-Item -LiteralPath $resolved).VersionInfo
-if ($version.FileVersion -ne '1.16.1' -or $version.ProductVersion -ne '1.16.1') {
+if ($version.FileVersion -ne '1.16.2' -or $version.ProductVersion -ne '1.16.2') {
     throw "Unexpected version metadata: file=$($version.FileVersion), product=$($version.ProductVersion)"
 }
 
@@ -54,7 +54,10 @@ public static class MineBackupResourceProbe
     [DllImport("kernel32.dll")]
     private static extern bool FreeLibrary(IntPtr module);
 
-    private static IntPtr ResourceId(ushort value) => new IntPtr(value);
+    private static IntPtr ResourceId(ushort value)
+    {
+        return new IntPtr(value);
+    }
 
     public static uint SizeOf(string path, ushort id, ushort type)
     {
@@ -86,10 +89,10 @@ public static class MineBackupResourceProbe
 }
 
 $requiredResources = @(
-    @{ Label = 'primary icon'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [ushort]102, [ushort]14) },
-    @{ Label = 'alternate icon'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [ushort]104, [ushort]14) },
-    @{ Label = 'embedded 7-Zip'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [ushort]101, 'EXE') },
-    @{ Label = 'embedded icon font'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [ushort]111, 'FONTS') }
+    @{ Label = 'primary icon'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [System.UInt16]102, [System.UInt16]14) },
+    @{ Label = 'alternate icon'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [System.UInt16]104, [System.UInt16]14) },
+    @{ Label = 'embedded 7-Zip'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [System.UInt16]101, 'EXE') },
+    @{ Label = 'embedded icon font'; Size = [MineBackupResourceProbe]::SizeOf($resolved, [System.UInt16]111, 'FONTS') }
 )
 foreach ($resource in $requiredResources) {
     if ($resource.Size -le 0) {

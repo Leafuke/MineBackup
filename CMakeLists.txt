@@ -153,6 +153,9 @@ target_include_directories(minebackup_data_core PUBLIC ${MINEBACKUP_COMMON_INCLU
 target_include_directories(minebackup_runtime PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
 target_link_libraries(minebackup_data_core PUBLIC Threads::Threads minebackup_third_party_spdlog)
 target_link_libraries(minebackup_runtime PUBLIC minebackup_data_core)
+if(APPLE)
+    target_link_libraries(minebackup_data_core PUBLIC "-framework CoreServices")
+endif()
 if(NOT WIN32)
     target_link_libraries(minebackup_data_core PUBLIC Iconv::Iconv)
 endif()
@@ -407,6 +410,7 @@ if(BUILD_TESTING)
 		tests/JobTests.cpp
         tests/LegacyIniConfigCodecTests.cpp
 		tests/OperationResultTests.cpp
+        tests/PathIdentityTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
         tests/ProfileConfigCatalogTests.cpp
@@ -423,6 +427,108 @@ if(BUILD_TESTING)
         target_link_libraries(minebackup_data_tests PRIVATE shell32)
     endif()
     add_test(NAME minebackup.data_core COMMAND minebackup_data_tests)
+
+    add_executable(minebackup_known_user_folders_tests
+        tests/KnownUserFoldersTests.cpp)
+    target_link_libraries(minebackup_known_user_folders_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_known_user_folders_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.known_user_folders
+        COMMAND minebackup_known_user_folders_tests)
+
+    add_executable(minebackup_minecraft_inspector_tests
+        tests/MinecraftInstanceInspectorTests.cpp)
+    target_link_libraries(minebackup_minecraft_inspector_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_minecraft_inspector_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.minecraft_inspector
+        COMMAND minebackup_minecraft_inspector_tests)
+
+    add_executable(minebackup_known_minecraft_location_tests
+        tests/KnownMinecraftLocationProviderTests.cpp)
+    target_link_libraries(minebackup_known_minecraft_location_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_known_minecraft_location_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.known_minecraft_locations
+        COMMAND minebackup_known_minecraft_location_tests)
+
+    add_executable(minebackup_process_inspection_tests
+        tests/ProcessInspectionServiceTests.cpp)
+    target_link_libraries(minebackup_process_inspection_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_process_inspection_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.process_inspection
+        COMMAND minebackup_process_inspection_tests)
+
+    add_executable(minebackup_pcl2_discovery_tests
+        tests/Pcl2ProcessDiscoveryProviderTests.cpp)
+    target_link_libraries(minebackup_pcl2_discovery_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_pcl2_discovery_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.pcl2_discovery
+        COMMAND minebackup_pcl2_discovery_tests)
+
+    add_executable(minebackup_minecraft_discovery_service_tests
+        tests/MinecraftInstanceDiscoveryServiceTests.cpp)
+    target_link_libraries(minebackup_minecraft_discovery_service_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_minecraft_discovery_service_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.minecraft_discovery_service
+        COMMAND minebackup_minecraft_discovery_service_tests)
+
+    add_executable(minebackup_batch_readiness_tests
+        tests/BatchReadinessServiceTests.cpp)
+    target_link_libraries(minebackup_batch_readiness_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_batch_readiness_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.batch_readiness
+        COMMAND minebackup_batch_readiness_tests)
+
+    add_executable(minebackup_wizard_session_tests
+        tests/WizardSessionTests.cpp)
+    target_link_libraries(minebackup_wizard_session_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_wizard_session_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.wizard_session
+        COMMAND minebackup_wizard_session_tests)
+
+    if(MINEBACKUP_BUILD_GUI)
+        add_executable(minebackup_config_batch_tests
+            tests/ConfigBatchCreationServiceTests.cpp)
+        target_link_libraries(minebackup_config_batch_tests PRIVATE
+            minebackup_desktop)
+        if(MSVC)
+            target_compile_options(minebackup_config_batch_tests PRIVATE /utf-8 /FS)
+        endif()
+        add_test(NAME minebackup.config_batch
+            COMMAND minebackup_config_batch_tests)
+
+        add_executable(minebackup_onboarding_flow_tests
+            tests/OnboardingFlowTests.cpp)
+        target_link_libraries(minebackup_onboarding_flow_tests PRIVATE
+            minebackup_desktop)
+        if(MSVC)
+            target_compile_options(minebackup_onboarding_flow_tests PRIVATE /utf-8 /FS)
+        endif()
+        add_test(NAME minebackup.onboarding_flow
+            COMMAND minebackup_onboarding_flow_tests)
+    endif()
 
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_ui_model_tests tests/UiModelTests.cpp)

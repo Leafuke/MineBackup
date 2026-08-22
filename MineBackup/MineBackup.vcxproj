@@ -103,6 +103,7 @@
     <ClCompile Include="src\app\DesktopUiLifecycle.cpp" />
     <ClCompile Include="src\app\DesktopUiSession.cpp" />
     <ClCompile Include="src\app\AppState.cpp" />
+    <ClCompile Include="src\app\ConfigBatchCreationService.cpp" />
     <ClCompile Include="src\app\ConfigSelection.cpp" />
     <ClCompile Include="src\app\LaunchOptions.cpp" />
     <ClCompile Include="src\app\Globals.cpp" />
@@ -117,10 +118,12 @@
     <ClCompile Include="src\core\BackupManagerDesktop.cpp" />
     <ClCompile Include="src\core\BackupRestore.cpp" />
     <ClCompile Include="src\core\BackupRetention.cpp" />
+    <ClCompile Include="src\core\BatchReadinessService.cpp" />
     <ClCompile Include="src\core\CloudHistoryAnalysis.cpp" />
     <ClCompile Include="src\core\CloudHistorySync.cpp" />
     <ClCompile Include="src\core\CloudPortableConfig.cpp" />
     <ClCompile Include="src\core\CloudSyncService.cpp" />
+    <ClCompile Include="src\core\ConfigFactory.cpp" />
     <ClCompile Include="src\core\CoreValidation.cpp" />
     <ClCompile Include="src\core\FolderRewindFormat.cpp" />
     <ClCompile Include="src\core\FolderRewindHistoryStore.cpp" />
@@ -131,6 +134,12 @@
 	<ClCompile Include="src\core\HotRestoreCoordinator.cpp" />
 	<ClCompile Include="src\core\JobDocument.cpp" />
 	<ClCompile Include="src\core\JobRunner.cpp" />
+	<ClCompile Include="src\core\KnownMinecraftLocationProvider.cpp" />
+	<ClCompile Include="src\core\MinecraftInstanceDiscoveryService.cpp" />
+	<ClCompile Include="src\core\MinecraftInstanceInspector.cpp" />
+	<ClCompile Include="src\core\PathIdentity.cpp" />
+	<ClCompile Include="src\core\Pcl2ProcessDiscoveryProvider.cpp" />
+	<ClCompile Include="src\core\ProcessInspectionService.cpp" />
 	<ClCompile Include="src\core\ProfileConfigCatalog.cpp" />
 	<ClCompile Include="src\core\ProfileConfigRepository.cpp" />
 	<ClCompile Include="src\core\ProfileKnotLinkCommands.cpp" />
@@ -149,6 +158,7 @@
     <ClCompile Include="src\core\HistoryRepository.cpp" />
     <ClCompile Include="src\core\PathRuleSet.cpp" />
     <ClCompile Include="src\core\TaskCoordinator.cpp" />
+    <ClCompile Include="src\core\WizardSession.cpp" />
     <ClCompile Include="src\core\RemoteContentService.cpp" />
     <ClCompile Include="src\core\ExternalToolManager.cpp" />
     <ClCompile Include="src\core\PortableConfigDocument.cpp" />
@@ -161,6 +171,7 @@
     <ClCompile Include="src\infra\LegacyLocationDiscovery.cpp" />
     <ClCompile Include="src\infra\LegacyLocationMigration.cpp" />
     <ClCompile Include="src\infra\LegacyIniConfigCodec.cpp" />
+    <ClCompile Include="src\infra\KnownUserFolders.cpp" />
     <ClCompile Include="src\infra\Logging.cpp" />
     <ClCompile Include="src\infra\ProcessRunner.cpp" />
     <ClCompile Include="src\infra\ReadOnlyMappedFile.cpp" />
@@ -186,9 +197,11 @@
     <ClCompile Include="src\ui\LogPanel.cpp" />
     <ClCompile Include="src\ui\MainUI.cpp" />
     <ClCompile Include="src\ui\MigrationReportUI.cpp" />
+    <ClCompile Include="src\ui\MinecraftSetupUI.cpp" />
     <ClCompile Include="src\ui\SettingsUIAppearance.cpp" />
     <ClCompile Include="src\ui\SettingsUIConfig.cpp" />
     <ClCompile Include="src\ui\SettingsUI.cpp" />
+    <ClCompile Include="src\ui\SettingsUIApplication.cpp" />
     <ClCompile Include="src\ui\SettingsUISpecial.cpp" />
     <ClCompile Include="src\ui\SettingsUIHotkeys.cpp" />
     <ClCompile Include="src\ui\WizardUI.cpp" />
@@ -217,6 +230,7 @@
     <ClInclude Include="src\app\ApplicationEventRouter.h" />
     <ClInclude Include="src\app\AppearanceRuntime.h" />
     <ClInclude Include="src\app\AppState.h" />
+    <ClInclude Include="src\app\ConfigBatchCreationService.h" />
     <ClInclude Include="src\app\ConfigSelection.h" />
     <ClInclude Include="src\app\DataModels.h" />
     <ClInclude Include="src\app\Globals.h" />
@@ -225,12 +239,14 @@
     <ClInclude Include="src\app\MainUI.h" />
 	<ClInclude Include="src\app\legacy\LegacyServiceCleanup.h" />
     <ClInclude Include="src\core\ArchiveRunner.h" />
+    <ClInclude Include="src\core\BatchReadinessService.h" />
     <ClInclude Include="src\core\ChainSafeRetention.h" />
     <ClInclude Include="src\core\BackupChangeDetector.h" />
     <ClInclude Include="src\core\BackupManager.h" />
     <ClInclude Include="src\core\BackupManagerInternal.h" />
     <ClInclude Include="src\core\BackupService.h" />
     <ClInclude Include="src\core\CloudSyncService.h" />
+    <ClInclude Include="src\core\ConfigFactory.h" />
     <ClInclude Include="src\core\CoreValidation.h" />
     <ClInclude Include="src\core\FolderRewindFormat.h" />
     <ClInclude Include="src\core\FolderRewindHistoryStore.h" />
@@ -243,6 +259,14 @@
 	<ClInclude Include="src\core\JobDocument.h" />
 	<ClInclude Include="src\core\JobModels.h" />
 	<ClInclude Include="src\core\JobRunner.h" />
+	<ClInclude Include="src\core\KnownMinecraftLocationProvider.h" />
+	<ClInclude Include="src\core\MinecraftDiscovery.h" />
+	<ClInclude Include="src\core\MinecraftInstanceDiscoveryService.h" />
+	<ClInclude Include="src\core\MinecraftInstanceInspector.h" />
+	<ClInclude Include="src\core\MinecraftTypes.h" />
+	<ClInclude Include="src\core\PathIdentity.h" />
+	<ClInclude Include="src\core\Pcl2ProcessDiscoveryProvider.h" />
+	<ClInclude Include="src\core\ProcessInspectionService.h" />
 	<ClInclude Include="src\core\ProfileConfigCatalog.h" />
 	<ClInclude Include="src\core\ProfileConfigRepository.h" />
 	<ClInclude Include="src\core\ProfileKnotLinkCommands.h" />
@@ -259,6 +283,7 @@
     <ClInclude Include="src\core\HistoryManager.h" />
     <ClInclude Include="src\core\HistoryRepository.h" />
     <ClInclude Include="src\core\TaskCoordinator.h" />
+    <ClInclude Include="src\core\WizardSession.h" />
     <ClInclude Include="src\core\RemoteContentService.h" />
     <ClInclude Include="src\core\ExternalToolManager.h" />
     <ClInclude Include="src\core\PathRuleSet.h" />
@@ -271,6 +296,7 @@
     <ClInclude Include="src\infra\LegacyLocationDiscovery.h" />
     <ClInclude Include="src\infra\LegacyLocationMigration.h" />
     <ClInclude Include="src\infra\LegacyIniConfigCodec.h" />
+    <ClInclude Include="src\infra\KnownUserFolders.h" />
     <ClInclude Include="src\infra\ProcessRunner.h" />
     <ClInclude Include="src\infra\InterruptedTaskRecovery.h" />
     <ClInclude Include="src\infra\NetworkService.h" />
@@ -298,6 +324,7 @@
     <ClInclude Include="src\ui\LogPanel.h" />
     <ClInclude Include="src\ui\MainUiController.h" />
     <ClInclude Include="src\ui\MigrationReportUI.h" />
+    <ClInclude Include="src\ui\MinecraftSetupUI.h" />
     <ClInclude Include="src\ui\SettingsUI.h" />
     <ClInclude Include="src\ui\SettingsUIHotkeys.h" />
     <ClInclude Include="src\ui\SettingsUIPrivate.h" />

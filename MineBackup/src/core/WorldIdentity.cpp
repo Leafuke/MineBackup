@@ -2,33 +2,17 @@
 
 #include "FolderRewindFormat.h"
 #include "JobDocument.h"
+#include "PathIdentity.h"
 #include "text_to_text.h"
 
 #include <algorithm>
 #include <cwctype>
 #include <map>
-#include <system_error>
 
 using namespace std;
 
 namespace WorldIdentity {
 namespace {
-
-filesystem::path AbsoluteNormalized(const filesystem::path& path) {
-	error_code error;
-	const auto canonical = filesystem::weakly_canonical(path, error);
-	if (!error) return canonical.lexically_normal();
-	const auto absolute = filesystem::absolute(path, error);
-	return (error ? path : absolute).lexically_normal();
-}
-
-wstring PathKey(const filesystem::path& path) {
-	wstring value = AbsoluteNormalized(path).wstring();
-#ifdef _WIN32
-	transform(value.begin(), value.end(), value.begin(), ::towlower);
-#endif
-	return value;
-}
 
 wstring StorageKey(wstring value) {
 #ifdef _WIN32
@@ -38,7 +22,7 @@ wstring StorageKey(wstring value) {
 }
 
 bool SamePath(const filesystem::path& left, const filesystem::path& right) {
-	return PathKey(left) == PathKey(right);
+	return PathIdentity::PathsEqual(left, right);
 }
 
 string Describe(const wstring& configId, const wstring& worldPath) {
@@ -57,9 +41,12 @@ bool TryBuildNormalized(
 			+ Describe(config.configId, normalized);
 		return false;
 	}
-	const filesystem::path sourceRoot = AbsoluteNormalized(config.saveRoot);
-	const filesystem::path sourcePath = AbsoluteNormalized(sourceRoot / normalized);
-	const filesystem::path backupRoot = AbsoluteNormalized(config.backupPath);
+	const filesystem::path sourceRoot =
+		PathIdentity::NormalizeExistingOrProspectivePath(config.saveRoot);
+	const filesystem::path sourcePath =
+		PathIdentity::NormalizeExistingOrProspectivePath(sourceRoot / normalized);
+	const filesystem::path backupRoot =
+		PathIdentity::NormalizeExistingOrProspectivePath(config.backupPath);
 	FolderRewindFormat::StoragePaths storage;
 	if (!FolderRewindFormat::TryResolveStoragePaths(
 			backupRoot.wstring(), normalized, sourcePath.wstring(), storage)) {
@@ -111,7 +98,8 @@ bool TryBuildFromHistory(
 	});
 	if (found != identities.end()
 		&& count_if(identities.begin(), identities.end(), [&](const Value& candidate) {
-			return PathKey(candidate.backupRoot) == PathKey(found->backupRoot)
+			return PathIdentity::BuildPathIdentityKey(candidate.backupRoot)
+				== PathIdentity::BuildPathIdentityKey(found->backupRoot)
 				&& StorageKey(candidate.storageFolderName)
 					== StorageKey(found->storageFolderName);
 		}) == 1) {
@@ -157,7 +145,8 @@ bool TryBuild(
 	});
 	if (found != identities.end()
 		&& count_if(identities.begin(), identities.end(), [&](const Value& candidate) {
-			return PathKey(candidate.backupRoot) == PathKey(found->backupRoot)
+			return PathIdentity::BuildPathIdentityKey(candidate.backupRoot)
+				== PathIdentity::BuildPathIdentityKey(found->backupRoot)
 				&& StorageKey(candidate.storageFolderName)
 					== StorageKey(found->storageFolderName);
 		}) == 1) {
@@ -184,7 +173,8 @@ bool Matches(
 	const auto identities = ConfigWorldIdentities(config);
 	const auto sameStorageCount = count_if(identities.begin(), identities.end(),
 		[&](const Value& candidate) {
-			return PathKey(candidate.backupRoot) == PathKey(target.backupRoot)
+			return PathIdentity::BuildPathIdentityKey(candidate.backupRoot)
+				== PathIdentity::BuildPathIdentityKey(target.backupRoot)
 				&& StorageKey(candidate.storageFolderName)
 					== StorageKey(target.storageFolderName);
 		});
@@ -228,7 +218,7 @@ vector<StorageConflict> FindStorageConflicts(const map<int, Config>& configs) {
 	for (const auto& [index, config] : configs) {
 		(void)index;
 		for (const auto& value : ConfigWorldIdentities(config)) {
-			const wstring key = PathKey(value.backupRoot) + L"\n"
+			const wstring key = PathIdentity::BuildPathIdentityKey(value.backupRoot) + L"\n"
 				+ StorageKey(value.storageFolderName);
 			const Occupant current{
 				value.configId, value.relativeWorldPath, value.backupRoot,

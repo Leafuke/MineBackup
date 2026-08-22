@@ -305,11 +305,14 @@ ManagedToolInstallResult InstallBundledSevenZipForWindows(
             result.error = write.error;
             return result;
         }
-    }
-    const auto probe = ProbeSevenZip(target, stopToken);
-    if (!probe.available) {
-        result.error = probe.diagnostic;
-        return result;
+        // Only probe a freshly written binary. When the pinned hash already
+        // matches, the file is byte-identical to the verified resource, and
+        // launching 7za.exe on every startup only slows the boot sequence.
+        const auto probe = ProbeSevenZip(target, stopToken);
+        if (!probe.available) {
+            result.error = probe.diagnostic;
+            return result;
+        }
     }
     result.success = true;
     result.executable = target;

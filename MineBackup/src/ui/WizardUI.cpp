@@ -1,464 +1,598 @@
-﻿#include "Globals.h"
-#include "UIHelpers.h"
-#include "imgui-all.h"
-#include "imgui_style.h"
-#include "i18n.h"
-#include "AppState.h"
-#include "AppPaths.h"
-#include "ConfigManager.h"
-#include "KnotLinkServerManager.h"
 #include "MainUI.h"
-#include "ApplicationActions.h"
-#include "AppearanceRuntime.h"
-#include "text_to_text.h"
-#include "PlatformCompat.h"
+
+#include "AppPaths.h"
+#include "AppState.h"
+#include "BatchReadinessService.h"
+#include "ConfigBatchCreationService.h"
+#include "CoreValidation.h"
 #include "DesktopServices.h"
+#include "Globals.h"
+#include "KnownUserFolders.h"
+#include "MinecraftSetupUI.h"
+#include "MinecraftInstanceDiscoveryService.h"
+#include "TaskCoordinator.h"
+#include "UIHelpers.h"
+#include "WizardSession.h"
+#include "i18n.h"
+#include "imgui-all.h"
+#include "text_to_text.h"
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace std;
 
-void ShowConfigWizard(bool& showConfigWizard, bool& errorShow, bool sevenZipExtracted, const wstring& g_7zTempPath) {
-	// 首次启动向导使用的静态变量
-	static int page = 0, themeId = 5;
-	static bool isWizardOpen = true;
-	static char saveRootPath[CONSTANT1] = "";
-	static char backupPath[CONSTANT1] = "";
-	static char zipPath[CONSTANT1] = "";
-	static char wizardFontPath[CONSTANT1] = "";
-	static int wizardLangIdx = 0;
-	static bool wizardLangInitialized = false;
+namespace {
 
-	// 初始化语言选择索引
-	if (!wizardLangInitialized) {
-		for (int i = 0; i < 2; i++) {
-			if (g_CurrentLang == lang_codes[i]) {
-				wizardLangIdx = i;
-				break;
-			}
+constexpr size_t kWizardPathCapacity = 4096;
+
+enum class ReadinessPurpose {
+	Preview,
+	Final
+};
+
+struct DiscoveryCompletion {
+	uint64_t generation = 0;
+	MinecraftDiscoveryResult result;
+};
+
+struct ReadinessCompletion {
+	uint64_t generation = 0;
+	ReadinessPurpose purpose = ReadinessPurpose::Preview;
+	BatchReadinessResult result;
+};
+
+struct WizardMailbox {
+	std::mutex mutex;
+	optional<DiscoveryCompletion> discovery;
+	optional<ReadinessCompletion> readiness;
+};
+
+struct WizardRuntime {
+	WizardSession session;
+	shared_ptr<WizardMailbox> mailbox = make_shared<WizardMailbox>();
+	vector<DiscoveryLocation> manualLocations;
+	optional<ConfigDraft> advancedCustomDraft;
+	array<char, kWizardPathCapacity> backupRootBuffer{};
+	uint64_t readinessGeneration = 0;
+	wstring scanTaskName;
+	wstring readinessTaskName;
+	string errorKey;
+	bool initialized = false;
+	bool windowOpen = true;
+	bool scanning = false;
+	bool readinessRunning = false;
+	bool finalizing = false;
+	bool coreValidationStarted = false;
+	bool coreValidationStartFailed = false;
+	int languageIndex = 0;
+};
+
+WizardRuntime& Runtime() {
+	static WizardRuntime runtime;
+	return runtime;
+}
+
+map<int, Config> ConfigSnapshot() {
+	lock_guard<mutex> lock(g_appState.configsMutex);
+	return g_appState.configs;
+}
+
+void SetPathBuffer(array<char, kWizardPathCapacity>& buffer, const filesystem::path& path) {
+	const string value = wstring_to_utf8(path.wstring());
+	const size_t count = (min)(value.size(), buffer.size() - 1);
+	memcpy(buffer.data(), value.data(), count);
+	buffer[count] = '\0';
+}
+
+const char* EvidenceLabel(const InspectedMinecraftInstance& instance) {
+	for (const auto& evidence : instance.evidence) {
+		if (evidence.kind == DiscoveryEvidenceKind::LauncherProcess
+			|| evidence.kind == DiscoveryEvidenceKind::LauncherSettings
+			|| evidence.kind == DiscoveryEvidenceKind::WorkspaceProbe) {
+			return L("WIZARD_SOURCE_PCL2");
 		}
-		wizardLangInitialized = true;
+	}
+	for (const auto& evidence : instance.evidence) {
+		if (evidence.kind == DiscoveryEvidenceKind::ExistingConfig) {
+			return L("WIZARD_SOURCE_EXISTING_CONFIG");
+		}
+	}
+	for (const auto& evidence : instance.evidence) {
+		if (evidence.kind == DiscoveryEvidenceKind::Manual) {
+			return L("WIZARD_SOURCE_MANUAL");
+		}
+	}
+	return L("WIZARD_SOURCE_KNOWN");
+}
+
+filesystem::path RecommendedBackupRoot() {
+	return KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(GetAppPaths());
+}
+
+void BeginDiscovery(WizardRuntime& runtime) {
+	if (!runtime.scanTaskName.empty()) {
+		TaskCoordinator::Instance().RequestStop(runtime.scanTaskName);
+	}
+	const uint64_t generation = BeginWizardDiscovery(runtime.session);
+	runtime.advancedCustomDraft.reset();
+	runtime.scanTaskName = L"onboarding-discovery-" + to_wstring(generation);
+	runtime.scanning = true;
+	runtime.errorKey.clear();
+	const auto configs = ConfigSnapshot();
+	const auto manualLocations = runtime.manualLocations;
+	const auto mailbox = runtime.mailbox;
+	const wstring taskName = runtime.scanTaskName;
+	const bool submitted = TaskCoordinator::Instance().Submit(
+		taskName, {L"minecraft-discovery"},
+		[generation, configs, manualLocations, mailbox](stop_token stopToken) mutable {
+			MinecraftDiscoveryResult result;
+			try {
+				auto service = CreateDefaultMinecraftDiscoveryService();
+				result = service.Discover(
+					configs, std::move(manualLocations), stopToken);
+			}
+			catch (...) {
+				result.diagnostics.push_back({
+					"discovery_failed", "aggregator", {}, {}});
+			}
+			lock_guard<mutex> lock(mailbox->mutex);
+			if (!mailbox->discovery
+				|| generation >= mailbox->discovery->generation) {
+				mailbox->discovery = {generation, std::move(result)};
+			}
+		});
+	if (!submitted) {
+		runtime.scanning = false;
+		runtime.errorKey = "WIZARD_TASK_SUBMIT_FAILED";
+	}
+}
+
+const vector<ConfigDraft>& RebuildRuntimeDrafts(WizardRuntime& runtime) {
+	if (!runtime.advancedCustomDraft) {
+		return RebuildWizardDrafts(runtime.session, ConfigSnapshot());
+	}
+	runtime.session.drafts = ResolveUniqueConfigDrafts(
+		{*runtime.advancedCustomDraft},
+		runtime.session.defaultBackupRoot,
+		ConfigSnapshot());
+	InvalidateWizardReadiness(runtime.session);
+	return runtime.session.drafts;
+}
+
+void BeginReadiness(WizardRuntime& runtime, ReadinessPurpose purpose) {
+	if (!runtime.readinessTaskName.empty()) {
+		TaskCoordinator::Instance().RequestStop(runtime.readinessTaskName);
+	}
+	++runtime.readinessGeneration;
+	if (runtime.readinessGeneration == 0) ++runtime.readinessGeneration;
+	const uint64_t generation = runtime.readinessGeneration;
+	runtime.readinessTaskName = L"onboarding-readiness-" + to_wstring(generation);
+	runtime.readinessRunning = true;
+	runtime.finalizing = purpose == ReadinessPurpose::Final;
+	runtime.errorKey.clear();
+	runtime.session.readiness = {};
+	const auto drafts = runtime.session.drafts;
+	const auto configs = ConfigSnapshot();
+	const auto appPaths = GetAppPaths();
+	const auto mailbox = runtime.mailbox;
+	const wstring taskName = runtime.readinessTaskName;
+	const bool submitted = TaskCoordinator::Instance().Submit(
+		taskName, {L"minecraft-readiness"},
+		[generation, purpose, drafts, configs, appPaths, mailbox](stop_token stopToken) {
+			BatchReadinessResult result;
+			try {
+				result = BatchReadinessService(appPaths).CheckBatch(
+					drafts, configs, stopToken);
+			}
+			catch (...) {
+				result.report.issues.push_back({
+					"readiness_unexpected_failure",
+					ReadinessSeverity::Blocking, {}, {}});
+			}
+			lock_guard<mutex> lock(mailbox->mutex);
+			if (!mailbox->readiness
+				|| generation >= mailbox->readiness->generation) {
+				mailbox->readiness = {generation, purpose, std::move(result)};
+			}
+		});
+	if (!submitted) {
+		runtime.readinessRunning = false;
+		runtime.finalizing = false;
+		runtime.errorKey = "WIZARD_TASK_SUBMIT_FAILED";
+	}
+}
+
+void CommitReadyDrafts(WizardRuntime& runtime) {
+	ConfigBatchCreationRequest request;
+	request.drafts = runtime.session.drafts;
+	request.factoryContext.resolvedSevenZip =
+		runtime.session.readiness.resolvedSevenZip;
+	request.defaultBackupRoot = runtime.session.defaultBackupRoot;
+	request.markCoreValidationPending = true;
+	const auto result = ConfigBatchCreationService{}.Commit(request);
+	if (!result.success) {
+		runtime.errorKey = "WIZARD_COMMIT_FAILED";
+		return;
+	}
+	runtime.session.committedConfigIndices = result.configIndices;
+	runtime.session.stage = WizardStage::CoreValidation;
+	runtime.coreValidationStarted = false;
+	runtime.coreValidationStartFailed = false;
+	runtime.errorKey.clear();
+}
+
+void ConsumeCompletions(WizardRuntime& runtime) {
+	optional<DiscoveryCompletion> discovery;
+	optional<ReadinessCompletion> readiness;
+	{
+		lock_guard<mutex> lock(runtime.mailbox->mutex);
+		discovery.swap(runtime.mailbox->discovery);
+		readiness.swap(runtime.mailbox->readiness);
+	}
+	if (discovery
+		&& ApplyWizardDiscoveryResult(runtime.session,
+			discovery->generation, std::move(discovery->result))) {
+		runtime.scanning = false;
+	}
+	if (readiness && readiness->generation == runtime.readinessGeneration) {
+		runtime.readinessRunning = false;
+		runtime.session.readiness = std::move(readiness->result);
+		const bool shouldCommit = readiness->purpose == ReadinessPurpose::Final
+			&& runtime.session.readiness.report.ready;
+		runtime.finalizing = false;
+		if (shouldCommit) CommitReadyDrafts(runtime);
+	}
+}
+
+void Initialize(WizardRuntime& runtime) {
+	if (runtime.initialized) return;
+	runtime.initialized = true;
+	for (int index = 0; index < 2; ++index) {
+		if (g_CurrentLang == lang_codes[index]) runtime.languageIndex = index;
+	}
+	const filesystem::path defaultRoot = !g_defaultBackupRootPath.empty()
+		? filesystem::path(g_defaultBackupRootPath)
+		: RecommendedBackupRoot();
+	SetWizardDefaultBackupRoot(runtime.session, defaultRoot);
+	SetPathBuffer(runtime.backupRootBuffer, defaultRoot);
+	BeginDiscovery(runtime);
+}
+
+void DrawLanguageSelector(WizardRuntime& runtime) {
+	ImGui::TextUnformatted(L("LANGUAGE"));
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(GetUiMetrics().Em(12.0f));
+	if (ImGui::Combo(
+		"##WizardLanguage", &runtime.languageIndex, langs, IM_ARRAYSIZE(langs))) {
+		SetLanguage(lang_codes[runtime.languageIndex]);
+	}
+	ImGui::Separator();
+}
+
+void DrawDiscoveryStage(WizardRuntime& runtime) {
+	ImGui::TextUnformatted(L("WIZARD_DISCOVER_TITLE"));
+	ImGui::TextWrapped("%s", L("WIZARD_DISCOVER_DESC"));
+	ImGui::Spacing();
+
+	if (runtime.scanning) ImGui::BeginDisabled();
+	if (ImGui::Button(L("WIZARD_RESCAN"))) BeginDiscovery(runtime);
+	if (runtime.scanning) ImGui::EndDisabled();
+	ImGui::SameLine();
+	if (ImGui::Button(L("WIZARD_MANUAL_ADD"))) {
+		const auto selected = GetDesktopServices()->SelectFolder();
+		if (!selected.path.empty()) {
+			runtime.manualLocations.push_back({
+				selected.path,
+				DiscoveryLocationKind::Manual,
+				{{DiscoveryEvidenceKind::Manual, "manual", selected.path}}});
+			BeginDiscovery(runtime);
+		}
+	}
+	ImGui::SameLine();
+	ImGui::BeginDisabled(runtime.scanning);
+	const string selectAllNewLabel =
+		string(L("WIZARD_SELECT_ALL_NEW")) + "##WizardSelectAllNew";
+	if (ImGui::Button(selectAllNewLabel.c_str())) {
+		for (const auto& candidate : runtime.session.discovery.instances) {
+			if (candidate.alreadyConfigured) continue;
+			SetWizardInstanceSelected(
+				runtime.session,
+				BuildWizardInstanceKey(candidate.instance), true);
+		}
+	}
+	ImGui::EndDisabled();
+
+	if (runtime.scanning) {
+		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
+			"%s", L("WIZARD_SCANNING"));
+	}
+	// 空结果提示只负责解释“没扫到 Minecraft”；普通文件夹入口
+	// 不再挂在这个条件下，发现 Minecraft 时也必须保持可用。
+	if (!runtime.scanning && runtime.session.discovery.instances.empty()) {
+		ImGui::Spacing();
+		ImGui::TextWrapped("%s", L("WIZARD_DISCOVERY_EMPTY"));
+		ImGui::TextWrapped("%s", L("WIZARD_PCL2_HINT"));
+	}
+	if (!runtime.errorKey.empty()) {
+		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+			"%s", L(runtime.errorKey.c_str()));
 	}
 
-	ImGuiViewport* wizardViewport = ImGui::GetMainViewport();
-	ImGui::SetNextWindowViewport(wizardViewport->ID);
-	ImGui::SetNextWindowPos(wizardViewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-
-	if (!isWizardOpen)
-		g_appState.done = true;
-
-	ImGui::Begin(L("WIZARD_TITLE"), &isWizardOpen, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
-
-	if (page == 0) {
-		ImGui::TextUnformatted(L("WIZARD_WELCOME"));
+	for (size_t index = 0;
+		index < runtime.session.discovery.instances.size(); ++index) {
+		const auto& candidate = runtime.session.discovery.instances[index];
+		const auto& instance = candidate.instance;
+		const wstring key = BuildWizardInstanceKey(instance);
+		bool selected = runtime.session.selectedInstanceKeys.contains(key);
+		ImGui::PushID(static_cast<int>(index));
+		if (candidate.alreadyConfigured) ImGui::BeginDisabled();
+		if (ImGui::Checkbox("##Selected", &selected)) {
+			SetWizardInstanceSelected(runtime.session, key, selected);
+		}
+		if (candidate.alreadyConfigured) ImGui::EndDisabled();
+		ImGui::SameLine();
+		const string name = wstring_to_utf8(instance.suggestedName);
+		ImGui::TextUnformatted(name.empty() ? "Minecraft" : name.c_str());
+		ImGui::Indent();
+		ImGui::Text("%s: %s", L("WIZARD_SOURCE"), EvidenceLabel(instance));
+		const wstring count = MineFormatMessage(
+			"WIZARD_WORLD_COUNT", instance.worlds.size());
+		ImGui::TextUnformatted(wstring_to_utf8(count).c_str());
+		if (candidate.alreadyConfigured) {
+			ImGui::TextColored(ImVec4(0.55f, 0.75f, 0.55f, 1.0f),
+				"%s", L("WIZARD_ALREADY_ADDED"));
+		}
+		ImGui::Unindent();
 		ImGui::Separator();
-		ImGui::TextWrapped("%s", L("WIZARD_INTRO1"));
-		ImGui::TextWrapped("%s", L("WIZARD_INTRO2"));
-		ImGui::TextWrapped("%s", L("WIZARD_INTRO3"));
-
-		ImGui::Dummy(ImVec2(0.0f, 10.0f));
-		
-		// 语言选择
-		ImGui::TextUnformatted(L("LANGUAGE"));
-		if (ImGui::Combo("##WizardLang", &wizardLangIdx, langs, IM_ARRAYSIZE(langs))) {
-			SetLanguage(lang_codes[wizardLangIdx]);
-			// 切换到中文时，如果字体路径为空，自动设置中文字体
-			if (g_CurrentLang == "zh_CN" && strlen(wizardFontPath) == 0) {
-#ifdef _WIN32
-				wstring defaultCNFont = L"C:\\Windows\\Fonts\\msyh.ttc";
-				if (filesystem::exists(defaultCNFont)) {
-					Fontss = defaultCNFont;
-					strncpy_s(wizardFontPath, wstring_to_utf8(defaultCNFont).c_str(), sizeof(wizardFontPath));
-				}
-#endif
-			}
-		}
-
-		ImGui::Dummy(ImVec2(0.0f, 5.0f));
-		
-		// 字体路径设置
-		ImGui::TextUnformatted(L("WIZARD_FONT_PATH"));
-		if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
-			wstring selected_file = GetDesktopServices()->SelectFile().path.wstring();
-			if (!selected_file.empty()) {
-				strncpy_s(wizardFontPath, wstring_to_utf8(selected_file).c_str(), sizeof(wizardFontPath));
-				Fontss = selected_file;
-			}
-		}
-		ImGui::SameLine();
-		if (ImGui::InputText("##WizardFontPath", wizardFontPath, IM_ARRAYSIZE(wizardFontPath), ImGuiInputTextFlags_EnterReturnsTrue)) {
-			if (strlen(wizardFontPath) > 0) {
-				Fontss = utf8_to_wstring(wizardFontPath);
-			}
-		}
-		ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), L("WIZARD_FONT_TIP"));
-
-		ImGui::Dummy(ImVec2(0.0f, 5.0f));
-
-		ImGui::TextUnformatted(L("THEME_SETTINGS"));
-		const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
-		if (ImGui::Combo("##Theme", &themeId, theme_names, IM_ARRAYSIZE(theme_names))) {
-			g_theme = themeId;
-			const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
-			if (themeId == 7 && !filesystem::exists(customThemePath)) {
-				// 打开自定义主题编辑器
-				ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
-				// 打开 custom_theme.json 文件供用户编辑
-				(void)GetDesktopServices()->OpenFolder(customThemePath);
-			}
-			else {
-				ApplyTheme();
-			}
-		}
-
-		static float pendingUiScale = g_uiScale;
-		if (ImGui::IsWindowAppearing()) {
-			pendingUiScale = g_uiScale;
-		}
-		ImGui::SliderFloat(L("UI_SCALE"), &pendingUiScale, 0.75f, 2.5f, "%.2f");
-		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_OK"))) {
-			g_uiScale = pendingUiScale;
-			g_theme = themeId;
-			ApplyTheme();
-		}
-
-		ImGui::Dummy(ImVec2(0.0f, 10.0f));
-		if (ImGui::Button(L("BUTTON_START_CONFIG"))) {
-			page++;
-		}
-	}
-	else if (page == 1) {
-		ImGui::TextUnformatted(L("WIZARD_STEP1_TITLE"));
-		ImGui::TextWrapped("%s", L("WIZARD_STEP1_DESC1"));
-		ImGui::TextWrapped("%s", L("WIZARD_STEP1_DESC2"));
-		ImGui::Dummy(ImVec2(0.0f, 10.0f));
-
-		// 找路径
-		string pathTemp;
-		if (ImGui::Button(L("BUTTON_AUTO_JAVA"))) {
-			pathTemp.clear();
-#ifdef _WIN32
-			char* buffer_env_appdata = nullptr;
-			_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
-			if (buffer_env_appdata) {
-				filesystem::path candidate = filesystem::path(buffer_env_appdata) / ".minecraft" / "saves";
-				if (filesystem::exists(candidate)) {
-					pathTemp = candidate.string();
-				}
-				free(buffer_env_appdata);
-			}
-#else
-			const char* home = std::getenv("HOME");
-			if (home) {
-				vector<filesystem::path> candidates = {
-					filesystem::path(home) / ".minecraft" / "saves",
-					filesystem::path(home) / ".var/app/com.mojang.Minecraft/.minecraft/saves",
-					filesystem::path(home) / ".local/share/minecraft/saves"
-				};
-				for (const auto& candidate : candidates) {
-					if (filesystem::exists(candidate)) {
-						pathTemp = candidate.string();
-						break;
-					}
-				}
-			}
-#endif
-			if (!pathTemp.empty()) {
-				strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
-#ifndef _WIN32
-				for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
-#endif
-			}
-			else {
-				MessageBoxWin(L("INFO_TITLE"), L("WIZARD_AUTO_JAVA_NOT_FOUND"), 1);
-			}
-		}
-		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_AUTO_BEDROCK"))) {
-			pathTemp.clear();
-#ifdef _WIN32
-			char* buffer_env_appdata = nullptr, * buffer_env_username = nullptr;
-			_dupenv_s(&buffer_env_appdata, nullptr, "APPDATA");
-			_dupenv_s(&buffer_env_username, nullptr, "USERNAME");
-			if (buffer_env_appdata && filesystem::exists(filesystem::path(buffer_env_appdata) / "Minecraft Bedrock" / "Users")) {
-				pathTemp = (filesystem::path(buffer_env_appdata) / "Minecraft Bedrock" / "Users").string();
-				for (const auto& entry : filesystem::directory_iterator(pathTemp)) {
-					if (entry.is_directory() && (entry.path().filename().string()[0] - '0') < 10 && (entry.path().filename().string()[0] - '0') >= 0) {
-						pathTemp = (filesystem::path(pathTemp) / entry.path().filename() / "games" / "com.mojang" / "minecraftWorlds").string();
-						break;
-					}
-				}
-			}
-			else if (buffer_env_username && filesystem::exists("C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds")) {
-				pathTemp = "C:\\Users\\" + (string)buffer_env_username + "\\Appdata\\Local\\Packages\\Microsoft.MinecraftUWP_8wekyb3d8bbwe\\LocalState\\games\\com.mojang\\minecraftWorlds";
-			}
-			if (buffer_env_appdata) free(buffer_env_appdata);
-			if (buffer_env_username) free(buffer_env_username);
-#else
-			const char* home = std::getenv("HOME");
-			if (home) {
-				vector<filesystem::path> candidates = {
-					filesystem::path(home) / ".local/share/mcpelauncher/games/com.mojang/minecraftWorlds",
-					filesystem::path(home) / ".var/app/io.mrarm.mcpelauncher/.local/share/mcpelauncher/games/com.mojang/minecraftWorlds"
-				};
-				for (const auto& candidate : candidates) {
-					if (filesystem::exists(candidate)) {
-						pathTemp = candidate.string();
-						break;
-					}
-				}
-			}
-#endif
-			if (!pathTemp.empty()) {
-				strncpy_s(saveRootPath, pathTemp.c_str(), sizeof(saveRootPath));
-#ifndef _WIN32
-				for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
-#endif
-			}
-			else {
-				MessageBoxWin(L("INFO_TITLE"), L("WIZARD_AUTO_BEDROCK_NOT_FOUND"), 1);
-			}
-		}
-		if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-			wstring selected_folder = GetDesktopServices()->SelectFolder().path.wstring();
-			if (!selected_folder.empty()) {
-				strncpy_s(saveRootPath, wstring_to_utf8(selected_folder).c_str(), sizeof(saveRootPath));
-			}
-		}
-		ImGui::SameLine();
-		ImGui::InputText(L("SAVES_ROOT_PATH"), saveRootPath, IM_ARRAYSIZE(saveRootPath));
-
-		ImGui::Dummy(ImVec2(0.0f, 20.0f));
-		if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(CalcButtonWidth(L("BUTTON_NEXT")), 0))) {
-#ifndef _WIN32
-			for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
-#endif
-			if (strlen(saveRootPath) > 0 && filesystem::exists(utf8_to_wstring(saveRootPath))) {
-				page++;
-				errorShow = false;
-			}
-			else {
-				errorShow = true;
-			}
-		}
-		if (errorShow)
-			ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("WIZARD_PATH_EMPTY_OR_INVALID"));
-	}
-	else if (page == 2) {
-		ImGui::TextUnformatted(L("WIZARD_STEP2_TITLE"));
-		ImGui::TextWrapped("%s", L("WIZARD_STEP2_DESC"));
-		ImGui::Dummy(ImVec2(0.0f, 10.0f));
-
-		if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
-			wstring selected_folder = GetDesktopServices()->SelectFolder().path.wstring();
-			if (!selected_folder.empty()) {
-				strncpy_s(backupPath, wstring_to_utf8(selected_folder).c_str(), sizeof(backupPath));
-			}
-		}
-		ImGui::SameLine();
-		ImGui::InputText(L("WIZARD_BACKUP_PATH"), backupPath, IM_ARRAYSIZE(backupPath));
-
-		ImGui::Dummy(ImVec2(0.0f, 20.0f));
-		float navBtnWidth = CalcPairButtonWidth(L("BUTTON_PREVIOUS"), L("BUTTON_NEXT"));
-		if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(navBtnWidth, 0))) page--;
-		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(navBtnWidth, 0))) {
-#ifndef _WIN32
-			for (size_t i = 0; backupPath[i]; ++i) if (backupPath[i] == '\\') backupPath[i] = '/';
-#endif
-			if (strlen(backupPath) > 0 && filesystem::exists(utf8_to_wstring(backupPath))) {
-				page++;
-				errorShow = false;
-			}
-			else {
-				errorShow = true;
-			}
-		}
-		if (errorShow)
-			ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), L("WIZARD_PATH_EMPTY_OR_INVALID"));
-	}
-	else if (page == 3) {
-		static bool knotLinkStatusInitialized = false;
-		static minebackup::knotlink::KnotLinkServerStatus knotLinkStatus;
-		if (!knotLinkStatusInitialized) {
-			knotLinkStatus =
-				minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
-			knotLinkStatusInitialized = true;
-		}
-
-		ImGui::TextUnformatted(L("WIZARD_KNOTLINK_TITLE"));
-		ImGui::TextWrapped("%s", L("WIZARD_KNOTLINK_DESC"));
-		ImGui::Dummy(ImVec2(0.0f, 10.0f));
-		ImGui::Text(
-			"%s: %s",
-			L("KNOTLINK_SERVER_STATUS"),
-			minebackup::knotlink::KnotLinkServerManager::StateName(
-				knotLinkStatus.state));
-		ImGui::Text(
-			"%s: %s",
-			L("KNOTLINK_SERVER_VERSION"),
-			knotLinkStatus.version.empty()
-				? L("KNOTLINK_VERSION_UNKNOWN")
-				: knotLinkStatus.version.c_str());
-
-		ImGui::BeginDisabled(g_KnotLinkInstallRunning);
-		if (ImGui::Button(
-			L("KNOTLINK_DOWNLOAD_INSTALLER"), ImVec2(-1, 0))) {
-			(void)StartKnotLinkInstallerDownload();
-		}
-		ImGui::EndDisabled();
-		if (ImGui::Button(L("KNOTLINK_REFRESH_STATUS"), ImVec2(-1, 0))) {
-			knotLinkStatus =
-				minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
-		}
-		if (!g_KnotLinkInstallMessage.empty()) {
-			ImGui::TextWrapped(
-				"%s", wstring_to_utf8(g_KnotLinkInstallMessage).c_str());
-		}
-
-		ImGui::Dummy(ImVec2(0.0f, 20.0f));
-		const float navBtnWidth =
-			CalcPairButtonWidth(L("BUTTON_PREVIOUS"), L("BUTTON_NEXT"));
-		if (ImGui::Button(
-			L("BUTTON_PREVIOUS"), ImVec2(navBtnWidth, 0))) {
-			page--;
-		}
-		ImGui::SameLine();
-		if (ImGui::Button(
-			L("BUTTON_NEXT"), ImVec2(navBtnWidth, 0))) {
-			page++;
-		}
-	}
-	else if (page == 4) {
-		ImGui::TextUnformatted(L("WIZARD_STEP3_TITLE"));
-		ImGui::TextWrapped("%s", L("WIZARD_STEP3_DESC"));
-		ImGui::Dummy(ImVec2(0.0f, 10.0f));
-		// 检查内嵌的7z是否已释放成功
-		if (sevenZipExtracted) {
-			string extracted_path_utf8 = wstring_to_utf8(g_7zTempPath);
-			strncpy_s(zipPath, extracted_path_utf8.c_str(), sizeof(zipPath));
-			ImGui::TextColored(ImVec4(0.4f, 0.7f, 0.4f, 1.0f), L("WIZARD_USING_EMBEDDED_7Z"));
-		}
-		else {
-			// 如果释放失败，执行原来的自动检测逻辑
-			const auto bundled7z = GetAppPaths().toolsRoot / L"7zip" / L"7z.exe";
-			if (filesystem::exists(bundled7z))
-			{
-				strncpy_s(zipPath, wstring_to_utf8(bundled7z.wstring()).c_str(), sizeof(zipPath));
-				ImGui::TextUnformatted(L("AUTODETECTED_7Z"));
-			}
-			else
-			{
-				static string zipTemp = GetRegistryValue("Software\\7-Zip", "Path") + "7z.exe";
-				strncpy_s(zipPath, zipTemp.c_str(), sizeof(zipPath));
-				if (strlen(zipPath) != 0)
-					ImGui::TextUnformatted(L("AUTODETECTED_7Z"));
-			}
-		}
-		if (ImGui::Button(L("BUTTON_SELECT_FILE"))) {
-			wstring selected_file = GetDesktopServices()->SelectFile().path.wstring();
-			if (!selected_file.empty()) {
-				strncpy_s(zipPath, wstring_to_utf8(selected_file).c_str(), sizeof(zipPath));
-			}
-		}
-		ImGui::SameLine();
-		ImGui::InputText(L("WIZARD_7Z_PATH"), zipPath, IM_ARRAYSIZE(zipPath));
-
-		ImGui::Dummy(ImVec2(0.0f, 20.0f));
-		
-		ImGui::Checkbox(L("BUTTON_AUTO_SCAN_WORLDS"), &g_AutoScanForWorlds);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_BUTTON_AUTO_SCAN_WORLDS"));
-
-		ImGui::Dummy(ImVec2(0.0f, 20.0f));
-		if (ImGui::Button(L("BUTTON_PREVIOUS"))) page--;
-		ImGui::SameLine();
-		if (ImGui::Button(L("BUTTON_FINISH_CONFIG"))) {
-#ifndef _WIN32
-			for (size_t i = 0; saveRootPath[i]; ++i) if (saveRootPath[i] == '\\') saveRootPath[i] = '/';
-			for (size_t i = 0; backupPath[i]; ++i) if (backupPath[i] == '\\') backupPath[i] = '/';
-			for (size_t i = 0; zipPath[i]; ++i) if (zipPath[i] == '\\') zipPath[i] = '/';
-#endif
-			if (strlen(saveRootPath) > 0 && strlen(backupPath) > 0 && strlen(zipPath) > 0) {
-				// 创建并填充第一个配置
-				g_appState.currentConfigIndex = 1;
-				Config& initialConfig = g_appState.configs[g_appState.currentConfigIndex];
-
-				// 1. 保存向导中收集的路径
-				initialConfig.name = "First";
-				initialConfig.saveRoot = utf8_to_wstring(saveRootPath);
-				initialConfig.backupPath = utf8_to_wstring(backupPath);
-				initialConfig.zipPath = utf8_to_wstring(zipPath);
-				EnsureDefaultBackupBlacklist(initialConfig.blacklist);
-				EnsureDefaultRestoreWhitelist();
-#ifndef _WIN32
-				replace(initialConfig.saveRoot.begin(), initialConfig.saveRoot.end(), L'\\', L'/');
-				replace(initialConfig.backupPath.begin(), initialConfig.backupPath.end(), L'\\', L'/');
-				replace(initialConfig.zipPath.begin(), initialConfig.zipPath.end(), L'\\', L'/');
-#endif
-
-				if (g_AutoScanForWorlds) {
-					filesystem::path parent = filesystem::path(utf8_to_wstring(saveRootPath)).lexically_normal().parent_path().parent_path();
-					std::error_code parent_ec;
-					if (!parent.empty() && filesystem::exists(parent, parent_ec) && !parent_ec) {
-						std::error_code iter_ec;
-						for (filesystem::directory_iterator it(parent, filesystem::directory_options::skip_permission_denied, iter_ec);
-							!iter_ec && it != filesystem::directory_iterator(); ++it) {
-							const auto& entry = *it;
-							if (!entry.is_directory()) continue;
-							std::error_code save_ec;
-							if (!filesystem::exists(entry.path() / "save", save_ec) || save_ec) continue;
-							int index = CreateNewNormalConfig();
-							g_appState.configs[index] = initialConfig;
-							AssignFreshNormalConfigId(index);
-							g_appState.configs[index].saveRoot = (entry.path() / "save").wstring();
-							g_appState.configs[index].worlds.clear();
-						}
-					}
-				}
-
-				// 2. 自动扫描存档目录，填充世界列表
-				if (filesystem::exists(initialConfig.saveRoot)) {
-					for (auto& entry : filesystem::directory_iterator(initialConfig.saveRoot)) {
-						if (entry.is_directory()) {
-							// 针对基岩版的特殊处理：把 levelname.txt 里的内容当做文件描述
-							
-							if (filesystem::exists(entry.path() / "levelname.txt")) {
-								ifstream levelNameFile(entry.path() / "levelname.txt");
-								string levelName = "";
-								getline(levelNameFile, levelName);
-								levelNameFile.close();
-								initialConfig.worlds.push_back({ entry.path().filename().wstring(), utf8_to_wstring(levelName) });
-							}
-							else {
-								initialConfig.worlds.push_back({ entry.path().filename().wstring(), L"" });
-							}
-						}
-					}
-				}
-
-				// 3. 设置合理的默认值
-				initialConfig.zipFormat = L"7z";
-				initialConfig.zipLevel = 5;
-				initialConfig.keepCount = 0;
-				initialConfig.backupMode = 1;
-				initialConfig.backupBefore = false;
-				initialConfig.skipIfUnchanged = true;
-				g_theme = themeId;
-				if (strlen(wizardFontPath) > 0) {
-					Fontss = utf8_to_wstring(wizardFontPath);
-				} else {
-					Fontss = GetDefaultUIFontPath();
-				}
-				g_CoreValidationPending.store(true);
-				g_CoreValidationPassed.store(false);
-
-				// 4. 保存到文件并切换到主应用界面
-				SaveConfigs();
-				showConfigWizard = false;
-				g_appState.showMainApp = true;
-			}
-		}
-		ImGui::TextUnformatted(L("WIZARD_WARNING_TIPS"));
+		ImGui::PopID();
 	}
 
+	// 普通文件夹入口与 discovery 结果完全解耦：只要不在扫描中，
+	// 即使发现了 Minecraft 实例也始终显示，与候选列表做轻微视觉分隔。
+	if (!runtime.scanning) {
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::TextWrapped("%s", L("WIZARD_ADVANCED_CUSTOM_DESC"));
+		if (ImGui::Button(L("WIZARD_ADVANCED_CUSTOM"), ImVec2(-1, 0))) {
+			const auto selected = GetDesktopServices()->SelectFolder();
+			if (!selected.path.empty()) {
+				runtime.advancedCustomDraft = BuildCustomFolderDraft(selected.path);
+				if (runtime.advancedCustomDraft) {
+					// 保持现有互斥模式：custom folder 取代本次 Minecraft 选择，
+					// 不允许一次 onboarding 混合两类配置。
+					runtime.session.selectedInstanceKeys.clear();
+					RebuildRuntimeDrafts(runtime);
+					runtime.session.stage = WizardStage::BackupLocation;
+					runtime.errorKey.clear();
+				}
+				else {
+					runtime.errorKey = "WIZARD_ADVANCED_CUSTOM_INVALID";
+				}
+			}
+		}
+	}
+
+	// discovery 为空且未选择时，用户仍可走 custom folder 入口，
+	// 此时“请选择至少一个实例”没有信息量，不再显示。
+	if (!runtime.session.discovery.instances.empty()
+		&& runtime.session.selectedInstanceKeys.empty()) {
+		ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.25f, 1.0f),
+			"%s", L("WIZARD_SELECT_AT_LEAST_ONE"));
+	}
+	ImGui::BeginDisabled(runtime.scanning
+		|| runtime.session.selectedInstanceKeys.empty());
+	if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(-1, 0))) {
+		runtime.advancedCustomDraft.reset();
+		RebuildRuntimeDrafts(runtime);
+		if (!runtime.session.drafts.empty()) {
+			runtime.session.stage = WizardStage::BackupLocation;
+		}
+	}
+	ImGui::EndDisabled();
+}
+
+void DrawBackupStage(WizardRuntime& runtime) {
+	ImGui::TextUnformatted(L("WIZARD_BACKUP_TITLE"));
+	ImGui::TextWrapped("%s", L("WIZARD_BACKUP_DESC"));
+	ImGui::Spacing();
+
+	if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
+		const auto selected = GetDesktopServices()->SelectFolder();
+		if (!selected.path.empty()) {
+			SetWizardDefaultBackupRoot(runtime.session, selected.path);
+			SetPathBuffer(runtime.backupRootBuffer, selected.path);
+			RebuildRuntimeDrafts(runtime);
+		}
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(L("BUTTON_RESTORE_RECOMMENDED"))) {
+		const auto recommended = RecommendedBackupRoot();
+		SetWizardDefaultBackupRoot(runtime.session, recommended);
+		SetPathBuffer(runtime.backupRootBuffer, recommended);
+		RebuildRuntimeDrafts(runtime);
+	}
+	ImGui::SetNextItemWidth(-1.0f);
+	if (ImGui::InputText(
+		"##WizardBackupRoot", runtime.backupRootBuffer.data(),
+		runtime.backupRootBuffer.size())) {
+		SetWizardDefaultBackupRoot(runtime.session,
+			filesystem::path(utf8_to_wstring(runtime.backupRootBuffer.data())));
+		RebuildRuntimeDrafts(runtime);
+	}
+
+	const bool rootValid = !runtime.session.defaultBackupRoot.empty()
+		&& runtime.session.defaultBackupRoot.is_absolute();
+	if (!rootValid) {
+		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+			"%s", L("WIZARD_BACKUP_ABSOLUTE_REQUIRED"));
+	}
+	ImGui::Spacing();
+	ImGui::TextUnformatted(L("WIZARD_BACKUP_PREVIEW"));
+	for (const auto& draft : runtime.session.drafts) {
+		ImGui::BulletText("%s", draft.name.c_str());
+		ImGui::Indent();
+		ImGui::TextWrapped("%s", wstring_to_utf8(draft.backupPath.wstring()).c_str());
+		ImGui::Unindent();
+	}
+
+	const float width = CalcPairButtonWidth(L("BUTTON_PREVIOUS"), L("BUTTON_NEXT"));
+	if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(width, 0))) {
+		runtime.advancedCustomDraft.reset();
+		runtime.session.drafts.clear();
+		InvalidateWizardReadiness(runtime.session);
+		runtime.session.stage = WizardStage::Discover;
+	}
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!rootValid || runtime.session.drafts.empty());
+	if (ImGui::Button(L("BUTTON_NEXT"), ImVec2(width, 0))) {
+		runtime.session.stage = WizardStage::Ready;
+		BeginReadiness(runtime, ReadinessPurpose::Preview);
+	}
+	ImGui::EndDisabled();
+}
+
+void DrawReadyStage(WizardRuntime& runtime) {
+	ImGui::TextUnformatted(L("WIZARD_READY_TITLE"));
+	ImGui::TextWrapped("%s", L("WIZARD_READY_DESC"));
+	ImGui::Spacing();
+	if (runtime.readinessRunning) {
+		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f), "%s",
+			L(runtime.finalizing
+				? "WIZARD_FINAL_CHECKING" : "WIZARD_READINESS_CHECKING"));
+	}
+	else if (runtime.session.readiness.report.ready) {
+		ImGui::TextColored(ImVec4(0.35f, 0.8f, 0.45f, 1.0f),
+			"%s", L("WIZARD_READY_OK"));
+	}
+	DrawMinecraftReadinessIssues(runtime.session.readiness);
+	if (!runtime.errorKey.empty()) {
+		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+			"%s", L(runtime.errorKey.c_str()));
+	}
+
+	if (!runtime.readinessRunning && !runtime.session.readiness.report.ready) {
+		if (ImGui::Button(L("BUTTON_RETRY"), ImVec2(-1, 0))) {
+			BeginReadiness(runtime, ReadinessPurpose::Preview);
+		}
+	}
+	const float width = CalcPairButtonWidth(
+		L("BUTTON_PREVIOUS"), L("BUTTON_FINISH_CONFIG"));
+	ImGui::BeginDisabled(runtime.readinessRunning);
+	if (ImGui::Button(L("BUTTON_PREVIOUS"), ImVec2(width, 0))) {
+		runtime.session.stage = WizardStage::BackupLocation;
+		InvalidateWizardReadiness(runtime.session);
+	}
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!runtime.session.readiness.report.ready);
+	if (ImGui::Button(L("BUTTON_FINISH_CONFIG"), ImVec2(width, 0))) {
+		BeginReadiness(runtime, ReadinessPurpose::Final);
+	}
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+}
+
+void FinishWizard(bool& showConfigWizard, bool openSettings) {
+	showConfigWizard = false;
+	g_OnboardingActive = false;
+	g_appState.showMainApp = true;
+	if (openSettings) showSettings = true;
+}
+
+void DrawCoreValidationStage(WizardRuntime& runtime, bool& showConfigWizard) {
+	if (!runtime.coreValidationStarted && !runtime.coreValidationStartFailed) {
+		runtime.coreValidationStarted = StartCoreValidationAsync(true);
+		runtime.coreValidationStartFailed = !runtime.coreValidationStarted;
+	}
+	ImGui::TextUnformatted(L("WIZARD_CORE_VALIDATION_TITLE"));
+	if (runtime.coreValidationStartFailed) {
+		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+			"%s", L("WIZARD_CORE_VALIDATION_START_FAILED"));
+		if (ImGui::Button(L("BUTTON_RETRY"), ImVec2(-1, 0))) {
+			runtime.coreValidationStartFailed = false;
+		}
+		return;
+	}
+	if (g_CoreValidationRunning.load() || g_CoreValidationPending.load()) {
+		ImGui::TextWrapped("%s", L("WIZARD_CORE_VALIDATION_RUNNING"));
+		return;
+	}
+	if (g_CoreValidationPassed.load()) {
+		ImGui::TextColored(ImVec4(0.35f, 0.8f, 0.45f, 1.0f),
+			"%s", L("WIZARD_CORE_VALIDATION_PASSED"));
+		if (ImGui::Button(L("WIZARD_ENTER_MAIN"), ImVec2(-1, 0))) {
+			FinishWizard(showConfigWizard, false);
+		}
+		return;
+	}
+
+	ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+		"%s", L("WIZARD_CORE_VALIDATION_FAILED"));
+	ImGui::TextWrapped("%s", L("WIZARD_CORE_VALIDATION_FAILED_DESC"));
+	if (ImGui::Button(L("WIZARD_OPEN_LOGS"), ImVec2(-1, 0))) {
+		(void)GetDesktopServices()->OpenFolder(GetAppPaths().logsRoot);
+	}
+	if (ImGui::Button(L("WIZARD_OPEN_SETTINGS"), ImVec2(-1, 0))) {
+		FinishWizard(showConfigWizard, true);
+	}
+	if (ImGui::Button(L("WIZARD_ENTER_MAIN"), ImVec2(-1, 0))) {
+		FinishWizard(showConfigWizard, false);
+	}
+}
+
+} // namespace
+
+void ShowConfigWizard(bool& showConfigWizard) {
+	WizardRuntime& runtime = Runtime();
+	Initialize(runtime);
+	ConsumeCompletions(runtime);
+
+	ImGuiViewport* viewport = ImGui::GetMainViewport();
+	ImGui::SetNextWindowViewport(viewport->ID);
+	ImGui::SetNextWindowPos(
+		viewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(
+		ImVec2(GetUiMetrics().Em(42.0f), GetUiMetrics().Em(34.0f)),
+		ImGuiCond_FirstUseEver);
+	const bool visible = ImGui::Begin(
+		L("WIZARD_TITLE"), &runtime.windowOpen,
+		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking);
+	if (visible) {
+		DrawLanguageSelector(runtime);
+		switch (runtime.session.stage) {
+		case WizardStage::Discover:
+			DrawDiscoveryStage(runtime);
+			break;
+		case WizardStage::BackupLocation:
+			DrawBackupStage(runtime);
+			break;
+		case WizardStage::Ready:
+			DrawReadyStage(runtime);
+			break;
+		case WizardStage::CoreValidation:
+			DrawCoreValidationStage(runtime, showConfigWizard);
+			break;
+		}
+	}
 	ImGui::End();
+
+	if (!runtime.windowOpen) {
+		if (!runtime.scanTaskName.empty()) {
+			TaskCoordinator::Instance().RequestStop(runtime.scanTaskName);
+		}
+		if (!runtime.readinessTaskName.empty()) {
+			TaskCoordinator::Instance().RequestStop(runtime.readinessTaskName);
+		}
+		// 完成提交前关闭向导不会调用 SaveConfigs，下一次启动仍进入向导。
+		g_appState.done = true;
+	}
 }

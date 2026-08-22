@@ -44,7 +44,9 @@ string ReadFixture(const filesystem::path& path) {
 
 ArchiveRunner MakeFakeArchiveRunner(
 	const shared_ptr<int>& processCount,
-	stop_token stopToken) {
+	stop_token stopToken,
+	size_t archiveSize = 128 * 1024,
+	bool createArchive = true) {
 	ExternalToolResolution resolution;
 	resolution.available = true;
 	resolution.executable = filesystem::path(L"fake-7zz");
@@ -52,20 +54,22 @@ ArchiveRunner MakeFakeArchiveRunner(
 	return ArchiveRunner(
 		std::move(resolution),
 		stopToken,
-		[processCount](const ProcessSpec& spec, stop_token token) {
+		[processCount, archiveSize, createArchive](const ProcessSpec& spec, stop_token token) {
 			ProcessResult result;
 			if (token.stop_requested()) {
 				result.status = ProcessStatus::Cancelled;
 				return result;
 			}
 			++*processCount;
-			for (const auto& argument : spec.arguments) {
-				const filesystem::path candidate(argument);
-				if (candidate.extension() != L".7z") continue;
-				filesystem::create_directories(candidate.parent_path());
-				ofstream archive(candidate, ios::binary | ios::trunc);
-				archive << string(128 * 1024, 'a');
-				break;
+			if (createArchive) {
+				for (const auto& argument : spec.arguments) {
+					const filesystem::path candidate(argument);
+					if (candidate.extension() != L".7z") continue;
+					filesystem::create_directories(candidate.parent_path());
+					ofstream archive(candidate, ios::binary | ios::trunc);
+					archive << string(archiveSize, 'a');
+					break;
+				}
 			}
 			result.status = ProcessStatus::Succeeded;
 			result.exitCode = 0;
@@ -383,6 +387,55 @@ void RunBackupServiceTests(
 			&& EventField(*noChanges, "command") == "BACKUP"
 			&& EventField(*noChanges, "result") == "no_changes",
 		"No-change backup should emit a terminal event that releases hot-backup state");
+
+	auto runArchiveHealthCase = [&](const char* name, size_t archiveSize, bool createArchive) {
+		const filesystem::path caseRoot = temporaryRoot / (string("backup-archive-health-") + name);
+		const filesystem::path caseWorld = caseRoot / "saves" / "world";
+		WriteFixture(caseWorld / "level.dat", "archive-health-world-data");
+		Config caseConfig = config;
+		caseConfig.configId = L"config-archive-health";
+		caseConfig.saveRoot = (caseRoot / "saves").wstring();
+		caseConfig.backupPath = (caseRoot / "backups").wstring();
+		caseConfig.skipIfUnchanged = false;
+		BackupRequest caseRequest = request;
+		caseRequest.config = caseConfig;
+		caseRequest.world = {caseConfig.configId, L"world"};
+		caseRequest.sourcePath = caseWorld;
+
+		BackupServiceDependencies caseDependencies = dependencies;
+		caseDependencies.paths.runtimeRoot = caseRoot / "runtime";
+		caseDependencies.archiveRunnerFactory = [processCount, archiveSize, createArchive](
+			const filesystem::path&,
+			const AppPaths&,
+			stop_token token) {
+			return MakeFakeArchiveRunner(processCount, token, archiveSize, createArchive);
+		};
+		return BackupService(std::move(caseDependencies)).Run(caseRequest);
+	};
+
+	events.clear();
+	const BackupResult smallArchive = runArchiveHealthCase("small", 1, true);
+	test.Expect(smallArchive.code == OperationCode::Success
+			&& smallArchive.outcome == BackupOutcome::Created
+			&& filesystem::file_size(smallArchive.archivePath) == 1
+			&& FindLastEvent(events, "backup_warning") == nullptr,
+		"A valid non-empty small archive must not fail or warn the backup operation");
+	const BackupResult missingArchive = runArchiveHealthCase("missing", 0, false);
+	test.Expect(missingArchive.code == OperationCode::BackupFailed
+			&& missingArchive.outcome == BackupOutcome::Failed
+			&& any_of(missingArchive.diagnostics.begin(), missingArchive.diagnostics.end(),
+				[](const Diagnostic& diagnostic) {
+					return diagnostic.eventId == "backup.archive.missing";
+				}),
+		"A successful archive command without an archive must be reported as missing");
+	const BackupResult emptyArchive = runArchiveHealthCase("empty", 0, true);
+	test.Expect(emptyArchive.code == OperationCode::BackupFailed
+			&& emptyArchive.outcome == BackupOutcome::Failed
+			&& any_of(emptyArchive.diagnostics.begin(), emptyArchive.diagnostics.end(),
+				[](const Diagnostic& diagnostic) {
+					return diagnostic.eventId == "backup.archive.empty";
+				}),
+		"A zero-byte archive must be reported as empty");
 
 	WriteFixture(world / "level.dat", "changed-world-data");
 	BackupServiceDependencies unavailableDependencies = dependencies;
@@ -833,13 +886,25 @@ void RunBackupServiceTests(
 			const auto finalEntry = remainingEntries->front();
 			FolderRewindFormat::ChangeRecord finalRecord;
 			FolderRewindFormat::MetadataState finalState;
+			const vector<wstring> expectedFullFiles = {
+				L"level.dat", L"one.dat", L"two.dat"};
 			test.Expect(FolderRewindMetadataStore::LoadRecord(
 				chainStorage.metadataDir, finalEntry.backupFile, finalRecord)
 				&& FolderRewindMetadataStore::LoadState(chainStorage.metadataDir, finalState)
+				&& finalEntry.backupFile == L"[Full]-Chain-2.7z"
+				&& finalEntry.backupType == L"Full"
+				&& finalRecord.archiveFileName == finalEntry.backupFile
 				&& finalRecord.backupType == L"Full"
-				&& finalRecord.fullFileList.size() == 3
-				&& finalState.lastBackupFileName == finalEntry.backupFile,
-				"Smart retention should repair the surviving archive metadata and history references");
+				&& finalRecord.basedOnFullBackup == finalEntry.backupFile
+				&& finalRecord.previousBackupFileName.empty()
+				&& finalRecord.fullFileList == expectedFullFiles
+				&& finalRecord.addedFiles == expectedFullFiles
+				&& finalRecord.modifiedFiles.empty()
+				&& finalRecord.deletedFiles.empty()
+				&& finalState.lastBackupFileName == finalEntry.backupFile
+				&& finalState.basedOnFullBackup == finalEntry.backupFile
+				&& filesystem::exists(chainStorage.backupSubDir / finalEntry.backupFile),
+				"Smart retention should repair the surviving archive metadata, history, and full-file lists");
 		}
 	};
 

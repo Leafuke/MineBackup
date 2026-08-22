@@ -8,6 +8,8 @@
 #include "OperationResult.h"
 #include "BackupService.h"
 
+int ResolveDesktopConfigIndex(int requestedConfigIndex, int currentConfigIndex);
+
 BackupOutcome DoBackup(const MyFolder& folder, const std::wstring& comment = L"");
 BackupResult RunDesktopBackup(
 	const MyFolder& folder,

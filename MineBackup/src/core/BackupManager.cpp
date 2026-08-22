@@ -35,6 +35,12 @@ using namespace std;
 #define RESTORE_WARNING(...) MB_LOG_PRINTF_WARNING(minebackup::logging::LogCategory::Restore, "restore.warning", __VA_ARGS__)
 #define RESTORE_ERROR(...) MB_LOG_PRINTF_ERROR(minebackup::logging::LogCategory::Restore, "restore.error", __VA_ARGS__)
 
+int ResolveDesktopConfigIndex(int requestedConfigIndex, int currentConfigIndex) {
+	return requestedConfigIndex == -1
+		? currentConfigIndex
+		: requestedConfigIndex;
+}
+
 namespace BackupManagerInternal {
 ScopedRuntimeArtifact::ScopedRuntimeArtifact(filesystem::path path)
 	: path_(std::move(path)) {
@@ -896,28 +902,36 @@ execute_backup:
         {
 			BACKUP_INFO("Backup archive completed.");
 
-        // 备份文件大小检查 - 根据备份类型调整阈值
-        try {
-            if (filesystem::exists(archivePath)) {
-                uintmax_t fileSize = filesystem::file_size(archivePath);
-                // Full备份至少应该有100KB，Smart备份可以很小
-                uintmax_t minThreshold = (backupTypeStr == L"Full") ? 102400 : 10240;
-                if (fileSize < minThreshold) {
-					BACKUP_WARNING("The backup archive is unexpectedly small: %s",
-						wstring_to_utf8(filesystem::path(archivePath).filename().wstring()).c_str());
-					publish("backup_warning", {
-						{"config", wstring_to_utf8(config.configId)},
-						{"config_id", wstring_to_utf8(config.configId)},
-						{"folder", wstring_to_utf8(worldName)},
-						{"world", wstring_to_utf8(worldName)},
-						{"file", wstring_to_utf8(filesystem::path(archivePath).filename().wstring())},
-						{"type", "file_too_small"}});
-                }
-            }
-        }
-        catch (const filesystem::filesystem_error& e) {
-            BACKUP_ERROR("Could not check backup file size: %s", e.what());
-        }
+			const filesystem::path createdArchivePath(archivePath);
+			error_code archiveError;
+			if (!filesystem::is_regular_file(createdArchivePath, archiveError) || archiveError) {
+				const string detail = archiveError
+					? archiveError.message()
+					: "The archive was not created as a regular file.";
+				BACKUP_ERROR("Backup archive is missing after a successful 7-Zip command: %s",
+					wstring_to_utf8(createdArchivePath.filename().wstring()).c_str());
+				publish("backup.failed", {{"error", "archive_missing"}});
+				return MakeBackupFailure(
+					OperationCode::BackupFailed, BackupOutcome::Failed,
+					"backup.archive.missing", detail);
+			}
+			const uintmax_t archiveSize = filesystem::file_size(createdArchivePath, archiveError);
+			if (archiveError) {
+				BACKUP_ERROR("Could not read backup archive size: %s", archiveError.message().c_str());
+				publish("backup.failed", {{"error", "archive_stat_failed"}});
+				return MakeBackupFailure(
+					OperationCode::BackupFailed, BackupOutcome::Failed,
+					"backup.archive.stat_failed", archiveError.message());
+			}
+			if (archiveSize == 0) {
+				BACKUP_ERROR("Backup archive is empty after a successful 7-Zip command: %s",
+					wstring_to_utf8(createdArchivePath.filename().wstring()).c_str());
+				publish("backup.failed", {{"error", "archive_empty"}});
+				return MakeBackupFailure(
+					OperationCode::BackupFailed, BackupOutcome::Failed,
+					"backup.archive.empty",
+					wstring_to_utf8(createdArchivePath.filename().wstring()));
+			}
 
 		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
 

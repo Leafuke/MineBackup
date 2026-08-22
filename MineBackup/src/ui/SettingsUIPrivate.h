@@ -40,6 +40,9 @@ inline void ClampCompressionLevel(const std::wstring& method, int& level) {
 }
 
 void DrawConfigManagementPanel();
+void DrawApplicationSettings();
+void NotifySettingsPersistenceCompleted();
+void SuppressSettingsAutoSaveForCurrentFrame();
 void DrawPathSettings(Config& cfg);
 void DrawSystemIntegrationSettings();
 void DrawWorldEditSettings(Config& cfg);

@@ -4,6 +4,7 @@
 
 #include "HistoryRepository.h"
 
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -27,6 +28,10 @@ bool UpdateHistoryEntry(
 	const std::function<void(HistoryEntry&)>& update);
 bool ReplaceHistoryEntriesForConfig(int configIndex, std::vector<HistoryEntry> entries);
 bool ClearHistoryEntriesForWorld(int configIndex, const std::wstring& worldName);
+bool RemoveHistoryEntriesIf(
+	int configIndex,
+	const std::function<bool(const HistoryEntry&)>& predicate,
+	std::size_t* removedCount = nullptr);
 bool UpdateHistoryCloudState(
 	int configIndex,
 	const std::wstring& worldName,

@@ -42,8 +42,8 @@ struct AppWindowState {
 };
 
 struct AppAppearanceState {
-	int theme = static_cast<int>(ThemeId::ImGuiLight);
-	int lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
+	int theme = static_cast<int>(ThemeId::NordLight);
+	int lastValidTheme = static_cast<int>(ThemeId::NordLight);
 	std::wstring fontPath;
 	std::string customThemeError;
 	float userScale = 1.0f;
@@ -53,15 +53,21 @@ struct AppAppearanceState {
 };
 
 struct AppUpdateState {
-	std::atomic<bool> updateCheckDone{ false };
-	std::atomic<bool> newVersionAvailable{ false };
-	std::atomic<bool> noticeCheckDone{ false };
-	std::atomic<bool> newNoticeAvailable{ false };
-	std::string latestVersion;
-	std::string releaseNotes;
-	std::string noticeContent;
-	std::string noticeUpdatedAt;
-	std::string noticeLastSeenVersion;
+    std::atomic<bool> updateCheckDone{ false };
+    std::atomic<bool> newVersionAvailable{ false };
+    std::atomic<bool> noticeCheckDone{ false };
+    std::atomic<bool> newNoticeAvailable{ false };
+    std::string latestVersion;
+    std::string releaseNotes;
+    std::string noticeContent;
+    std::string noticeUpdatedAt;
+    std::string noticeLastSeenVersion;
+};
+
+struct KnotLinkRuntimeState {
+    std::atomic<bool> startupStatusReady{ false };
+    std::atomic<bool> startupNeedsUpdate{ false };
+    std::string startupVersion;
 };
 
 struct AppUiState {
@@ -73,6 +79,7 @@ struct AppUiState {
 	int closeAction = 0;
 	bool rememberCloseAction = false;
 	bool showCloseConfirmDialog = false;
+	bool onboardingActive = false;
 	std::wstring worldToFocusInHistory;
 };
 
@@ -84,6 +91,7 @@ struct AppSettingsState {
 	bool runOnStartup = false;
 	bool silentStartupToTray = false;
 	bool autoScanForWorlds = false;
+	std::wstring defaultBackupRootPath;
 	minebackup::logging::LogFileLevel logFileLevel = minebackup::logging::LogFileLevel::Info;
 	minebackup::logging::LogLevel logViewLevel = minebackup::logging::LogLevel::Info;
 	bool logViewAutoTail = true;
@@ -113,14 +121,15 @@ struct ExternalToolRuntimeState {
 };
 
 struct AppGlobalState {
-	std::string currentVersion = MINEBACKUP_VERSION_STRING;
-	AppWindowState window;
-	AppAppearanceState appearance;
-	AppUpdateState update;
-	AppUiState ui;
-	AppSettingsState settings;
-	CoreValidationRuntimeState coreValidation;
-	ExternalToolRuntimeState externalTools;
+    std::string currentVersion = MINEBACKUP_VERSION_STRING;
+    AppWindowState window;
+    AppAppearanceState appearance;
+    AppUpdateState update;
+    KnotLinkRuntimeState knotlink;
+    AppUiState ui;
+    AppSettingsState settings;
+    CoreValidationRuntimeState coreValidation;
+    ExternalToolRuntimeState externalTools;
 };
 
 extern AppGlobalState g_globals;
@@ -137,6 +146,10 @@ inline std::string& g_ReleaseNotes = g_globals.update.releaseNotes;
 inline std::string& g_NoticeContent = g_globals.update.noticeContent;
 inline std::string& g_NoticeUpdatedAt = g_globals.update.noticeUpdatedAt;
 inline std::string& g_NoticeLastSeenVersion = g_globals.update.noticeLastSeenVersion;
+
+inline std::atomic<bool>& g_KnotLinkStartupStatusReady = g_globals.knotlink.startupStatusReady;
+inline std::atomic<bool>& g_KnotLinkStartupNeedsUpdate = g_globals.knotlink.startupNeedsUpdate;
+inline std::string& g_KnotLinkStartupVersion = g_globals.knotlink.startupVersion;
 
 inline int& g_windowWidth = g_globals.window.width;
 inline int& g_windowHeight = g_globals.window.height;
@@ -159,6 +172,7 @@ inline bool& specialSetting = g_globals.ui.specialSetting;
 inline int& g_closeAction = g_globals.ui.closeAction;
 inline bool& g_rememberCloseAction = g_globals.ui.rememberCloseAction;
 inline bool& g_showCloseConfirmDialog = g_globals.ui.showCloseConfirmDialog;
+inline bool& g_OnboardingActive = g_globals.ui.onboardingActive;
 inline std::wstring& g_worldToFocusInHistory = g_globals.ui.worldToFocusInHistory;
 
 inline bool& isSafeDelete = g_globals.settings.safeDelete;
@@ -168,6 +182,7 @@ inline bool& g_StopAutoBackupOnExit = g_globals.settings.stopAutoBackupOnExit;
 inline bool& g_RunOnStartup = g_globals.settings.runOnStartup;
 inline bool& g_SilentStartupToTray = g_globals.settings.silentStartupToTray;
 inline bool& g_AutoScanForWorlds = g_globals.settings.autoScanForWorlds;
+inline std::wstring& g_defaultBackupRootPath = g_globals.settings.defaultBackupRootPath;
 inline minebackup::logging::LogFileLevel& g_logFileLevel = g_globals.settings.logFileLevel;
 inline minebackup::logging::LogLevel& g_logViewLevel = g_globals.settings.logViewLevel;
 inline bool& g_logViewAutoTail = g_globals.settings.logViewAutoTail;

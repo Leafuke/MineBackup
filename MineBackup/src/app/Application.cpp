@@ -16,7 +16,6 @@
 #include "MainUiController.h"
 #include "SettingsUIHotkeys.h"
 #include "imgui-all.h"
-#include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
 #include "AppPaths.h"
@@ -88,6 +87,11 @@ static void glfw_error_callback(int error, const char* description)
 
 static void main_window_close_callback(GLFWwindow* window)
 {
+	if (g_OnboardingActive) {
+		// 首次引导关闭时直接退出；提交前不得因通用关闭逻辑生成 config.ini。
+		g_appState.done = true;
+		return;
+	}
 	if (g_closeAction == 1) {
 		glfwSetWindowShouldClose(window, GLFW_FALSE);
 		auto services = GetDesktopServices();
@@ -413,18 +417,29 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	}
 	TaskCoordinator::Instance().Submit(L"game-session-watcher", {},
 		[](stop_token token) { GameSessionWatcherThread(token); });
-	const auto knotLinkStartupStatus =
-		minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
-	const bool knotLinkStartupNeedsUpdate =
-		knotLinkStartupStatus.state ==
-		minebackup::knotlink::KnotLinkServerState::Incompatible;
-	if (g_enableKnotLink && !knotLinkStartupNeedsUpdate) {
-		TaskCoordinator::Instance().Submit(L"knotlink-loader", {L"service:knotlink"}, [](stop_token) {
-			if (InitKnotLink()) {
-				BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+	// KnotLink 状态检测包含两次回环 TCP 连接;即使每次有 250ms 上限,防火墙
+	// 丢弃 SYN 时仍会推迟首帧。检测与初始化全部放入后台任务,状态经
+	// knotlink-startup-status 事件回传,主循环再决定是否弹更新提醒。
+	TaskCoordinator::Instance().Submit(L"knotlink-loader", {L"service:knotlink"},
+		[](stop_token) {
+			const auto status =
+				minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
+			TaskEvent event{L"knotlink-startup-status", L""};
+			event.values[L"needs-update"] =
+				status.state ==
+						minebackup::knotlink::KnotLinkServerState::Incompatible
+					? L"1"
+					: L"0";
+			event.values[L"version"] = utf8_to_wstring(status.version);
+			TaskCoordinator::Instance().PostEvent(std::move(event));
+			if (g_enableKnotLink &&
+				status.state !=
+					minebackup::knotlink::KnotLinkServerState::Incompatible) {
+				if (InitKnotLink()) {
+					BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+				}
 			}
 		});
-	}
 
 	if (!glfwLifetime.IsInitialized()) {
 		glfwSetErrorCallback(glfw_error_callback);
@@ -442,12 +457,12 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
 	FinalizeUiScaleMigration(main_scale);
-	bool errorShow = false;
 	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
-	bool showKnotLinkUpdateReminder =
-		!isFirstRun && knotLinkStartupNeedsUpdate;
+	g_OnboardingActive = isFirstRun;
+	bool showKnotLinkUpdateReminder = false;
 	bool knotLinkUpdateReminderOpened = false;
+	bool knotLinkStartupStatusHandled = false;
 	const bool requestedHiddenToTray = launchSilentStartup && !isFirstRun;
 #ifdef __linux__
 	// Probe the actual AppIndicator/GTK session before deciding to create an
@@ -544,13 +559,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	APP_PRINTF_INFO("application.welcome", L("CONSOLE_WELCOME"));
 
-	AutoDiscoverWorldConfigurations();
-
-	if (isFirstRun && uiSession.IsActive())
-	{
-		ImGuiTheme::ApplyNord(false);
-	}
-
 	struct FpsIdling {
 		float fpsIdle = 10.0f;        // 空闲时的 FPS
 		float fpsActive = 60.0f;      // 活跃时的 FPS
@@ -626,6 +634,11 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 				wstring_to_utf8(instanceError).c_str());
 		}
 		eventRouter.Dispatch(TaskCoordinator::Instance().PollEvents());
+		if (!knotLinkStartupStatusHandled && g_KnotLinkStartupStatusReady) {
+			knotLinkStartupStatusHandled = true;
+			showKnotLinkUpdateReminder =
+				!isFirstRun && g_KnotLinkStartupNeedsUpdate;
+		}
 
 #ifdef _WIN32
 		if (canUnloadForTray && !showConfigWizard) {
@@ -752,9 +765,9 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			ImGui::Text(
 				"%s: %s",
 				L("KNOTLINK_SERVER_VERSION"),
-				knotLinkStartupStatus.version.empty()
+				g_KnotLinkStartupVersion.empty()
 					? L("KNOTLINK_VERSION_UNKNOWN")
-					: knotLinkStartupStatus.version.c_str());
+					: g_KnotLinkStartupVersion.c_str());
 			ImGui::PopTextWrapPos();
 			ImGui::Separator();
 			ImGui::BeginDisabled(g_KnotLinkInstallRunning);
@@ -783,7 +796,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		}
 
 		if (showConfigWizard) {
-			ShowConfigWizard(showConfigWizard, errorShow, sevenZipExtracted, g_7zTempPath);
+			ShowConfigWizard(showConfigWizard);
 		}
 		else if (g_appState.showMainApp) {
 			DrawMainUiFrame({desktopServices.get(), wc, &paths, currentGlobalHotkeys});

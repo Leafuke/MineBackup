@@ -120,8 +120,15 @@ void ExpectSamePath(TestContext& test, const std::filesystem::path& actual,
 
 void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
     const auto target = root / "atomic" / "value.txt";
-    test.Expect(AtomicFileWriter::WriteText(target, "first").success, "first atomic write should succeed");
-    test.Expect(AtomicFileWriter::WriteText(target, "second").success, "replacement atomic write should succeed");
+    const auto firstWrite = AtomicFileWriter::WriteText(target, "first");
+    test.Expect(firstWrite.success
+            && firstWrite.commitState == AtomicFileWriter::WriteCommitState::Durable
+            && firstWrite.IsDurable(),
+        "first atomic write should complete durably");
+    const auto replacementWrite = AtomicFileWriter::WriteText(target, "second");
+    test.Expect(replacementWrite.success
+            && replacementWrite.commitState == AtomicFileWriter::WriteCommitState::Durable,
+        "replacement atomic write should complete durably");
     test.Expect(ReadFile(target) == "second", "atomic target should contain the replacement");
     test.Expect(ReadFile(target.wstring() + L".bak") == "first", "atomic backup should contain the previous value");
 
@@ -152,6 +159,145 @@ void TestAtomicWriter(TestContext& test, const std::filesystem::path& root) {
     test.Expect(finalValue.rfind("writer-", 0) == 0, "the concurrent target should contain one complete transaction");
     test.Expect(backupValue == "seed" || backupValue.rfind("writer-", 0) == 0,
         "the concurrent backup should contain one complete previous transaction");
+
+    // replace 成功后、目录同步失败的确定性注入：
+    // 必须报告 ReplacedNotDurable，且新内容已经落盘、无临时文件残留。
+    const auto syncFailureTarget = root / "atomic" / "sync-failure.txt";
+    test.Expect(AtomicFileWriter::WriteText(syncFailureTarget, "old").success,
+        "the directory-sync failure fixture should be initialized");
+    AtomicFileWriter::WriteOptions syncFailureOptions;
+    syncFailureOptions.directorySyncOverride =
+        [](const std::filesystem::path&) { return false; };
+    const auto syncFailureResult = AtomicFileWriter::WriteText(
+        syncFailureTarget, "new", syncFailureOptions);
+    test.Expect(!syncFailureResult.success
+            && syncFailureResult.commitState
+                == AtomicFileWriter::WriteCommitState::ReplacedNotDurable
+            && syncFailureResult.WasReplaced() && !syncFailureResult.IsDurable(),
+        "a post-replacement directory sync failure must report ReplacedNotDurable");
+    test.Expect(syncFailureResult.error.find(L"could not be synchronized")
+            != std::wstring::npos,
+        "a post-replacement sync failure should explain the persistence warning");
+    test.Expect(ReadFile(syncFailureTarget) == "new",
+        "a post-replacement sync failure must keep the replaced target");
+    int syncFailureTemporaryFiles = 0;
+    std::error_code syncFailureIterationError;
+    for (const auto& entry : std::filesystem::directory_iterator(
+             syncFailureTarget.parent_path(), syncFailureIterationError)) {
+        if (entry.path().filename().wstring().find(L".tmp.") != std::wstring::npos) {
+            ++syncFailureTemporaryFiles;
+        }
+    }
+    test.Expect(!syncFailureIterationError && syncFailureTemporaryFiles == 0,
+        "a post-replacement sync failure should not leave temporary files");
+
+#ifdef _WIN32
+    const auto contentionRoot = root / "atomic-contention";
+    const auto transientTarget = contentionRoot / "transient.txt";
+    test.Expect(AtomicFileWriter::WriteText(
+        transientTarget, "old", {false, true}).success,
+        "the transient contention target should be initialized");
+    HANDLE transientHandle = CreateFileW(
+        transientTarget.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    test.Expect(transientHandle != INVALID_HANDLE_VALUE,
+        "the transient contention test should open a non-delete-sharing reader");
+    if (transientHandle != INVALID_HANDLE_VALUE) {
+        std::atomic<int> transientFailures{0};
+        AtomicFileWriter::WriteOptions transientOptions{false, true};
+        transientOptions.replaceFailureObserver = [&](const std::error_code& error, size_t attempts) {
+            if (attempts == 1
+                && (error.value() == ERROR_ACCESS_DENIED
+                    || error.value() == ERROR_SHARING_VIOLATION
+                    || error.value() == ERROR_LOCK_VIOLATION)) {
+                ++transientFailures;
+                CloseHandle(transientHandle);
+                transientHandle = INVALID_HANDLE_VALUE;
+            }
+        };
+        const auto transientResult = AtomicFileWriter::WriteText(
+            transientTarget, "new", transientOptions);
+        if (transientHandle != INVALID_HANDLE_VALUE) {
+            CloseHandle(transientHandle);
+            transientHandle = INVALID_HANDLE_VALUE;
+        }
+        test.Expect(transientResult.success && transientFailures == 1,
+            "a transient Windows sharing violation should be retried after the reader releases");
+        test.Expect(ReadFile(transientTarget) == "new",
+            "a transient Windows contention retry should commit the new target content");
+    }
+
+    const auto permanentTarget = contentionRoot / "permanent.txt";
+    test.Expect(AtomicFileWriter::WriteText(
+        permanentTarget, "old", {false, true}).success,
+        "the permanent contention target should be initialized");
+    HANDLE permanentHandle = CreateFileW(
+        permanentTarget.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    test.Expect(permanentHandle != INVALID_HANDLE_VALUE,
+        "the permanent contention test should open a non-delete-sharing reader");
+    if (permanentHandle != INVALID_HANDLE_VALUE) {
+        const auto permanentResult = AtomicFileWriter::WriteText(
+            permanentTarget, "new", {false, true});
+        test.Expect(!permanentResult.success
+                && permanentResult.commitState
+                    == AtomicFileWriter::WriteCommitState::NotReplaced
+                && !permanentResult.WasReplaced()
+                && permanentResult.error.find(L"Could not atomically replace the target") != std::wstring::npos
+                && (permanentResult.error.find(L"win32=5") != std::wstring::npos
+                    || permanentResult.error.find(L"win32=32") != std::wstring::npos
+                    || permanentResult.error.find(L"win32=33") != std::wstring::npos)
+                && permanentResult.error.find(L"attempts=7") != std::wstring::npos,
+            "permanent Windows sharing violation should fail with bounded native diagnostics");
+        test.Expect(ReadFile(permanentTarget) == "old",
+            "a failed Windows atomic replace should preserve the old target");
+        CloseHandle(permanentHandle);
+        permanentHandle = INVALID_HANDLE_VALUE;
+    }
+
+    const auto readOnlyTarget = contentionRoot / "read-only.txt";
+    test.Expect(AtomicFileWriter::WriteText(
+        readOnlyTarget, "old", {false, true}).success,
+        "the read-only target should be initialized");
+    const bool readOnlyMarked = SetFileAttributesW(
+        readOnlyTarget.c_str(), FILE_ATTRIBUTE_READONLY) != FALSE;
+    test.Expect(readOnlyMarked,
+        "the non-transient Access Denied test should mark its target read-only");
+    if (readOnlyMarked) {
+        const auto readOnlyResult = AtomicFileWriter::WriteText(
+            readOnlyTarget, "new", {false, true});
+        test.Expect(!readOnlyResult.success
+                && readOnlyResult.commitState
+                    == AtomicFileWriter::WriteCommitState::NotReplaced
+                && readOnlyResult.error.find(L"win32=5") != std::wstring::npos
+                && readOnlyResult.error.find(L"attempts=1") != std::wstring::npos,
+            "a read-only target should fail Access Denied without transient retry");
+        test.Expect(ReadFile(readOnlyTarget) == "old",
+            "a non-transient Access Denied should preserve the old target");
+        SetFileAttributesW(readOnlyTarget.c_str(), FILE_ATTRIBUTE_NORMAL);
+    }
+
+    int contentionTemporaryFiles = 0;
+    std::error_code contentionIterationError;
+    for (const auto& entry : std::filesystem::directory_iterator(
+             contentionRoot, contentionIterationError)) {
+        if (entry.path().filename().wstring().find(L".tmp.") != std::wstring::npos) {
+            ++contentionTemporaryFiles;
+        }
+    }
+    test.Expect(!contentionIterationError && contentionTemporaryFiles == 0,
+        "Windows contention tests should clean up every atomic temporary file");
+#endif
 }
 
 void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root) {
@@ -189,6 +335,14 @@ void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root)
         && renamedRecord.basedOnFullBackup == renamedArchive
         && renamedRecord.previousBackupFileName == renamedArchive,
         "metadata archive references should be rewritten case-insensitively");
+
+    FolderRewindFormat::ChangeRecord invalidRecord = record;
+    invalidRecord.archiveFileName = L"../unsafe.7z";
+    const auto invalidSave = FolderRewindMetadataStore::SaveRecordDetailed(
+        metadata, invalidRecord);
+    test.Expect(!invalidSave.success
+        && invalidSave.error.find(L"Could not serialize change record") != std::wstring::npos,
+        "detailed metadata save should identify serialization rejection");
 }
 
 void TestHistoryRoundTrip(TestContext& test, const std::filesystem::path& root) {

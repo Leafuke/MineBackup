@@ -21,12 +21,6 @@ using namespace std;
 
 namespace {
 
-int ResolveLegacyConfigIndex(const MyFolder& folder) {
-	return folder.configIndex >= 0
-		? folder.configIndex
-		: g_appState.currentConfigIndex;
-}
-
 HotBackupPreparation PrepareDesktopHotBackup(
 	const BackupRequest& request,
 	stop_token stopToken) {
@@ -78,7 +72,9 @@ BackupResult RunDesktopBackup(
 	const wstring& comment,
 	stop_token stopToken,
 	BackupExecutionOptions options) {
-	const int configIndex = ResolveLegacyConfigIndex(folder);
+	const int configIndex = ResolveDesktopConfigIndex(
+		folder.configIndex,
+		g_appState.currentConfigIndex);
 	BackupRequest request;
 	request.config = folder.config;
 	request.world = {folder.config.configId, folder.name};

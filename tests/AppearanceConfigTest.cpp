@@ -1,6 +1,8 @@
 #include "ConfigManager.h"
 #include "AppState.h"
+#include "AppPaths.h"
 #include "Globals.h"
+#include "KnownUserFolders.h"
 
 #include <chrono>
 #include <filesystem>
@@ -37,19 +39,28 @@ int main() {
 	std::error_code error;
 	std::filesystem::remove_all(root, error);
 	std::filesystem::create_directories(root);
+	AppPaths appPaths;
+	appPaths.dataRoot = root / "profile-data";
+	SetCurrentAppPaths(appPaths);
 	const std::filesystem::path font = root / "test-font.ttf";
 	{
 		std::ofstream fontFile(font, std::ios::binary);
 		fontFile << "test";
 	}
 	const std::filesystem::path legacy = root / "legacy.ini";
+	const std::filesystem::path legacySaveRoot = root / "legacy-saves";
+	const std::filesystem::path legacyBackupRoot = root / "legacy-backups";
 	{
 		std::ofstream output(legacy, std::ios::binary);
 		output << "[General]\n"
 			<< "CurrentConfig=2\n"
+			<< "AutoScanForWorlds=1\n"
 			<< "UIScale=1.5\n"
 			<< "[Config2]\n"
 			<< "Name=Active\n"
+			<< "SavePath=" << legacySaveRoot.string() << "\n"
+			<< "BackupPath=" << legacyBackupRoot.string() << "\n"
+			<< "KeepCount=0\n"
 			<< "Theme=5\n"
 			<< "Font=" << font.string() << "\n";
 	}
@@ -61,6 +72,15 @@ int main() {
 		"active valid legacy font migrates to application appearance");
 	Check(g_uiScaleMigrationPending,
 		"legacy scale is pending semantic migration");
+	Check(g_AutoScanForWorlds && g_appState.configs.size() == 1,
+		"legacy AutoScanForWorlds=1 remains readable without creating configurations");
+	Check(g_appState.configs.at(2).keepCount == 0
+			&& std::filesystem::path(g_appState.configs.at(2).backupPath)
+				== legacyBackupRoot,
+		"legacy keepCount and backupPath remain unchanged during onboarding upgrade");
+	Check(std::filesystem::path(g_defaultBackupRootPath)
+			== KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(appPaths),
+		"legacy INI without a default backup root receives the in-memory recommendation");
 	FinalizeUiScaleMigration(1.5f);
 	Check(g_uiScale == 1.0f && !g_uiScaleMigrationPending && g_uiScaleV2,
 		"DPI-derived legacy scale migrates once");
@@ -79,6 +99,8 @@ int main() {
 	stage.steps.push_back(step);
 	job.stages.push_back(stage);
 	g_appState.jobs.jobs = {job};
+	const std::filesystem::path customBackupRoot = root / "custom-backups";
+	g_defaultBackupRootPath = customBackupRoot.wstring();
 
 	const std::filesystem::path roundTrip = root / "roundtrip.ini";
 	Check(SaveConfigs(roundTrip), "global appearance saves atomically");
@@ -87,6 +109,11 @@ int main() {
 		"scale semantic version is persisted");
 	Check(saved.find("AppearanceSchema=1") != std::string::npos,
 		"appearance schema is persisted");
+	Check(saved.find("DefaultBackupRootPath=" + customBackupRoot.string())
+			!= std::string::npos,
+		"default backup root is persisted");
+	Check(saved.find("AutoScanForWorlds=1") != std::string::npos,
+		"legacy AutoScanForWorlds remains writable for compatibility");
 	Check(saved.find("\nTheme=5\n") != std::string::npos,
 		"global theme is persisted");
 	Check(saved.find("\nFont=" + font.string() + "\n") != std::string::npos,
@@ -104,11 +131,20 @@ int main() {
 	g_theme = static_cast<int>(ThemeId::ImGuiDark);
 	Fontss.clear();
 	g_uiScale = 2.0f;
+	g_defaultBackupRootPath.clear();
 	LoadConfigs(roundTrip);
 	Check(g_theme == static_cast<int>(ThemeId::NordLight)
 		&& std::filesystem::path(Fontss) == font && g_uiScale == 1.0f
 		&& !g_uiScaleMigrationPending,
 		"global appearance round-trips without a second migration");
+	Check(std::filesystem::path(g_defaultBackupRootPath) == customBackupRoot,
+		"default backup root round-trips without changing existing configs");
+	Check(g_AutoScanForWorlds && g_appState.configs.size() == 1,
+		"legacy AutoScanForWorlds=1 round-trips without activating discovery");
+	Check(g_appState.configs.at(2).keepCount == 0
+			&& std::filesystem::path(g_appState.configs.at(2).backupPath)
+				== legacyBackupRoot,
+		"default backup root changes do not rewrite an existing configuration");
 	Check(g_appState.jobs.jobs.size() == 1
 			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments.size() == 2
 			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments[1] == L"with spaces",

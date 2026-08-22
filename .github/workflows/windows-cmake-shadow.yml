@@ -2,8 +2,6 @@ name: Windows CMake MSVC Shadow
 
 on:
   pull_request:
-  push:
-    branches: [develop]
   workflow_dispatch:
 
 jobs:

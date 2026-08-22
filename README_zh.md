@@ -37,14 +37,26 @@
 ### 1️⃣ 下载 & 运行
 1. 前往 [最新发布页](https://github.com/Leafuke/MineBackup/releases)。
 2. 下载 `MineBackup-windows-x64.exe`、Ubuntu `.deb`、Linux AppImage 或
-   `MineBackup-1.16.0-macos-arm64.dmg`。
+   `MineBackup-1.16.2-macos-arm64.dmg`。
 3. 使用 `SHA256SUMS` 核对文件后再正常安装或运行。
 
 各系统版本与 Linux 桌面能力降级规则见[平台支持矩阵](docs/platform-support.md)。
 macOS 包尚未公证；若系统拦截，请使用“隐私与安全性 → 仍要打开”，不要关闭
 Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 
-### 2️⃣ 基础操作
+### 2️⃣ 首次设置
+首次启动时，设置向导会异步扫描标准 Java/基岩版位置，以及 PCL2 当前活动目录或工作区的有界线索。
+扫描只生成候选，不会立即创建配置；用户勾选候选并确认后才会创建配置。每个实例都有独立的
+`Config` 条目和备份子目录。
+
+默认备份根为 `Documents/MineBackup-Backups`；如果 Documents 不可用，则回退到应用数据目录下的
+`backups`。也可以手动添加 Minecraft 目录，或通过高级入口保护普通自定义文件夹。PCL2 不保证枚举
+所有历史自定义目录，需要时请先运行 PCL2，再次执行扫描。重新扫描时，MineBackup 还会利用已有
+Minecraft 配置的目录结构识别所属 `.minecraft`，从而发现同一游戏目录中的其他标准或版本隔离实例。
+HMCL 自动发现本轮尚未支持，请手动添加其目录。之后可在 **设置 → 应用** 中重新扫描。
+在确认创建配置前退出首次设置不会写入新的配置。
+
+### 3️⃣ 基础操作
 | 功能       | 操作方式 |
 |------------|----------|
 | 备份世界   | 在列表中选择世界 → 点击 **备份** |
@@ -52,7 +64,7 @@ Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 | 修改备份路径 | 打开 **设置** → 选择备份存放位置 |
 | 切换语言   | 设置 → 语言 |
 
-### 3️⃣ 高级技巧
+### 4️⃣ 高级技巧
 - 使用 **热键 Alt+Ctrl+S** 即可在游戏运行时触发“热备份”。
 - 启用 **退出检测（DetectOnExit）**：自动在退出 Minecraft 后进行备份。
 - 通过 **KnotLink** 与其他程序或 Mod 联动，实现备份前自动保存世界。示例 Mod 可见 [这里](https://modrinth.com/mod/minebackup)。

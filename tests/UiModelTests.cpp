@@ -1,6 +1,7 @@
 #include "HistoryViewModel.h"
 #include "ConfigSelection.h"
 #include "DesktopUiLifecycle.h"
+#include "SettingsAutoSave.h"
 #include "WorldListModel.h"
 
 #include <chrono>
@@ -87,6 +88,19 @@ namespace {
 		silent.CompleteColdRestore(false);
 		Expect(silent.State() == DesktopUiState::HiddenCold,
 			"a failed cold restore should remain in the cold state");
+	}
+
+	void TestSettingsExternalPersistenceAcknowledgement() {
+		SettingsAutoSaveController controller;
+		const auto start = SettingsAutoSaveController::Clock::time_point{};
+		int saves = 0;
+		controller.MarkDirty(start);
+		controller.AcknowledgeSaved();
+		controller.Tick([&] { ++saves; return true; }, start + chrono::seconds(1));
+		Expect(!controller.IsDirty()
+				&& controller.State() == SettingsSaveState::Saved
+				&& saves == 0,
+			"an external batch save should clear pending Settings auto-save work");
 	}
 
 	void TestHistorySnapshots(const filesystem::path& root) {
@@ -226,6 +240,7 @@ int main() {
 	filesystem::create_directories(root);
 	TestResponsiveLayouts();
 	TestDesktopUiLifecycle();
+	TestSettingsExternalPersistenceAcknowledgement();
 	TestHistorySnapshots(root);
 	TestWorldModels();
 	TestStableConfigSelection();

@@ -6,6 +6,7 @@
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <exception>
 #include <fstream>
 
 using namespace std;
@@ -13,8 +14,34 @@ using namespace std;
 namespace FolderRewindMetadataStore {
 namespace {
 
-bool AtomicWriteJson(const filesystem::path& path, const nlohmann::json& value) {
-    return AtomicFileWriter::WriteText(path, value.dump(2)).success;
+SaveResult Failure(const wstring& error) {
+    return {false, error};
+}
+
+wstring SystemErrorText(const wchar_t* operation, const error_code& error) {
+    wstring text(operation);
+    if (!error) return text;
+    text += L" (native=" + to_wstring(error.value()) + L"): ";
+    text += utf8_to_wstring(error.message());
+    return text;
+}
+
+SaveResult ExceptionFailure(const wchar_t* operation, const exception& error) {
+    return Failure(wstring(operation) + L": " + utf8_to_wstring(error.what()));
+}
+
+SaveResult AtomicWriteJson(const filesystem::path& path, const nlohmann::json& value) {
+    try {
+        const auto write = AtomicFileWriter::WriteText(path, value.dump(2));
+        if (!write.success) return Failure(write.error);
+        return {true, {}};
+    }
+    catch (const exception& error) {
+        return ExceptionFailure(L"Could not serialize metadata JSON", error);
+    }
+    catch (...) {
+        return Failure(L"Could not serialize metadata JSON: unknown exception.");
+    }
 }
 
 wstring JsonString(const nlohmann::json& item, const char* key) {
@@ -414,15 +441,19 @@ LoadResult Load(const filesystem::path& metadataDir, const vector<wstring>& requ
     return result;
 }
 
-bool SaveState(const filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state) {
+SaveResult SaveStateDetailed(
+    const filesystem::path& metadataDir,
+    const FolderRewindFormat::MetadataState& state) {
     try {
-        filesystem::create_directories(metadataDir);
+        error_code error;
+        filesystem::create_directories(metadataDir, error);
+        if (error) return Failure(SystemErrorText(L"Could not create metadata directory", error));
 
         nlohmann::json root;
         root["Version"] = "3.0";
         if (!IsSafeArchiveReference(state.lastBackupFileName, true)
             || !IsSafeArchiveReference(state.basedOnFullBackup, true)) {
-            return false;
+            return Failure(L"Could not serialize metadata state: unsafe archive reference.");
         }
 
         root["LastBackupTime"] = wstring_to_utf8(state.lastBackupTime);
@@ -432,35 +463,61 @@ bool SaveState(const filesystem::path& metadataDir, const FolderRewindFormat::Me
 
         for (const auto& item : state.fileStates) {
             wstring relativePath;
-            if (!TryNormalizeRelativeEntry(item.first, relativePath)) return false;
+            if (!TryNormalizeRelativeEntry(item.first, relativePath)) {
+                return Failure(L"Could not serialize metadata state: unsafe file-state path.");
+            }
             root["FileStates"][wstring_to_utf8(relativePath)] = SerializeFileState(item.second);
         }
 
         const filesystem::path statePath = GetStatePath(metadataDir);
-        if (statePath.empty()) return false;
+        if (statePath.empty()) return Failure(L"Could not resolve metadata state path.");
 
         return AtomicWriteJson(statePath, root);
     }
+    catch (const exception& error) {
+        return ExceptionFailure(L"Could not save metadata state", error);
+    }
     catch (...) {
-        return false;
+        return Failure(L"Could not save metadata state: unknown exception.");
     }
 }
 
-bool SaveRecord(const filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record) {
+SaveResult SaveRecordDetailed(
+    const filesystem::path& metadataDir,
+    const FolderRewindFormat::ChangeRecord& record) {
     try {
         const auto recordPath = TryGetRecordPath(metadataDir, record.archiveFileName);
-        if (!recordPath) return false;
+        if (!recordPath) {
+            return Failure(L"Could not serialize change record: unsafe archive file name.");
+        }
 
         nlohmann::json root;
-        if (!TrySerializeRecord(record, root)) return false;
+        if (!TrySerializeRecord(record, root)) {
+            return Failure(L"Could not serialize change record: unsafe metadata value.");
+        }
 
-        filesystem::create_directories(GetRecordsDir(metadataDir));
+        const filesystem::path recordsDirectory = GetRecordsDir(metadataDir);
+        if (recordsDirectory.empty()) return Failure(L"Could not resolve metadata records directory.");
+        error_code error;
+        filesystem::create_directories(recordsDirectory, error);
+        if (error) return Failure(SystemErrorText(L"Could not create metadata records directory", error));
 
         return AtomicWriteJson(*recordPath, root);
     }
-    catch (...) {
-        return false;
+    catch (const exception& error) {
+        return ExceptionFailure(L"Could not save change record", error);
     }
+    catch (...) {
+        return Failure(L"Could not save change record: unknown exception.");
+    }
+}
+
+bool SaveState(const filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state) {
+    return SaveStateDetailed(metadataDir, state).success;
+}
+
+bool SaveRecord(const filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record) {
+    return SaveRecordDetailed(metadataDir, record).success;
 }
 
 bool Save(const filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state, const FolderRewindFormat::ChangeRecord& record) {

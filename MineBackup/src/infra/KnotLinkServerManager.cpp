@@ -21,6 +21,7 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -57,6 +58,49 @@ bool ParseVersion(
     }
     return false;
 }
+
+#ifndef _WIN32
+// A blocking connect() has no timeout; a filtered loopback port would stall
+// the calling thread for the full SYN retransmit window. Bound the wait with
+// poll() so startup and WaitForReady() stay responsive.
+bool IsLoopbackPortReady(unsigned short port) {
+    const int socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socketHandle < 0) {
+        return false;
+    }
+    bool ready = false;
+    const int flags = fcntl(socketHandle, F_GETFL, 0);
+    if (flags >= 0 &&
+        fcntl(socketHandle, F_SETFL, flags | O_NONBLOCK) == 0) {
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(port);
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        const int connectResult = connect(
+            socketHandle,
+            reinterpret_cast<const sockaddr*>(&address),
+            sizeof(address));
+        if (connectResult == 0) {
+            ready = true;
+        } else if (errno == EINPROGRESS) {
+            pollfd descriptor{};
+            descriptor.fd = socketHandle;
+            descriptor.events = POLLOUT;
+            if (poll(&descriptor, 1, 250) > 0) {
+                int socketError = 0;
+                socklen_t errorSize = sizeof(socketError);
+                ready =
+                    getsockopt(
+                        socketHandle, SOL_SOCKET, SO_ERROR, &socketError,
+                        &errorSize) == 0 &&
+                    socketError == 0;
+            }
+        }
+    }
+    close(socketHandle);
+    return ready;
+}
+#endif
 
 #ifdef _WIN32
 
@@ -238,26 +282,48 @@ public:
         if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
             return false;
         }
+        bool ready = false;
         const SOCKET socketHandle =
             socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (socketHandle == INVALID_SOCKET) {
-            WSACleanup();
-            return false;
+        if (socketHandle != INVALID_SOCKET) {
+            // SO_SNDTIMEO does not bound connect(); a local firewall that
+            // drops loopback SYNs stalls this check for seconds on the UI
+            // thread. Drive the connect through select() with a deadline.
+            u_long nonBlocking = 1;
+            if (ioctlsocket(socketHandle, FIONBIO, &nonBlocking) == 0) {
+                sockaddr_in address{};
+                address.sin_family = AF_INET;
+                address.sin_port = htons(port);
+                address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                const int connectResult = connect(
+                    socketHandle,
+                    reinterpret_cast<const sockaddr*>(&address),
+                    sizeof(address));
+                if (connectResult == 0) {
+                    ready = true;
+                } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                    fd_set writeSet;
+                    FD_ZERO(&writeSet);
+                    FD_SET(socketHandle, &writeSet);
+                    timeval timeout{};
+                    timeout.tv_sec = 0;
+                    timeout.tv_usec = 250 * 1000;
+                    if (select(
+                            static_cast<int>(socketHandle) + 1, nullptr,
+                            &writeSet, nullptr, &timeout) > 0) {
+                        int socketError = 0;
+                        int errorSize = sizeof(socketError);
+                        ready =
+                            getsockopt(
+                                socketHandle, SOL_SOCKET, SO_ERROR,
+                                reinterpret_cast<char*>(&socketError),
+                                &errorSize) == 0 &&
+                            socketError == 0;
+                    }
+                }
+            }
+            closesocket(socketHandle);
         }
-        DWORD timeout = 250;
-        setsockopt(
-            socketHandle, SOL_SOCKET, SO_SNDTIMEO,
-            reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_port = htons(port);
-        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        const bool ready =
-            connect(
-                socketHandle,
-                reinterpret_cast<const sockaddr*>(&address),
-                sizeof(address)) == 0;
-        closesocket(socketHandle);
         WSACleanup();
         return ready;
     }
@@ -357,21 +423,7 @@ public:
     }
 
     bool IsPortReady(unsigned short port) override {
-        const int socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (socketHandle < 0) {
-            return false;
-        }
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_port = htons(port);
-        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        const bool ready =
-            connect(
-                socketHandle,
-                reinterpret_cast<const sockaddr*>(&address),
-                sizeof(address)) == 0;
-        close(socketHandle);
-        return ready;
+        return IsLoopbackPortReady(port);
     }
 
     bool Start(const std::filesystem::path&) override {
@@ -455,21 +507,7 @@ public:
     }
 
     bool IsPortReady(unsigned short port) override {
-        const int socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (socketHandle < 0) {
-            return false;
-        }
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_port = htons(port);
-        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        const bool ready =
-            connect(
-                socketHandle,
-                reinterpret_cast<const sockaddr*>(&address),
-                sizeof(address)) == 0;
-        close(socketHandle);
-        return ready;
+        return IsLoopbackPortReady(port);
     }
 
     bool Start(const std::filesystem::path&) override {

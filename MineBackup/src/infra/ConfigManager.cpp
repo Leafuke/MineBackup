@@ -3,12 +3,14 @@
 #include "UIHelpers.h"
 #include "AppPaths.h"
 #include "AtomicFileWriter.h"
+#include "ConfigFactory.h"
 #include "FolderRewindFormat.h"
 #include "JobDocument.h"
 #include "MigrationCoordinator.h"
 #include "Globals.h"
 #include "Logging.h"
 #include "LegacyIniConfigCodec.h"
+#include "KnownUserFolders.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "PlatformCompat.h"
@@ -26,6 +28,16 @@ using namespace std;
 namespace {
 
 vector<LegacyIniConfigCodec::Diagnostic> g_configLoadDiagnostics;
+
+filesystem::path RecommendedBackupRoot() {
+	try {
+		return KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(GetAppPaths());
+	}
+	catch (...) {
+		// 独立配置解析测试可能尚未初始化 AppPaths；禁止用当前工作目录作为隐式回退。
+		return {};
+	}
+}
 
 filesystem::path JobsPathForConfig(const filesystem::path& configFile) {
 	return configFile.parent_path() / L"jobs.json";
@@ -72,6 +84,19 @@ void RecordConfigDiagnostic(
 }
 
 } // namespace
+
+filesystem::path GetEffectiveDefaultBackupRoot() {
+	const filesystem::path configured(g_defaultBackupRootPath);
+	if (!configured.empty() && configured.is_absolute()) {
+		return configured.lexically_normal();
+	}
+
+	const filesystem::path recommended = RecommendedBackupRoot();
+	if (!recommended.empty() && recommended.is_absolute()) {
+		return recommended.lexically_normal();
+	}
+	return {};
+}
 
 const vector<LegacyIniConfigCodec::Diagnostic>& GetLastConfigLoadDiagnostics() {
 	return g_configLoadDiagnostics;
@@ -163,13 +188,7 @@ static bool ContainsRuleIgnoreCase(const vector<wstring>& rules, const wstring& 
 }
 
 vector<wstring> DefaultBackupBlacklist() {
-	return {
-		L"session.lock",
-		L"voxy",
-		L"DistantHorizons.sqlite",
-		L"DistantHorizons.sqlite-shm",
-		L"DistantHorizons.sqlite-wal"
-	};
+	return RecommendedConfigBackupBlacklist();
 }
 
 vector<wstring> DefaultRestoreWhitelist() {
@@ -207,18 +226,35 @@ vector<wstring> BuildEffectiveRestoreWhitelist(const vector<wstring>& userWhitel
 }
 
 int CreateNewNormalConfig(const string& name_hint) {
-	int newId = nextConfigId++;
-	Config new_cfg;
-	new_cfg.name = name_hint;
+	ConfigDraft draft;
+	draft.name = name_hint;
+	const auto resolved = ResolveUniqueConfigDrafts(
+		{draft}, GetEffectiveDefaultBackupRoot(), g_appState.configs);
+	if (!resolved.empty()) draft = resolved.front();
+
+	const int newId = AllocateNormalConfigIndex();
+	Config new_cfg = BuildRecommendedConfig(draft, {});
 	new_cfg.configId = FolderRewindFormat::GenerateGuidString();
-	// 默认空的路径/世界
-	new_cfg.saveRoot.clear();
-	new_cfg.backupPath.clear();
-	new_cfg.worlds.clear();
-	EnsureDefaultBackupBlacklist(new_cfg.blacklist);
-	EnsureDefaultRestoreWhitelist();
 	g_appState.configs[newId] = new_cfg;
 	return newId;
+}
+
+NormalConfigIndexAllocatorState SnapshotNormalConfigIndexAllocator() {
+	return {nextConfigId};
+}
+
+void RestoreNormalConfigIndexAllocator(NormalConfigIndexAllocatorState state) {
+	nextConfigId = (max)(state.nextIndex, 2);
+}
+
+int AllocateNormalConfigIndex() {
+	if (nextConfigId == (numeric_limits<int>::max)()
+		&& g_appState.configs.contains(nextConfigId)) {
+		throw overflow_error("No normal configuration index remains");
+	}
+	const int allocated = nextConfigId;
+	if (nextConfigId < (numeric_limits<int>::max)()) ++nextConfigId;
+	return allocated;
 }
 
 void AssignFreshNormalConfigId(int configIndex) {
@@ -240,15 +276,17 @@ void LoadConfigs() {
 void LoadConfigs(const filesystem::path& filename) {
 	lock_guard<mutex> lock(g_appState.configsMutex);
 	g_configLoadDiagnostics.clear();
+	nextConfigId = 2;
 	g_appState.configs.clear();
 	g_appState.jobs = JobDocument{};
-	g_theme = static_cast<int>(ThemeId::ImGuiLight);
-	g_lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
+	g_theme = static_cast<int>(ThemeId::NordLight);
+	g_lastValidTheme = static_cast<int>(ThemeId::NordLight);
 	Fontss.clear();
 	g_appearanceSchema = 1;
 	g_uiScaleV2 = true;
 	g_uiScaleMigrationPending = false;
 	restoreWhitelist.clear();
+	g_defaultBackupRootPath = RecommendedBackupRoot().wstring();
 	g_logFileLevel = minebackup::logging::LogFileLevel::Info;
 	g_logViewLevel = minebackup::logging::LogLevel::Info;
 	g_logViewAutoTail = true;
@@ -257,8 +295,10 @@ void LoadConfigs(const filesystem::path& filename) {
 	optional<wstring> configuredLogFileLevel;
 	optional<wstring> configuredLogViewLevel;
 	optional<bool> legacyAutoLog;
+	bool configuredRestoreWhitelist = false;
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) {
+		EnsureDefaultRestoreWhitelist();
 		Fontss = GetDefaultFontPath();
 		minebackup::logging::SetFileLevel(g_logFileLevel);
 		return;
@@ -463,6 +503,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					g_SilentStartupToTray = (val != L"0");
 				}
 				else if (key == L"RestoreWhitelistItem") {
+					configuredRestoreWhitelist = true;
 					restoreWhitelist.push_back(val);
 				}
 				else if (key == L"WindowWidth") {
@@ -493,7 +534,11 @@ void LoadConfigs(const filesystem::path& filename) {
 					configuredGlobalFont = val;
 				}
 				else if (key == L"AutoScanForWorlds") {
+					// 仅保留旧字段的兼容读写；世界发现必须由显式发现流程触发。
 					g_AutoScanForWorlds = (val != L"0");
+				}
+				else if (key == L"DefaultBackupRootPath") {
+					g_defaultBackupRootPath = val;
 				}
 				else if (key == L"HotkeyBackup") {
 					readInt(g_hotKeyBackupId, 0, 100000, false);
@@ -564,7 +609,15 @@ void LoadConfigs(const filesystem::path& filename) {
 		}
 	}
 	minebackup::logging::SetFileLevel(g_logFileLevel);
+	if (!configuredRestoreWhitelist) EnsureDefaultRestoreWhitelist();
 	set<wstring> usedConfigIds;
+	if (!g_appState.configs.empty()) {
+		const int maximumIndex = g_appState.configs.rbegin()->first;
+		if (nextConfigId <= maximumIndex) {
+			nextConfigId = maximumIndex == (numeric_limits<int>::max)()
+				? maximumIndex : maximumIndex + 1;
+		}
+	}
 	for (auto& kv : g_appState.configs) {
 		Config& cfg = kv.second;
 		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
@@ -674,11 +727,23 @@ void FinalizeUiScaleMigration(float primaryDpiScale) {
 }
 
 bool SaveConfigs() {
-	return SaveConfigs(GetAppPaths().ConfigFile());
+	// 布尔契约：只要逻辑 commit 已发生（含“已替换但持久化未确认”）即返回 true。
+	return SaveConfigsDetailed().Committed();
 }
 
 bool SaveConfigs(const filesystem::path& filename) {
+	return SaveConfigsDetailed(filename).Committed();
+}
+
+ConfigSaveResult SaveConfigsDetailed() {
+	return SaveConfigsDetailed(GetAppPaths().ConfigFile());
+}
+
+ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
+	// 内部全程使用 error_code 明确状态的实现，不在 replacement 之后抛出
+	// 无法分类的异常；文件系统错误都转换为对应的 ConfigSaveState。
 	lock_guard<mutex> lock(g_appState.configsMutex);
+	ConfigSaveResult result;
 	const filesystem::path target(filename);
 	for (auto& [index, config] : g_appState.configs) {
 		(void)index;
@@ -689,7 +754,8 @@ bool SaveConfigs(const filesystem::path& filename) {
 		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
 			"jobs.write_failed", "{}", wstring_to_utf8(jobsWriteError));
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		return false;
+		result.detail = jobsWriteError;
+		return result; // NotCommitted
 	}
 	std::wostringstream buffer;
 	buffer << L"[General]\n";
@@ -707,6 +773,7 @@ bool SaveConfigs(const filesystem::path& filename) {
 	buffer << L"StopAutoBackupOnExit=" << (g_StopAutoBackupOnExit ? 1 : 0) << L"\n";
 	buffer << L"SilentStartupToTray=" << (g_SilentStartupToTray ? 1 : 0) << L"\n";
 	buffer << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
+	buffer << L"DefaultBackupRootPath=" << g_defaultBackupRootPath << L"\n";
 	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
 	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
 	buffer << L"UIScale=" << g_uiScale << L"\n";
@@ -785,11 +852,27 @@ bool SaveConfigs(const filesystem::path& filename) {
 	string utf8 = wstring_to_utf8(buffer.str());
 	const string ignoredSpecial = ReadIgnoredSpecialSections(target);
 	if (!ignoredSpecial.empty()) utf8 += "\n" + ignoredSpecial;
-	if (!AtomicFileWriter::WriteText(target, utf8).success) {
+	const auto write = AtomicFileWriter::WriteText(target, utf8);
+	if (write.commitState == AtomicFileWriter::WriteCommitState::NotReplaced) {
+		// config.ini 从未被替换：这次保存逻辑上什么都没有发生。
+		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
+			"config.write_not_committed", "{}", wstring_to_utf8(write.error));
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		return false;
+		result.detail = write.error;
+		return result; // NotCommitted
 	}
-	return true;
+	if (!write.IsDurable()) {
+		// config.ini 已替换（commit point 已越过），仅目录同步未确认。
+		// 不显示误导性的“写入失败”，不尝试用 .bak 反向覆盖，
+		// 更不允许业务层按“未提交”回滚内存状态。
+		result.state = ConfigSaveState::CommittedNotDurable;
+		result.detail = write.error;
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Application,
+			"config.write_committed_not_durable", "{}", wstring_to_utf8(write.error));
+		return result;
+	}
+	result.state = ConfigSaveState::CommittedDurably;
+	return result;
 }
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口

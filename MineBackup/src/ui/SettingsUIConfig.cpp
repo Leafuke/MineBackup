@@ -3,6 +3,7 @@
 #include "ApplicationActions.h"
 #include "AppPaths.h"
 #include "Broadcast.h"
+#include "ConfigFactory.h"
 #include "ExternalToolManager.h"
 #include "KnotLinkServerManager.h"
 #include "KnotLinkService.h"
@@ -65,10 +66,22 @@ void DrawConfigManagementPanel() {
 		if (ImGui::MenuItem(L("CONFIG_COPY_CURRENT"))) {
 			const int sourceIndex = g_appState.currentConfigIndex;
 			const Config source = g_appState.configs.at(sourceIndex);
-			const int newIndex = CreateNewNormalConfig(source.name + " - Copy");
-			g_appState.configs[newIndex] = source;
-			AssignFreshNormalConfigId(newIndex);
-			g_appState.configs[newIndex].name = source.name + " - Copy";
+			Config copied = source;
+			ConfigDraft identityDraft;
+			identityDraft.name = source.name + " - Copy";
+			copied.name = identityDraft.name;
+			// 即使默认根目录解析失败，也不能继续引用 source.backupPath。
+			copied.backupPath.clear();
+			const auto resolved = ResolveUniqueConfigDrafts(
+				{identityDraft}, GetEffectiveDefaultBackupRoot(), g_appState.configs);
+			if (!resolved.empty()) {
+				copied.name = resolved.front().name;
+				copied.backupPath = resolved.front().backupPath.wstring();
+			}
+
+			const int newIndex = AllocateNormalConfigIndex();
+			copied.configId = FolderRewindFormat::GenerateGuidString();
+			g_appState.configs[newIndex] = std::move(copied);
 			g_appState.currentConfigIndex = newIndex;
 			specialSetting = false;
 			ImGui::MarkItemEdited(ImGui::GetItemID());
