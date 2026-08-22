@@ -18,7 +18,7 @@ ConfigBatchCreationService::ConfigBatchCreationService(
 	ConfigBatchCreationDependencies dependencies)
 	: dependencies_(std::move(dependencies)) {
 	if (!dependencies_.buildConfig) dependencies_.buildConfig = BuildRecommendedConfig;
-	if (!dependencies_.saveConfigs) dependencies_.saveConfigs = [] { return SaveConfigs(); };
+	if (!dependencies_.saveConfigs) dependencies_.saveConfigs = [] { return SaveConfigsDetailed(); };
 	if (!dependencies_.onCommitted) {
 		dependencies_.onCommitted = [](const vector<int>&) {
 			GetMainUiController().worldList.Invalidate();
@@ -100,15 +100,18 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 
 	MB_LOG_INFO(minebackup::logging::LogCategory::Application,
 		"minecraft.config_batch.commit_started", "selected={}", request.drafts.size());
-	bool saved = false;
+	// 无法确定磁盘 commit point 时（依赖抛出异常），按 NotCommitted 处理，
+	// 保持与真正的“未写入”一致的保守回滚。
+	ConfigSaveState saveState = ConfigSaveState::NotCommitted;
 	try {
-		saved = dependencies_.saveConfigs();
+		saveState = dependencies_.saveConfigs().state;
 	}
 	catch (...) {
-		saved = false;
+		saveState = ConfigSaveState::NotCommitted;
 	}
-	if (!saved) {
-		// 配置文件原子写失败时恢复所有内存状态，使用户重试得到相同名称和目录。
+	if (saveState == ConfigSaveState::NotCommitted) {
+		// config.ini 从未被替换：这次提交逻辑上什么都没有发生，
+		// 恢复所有内存状态，使用户重试得到相同名称和目录。
 		lock_guard<mutex> lock(g_appState.configsMutex);
 		g_appState.configs = std::move(configsSnapshot);
 		g_appState.currentConfigIndex = currentConfigSnapshot;
@@ -121,6 +124,15 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
 			"minecraft.config_batch.commit_failed", "Config persistence failed.");
 		return result;
+	}
+	if (saveState == ConfigSaveState::CommittedNotDurable) {
+		// config.ini 已被替换：真实 commit point 已越过，
+		// 内存必须向磁盘提交状态收敛，绝不允许回滚成旧快照。
+		// 也不尝试用 .bak 反向覆盖磁盘——那是第二次写事务，同样可能失败。
+		result.warningCode = "minecraft.config_batch.commit_not_durable";
+		MB_LOG_WARNING(minebackup::logging::LogCategory::Application,
+			"minecraft.config_batch.commit_not_durable",
+			"Configuration committed but directory sync was not confirmed.");
 	}
 
 	result.success = true;

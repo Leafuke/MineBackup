@@ -116,13 +116,13 @@ void TestNaming(TestContext& test, const std::filesystem::path& root) {
 
 ConfigBatchCreationDependencies Dependencies(
 	int& saveCalls,
-	bool saveResult,
+	ConfigSaveState saveState,
 	int& refreshCalls) {
 	ConfigBatchCreationDependencies dependencies;
 	dependencies.buildConfig = BuildRecommendedConfig;
-	dependencies.saveConfigs = [&saveCalls, saveResult] {
+	dependencies.saveConfigs = [&saveCalls, saveState] {
 		++saveCalls;
-		return saveResult;
+		return ConfigSaveResult{saveState, L""};
 	};
 	dependencies.onCommitted = [&refreshCalls](const std::vector<int>&) { ++refreshCalls; };
 	return dependencies;
@@ -148,7 +148,10 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 		if (++buildCalls == 2) throw std::runtime_error("injected build failure");
 		return BuildRecommendedConfig(draft, context);
 	};
-	buildFailure.saveConfigs = [&] { ++saveCalls; return true; };
+	buildFailure.saveConfigs = [&]() -> ConfigSaveResult {
+		++saveCalls;
+		return {ConfigSaveState::CommittedDurably, L""};
+	};
 	buildFailure.onCommitted = [&](const std::vector<int>&) { ++refreshCalls; };
 	ConfigBatchCreationRequest request;
 	request.defaultBackupRoot = root / "new-root";
@@ -163,7 +166,7 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 	saveCalls = 0;
 	refreshCalls = 0;
 	const auto failedSave = ConfigBatchCreationService(
-		Dependencies(saveCalls, false, refreshCalls)).Commit(request);
+		Dependencies(saveCalls, ConfigSaveState::NotCommitted, refreshCalls)).Commit(request);
 	test.Expect(!failedSave.success && saveCalls == 1 && refreshCalls == 0,
 		"a persistence failure should save once and skip refresh");
 	test.Expect(g_appState.configs.size() == 1 && g_appState.currentConfigIndex == 7
@@ -172,10 +175,28 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 			&& !g_CoreValidationPending.load() && g_CoreValidationPassed.load(),
 		"save failure should restore configs, selection, allocator, settings, and validation flags");
 
+	// 注入抛出异常的 saveConfigs：无法确定 commit point，按 NotCommitted 回滚。
+	saveCalls = 0;
+	refreshCalls = 0;
+	ConfigBatchCreationDependencies throwingSave;
+	throwingSave.buildConfig = BuildRecommendedConfig;
+	throwingSave.saveConfigs = [&]() -> ConfigSaveResult {
+		++saveCalls;
+		throw std::runtime_error("injected persistence failure");
+	};
+	throwingSave.onCommitted = [&refreshCalls](const std::vector<int>&) { ++refreshCalls; };
+	const auto thrownSave = ConfigBatchCreationService(throwingSave).Commit(request);
+	test.Expect(!thrownSave.success && thrownSave.errorCode == "minecraft.config_batch.commit_failed"
+			&& saveCalls == 1 && refreshCalls == 0,
+		"an exceptional save dependency should be treated as not committed");
+	test.Expect(g_appState.configs.size() == 1 && g_appState.currentConfigIndex == 7
+			&& SnapshotNormalConfigIndexAllocator().nextIndex == 10,
+		"an exceptional save dependency should restore the memory state");
+
 	saveCalls = 0;
 	refreshCalls = 0;
 	const auto succeeded = ConfigBatchCreationService(
-		Dependencies(saveCalls, true, refreshCalls)).Commit(request);
+		Dependencies(saveCalls, ConfigSaveState::CommittedDurably, refreshCalls)).Commit(request);
 	test.Expect(succeeded.success && succeeded.configIndices == std::vector<int>({10, 11, 12})
 			&& saveCalls == 1 && refreshCalls == 1,
 		"a valid three-config batch should save and refresh exactly once");
@@ -186,6 +207,46 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 	test.Expect(g_defaultBackupRootPath == request.defaultBackupRoot.wstring()
 			&& g_CoreValidationPending.load() && !g_CoreValidationPassed.load(),
 		"successful onboarding commit should persist the default root and pending validation state");
+}
+
+// CommittedNotDurable：config.ini 已替换、目录同步未确认。
+// 内存状态必须向磁盘提交状态收敛，任何回滚都会造成 disk-new/memory-old 撕裂。
+void TestCommittedNotDurableKeepsMemoryState(
+	TestContext& test,
+	const std::filesystem::path& root) {
+	GlobalSnapshot restore;
+	Config original;
+	original.name = "Existing";
+	original.configId = L"11111111-1111-4111-8111-111111111111";
+	g_appState.configs = {{7, original}};
+	g_appState.currentConfigIndex = 7;
+	RestoreNormalConfigIndexAllocator({10});
+	g_defaultBackupRootPath = (root / "old-root").wstring();
+	g_CoreValidationPending.store(false);
+	g_CoreValidationPassed.store(true);
+
+	int saveCalls = 0;
+	int refreshCalls = 0;
+	ConfigBatchCreationRequest request;
+	request.defaultBackupRoot = root / "durable-root";
+	request.drafts = ResolveUniqueConfigDrafts(
+		{Draft("Durable", root)}, request.defaultBackupRoot, g_appState.configs);
+	const auto result = ConfigBatchCreationService(
+		Dependencies(saveCalls, ConfigSaveState::CommittedNotDurable, refreshCalls))
+		.Commit(request);
+
+	test.Expect(result.success && result.warningCode == "minecraft.config_batch.commit_not_durable"
+			&& result.configIndices.size() == 1 && result.errorCode.empty(),
+		"a committed-but-not-durable save must succeed with a non-blocking warning");
+	test.Expect(saveCalls == 1 && refreshCalls == 1,
+		"a committed-but-not-durable save should still run onCommitted exactly once");
+	test.Expect(g_appState.configs.size() == 2 && g_appState.currentConfigIndex == 10
+			&& SnapshotNormalConfigIndexAllocator().nextIndex == 11
+			&& g_appState.configs.at(10).name == "Durable",
+		"a committed-but-not-durable save must keep new configs, selection, and allocator");
+	test.Expect(g_defaultBackupRootPath == request.defaultBackupRoot.wstring()
+			&& g_CoreValidationPending.load() && !g_CoreValidationPassed.load(),
+		"a committed-but-not-durable save must keep backup root and validation flags");
 }
 
 void TestSettingsCommitPreservesValidationState(
@@ -206,7 +267,7 @@ void TestSettingsCommitPreservesValidationState(
 	int saveCalls = 0;
 	int refreshCalls = 0;
 	const auto result = ConfigBatchCreationService(
-		Dependencies(saveCalls, true, refreshCalls)).Commit(request);
+		Dependencies(saveCalls, ConfigSaveState::CommittedDurably, refreshCalls)).Commit(request);
 		test.Expect(result.success && saveCalls == 1 && refreshCalls == 1
 			&& !g_CoreValidationPending.load() && g_CoreValidationPassed.load(),
 			"Settings batch creation should save once without scheduling onboarding validation");
@@ -286,6 +347,7 @@ int main() {
 	TestCompatibilityCreationEntry(test);
 	TestNaming(test, root);
 	TestBuildAndSaveRollback(test, root);
+	TestCommittedNotDurableKeepsMemoryState(test, root);
 	TestSettingsCommitPreservesValidationState(test, root);
 	TestCoreValidationContracts(test, root);
 	std::error_code error;

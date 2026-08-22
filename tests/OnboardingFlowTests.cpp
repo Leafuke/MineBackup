@@ -125,7 +125,8 @@ void TestFirstRunSelectionAndCommit(
 	request.factoryContext.resolvedSevenZip = session.readiness.resolvedSevenZip;
 	request.defaultBackupRoot = session.defaultBackupRoot;
 	ConfigBatchCreationDependencies commitDependencies;
-	commitDependencies.saveConfigs = [] { return SaveConfigs(); };
+	// 与生产默认一致：返回详细持久化状态，而非布尔值。
+	commitDependencies.saveConfigs = [] { return SaveConfigsDetailed(); };
 	commitDependencies.onCommitted = [](const std::vector<int>&) {};
 	const auto committed = ConfigBatchCreationService(
 		std::move(commitDependencies)).Commit(request);
