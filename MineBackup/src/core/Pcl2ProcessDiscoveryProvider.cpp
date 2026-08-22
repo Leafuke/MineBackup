@@ -13,6 +13,8 @@ namespace {
 
 constexpr uintmax_t MaximumSetupBytes = 1024u * 1024u;
 constexpr wchar_t Pcl2ExecutableName[] = L"Plain Craft Launcher 2.exe";
+constexpr wchar_t PclceExecutableName[] = L"PCL2_CE_Release_x64.exe";
+constexpr wchar_t PclceExecutableName2[] = L"PCL2_CE_Beta_x64.exe";
 
 BoundedTextFileResult ReadTextFile(
 	const filesystem::path& path,
@@ -188,7 +190,8 @@ vector<DiscoveryLocation> Pcl2ProcessDiscoveryProvider::DiscoverLocations(
 	const auto processes = processInspection_->ListRunningProcesses(stopToken);
 	for (const auto& process : processes) {
 		if (stopToken.stop_requested()) break;
-		if (Lower(process.executableName) != Lower(Pcl2ExecutableName)) continue;
+		if (Lower(process.executableName) != Lower(Pcl2ExecutableName) && Lower(process.executableName) != Lower(PclceExecutableName) && Lower(process.executableName) != Lower(PclceExecutableName2))
+			continue;
 		if (process.executablePath.empty()) {
 			Report(context, "pcl2_image_path_unavailable", {});
 			continue;
