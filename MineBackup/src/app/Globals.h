@@ -53,15 +53,21 @@ struct AppAppearanceState {
 };
 
 struct AppUpdateState {
-	std::atomic<bool> updateCheckDone{ false };
-	std::atomic<bool> newVersionAvailable{ false };
-	std::atomic<bool> noticeCheckDone{ false };
-	std::atomic<bool> newNoticeAvailable{ false };
-	std::string latestVersion;
-	std::string releaseNotes;
-	std::string noticeContent;
-	std::string noticeUpdatedAt;
-	std::string noticeLastSeenVersion;
+    std::atomic<bool> updateCheckDone{ false };
+    std::atomic<bool> newVersionAvailable{ false };
+    std::atomic<bool> noticeCheckDone{ false };
+    std::atomic<bool> newNoticeAvailable{ false };
+    std::string latestVersion;
+    std::string releaseNotes;
+    std::string noticeContent;
+    std::string noticeUpdatedAt;
+    std::string noticeLastSeenVersion;
+};
+
+struct KnotLinkRuntimeState {
+    std::atomic<bool> startupStatusReady{ false };
+    std::atomic<bool> startupNeedsUpdate{ false };
+    std::string startupVersion;
 };
 
 struct AppUiState {
@@ -115,14 +121,15 @@ struct ExternalToolRuntimeState {
 };
 
 struct AppGlobalState {
-	std::string currentVersion = MINEBACKUP_VERSION_STRING;
-	AppWindowState window;
-	AppAppearanceState appearance;
-	AppUpdateState update;
-	AppUiState ui;
-	AppSettingsState settings;
-	CoreValidationRuntimeState coreValidation;
-	ExternalToolRuntimeState externalTools;
+    std::string currentVersion = MINEBACKUP_VERSION_STRING;
+    AppWindowState window;
+    AppAppearanceState appearance;
+    AppUpdateState update;
+    KnotLinkRuntimeState knotlink;
+    AppUiState ui;
+    AppSettingsState settings;
+    CoreValidationRuntimeState coreValidation;
+    ExternalToolRuntimeState externalTools;
 };
 
 extern AppGlobalState g_globals;
@@ -139,6 +146,10 @@ inline std::string& g_ReleaseNotes = g_globals.update.releaseNotes;
 inline std::string& g_NoticeContent = g_globals.update.noticeContent;
 inline std::string& g_NoticeUpdatedAt = g_globals.update.noticeUpdatedAt;
 inline std::string& g_NoticeLastSeenVersion = g_globals.update.noticeLastSeenVersion;
+
+inline std::atomic<bool>& g_KnotLinkStartupStatusReady = g_globals.knotlink.startupStatusReady;
+inline std::atomic<bool>& g_KnotLinkStartupNeedsUpdate = g_globals.knotlink.startupNeedsUpdate;
+inline std::string& g_KnotLinkStartupVersion = g_globals.knotlink.startupVersion;
 
 inline int& g_windowWidth = g_globals.window.width;
 inline int& g_windowHeight = g_globals.window.height;

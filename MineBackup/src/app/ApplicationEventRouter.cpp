@@ -31,6 +31,7 @@ namespace {
 		constexpr wchar_t RcloneInstallComplete[] = L"rclone-install-complete";
 		constexpr wchar_t KnotLinkInstallerComplete[] = L"knotlink-installer-complete";
 		constexpr wchar_t KnotLinkEnableComplete[] = L"knotlink-settings-enable-complete";
+		constexpr wchar_t KnotLinkStartupStatus[] = L"knotlink-startup-status";
 		constexpr wchar_t PortableConfigPreview[] = L"portable-config-preview";
 	}
 
@@ -39,6 +40,8 @@ namespace {
 		constexpr wchar_t Available[] = L"available";
 		constexpr wchar_t Tag[] = L"tag";
 		constexpr wchar_t Notes[] = L"notes";
+		constexpr wchar_t Version[] = L"version";
+		constexpr wchar_t NeedsUpdate[] = L"needs-update";
 		constexpr wchar_t Content[] = L"content";
 		constexpr wchar_t ContentId[] = L"content-id";
 		constexpr wchar_t Path[] = L"path";
@@ -322,6 +325,15 @@ void ApplicationEventRouter::DispatchOne(const TaskEvent& event) const {
 				"network.knotlink.enable_failed",
 				"KnotLink could not be enabled; the setting was restored.");
 		}
+		return;
+	}
+	if (event.type == EventType::KnotLinkStartupStatus) {
+		const wstring* needsUpdate = RequiredValue(event, EventField::NeedsUpdate);
+		const wstring* version = RequiredValue(event, EventField::Version);
+		if (!needsUpdate || !version) return;
+		g_KnotLinkStartupNeedsUpdate = *needsUpdate == L"1";
+		g_KnotLinkStartupVersion = wstring_to_utf8(*version);
+		g_KnotLinkStartupStatusReady = true;
 		return;
 	}
 	if (event.type == EventType::PortableConfigPreview) {
