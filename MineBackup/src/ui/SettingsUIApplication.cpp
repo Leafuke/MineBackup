@@ -33,7 +33,7 @@ struct ReadinessCompletion {
 };
 
 struct MinecraftSettingsMailbox {
-	mutex mutex;
+	std::mutex mutex;
 	optional<DiscoveryCompletion> discovery;
 	optional<ReadinessCompletion> readiness;
 };

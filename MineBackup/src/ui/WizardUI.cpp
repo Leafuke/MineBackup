@@ -52,7 +52,7 @@ struct ReadinessCompletion {
 };
 
 struct WizardMailbox {
-	mutex mutex;
+	std::mutex mutex;
 	optional<DiscoveryCompletion> discovery;
 	optional<ReadinessCompletion> readiness;
 };
