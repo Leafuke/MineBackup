@@ -16,7 +16,6 @@
 #include "MainUiController.h"
 #include "SettingsUIHotkeys.h"
 #include "imgui-all.h"
-#include "imgui_style.h"
 #include "i18n.h"
 #include "AppState.h"
 #include "AppPaths.h"
@@ -548,11 +547,6 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #endif
 
 	APP_PRINTF_INFO("application.welcome", L("CONSOLE_WELCOME"));
-
-	if (isFirstRun && uiSession.IsActive())
-	{
-		ImGuiTheme::ApplyNord(false);
-	}
 
 	struct FpsIdling {
 		float fpsIdle = 10.0f;        // 空闲时的 FPS

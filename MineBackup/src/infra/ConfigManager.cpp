@@ -279,8 +279,8 @@ void LoadConfigs(const filesystem::path& filename) {
 	nextConfigId = 2;
 	g_appState.configs.clear();
 	g_appState.jobs = JobDocument{};
-	g_theme = static_cast<int>(ThemeId::ImGuiLight);
-	g_lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
+	g_theme = static_cast<int>(ThemeId::NordLight);
+	g_lastValidTheme = static_cast<int>(ThemeId::NordLight);
 	Fontss.clear();
 	g_appearanceSchema = 1;
 	g_uiScaleV2 = true;

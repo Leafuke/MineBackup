@@ -42,8 +42,8 @@ struct AppWindowState {
 };
 
 struct AppAppearanceState {
-	int theme = static_cast<int>(ThemeId::ImGuiLight);
-	int lastValidTheme = static_cast<int>(ThemeId::ImGuiLight);
+	int theme = static_cast<int>(ThemeId::NordLight);
+	int lastValidTheme = static_cast<int>(ThemeId::NordLight);
 	std::wstring fontPath;
 	std::string customThemeError;
 	float userScale = 1.0f;
