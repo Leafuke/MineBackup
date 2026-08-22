@@ -162,6 +162,99 @@ void TestFirstRunSelectionAndCommit(
 	}
 }
 
+// 行为级回归：discovery 已有有效 Minecraft candidate 时改走 custom folder。
+// UI 可见性由 DrawDiscoveryStage 的条件修改保证（无法在测试中点击 ImGui 按钮）；
+// 这里保证“有候选仍可走 custom path”在业务模型上完全成立。
+void TestCustomFolderWithDiscoveredCandidate(
+	TestContext& test,
+	const std::filesystem::path& root) {
+	const AppPaths appPaths = BuildTestAppPaths(root / "custom-profile");
+	std::filesystem::create_directories(appPaths.configRoot);
+	std::filesystem::create_directories(appPaths.dataRoot);
+	SetCurrentAppPaths(appPaths);
+
+	g_appState.configs.clear();
+	g_appState.jobs = {};
+	g_appState.currentConfigIndex = 1;
+	RestoreNormalConfigIndexAllocator({1});
+	g_defaultBackupRootPath.clear();
+	g_CoreValidationPending.store(false);
+	g_CoreValidationPassed.store(false);
+
+	MinecraftDiscoveryResult discovery;
+	discovery.instances.push_back({
+		CreateJavaInstance(root / "custom-instances" / "Discovered", L"Minecraft"),
+		false});
+	WizardSession session;
+	const auto generation = BeginWizardDiscovery(session);
+	test.Expect(ApplyWizardDiscoveryResult(session, generation, std::move(discovery)),
+		"the custom-path scenario should start with one discovered candidate");
+	test.Expect(!session.discovery.instances.empty(),
+		"the custom-path scenario requires a discovered Minecraft candidate");
+	const auto backupRoot = root / "custom-backups";
+	SetWizardDefaultBackupRoot(session, backupRoot);
+	// 用户不选择任何 Minecraft candidate，直接改走 custom folder 入口。
+	session.selectedInstanceKeys.clear();
+
+	// 与 UI 点击 custom folder 后相同的业务模型：
+	// BuildCustomFolderDraft -> 互斥清空 selection -> 仅保留 custom draft。
+	const auto customFolder = root / "custom-data" / "ProjectX";
+	std::filesystem::create_directories(customFolder);
+	const auto customDraft = BuildCustomFolderDraft(customFolder);
+	test.Expect(customDraft.has_value(),
+		"a regular folder below the drive root should yield a custom draft");
+	session.drafts = ResolveUniqueConfigDrafts(
+		{*customDraft}, session.defaultBackupRoot, g_appState.configs);
+	test.Expect(session.drafts.size() == 1,
+		"the custom path should produce exactly one draft");
+
+	BatchReadinessDependencies readinessDependencies;
+	readinessDependencies.resolveSevenZip = [&](std::stop_token) {
+		ExternalToolResolution resolution;
+		resolution.available = true;
+		resolution.executable = appPaths.toolsRoot / "7za-test.exe";
+		resolution.source = ExternalToolSource::Managed;
+		return resolution;
+	};
+	session.readiness = BatchReadinessService(appPaths, std::move(readinessDependencies))
+		.CheckBatch(session.drafts, g_appState.configs);
+	test.Expect(session.readiness.report.ready,
+		"the custom-folder draft should pass full readiness without level.dat");
+
+	ConfigBatchCreationRequest request;
+	request.drafts = session.drafts;
+	request.factoryContext.resolvedSevenZip = session.readiness.resolvedSevenZip;
+	request.defaultBackupRoot = session.defaultBackupRoot;
+	ConfigBatchCreationDependencies commitDependencies;
+	commitDependencies.saveConfigs = [] { return SaveConfigsDetailed(); };
+	commitDependencies.onCommitted = [](const std::vector<int>&) {};
+	const auto committed = ConfigBatchCreationService(
+		std::move(commitDependencies)).Commit(request);
+	test.Expect(committed.success && committed.configIndices.size() == 1
+			&& g_appState.configs.size() == 1,
+		"the custom path should create exactly one configuration");
+	test.Expect(g_appState.configs.size() == 1,
+		"the discovered Minecraft candidate must not be configured implicitly");
+
+	const Config& custom = g_appState.configs.at(committed.configIndices.front());
+	test.Expect(custom.name == "ProjectX"
+			&& custom.saveRoot == customFolder.parent_path().wstring()
+			&& custom.worlds.size() == 1
+			&& custom.worlds.front().first == customFolder.filename().wstring(),
+		"the custom config should keep the folder's parent as save root with a single world");
+	test.Expect(g_defaultBackupRootPath == backupRoot.wstring(),
+		"the custom onboarding commit should persist the chosen default backup root");
+
+	// Save -> Load round trip：重启后配置保持正确。
+	g_appState.configs.clear();
+	LoadConfigs();
+	test.Expect(g_appState.configs.size() == 1
+			&& g_appState.configs.begin()->second.saveRoot
+				== customFolder.parent_path().wstring()
+			&& !g_appState.configs.begin()->second.configId.empty(),
+		"the custom config should round-trip through Save/Load with identity");
+}
+
 } // namespace
 
 int main() {
@@ -172,6 +265,7 @@ int main() {
 
 	TestContext test;
 	TestFirstRunSelectionAndCommit(test, root);
+	TestCustomFolderWithDiscoveredCandidate(test, root);
 
 	std::error_code error;
 	std::filesystem::remove_all(root, error);

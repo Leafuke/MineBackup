@@ -316,26 +316,12 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
 			"%s", L("WIZARD_SCANNING"));
 	}
+	// 空结果提示只负责解释“没扫到 Minecraft”；普通文件夹入口
+	// 不再挂在这个条件下，发现 Minecraft 时也必须保持可用。
 	if (!runtime.scanning && runtime.session.discovery.instances.empty()) {
 		ImGui::Spacing();
 		ImGui::TextWrapped("%s", L("WIZARD_DISCOVERY_EMPTY"));
 		ImGui::TextWrapped("%s", L("WIZARD_PCL2_HINT"));
-		ImGui::TextWrapped("%s", L("WIZARD_ADVANCED_CUSTOM_DESC"));
-		if (ImGui::Button(L("WIZARD_ADVANCED_CUSTOM"), ImVec2(-1, 0))) {
-			const auto selected = GetDesktopServices()->SelectFolder();
-			if (!selected.path.empty()) {
-				runtime.advancedCustomDraft = BuildCustomFolderDraft(selected.path);
-				if (runtime.advancedCustomDraft) {
-					runtime.session.selectedInstanceKeys.clear();
-					RebuildRuntimeDrafts(runtime);
-					runtime.session.stage = WizardStage::BackupLocation;
-					runtime.errorKey.clear();
-				}
-				else {
-					runtime.errorKey = "WIZARD_ADVANCED_CUSTOM_INVALID";
-				}
-			}
-		}
 	}
 	if (!runtime.errorKey.empty()) {
 		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
@@ -371,7 +357,35 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 		ImGui::PopID();
 	}
 
-	if (runtime.session.selectedInstanceKeys.empty()) {
+	// 普通文件夹入口与 discovery 结果完全解耦：只要不在扫描中，
+	// 即使发现了 Minecraft 实例也始终显示，与候选列表做轻微视觉分隔。
+	if (!runtime.scanning) {
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::TextWrapped("%s", L("WIZARD_ADVANCED_CUSTOM_DESC"));
+		if (ImGui::Button(L("WIZARD_ADVANCED_CUSTOM"), ImVec2(-1, 0))) {
+			const auto selected = GetDesktopServices()->SelectFolder();
+			if (!selected.path.empty()) {
+				runtime.advancedCustomDraft = BuildCustomFolderDraft(selected.path);
+				if (runtime.advancedCustomDraft) {
+					// 保持现有互斥模式：custom folder 取代本次 Minecraft 选择，
+					// 不允许一次 onboarding 混合两类配置。
+					runtime.session.selectedInstanceKeys.clear();
+					RebuildRuntimeDrafts(runtime);
+					runtime.session.stage = WizardStage::BackupLocation;
+					runtime.errorKey.clear();
+				}
+				else {
+					runtime.errorKey = "WIZARD_ADVANCED_CUSTOM_INVALID";
+				}
+			}
+		}
+	}
+
+	// discovery 为空且未选择时，用户仍可走 custom folder 入口，
+	// 此时“请选择至少一个实例”没有信息量，不再显示。
+	if (!runtime.session.discovery.instances.empty()
+		&& runtime.session.selectedInstanceKeys.empty()) {
 		ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.25f, 1.0f),
 			"%s", L("WIZARD_SELECT_AT_LEAST_ONE"));
 	}
