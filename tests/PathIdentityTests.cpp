@@ -62,6 +62,35 @@ void TestPlatformCaseIdentity(
 #endif
 }
 
+void TestUnicodeCaseIdentity(
+	TestContext& test,
+	const std::filesystem::path& root) {
+	// 刻意使用尚不存在的 prospective path，避免真实文件系统 canonicalize
+	// 在背后“代劳”，从而确保校验的是 PathIdentity 自身的大小写规则。
+	const auto upper = root / L"École" / L"world";
+	const auto lower = root / L"école" / L"world";
+	const auto shout = root / L"ÉCOLE" / L"world";
+	test.Expect(!std::filesystem::exists(upper) && !std::filesystem::exists(lower),
+		"unicode case fixtures must remain prospective");
+#ifdef _WIN32
+	// É/é 等 Latin-1 扩展字符在 C locale（如中文 Windows）下无法被
+	// std::towlower 正确折叠；必须依赖操作系统 Unicode 大小写表。
+	test.Expect(PathIdentity::PathsEqual(upper, lower),
+		"Windows Unicode case difference should share path identity");
+	test.Expect(PathIdentity::PathsEqual(shout, lower),
+		"Windows Unicode identity should hold for full-uppercase variants");
+	test.Expect(PathIdentity::BuildPathIdentityKey(upper)
+			== PathIdentity::BuildPathIdentityKey(lower),
+		"Windows Unicode identity keys should match across case");
+	test.Expect(PathIdentity::IsEqualOrDescendant(
+			root / L"école" / L"world", root / L"ÉCOLE"),
+		"Unicode containment should ignore case on Windows");
+#else
+	test.Expect(!PathIdentity::PathsEqual(upper, lower),
+		"non-Windows Unicode case difference must stay distinct");
+#endif
+}
+
 void TestLinkedAncestor(
 	TestContext& test,
 	const std::filesystem::path& root) {
@@ -89,5 +118,6 @@ void RunPathIdentityTests(
 	TestNormalization(test, temporaryRoot);
 	TestContainment(test, temporaryRoot / "path-identity-containment");
 	TestPlatformCaseIdentity(test, temporaryRoot / "path-identity-case");
+	TestUnicodeCaseIdentity(test, temporaryRoot / "path-identity-unicode-case");
 	TestLinkedAncestor(test, temporaryRoot / "path-identity-link");
 }
