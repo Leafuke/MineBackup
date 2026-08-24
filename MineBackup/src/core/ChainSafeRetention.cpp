@@ -1,4 +1,5 @@
 #include "ChainSafeRetention.h"
+#include "PlatformCompat.h"
 
 #include "BackupManagerInternal.h"
 #include "FolderRewindFormat.h"
