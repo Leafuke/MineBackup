@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <exception>
 #include <fstream>
+#include <limits>
+#include <utility>
 
 using namespace std;
 
@@ -28,26 +30,6 @@ wstring SystemErrorText(const wchar_t* operation, const error_code& error) {
 
 SaveResult ExceptionFailure(const wchar_t* operation, const exception& error) {
     return Failure(wstring(operation) + L": " + utf8_to_wstring(error.what()));
-}
-
-SaveResult AtomicWriteJson(const filesystem::path& path, const nlohmann::json& value) {
-    try {
-        const auto write = AtomicFileWriter::WriteText(path, value.dump(2));
-        if (!write.success) return Failure(write.error);
-        return {true, {}};
-    }
-    catch (const exception& error) {
-        return ExceptionFailure(L"Could not serialize metadata JSON", error);
-    }
-    catch (...) {
-        return Failure(L"Could not serialize metadata JSON: unknown exception.");
-    }
-}
-
-wstring JsonString(const nlohmann::json& item, const char* key) {
-    const auto it = item.find(key);
-    if (it == item.end() || !it->is_string()) return L"";
-    return utf8_to_wstring(it->get<string>());
 }
 
 bool HasSafeRawRelativeSegments(const wstring& value) {
@@ -95,117 +77,409 @@ bool IsSafeArchiveReference(const wstring& value, bool allowEmpty) {
     return FolderRewindFormat::IsSafeSinglePathSegment(value);
 }
 
-nlohmann::json SerializeFileState(const FolderRewindFormat::FileState& state) {
-    nlohmann::json item;
-    item["Size"] = state.size;
-    item["LastWriteTimeUtc"] = wstring_to_utf8(state.lastWriteTimeUtc);
-    item["Hash"] = wstring_to_utf8(state.hash);
-    return item;
+string JsonStringLiteral(const wstring& value) {
+    return nlohmann::json(wstring_to_utf8(value)).dump();
 }
 
-bool TryParseFileState(const nlohmann::json& item, FolderRewindFormat::FileState& outState) {
-    if (!item.is_object()) return false;
-
-    FolderRewindFormat::FileState state;
-    const auto sizeIt = item.find("Size");
-    if (sizeIt == item.end()) return false;
-    if (sizeIt->is_number_unsigned()) {
-        state.size = sizeIt->get<uintmax_t>();
-    }
-    else if (sizeIt->is_number_integer()) {
-        const auto signedSize = sizeIt->get<int64_t>();
-        if (signedSize < 0) return false;
-        state.size = static_cast<uintmax_t>(signedSize);
-    }
-    else {
-        return false;
-    }
-    state.lastWriteTimeUtc = JsonString(item, "LastWriteTimeUtc");
-    if (state.lastWriteTimeUtc.empty()) return false;
-    state.hash = JsonString(item, "Hash");
-
-    outState = std::move(state);
-    return true;
-}
-
-bool TryLoadStringArray(const nlohmann::json& parent, const char* key, vector<wstring>& out) {
-    out.clear();
-
-    const auto it = parent.find(key);
-    if (it == parent.end()) return true;
-    if (!it->is_array()) return false;
-
-    for (const auto& item : *it) {
-        if (!item.is_string()) return false;
-
-        wstring normalized;
-        if (!TryNormalizeRelativeEntry(utf8_to_wstring(item.get<string>()), normalized)) return false;
-        out.push_back(normalized);
-    }
-    sort(out.begin(), out.end());
-    return adjacent_find(out.begin(), out.end()) == out.end();
-}
-
-bool WriteStringArray(nlohmann::json& parent, const char* key, const vector<wstring>& values) {
-    nlohmann::json array = nlohmann::json::array();
+bool WriteStringArrayJson(
+    const AtomicFileWriter::ChunkSink& sink,
+    const char* name,
+    const vector<wstring>& values) {
+    if (!sink("  \"") || !sink(name) || !sink("\": [")) return false;
+    bool first = true;
     for (const auto& value : values) {
         wstring normalized;
         if (!TryNormalizeRelativeEntry(value, normalized)) return false;
-        array.push_back(wstring_to_utf8(normalized));
+        if (!first && !sink(", ")) return false;
+        if (!sink(JsonStringLiteral(normalized))) return false;
+        first = false;
     }
-    parent[key] = std::move(array);
-    return true;
+    return sink("]");
 }
 
-bool TrySerializeRecord(const FolderRewindFormat::ChangeRecord& record, nlohmann::json& root) {
-    if (!IsSafeArchiveReference(record.archiveFileName, false)
-        || !IsSafeArchiveReference(record.basedOnFullBackup, true)
-        || !IsSafeArchiveReference(record.previousBackupFileName, true)) {
+bool WriteStateJson(
+    const AtomicFileWriter::ChunkSink& sink,
+    const FolderRewindFormat::MetadataState& state) {
+    if (!sink("{\n  \"Version\": \"3.0\",\n  \"LastBackupTime\": ")
+        || !sink(JsonStringLiteral(state.lastBackupTime))
+        || !sink(",\n  \"LastBackupFileName\": ")
+        || !sink(JsonStringLiteral(state.lastBackupFileName))
+        || !sink(",\n  \"BasedOnFullBackup\": ")
+        || !sink(JsonStringLiteral(state.basedOnFullBackup))
+        || !sink(",\n  \"FileStates\": {")) {
         return false;
     }
 
-    root = nlohmann::json::object();
-    root["ArchiveFileName"] = wstring_to_utf8(record.archiveFileName);
-    root["BackupType"] = wstring_to_utf8(record.backupType);
-    root["BasedOnFullBackup"] = wstring_to_utf8(record.basedOnFullBackup);
-    root["PreviousBackupFileName"] = wstring_to_utf8(record.previousBackupFileName);
-    root["CreatedAtUtc"] = wstring_to_utf8(record.createdAtUtc);
-    return WriteStringArray(root, "AddedFiles", record.addedFiles)
-        && WriteStringArray(root, "ModifiedFiles", record.modifiedFiles)
-        && WriteStringArray(root, "DeletedFiles", record.deletedFiles)
-        && WriteStringArray(root, "FullFileList", record.fullFileList);
+    bool first = true;
+    for (const auto& [rawPath, fileState] : state.fileStates) {
+        wstring relativePath;
+        if (!TryNormalizeRelativeEntry(rawPath, relativePath)) return false;
+        if (!first && !sink(",")) return false;
+        if (!sink("\n    ")
+            || !sink(JsonStringLiteral(relativePath))
+            || !sink(": {\"Size\": ")
+            || !sink(to_string(fileState.size))
+            || !sink(", \"LastWriteTimeUtc\": ")
+            || !sink(JsonStringLiteral(fileState.lastWriteTimeUtc))
+            || !sink(", \"Hash\": ")
+            || !sink(JsonStringLiteral(fileState.hash))
+            || !sink("}")) {
+            return false;
+        }
+        first = false;
+    }
+    return sink(first ? "}\n}\n" : "\n  }\n}\n");
 }
 
-bool TryParseRecord(const nlohmann::json& root, const wstring& fallbackArchiveFileName, FolderRewindFormat::ChangeRecord& outRecord) {
-    if (!root.is_object()) return false;
-
-    const auto archiveFileNameIt = root.find("ArchiveFileName");
-    if (archiveFileNameIt == root.end() || !archiveFileNameIt->is_string()) return false;
-
-    FolderRewindFormat::ChangeRecord record;
-    record.archiveFileName = utf8_to_wstring(archiveFileNameIt->get<string>());
-    if (!IsSafeArchiveReference(record.archiveFileName, false)) return false;
-    if (!fallbackArchiveFileName.empty() && _wcsicmp(record.archiveFileName.c_str(), fallbackArchiveFileName.c_str()) != 0) return false;
-
-    record.backupType = JsonString(root, "BackupType");
-    record.basedOnFullBackup = JsonString(root, "BasedOnFullBackup");
-    record.previousBackupFileName = JsonString(root, "PreviousBackupFileName");
-    if (!IsSafeArchiveReference(record.basedOnFullBackup, true)
-        || !IsSafeArchiveReference(record.previousBackupFileName, true)) {
+bool WriteRecordJson(
+    const AtomicFileWriter::ChunkSink& sink,
+    const FolderRewindFormat::ChangeRecord& record) {
+    if (!sink("{\n  \"ArchiveFileName\": ")
+        || !sink(JsonStringLiteral(record.archiveFileName))
+        || !sink(",\n  \"BackupType\": ")
+        || !sink(JsonStringLiteral(record.backupType))
+        || !sink(",\n  \"BasedOnFullBackup\": ")
+        || !sink(JsonStringLiteral(record.basedOnFullBackup))
+        || !sink(",\n  \"PreviousBackupFileName\": ")
+        || !sink(JsonStringLiteral(record.previousBackupFileName))
+        || !sink(",\n  \"CreatedAtUtc\": ")
+        || !sink(JsonStringLiteral(record.createdAtUtc))
+        || !sink(",\n")) {
         return false;
     }
-
-    record.createdAtUtc = JsonString(root, "CreatedAtUtc");
-    if (!TryLoadStringArray(root, "AddedFiles", record.addedFiles)
-        || !TryLoadStringArray(root, "ModifiedFiles", record.modifiedFiles)
-        || !TryLoadStringArray(root, "DeletedFiles", record.deletedFiles)
-        || !TryLoadStringArray(root, "FullFileList", record.fullFileList)) {
+    if (!WriteStringArrayJson(sink, "AddedFiles", record.addedFiles) || !sink(",\n")
+        || !WriteStringArrayJson(sink, "ModifiedFiles", record.modifiedFiles) || !sink(",\n")
+        || !WriteStringArrayJson(sink, "DeletedFiles", record.deletedFiles) || !sink(",\n")
+        || !WriteStringArrayJson(sink, "FullFileList", record.fullFileList)) {
         return false;
     }
-
-    outRecord = std::move(record);
-    return true;
+    return sink("\n}\n");
 }
+
+class StateSaxHandler final : public nlohmann::json_sax<nlohmann::json> {
+public:
+    using number_integer_t = nlohmann::json::number_integer_t;
+    using number_unsigned_t = nlohmann::json::number_unsigned_t;
+    using number_float_t = nlohmann::json::number_float_t;
+    using string_t = nlohmann::json::string_t;
+
+    bool Complete(FolderRewindFormat::MetadataState& outState) {
+        if (!rootEnded_ || !sawFileStates_ || !frames_.empty()) return false;
+        if (state_.version.empty()) state_.version = L"3.0";
+        if (!IsSafeArchiveReference(state_.lastBackupFileName, true)
+            || !IsSafeArchiveReference(state_.basedOnFullBackup, true)) {
+            return false;
+        }
+        outState = std::move(state_);
+        return true;
+    }
+
+    bool null() override { return Primitive(); }
+    bool boolean(bool) override { return Primitive(); }
+    bool number_integer(number_integer_t value) override {
+        if (frames_.empty()) return false;
+        Frame& frame = frames_.back();
+        if (frame.kind == Kind::FileStates) return false;
+        if (frame.kind == Kind::FileState && frame.key == "Size") {
+            if (value < 0) return false;
+            frame.fileState.size = static_cast<uintmax_t>(value);
+            frame.sizeSeen = true;
+        }
+        return true;
+    }
+    bool number_unsigned(number_unsigned_t value) override {
+        if (frames_.empty()) return false;
+        Frame& frame = frames_.back();
+        if (frame.kind == Kind::FileStates) return false;
+        if (frame.kind == Kind::FileState && frame.key == "Size") {
+            if (value > (numeric_limits<uintmax_t>::max)()) return false;
+            frame.fileState.size = static_cast<uintmax_t>(value);
+            frame.sizeSeen = true;
+        }
+        return true;
+    }
+    bool number_float(number_float_t, const string_t&) override { return Primitive(); }
+    bool string(string_t& value) override {
+        if (frames_.empty()) return false;
+        Frame& frame = frames_.back();
+        if (frame.kind == Kind::FileStates) return false;
+        const wstring converted = utf8_to_wstring(value);
+        if (frame.kind == Kind::Root) {
+            if (frame.key == "Version") state_.version = converted;
+            else if (frame.key == "LastBackupTime") state_.lastBackupTime = converted;
+            else if (frame.key == "LastBackupFileName") state_.lastBackupFileName = converted;
+            else if (frame.key == "BasedOnFullBackup") state_.basedOnFullBackup = converted;
+        }
+        else if (frame.kind == Kind::FileState) {
+            if (frame.key == "LastWriteTimeUtc") frame.fileState.lastWriteTimeUtc = converted;
+            else if (frame.key == "Hash") frame.fileState.hash = converted;
+        }
+        return true;
+    }
+    bool start_object(size_t) override {
+        if (frames_.empty()) {
+            if (rootStarted_) return false;
+            rootStarted_ = true;
+            frames_.push_back({Kind::Root});
+            return true;
+        }
+
+        Frame& parent = frames_.back();
+        if (parent.kind == Kind::Root && parent.key == "FileStates") {
+            state_.fileStates.clear();
+            sawFileStates_ = true;
+            parent.key.clear();
+            frames_.push_back({Kind::FileStates});
+            return true;
+        }
+        if (parent.kind == Kind::FileStates) {
+            wstring relativePath;
+            if (!TryNormalizeRelativeEntry(utf8_to_wstring(parent.key), relativePath)) return false;
+            parent.key.clear();
+            Frame frame{Kind::FileState};
+            frame.relativePath = std::move(relativePath);
+            frames_.push_back(std::move(frame));
+            return true;
+        }
+        frames_.push_back({Kind::IgnoredObject});
+        return true;
+    }
+    bool key(string_t& value) override {
+        if (frames_.empty()) return false;
+        Frame& frame = frames_.back();
+        frame.key = value;
+        if (frame.kind == Kind::Root) {
+            if (value == "Version") state_.version.clear();
+            else if (value == "LastBackupTime") state_.lastBackupTime.clear();
+            else if (value == "LastBackupFileName") state_.lastBackupFileName.clear();
+            else if (value == "BasedOnFullBackup") state_.basedOnFullBackup.clear();
+        }
+        else if (frame.kind == Kind::FileState) {
+            if (value == "Size") frame.sizeSeen = false;
+            else if (value == "LastWriteTimeUtc") frame.fileState.lastWriteTimeUtc.clear();
+            else if (value == "Hash") frame.fileState.hash.clear();
+        }
+        return true;
+    }
+    bool end_object() override {
+        if (frames_.empty()) return false;
+        Frame frame = std::move(frames_.back());
+        frames_.pop_back();
+        if (frame.kind == Kind::FileState) {
+            if (!frame.sizeSeen || frame.fileState.lastWriteTimeUtc.empty()) return false;
+            state_.fileStates[frame.relativePath] = std::move(frame.fileState);
+        }
+        else if (frame.kind == Kind::Root) {
+            if (!frames_.empty()) return false;
+            rootEnded_ = true;
+        }
+        return true;
+    }
+    bool start_array(size_t) override {
+        if (frames_.empty()) return false;
+        const Frame& parent = frames_.back();
+        if (parent.kind == Kind::FileStates
+            || (parent.kind == Kind::Root && parent.key == "FileStates")) {
+            return false;
+        }
+        frames_.push_back({Kind::IgnoredArray});
+        return true;
+    }
+    bool end_array() override {
+        if (frames_.empty() || frames_.back().kind != Kind::IgnoredArray) return false;
+        frames_.pop_back();
+        return true;
+    }
+    bool parse_error(size_t, const std::string&, const nlohmann::detail::exception&) override { return false; }
+
+private:
+    enum class Kind { Root, FileStates, FileState, IgnoredObject, IgnoredArray };
+    struct Frame {
+        Kind kind;
+        std::string key;
+        wstring relativePath;
+        FolderRewindFormat::FileState fileState;
+        bool sizeSeen = false;
+    };
+
+    bool Primitive() {
+        if (frames_.empty()) return false;
+        const Frame& frame = frames_.back();
+        return frame.kind != Kind::FileStates
+            && !(frame.kind == Kind::Root && frame.key == "FileStates");
+    }
+
+    vector<Frame> frames_;
+    FolderRewindFormat::MetadataState state_;
+    bool rootStarted_ = false;
+    bool rootEnded_ = false;
+    bool sawFileStates_ = false;
+};
+
+class RecordSaxHandler final : public nlohmann::json_sax<nlohmann::json> {
+public:
+    using number_integer_t = nlohmann::json::number_integer_t;
+    using number_unsigned_t = nlohmann::json::number_unsigned_t;
+    using number_float_t = nlohmann::json::number_float_t;
+    using string_t = nlohmann::json::string_t;
+
+    explicit RecordSaxHandler(wstring fallbackArchiveFileName)
+        : fallbackArchiveFileName_(std::move(fallbackArchiveFileName)) {}
+
+    bool Complete(FolderRewindFormat::ChangeRecord& outRecord) {
+        if (!rootEnded_ || !frames_.empty()
+            || !IsSafeArchiveReference(record_.archiveFileName, false)
+            || !IsSafeArchiveReference(record_.basedOnFullBackup, true)
+            || !IsSafeArchiveReference(record_.previousBackupFileName, true)) {
+            return false;
+        }
+        if (!fallbackArchiveFileName_.empty()
+            && _wcsicmp(record_.archiveFileName.c_str(), fallbackArchiveFileName_.c_str()) != 0) {
+            return false;
+        }
+        outRecord = std::move(record_);
+        return true;
+    }
+
+    bool null() override { return Primitive(); }
+    bool boolean(bool) override { return Primitive(); }
+    bool number_integer(number_integer_t) override { return Primitive(); }
+    bool number_unsigned(number_unsigned_t) override { return Primitive(); }
+    bool number_float(number_float_t, const string_t&) override { return Primitive(); }
+    bool string(string_t& value) override {
+        if (frames_.empty()) return false;
+        Frame& frame = frames_.back();
+        if (frame.kind == Kind::KnownArray) {
+            wstring normalized;
+            if (!TryNormalizeRelativeEntry(utf8_to_wstring(value), normalized)) return false;
+            Array(frame.arrayKind).push_back(std::move(normalized));
+            return true;
+        }
+        if (frame.kind != Kind::Root) return true;
+        if (IsArrayKey(frame.key)) return false;
+
+        const wstring converted = utf8_to_wstring(value);
+        if (frame.key == "ArchiveFileName") record_.archiveFileName = converted;
+        else if (frame.key == "BackupType") record_.backupType = converted;
+        else if (frame.key == "BasedOnFullBackup") record_.basedOnFullBackup = converted;
+        else if (frame.key == "PreviousBackupFileName") record_.previousBackupFileName = converted;
+        else if (frame.key == "CreatedAtUtc") record_.createdAtUtc = converted;
+        return true;
+    }
+    bool start_object(size_t) override {
+        if (frames_.empty()) {
+            if (rootStarted_) return false;
+            rootStarted_ = true;
+            frames_.push_back({Kind::Root});
+            return true;
+        }
+        const Frame& parent = frames_.back();
+        if (parent.kind == Kind::KnownArray
+            || (parent.kind == Kind::Root && IsArrayKey(parent.key))) {
+            return false;
+        }
+        frames_.push_back({Kind::IgnoredObject});
+        return true;
+    }
+    bool key(string_t& value) override {
+        if (frames_.empty()) return false;
+        Frame& frame = frames_.back();
+        frame.key = value;
+        if (frame.kind == Kind::Root) {
+            if (value == "ArchiveFileName") record_.archiveFileName.clear();
+            else if (value == "BackupType") record_.backupType.clear();
+            else if (value == "BasedOnFullBackup") record_.basedOnFullBackup.clear();
+            else if (value == "PreviousBackupFileName") record_.previousBackupFileName.clear();
+            else if (value == "CreatedAtUtc") record_.createdAtUtc.clear();
+        }
+        return true;
+    }
+    bool end_object() override {
+        if (frames_.empty()) return false;
+        const Kind kind = frames_.back().kind;
+        frames_.pop_back();
+        if (kind == Kind::Root) {
+            if (!frames_.empty()) return false;
+            rootEnded_ = true;
+        }
+        return true;
+    }
+    bool start_array(size_t) override {
+        if (frames_.empty()) return false;
+        const Frame& parent = frames_.back();
+        if (parent.kind == Kind::KnownArray) return false;
+        if (parent.kind == Kind::Root) {
+            ArrayKind arrayKind;
+            if (TryGetArrayKind(parent.key, arrayKind)) {
+                Array(arrayKind).clear();
+                Frame frame{Kind::KnownArray};
+                frame.arrayKind = arrayKind;
+                frames_.push_back(std::move(frame));
+                return true;
+            }
+        }
+        frames_.push_back({Kind::IgnoredArray});
+        return true;
+    }
+    bool end_array() override {
+        if (frames_.empty()) return false;
+        Frame frame = std::move(frames_.back());
+        frames_.pop_back();
+        if (frame.kind == Kind::KnownArray) {
+            auto& values = Array(frame.arrayKind);
+            sort(values.begin(), values.end());
+            if (adjacent_find(values.begin(), values.end()) != values.end()) return false;
+        }
+        else if (frame.kind != Kind::IgnoredArray) {
+            return false;
+        }
+        return true;
+    }
+    bool parse_error(size_t, const std::string&, const nlohmann::detail::exception&) override { return false; }
+
+private:
+    enum class Kind { Root, KnownArray, IgnoredObject, IgnoredArray };
+    enum class ArrayKind { Added, Modified, Deleted, Full };
+    struct Frame {
+        Kind kind;
+        std::string key;
+        ArrayKind arrayKind = ArrayKind::Added;
+    };
+
+    static bool TryGetArrayKind(const std::string& key, ArrayKind& outKind) {
+        if (key == "AddedFiles") outKind = ArrayKind::Added;
+        else if (key == "ModifiedFiles") outKind = ArrayKind::Modified;
+        else if (key == "DeletedFiles") outKind = ArrayKind::Deleted;
+        else if (key == "FullFileList") outKind = ArrayKind::Full;
+        else return false;
+        return true;
+    }
+    static bool IsArrayKey(const std::string& key) {
+        ArrayKind ignored;
+        return TryGetArrayKind(key, ignored);
+    }
+    vector<wstring>& Array(ArrayKind kind) {
+        switch (kind) {
+        case ArrayKind::Added: return record_.addedFiles;
+        case ArrayKind::Modified: return record_.modifiedFiles;
+        case ArrayKind::Deleted: return record_.deletedFiles;
+        case ArrayKind::Full: return record_.fullFileList;
+        }
+        return record_.fullFileList;
+    }
+    bool Primitive() {
+        if (frames_.empty()) return false;
+        const Frame& frame = frames_.back();
+        return frame.kind != Kind::KnownArray
+            && !(frame.kind == Kind::Root && IsArrayKey(frame.key));
+    }
+
+    vector<Frame> frames_;
+    FolderRewindFormat::ChangeRecord record_;
+    wstring fallbackArchiveFileName_;
+    bool rootStarted_ = false;
+    bool rootEnded_ = false;
+};
 
 } // namespace
 
@@ -245,34 +519,8 @@ bool LoadState(const filesystem::path& metadataDir, FolderRewindFormat::Metadata
         ifstream in(statePath, ios::binary);
         if (!in.is_open()) return false;
 
-        const nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
-        if (root.is_discarded() || !root.is_object()) return false;
-
-        FolderRewindFormat::MetadataState state;
-        state.version = JsonString(root, "Version");
-        if (state.version.empty()) state.version = L"3.0";
-        state.lastBackupTime = JsonString(root, "LastBackupTime");
-        state.lastBackupFileName = JsonString(root, "LastBackupFileName");
-        state.basedOnFullBackup = JsonString(root, "BasedOnFullBackup");
-        if (!IsSafeArchiveReference(state.lastBackupFileName, true)
-            || !IsSafeArchiveReference(state.basedOnFullBackup, true)) {
-            return false;
-        }
-
-        const auto fileStatesIt = root.find("FileStates");
-        if (fileStatesIt == root.end() || !fileStatesIt->is_object()) return false;
-
-        for (const auto& item : fileStatesIt->items()) {
-            wstring relativePath;
-            if (!TryNormalizeRelativeEntry(utf8_to_wstring(item.key()), relativePath)) return false;
-
-            FolderRewindFormat::FileState fileState;
-            if (!TryParseFileState(item.value(), fileState)) return false;
-            state.fileStates[relativePath] = std::move(fileState);
-        }
-
-        outState = std::move(state);
-        return true;
+        StateSaxHandler handler;
+        return nlohmann::json::sax_parse(in, &handler) && handler.Complete(outState);
     }
     catch (...) {
         return false;
@@ -287,9 +535,8 @@ bool LoadRecord(const filesystem::path& metadataDir, const wstring& archiveFileN
         ifstream in(*recordPath, ios::binary);
         if (!in.is_open()) return false;
 
-        const nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
-        if (root.is_discarded()) return false;
-        return TryParseRecord(root, archiveFileName, outRecord);
+        RecordSaxHandler handler(archiveFileName);
+        return nlohmann::json::sax_parse(in, &handler) && handler.Complete(outRecord);
     }
     catch (...) {
         return false;
@@ -449,30 +696,19 @@ SaveResult SaveStateDetailed(
         filesystem::create_directories(metadataDir, error);
         if (error) return Failure(SystemErrorText(L"Could not create metadata directory", error));
 
-        nlohmann::json root;
-        root["Version"] = "3.0";
         if (!IsSafeArchiveReference(state.lastBackupFileName, true)
             || !IsSafeArchiveReference(state.basedOnFullBackup, true)) {
             return Failure(L"Could not serialize metadata state: unsafe archive reference.");
         }
 
-        root["LastBackupTime"] = wstring_to_utf8(state.lastBackupTime);
-        root["LastBackupFileName"] = wstring_to_utf8(state.lastBackupFileName);
-        root["BasedOnFullBackup"] = wstring_to_utf8(state.basedOnFullBackup);
-        root["FileStates"] = nlohmann::json::object();
-
-        for (const auto& item : state.fileStates) {
-            wstring relativePath;
-            if (!TryNormalizeRelativeEntry(item.first, relativePath)) {
-                return Failure(L"Could not serialize metadata state: unsafe file-state path.");
-            }
-            root["FileStates"][wstring_to_utf8(relativePath)] = SerializeFileState(item.second);
-        }
-
         const filesystem::path statePath = GetStatePath(metadataDir);
         if (statePath.empty()) return Failure(L"Could not resolve metadata state path.");
 
-        return AtomicWriteJson(statePath, root);
+        const auto write = AtomicFileWriter::WriteStreamed(statePath, [&](const AtomicFileWriter::ChunkSink& sink) {
+            return WriteStateJson(sink, state);
+        });
+        if (!write.success) return Failure(write.error);
+        return {true, {}};
     }
     catch (const exception& error) {
         return ExceptionFailure(L"Could not save metadata state", error);
@@ -491,8 +727,9 @@ SaveResult SaveRecordDetailed(
             return Failure(L"Could not serialize change record: unsafe archive file name.");
         }
 
-        nlohmann::json root;
-        if (!TrySerializeRecord(record, root)) {
+        if (!IsSafeArchiveReference(record.archiveFileName, false)
+            || !IsSafeArchiveReference(record.basedOnFullBackup, true)
+            || !IsSafeArchiveReference(record.previousBackupFileName, true)) {
             return Failure(L"Could not serialize change record: unsafe metadata value.");
         }
 
@@ -502,7 +739,11 @@ SaveResult SaveRecordDetailed(
         filesystem::create_directories(recordsDirectory, error);
         if (error) return Failure(SystemErrorText(L"Could not create metadata records directory", error));
 
-        return AtomicWriteJson(*recordPath, root);
+        const auto write = AtomicFileWriter::WriteStreamed(*recordPath, [&](const AtomicFileWriter::ChunkSink& sink) {
+            return WriteRecordJson(sink, record);
+        });
+        if (!write.success) return Failure(write.error);
+        return {true, {}};
     }
     catch (const exception& error) {
         return ExceptionFailure(L"Could not save change record", error);

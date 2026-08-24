@@ -5,12 +5,12 @@
 #include <atomic>
 #include <chrono>
 #include <cerrno>
-#include <fstream>
 #include <limits>
 #include <mutex>
 #include <system_error>
 #include <thread>
 
+#include "Sha256.h"
 #include "text_to_text.h"
 
 #ifdef _WIN32
@@ -185,9 +185,16 @@ filesystem::path UniqueSibling(const filesystem::path& target, const wchar_t* su
 void RemoveQuietly(const filesystem::path& path);
 
 bool WriteExclusiveTemporary(
-    const filesystem::path& target, const string& content, filesystem::path& temporary, wstring& errorText) {
+    const filesystem::path& target,
+    const StreamProducer& producer,
+    filesystem::path& temporary,
+    string& expectedHash,
+    uintmax_t& expectedSize,
+    wstring& errorText) {
     for (int attempt = 0; attempt < 64; ++attempt) {
         temporary = UniqueSibling(target, L".tmp");
+        Sha256 hash;
+        expectedSize = 0;
 #ifdef _WIN32
         HANDLE handle = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_TEMPORARY, nullptr);
@@ -196,19 +203,32 @@ bool WriteExclusiveTemporary(
             errorText = L"Could not exclusively create the atomic write temporary file.";
             return false;
         }
-        bool success = true;
-        size_t offset = 0;
-        while (offset < content.size()) {
-            const size_t remaining = content.size() - offset;
-            const size_t maximumChunk = static_cast<size_t>((numeric_limits<DWORD>::max)());
-            const DWORD chunk = static_cast<DWORD>(remaining < maximumChunk ? remaining : maximumChunk);
-            DWORD written = 0;
-            if (!WriteFile(handle, content.data() + offset, chunk, &written, nullptr) || written != chunk) {
-                success = false;
-                break;
+        bool writeFailed = false;
+        const ChunkSink sink = [&](string_view content) {
+            size_t offset = 0;
+            while (offset < content.size()) {
+                const size_t remaining = content.size() - offset;
+                const size_t maximumChunk = static_cast<size_t>((numeric_limits<DWORD>::max)());
+                const DWORD chunk = static_cast<DWORD>(remaining < maximumChunk ? remaining : maximumChunk);
+                DWORD written = 0;
+                if (!WriteFile(handle, content.data() + offset, chunk, &written, nullptr) || written != chunk) {
+                    writeFailed = true;
+                    return false;
+                }
+                offset += written;
             }
-            offset += written;
+            hash.Update(content.data(), content.size());
+            expectedSize += content.size();
+            return true;
+        };
+        bool produced = false;
+        try {
+            produced = producer && producer(sink);
         }
+        catch (...) {
+            produced = false;
+        }
+        bool success = produced && !writeFailed;
         if (success) success = FlushFileBuffers(handle) != FALSE;
         CloseHandle(handle);
 #else
@@ -218,34 +238,54 @@ bool WriteExclusiveTemporary(
             errorText = L"Could not exclusively create the atomic write temporary file.";
             return false;
         }
-        bool success = true;
-        size_t offset = 0;
-        while (offset < content.size()) {
-            const ssize_t written = write(descriptor, content.data() + offset, content.size() - offset);
-            if (written < 0 && errno == EINTR) continue;
-            if (written <= 0) {
-                success = false;
-                break;
+        bool writeFailed = false;
+        const ChunkSink sink = [&](string_view content) {
+            size_t offset = 0;
+            while (offset < content.size()) {
+                const ssize_t written = write(descriptor, content.data() + offset, content.size() - offset);
+                if (written < 0 && errno == EINTR) continue;
+                if (written <= 0) {
+                    writeFailed = true;
+                    return false;
+                }
+                offset += static_cast<size_t>(written);
             }
-            offset += static_cast<size_t>(written);
+            hash.Update(content.data(), content.size());
+            expectedSize += content.size();
+            return true;
+        };
+        bool produced = false;
+        try {
+            produced = producer && producer(sink);
         }
+        catch (...) {
+            produced = false;
+        }
+        bool success = produced && !writeFailed;
         if (success) success = fsync(descriptor) == 0;
         close(descriptor);
 #endif
-        if (success) return true;
+        if (success) {
+            expectedHash = hash.FinalHex();
+            return true;
+        }
         RemoveQuietly(temporary);
-        errorText = L"Could not write and synchronize the complete atomic temporary file.";
+        errorText = produced
+            ? L"Could not write and synchronize the complete atomic temporary file."
+            : L"The atomic stream producer could not generate complete content.";
         return false;
     }
     errorText = L"Could not allocate a unique atomic write temporary file.";
     return false;
 }
 
-bool ReadExactly(const filesystem::path& path, const string& expected) {
-    ifstream input(path, ios::binary);
-    if (!input.is_open()) return false;
-    string actual((istreambuf_iterator<char>(input)), istreambuf_iterator<char>());
-    return (input.good() || input.eof()) && actual == expected;
+bool VerifyFile(const filesystem::path& path, const string& expectedHash, uintmax_t expectedSize) {
+    error_code error;
+    if (filesystem::file_size(path, error) != expectedSize || error) return false;
+
+    string actualHash;
+    wstring hashError;
+    return Sha256::FileHex(path, actualHash, hashError) && actualHash == expectedHash;
 }
 
 void RemoveQuietly(const filesystem::path& path) {
@@ -255,7 +295,7 @@ void RemoveQuietly(const filesystem::path& path) {
 
 } // namespace
 
-WriteResult WriteText(const filesystem::path& requestedTarget, const string& content, const WriteOptions& options) {
+WriteResult WriteStreamed(const filesystem::path& requestedTarget, const StreamProducer& producer, const WriteOptions& options) {
     lock_guard<mutex> writeLock(g_writeMutex);
     WriteResult result;
     if (requestedTarget.empty()) {
@@ -288,11 +328,13 @@ WriteResult WriteText(const filesystem::path& requestedTarget, const string& con
     }
 
     filesystem::path temporary;
-    if (!WriteExclusiveTemporary(target, content, temporary, result.error)) {
+    string expectedHash;
+    uintmax_t expectedSize = 0;
+    if (!WriteExclusiveTemporary(target, producer, temporary, expectedHash, expectedSize, result.error)) {
         return result;
     }
 
-    if (!ReadExactly(temporary, content)) {
+    if (!VerifyFile(temporary, expectedHash, expectedSize)) {
         result.error = L"The atomic temporary file failed read-back verification.";
         RemoveQuietly(temporary);
         return result;
@@ -356,6 +398,12 @@ WriteResult WriteText(const filesystem::path& requestedTarget, const string& con
     result.commitState = WriteCommitState::Durable;
     result.success = true;
     return result;
+}
+
+WriteResult WriteText(const filesystem::path& requestedTarget, const string& content, const WriteOptions& options) {
+    return WriteStreamed(requestedTarget, [&](const ChunkSink& sink) {
+        return sink(content);
+    }, options);
 }
 
 } // namespace AtomicFileWriter
