@@ -265,12 +265,13 @@ void WorldOperationGuard::Release() {
 		record.addedFiles = changeSet.addedFiles;
 		record.modifiedFiles = changeSet.modifiedFiles;
 		record.deletedFiles = changeSet.deletedFiles;
-		for (const auto& pair : currentState) {
-			record.fullFileList.push_back(FolderRewindFormat::NormalizeRelativePath(pair.first));
-		}
-		sort(record.fullFileList.begin(), record.fullFileList.end());
 
 		if (!FolderRewindFormat::IsSmartBackupType(backupType)) {
+			record.fullFileList.reserve(currentState.size());
+			for (const auto& pair : currentState) {
+				record.fullFileList.push_back(FolderRewindFormat::NormalizeRelativePath(pair.first));
+			}
+			sort(record.fullFileList.begin(), record.fullFileList.end());
 			record.previousBackupFileName.clear();
 			record.basedOnFullBackup = currentBackupFile;
 			record.addedFiles = record.fullFileList;
