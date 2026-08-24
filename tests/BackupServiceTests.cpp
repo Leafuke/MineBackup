@@ -793,14 +793,12 @@ void RunBackupServiceTests(
 		oneRecord.previousBackupFileName = fullFile;
 		oneRecord.basedOnFullBackup = fullFile;
 		oneRecord.addedFiles = {L"one.dat"};
-		oneRecord.fullFileList = {L"level.dat", L"one.dat"};
 		FolderRewindFormat::ChangeRecord twoRecord;
 		twoRecord.archiveFileName = smartTwoFile;
 		twoRecord.backupType = L"Smart";
 		twoRecord.previousBackupFileName = smartOneFile;
 		twoRecord.basedOnFullBackup = fullFile;
 		twoRecord.addedFiles = {L"two.dat"};
-		twoRecord.fullFileList = {L"level.dat", L"one.dat", L"two.dat"};
 		test.Expect(FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, fullRecord)
 			&& FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, oneRecord)
 			&& FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, twoRecord),

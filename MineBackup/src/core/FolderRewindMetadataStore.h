@@ -36,9 +36,10 @@ struct LoadResult {
 std::filesystem::path GetStatePath(const std::filesystem::path& metadataDir);
 std::filesystem::path GetRecordsDir(const std::filesystem::path& metadataDir);
 std::optional<std::filesystem::path> TryGetRecordPath(const std::filesystem::path& metadataDir, const std::wstring& archiveFileName);
+bool ListRecordArchiveFileNames(const std::filesystem::path& metadataDir, std::vector<std::wstring>& outArchiveFileNames);
 bool LoadState(const std::filesystem::path& metadataDir, FolderRewindFormat::MetadataState& outState);
 bool LoadRecord(const std::filesystem::path& metadataDir, const std::wstring& archiveFileName, FolderRewindFormat::ChangeRecord& outRecord);
-LoadResult Load(const std::filesystem::path& metadataDir, const std::vector<std::wstring>& requestedArchiveFileNames = {});
+LoadResult Load(const std::filesystem::path& metadataDir, const std::vector<std::wstring>& requestedArchiveFileNames);
 SaveResult SaveStateDetailed(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state);
 SaveResult SaveRecordDetailed(const std::filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record);
 bool SaveState(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state);

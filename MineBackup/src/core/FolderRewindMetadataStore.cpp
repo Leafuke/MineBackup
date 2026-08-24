@@ -511,6 +511,36 @@ optional<filesystem::path> TryGetRecordPath(const filesystem::path& metadataDir,
     }
 }
 
+bool ListRecordArchiveFileNames(
+    const filesystem::path& metadataDir,
+    vector<wstring>& outArchiveFileNames) {
+    outArchiveFileNames.clear();
+    try {
+        const filesystem::path recordsDir = GetRecordsDir(metadataDir);
+        if (recordsDir.empty()) return false;
+
+        error_code error;
+        if (!filesystem::is_directory(recordsDir, error) || error) return false;
+        for (filesystem::directory_iterator iterator(recordsDir, error), end;
+            !error && iterator != end; iterator.increment(error)) {
+            const bool regularFile = iterator->is_regular_file(error);
+            if (error) return false;
+            if (!regularFile || iterator->path().extension().wstring() != L".json") continue;
+
+            const wstring archiveFileName = iterator->path().stem().wstring();
+            if (!FolderRewindFormat::IsSafeSinglePathSegment(archiveFileName)) return false;
+            outArchiveFileNames.push_back(archiveFileName);
+        }
+        if (error) return false;
+        sort(outArchiveFileNames.begin(), outArchiveFileNames.end());
+        return true;
+    }
+    catch (...) {
+        outArchiveFileNames.clear();
+        return false;
+    }
+}
+
 bool LoadState(const filesystem::path& metadataDir, FolderRewindFormat::MetadataState& outState) {
     try {
         const filesystem::path statePath = GetStatePath(metadataDir);
