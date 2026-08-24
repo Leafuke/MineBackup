@@ -173,7 +173,7 @@ bool RepairMetadata(
 	}
 	const auto repairedSave = FolderRewindMetadataStore::SaveRecordDetailed(
 		metadataDirectory, repaired);
-	if (!repairedSave.success) {
+	if (!repairedSave.WasCommitted()) {
 		errorText = SaveFailureDetail(
 			"failed to save repaired chain metadata", repairedSave);
 		return false;
@@ -220,7 +220,7 @@ bool RepairMetadata(
 		if (!changed) continue;
 		const auto referenceSave = FolderRewindMetadataStore::SaveRecordDetailed(
 			metadataDirectory, record);
-		if (!referenceSave.success) {
+		if (!referenceSave.WasCommitted()) {
 			errorText = SaveFailureDetail(
 				"failed to repair references in chain metadata", referenceSave);
 			return false;
@@ -243,7 +243,7 @@ bool RepairMetadata(
 		if (!changed) return true;
 		const auto stateSave = FolderRewindMetadataStore::SaveStateDetailed(
 			metadataDirectory, state);
-		if (!stateSave.success) {
+		if (!stateSave.WasCommitted()) {
 			errorText = SaveFailureDetail(
 				"failed to repair chain metadata state", stateSave);
 			return false;

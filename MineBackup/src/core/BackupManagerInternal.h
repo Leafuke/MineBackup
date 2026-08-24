@@ -3,6 +3,7 @@
 #include "DataModels.h"
 #include "BackupChangeDetector.h"
 #include "FolderRewindFormat.h"
+#include "FolderRewindMetadataStore.h"
 #include "ProcessRunner.h"
 
 #include <filesystem>
@@ -71,7 +72,7 @@ std::vector<std::wstring> BuildEffectiveBackupBlacklist(
 std::filesystem::path GetMetadataDirectory(
 	const Config& config,
 	const std::wstring& worldName);
-bool UpdateMetadataFiles(
+FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(
 	const std::filesystem::path& metadataDirectory,
 	const std::wstring& currentBackupFile,
 	const std::wstring& baseBackupFile,

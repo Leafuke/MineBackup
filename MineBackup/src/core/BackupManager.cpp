@@ -251,7 +251,7 @@ void WorldOperationGuard::Release() {
 		return filesystem::path(config.backupPath) / FolderRewindFormat::kMetadataRootDirName / FolderRewindFormat::SanitizePathSegment(worldName);
 	}
 
-	bool UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& previousLastBackupFile, const wstring& backupType, map<wstring, FolderRewindFormat::FileState> currentState, const BackupChangeSet& changeSet) {
+	FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& previousLastBackupFile, const wstring& backupType, map<wstring, FolderRewindFormat::FileState> currentState, const BackupChangeSet& changeSet) {
 		const wstring normalizedBase = FolderRewindFormat::IsSmartBackupType(backupType)
 			? (baseBackupFile.empty() ? currentBackupFile : baseBackupFile)
 			: currentBackupFile;
@@ -286,13 +286,7 @@ void WorldOperationGuard::Release() {
 		state.basedOnFullBackup = record.basedOnFullBackup;
 		state.fileStates = std::move(currentState);
 
-		if (!FolderRewindMetadataStore::Save(metadataDir, state, record)) {
-			error_code ec;
-			filesystem::remove(FolderRewindMetadataStore::GetStatePath(metadataDir), ec);
-			FolderRewindMetadataStore::DeleteRecord(metadataDir, currentBackupFile);
-			return false;
-		}
-		return true;
+		return FolderRewindMetadataStore::SaveDetailed(metadataDir, state, record);
 	}
 
 	void InvalidateBackupMetadata(const Config& config, const wstring& worldName, const wstring& deletedBackupFile, const wstring& renamedOldFile, const wstring& renamedNewFile) {
@@ -942,12 +936,39 @@ execute_backup:
             }
         }
 
-		if (!UpdateMetadataFiles(metadataFolder, completedBackupFile, basedOnBackupFile, previousLastBackupFile, backupTypeStr, std::move(currentState), changeSet)) {
+		const auto metadataUpdate = UpdateMetadataFiles(
+			metadataFolder,
+			completedBackupFile,
+			basedOnBackupFile,
+			previousLastBackupFile,
+			backupTypeStr,
+			std::move(currentState),
+			changeSet);
+		if (!metadataUpdate.IsCommitted()) {
 			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
+			const bool archiveWasNewlyCreated = config.backupMode != 3 || latestBackupPath.empty();
+			error_code cleanupError;
+			if (archiveWasNewlyCreated) filesystem::remove(filesystem::path(archivePath), cleanupError);
 			publish("backup.failed", {{"error", "metadata_write_failed"}});
-			return MakeBackupFailure(
+			BackupResult failure = MakeBackupFailure(
 				OperationCode::BackupFailed, BackupOutcome::Failed,
-				"backup.metadata.write_failed", wstring_to_utf8(completedBackupFile));
+				"backup.metadata.write_failed",
+				metadataUpdate.error.empty()
+					? wstring_to_utf8(completedBackupFile)
+					: wstring_to_utf8(metadataUpdate.error));
+			if (cleanupError) {
+				failure.diagnostics.push_back(MakeDiagnostic(
+					"backup.archive.cleanup_failed",
+					DiagnosticSeverity::Warning,
+					cleanupError.message()));
+			}
+			return failure;
+		}
+		const bool metadataDurabilityWarning = !metadataUpdate.IsDurable();
+		if (metadataDurabilityWarning) {
+			BACKUP_WARNING("FolderRewind metadata was committed but directory durability could not be confirmed: %s",
+				wstring_to_utf8(metadataUpdate.error).c_str());
+			publish("backup.metadata.committed_not_durable");
 		}
 
 		HistoryEntry historyEntry;
@@ -985,11 +1006,19 @@ execute_backup:
 			{"result", "created"}});
 
 		BackupResult result;
-		result.code = OperationCode::Success;
+		result.code = metadataDurabilityWarning
+			? OperationCode::PartialSuccess
+			: OperationCode::Success;
 		result.outcome = BackupOutcome::Created;
 		result.archivePath = filesystem::path(archivePath);
 		result.historyEntry = historyEntry;
 		result.diagnostics.push_back(MakeDiagnostic("backup.completed", DiagnosticSeverity::Info));
+		if (metadataDurabilityWarning) {
+			result.diagnostics.push_back(MakeDiagnostic(
+				"backup.metadata.committed_not_durable",
+				DiagnosticSeverity::Warning,
+				wstring_to_utf8(metadataUpdate.error)));
+		}
 		result.diagnostics.insert(result.diagnostics.end(),
 			deferredDiagnostics.begin(), deferredDiagnostics.end());
 		if (dependencies_.cloudPost && !cancelled()) {

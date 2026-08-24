@@ -267,10 +267,24 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 	arguments.push_back(othersPath.wstring() + L"\\*");
 
 	if (RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority))) {
-		if (!UpdateMetadataFiles(storagePaths.metadataDir, archiveFileName, archiveFileName, L"", L"Full", std::move(currentState), changeSet)) {
+		const auto metadataUpdate = UpdateMetadataFiles(
+			storagePaths.metadataDir,
+			archiveFileName,
+			archiveFileName,
+			L"",
+			L"Full",
+			std::move(currentState),
+			changeSet);
+		if (!metadataUpdate.IsCommitted()) {
 			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(archiveFileName).c_str());
+			error_code cleanupError;
+			filesystem::remove(filesystem::path(archivePath), cleanupError);
 			BACKUP_INFO(L("LOG_BACKUP_OTHERS_END"));
 			return;
+		}
+		if (!metadataUpdate.IsDurable()) {
+			BACKUP_WARNING("FolderRewind metadata was committed but directory durability could not be confirmed: %s",
+				wstring_to_utf8(metadataUpdate.error).c_str());
 		}
 		LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount);
 		AddHistoryEntry(g_appState.currentConfigIndex, storagePaths.folderName, archiveFileName, L"Full", comment, othersPath.wstring());

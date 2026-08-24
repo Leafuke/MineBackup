@@ -3,6 +3,7 @@
 #define FOLDER_REWIND_METADATA_STORE_H
 
 #include "FolderRewindFormat.h"
+#include "AtomicFileWriter.h"
 
 #include <filesystem>
 #include <map>
@@ -15,6 +16,33 @@ namespace FolderRewindMetadataStore {
 struct SaveResult {
     bool success = false;
     std::wstring error;
+    AtomicFileWriter::WriteCommitState commitState = AtomicFileWriter::WriteCommitState::NotReplaced;
+    std::filesystem::path backupPath;
+
+    bool WasCommitted() const noexcept {
+        return commitState != AtomicFileWriter::WriteCommitState::NotReplaced;
+    }
+    bool IsDurable() const noexcept {
+        return commitState == AtomicFileWriter::WriteCommitState::Durable;
+    }
+};
+
+enum class SaveTransactionState {
+    NotCommitted,
+    CommittedNotDurable,
+    CommittedDurably,
+};
+
+struct SaveTransactionResult {
+    SaveTransactionState state = SaveTransactionState::NotCommitted;
+    std::wstring error;
+
+    bool IsCommitted() const noexcept {
+        return state != SaveTransactionState::NotCommitted;
+    }
+    bool IsDurable() const noexcept {
+        return state == SaveTransactionState::CommittedDurably;
+    }
 };
 
 struct LoadResult {
@@ -42,6 +70,7 @@ bool LoadRecord(const std::filesystem::path& metadataDir, const std::wstring& ar
 LoadResult Load(const std::filesystem::path& metadataDir, const std::vector<std::wstring>& requestedArchiveFileNames);
 SaveResult SaveStateDetailed(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state);
 SaveResult SaveRecordDetailed(const std::filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record);
+SaveTransactionResult SaveDetailed(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state, const FolderRewindFormat::ChangeRecord& record);
 bool SaveState(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state);
 bool SaveRecord(const std::filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record);
 bool Save(const std::filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state, const FolderRewindFormat::ChangeRecord& record);

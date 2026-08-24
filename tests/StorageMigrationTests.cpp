@@ -315,13 +315,33 @@ void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root)
     record.fullFileList = {L"level.dat"};
 
     const auto metadata = root / "metadata";
-    test.Expect(FolderRewindMetadataStore::Save(metadata, state, record), "metadata save should succeed");
+    const auto metadataSave = FolderRewindMetadataStore::SaveDetailed(metadata, state, record);
+    test.Expect(metadataSave.IsDurable(), "metadata save transaction should commit durably");
 
     const auto loaded = FolderRewindMetadataStore::Load(metadata, {record.archiveFileName});
     test.Expect(loaded.stateLoaded, "metadata state should load");
     test.Expect(!loaded.recordLoadFailed, "metadata record should load");
     test.Expect(loaded.state.lastBackupFileName == state.lastBackupFileName, "state archive name should round-trip");
     test.Expect(loaded.records.count(record.archiveFileName) == 1, "record should be indexed by archive name");
+
+    FolderRewindFormat::MetadataState invalidState = state;
+    invalidState.fileStates.clear();
+    invalidState.fileStates[L"../unsafe"] = {7, state.lastBackupTime, L""};
+    FolderRewindFormat::ChangeRecord replacementRecord = record;
+    replacementRecord.backupType = L"Replacement";
+    const auto rejectedTransaction = FolderRewindMetadataStore::SaveDetailed(
+        metadata, invalidState, replacementRecord);
+    FolderRewindFormat::MetadataState preservedState;
+    FolderRewindFormat::ChangeRecord preservedRecord;
+    test.Expect(!rejectedTransaction.IsCommitted()
+            && FolderRewindMetadataStore::LoadState(metadata, preservedState)
+            && FolderRewindMetadataStore::LoadRecord(metadata, record.archiveFileName, preservedRecord)
+            && preservedState.lastBackupFileName == state.lastBackupFileName
+            && preservedState.fileStates.size() == 1
+            && preservedState.fileStates.contains(L"level.dat")
+            && preservedState.fileStates.at(L"level.dat").size == 42
+            && preservedRecord.backupType == record.backupType,
+        "a rejected state write should roll back its record and preserve the prior metadata baseline");
 
     const auto renamedArchive = L"Renamed-World.7z";
     test.Expect(FolderRewindMetadataStore::RewriteRecordArchiveName(
@@ -340,7 +360,7 @@ void TestMetadataRoundTrip(TestContext& test, const std::filesystem::path& root)
     invalidRecord.archiveFileName = L"../unsafe.7z";
     const auto invalidSave = FolderRewindMetadataStore::SaveRecordDetailed(
         metadata, invalidRecord);
-    test.Expect(!invalidSave.success
+    test.Expect(!invalidSave.success && !invalidSave.WasCommitted()
         && invalidSave.error.find(L"Could not serialize change record") != std::wstring::npos,
         "detailed metadata save should identify serialization rejection");
 }

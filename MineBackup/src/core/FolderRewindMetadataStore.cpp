@@ -6,6 +6,7 @@
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <fstream>
 #include <limits>
@@ -30,6 +31,40 @@ wstring SystemErrorText(const wchar_t* operation, const error_code& error) {
 
 SaveResult ExceptionFailure(const wchar_t* operation, const exception& error) {
     return Failure(wstring(operation) + L": " + utf8_to_wstring(error.what()));
+}
+
+SaveResult FromAtomicWrite(AtomicFileWriter::WriteResult write) {
+    SaveResult result;
+    result.success = write.success;
+    result.error = std::move(write.error);
+    result.commitState = write.commitState;
+    result.backupPath = std::move(write.backupPath);
+    return result;
+}
+
+bool RestoreAtomicBackup(
+    const filesystem::path& target,
+    const filesystem::path& backup) {
+    ifstream input(backup, ios::binary);
+    if (!input.is_open()) return false;
+
+    AtomicFileWriter::WriteOptions options;
+    options.keepBackup = false;
+    const auto restored = AtomicFileWriter::WriteStreamed(
+        target,
+        [&](const AtomicFileWriter::ChunkSink& sink) {
+            array<char, 64 * 1024> buffer{};
+            while (input) {
+                input.read(buffer.data(), static_cast<streamsize>(buffer.size()));
+                const streamsize count = input.gcount();
+                if (count > 0 && !sink(string_view(buffer.data(), static_cast<size_t>(count)))) {
+                    return false;
+                }
+            }
+            return input.eof();
+        },
+        options);
+    return restored.WasReplaced();
 }
 
 bool HasSafeRawRelativeSegments(const wstring& value) {
@@ -737,8 +772,7 @@ SaveResult SaveStateDetailed(
         const auto write = AtomicFileWriter::WriteStreamed(statePath, [&](const AtomicFileWriter::ChunkSink& sink) {
             return WriteStateJson(sink, state);
         });
-        if (!write.success) return Failure(write.error);
-        return {true, {}};
+        return FromAtomicWrite(write);
     }
     catch (const exception& error) {
         return ExceptionFailure(L"Could not save metadata state", error);
@@ -772,8 +806,7 @@ SaveResult SaveRecordDetailed(
         const auto write = AtomicFileWriter::WriteStreamed(*recordPath, [&](const AtomicFileWriter::ChunkSink& sink) {
             return WriteRecordJson(sink, record);
         });
-        if (!write.success) return Failure(write.error);
-        return {true, {}};
+        return FromAtomicWrite(write);
     }
     catch (const exception& error) {
         return ExceptionFailure(L"Could not save change record", error);
@@ -784,20 +817,86 @@ SaveResult SaveRecordDetailed(
 }
 
 bool SaveState(const filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state) {
-    return SaveStateDetailed(metadataDir, state).success;
+    return SaveStateDetailed(metadataDir, state).WasCommitted();
 }
 
 bool SaveRecord(const filesystem::path& metadataDir, const FolderRewindFormat::ChangeRecord& record) {
-    return SaveRecordDetailed(metadataDir, record).success;
+    return SaveRecordDetailed(metadataDir, record).WasCommitted();
+}
+
+SaveTransactionResult SaveDetailed(
+    const filesystem::path& metadataDir,
+    const FolderRewindFormat::MetadataState& state,
+    const FolderRewindFormat::ChangeRecord& record) {
+    SaveTransactionResult result;
+    try {
+        const auto recordPath = TryGetRecordPath(metadataDir, record.archiveFileName);
+        if (!recordPath) {
+            result.error = L"Could not resolve the metadata record path.";
+            return result;
+        }
+
+        error_code error;
+        const bool recordExisted = filesystem::exists(*recordPath, error);
+        if (error) {
+            result.error = SystemErrorText(L"Could not inspect the metadata record", error);
+            return result;
+        }
+
+        const SaveResult recordSave = SaveRecordDetailed(metadataDir, record);
+        if (!recordSave.WasCommitted()) {
+            result.error = recordSave.error;
+            return result;
+        }
+
+        const SaveResult stateSave = SaveStateDetailed(metadataDir, state);
+        if (!stateSave.WasCommitted()) {
+            bool rolledBack = false;
+            if (recordExisted) {
+                rolledBack = !recordSave.backupPath.empty()
+                    && RestoreAtomicBackup(*recordPath, recordSave.backupPath);
+            }
+            else {
+                error.clear();
+                const bool removed = filesystem::remove(*recordPath, error);
+                if (!error && removed) {
+                    rolledBack = true;
+                }
+                else if (!error) {
+                    const bool stillExists = filesystem::exists(*recordPath, error);
+                    rolledBack = !error && !stillExists;
+                }
+            }
+            result.error = stateSave.error;
+            if (!rolledBack) {
+                if (!result.error.empty()) result.error += L" ";
+                result.error += L"The new record could not be rolled back after the state write failed.";
+            }
+            return result;
+        }
+
+        result.state = recordSave.IsDurable() && stateSave.IsDurable()
+            ? SaveTransactionState::CommittedDurably
+            : SaveTransactionState::CommittedNotDurable;
+        if (!recordSave.IsDurable()) result.error = recordSave.error;
+        if (!stateSave.IsDurable()) {
+            if (!result.error.empty()) result.error += L" ";
+            result.error += stateSave.error;
+        }
+        return result;
+    }
+    catch (const exception& error) {
+        result.error = wstring(L"Could not save metadata transaction: ") + utf8_to_wstring(error.what());
+        return result;
+    }
+    catch (...) {
+        result.error = L"Could not save metadata transaction: unknown exception.";
+        return result;
+    }
 }
 
 bool Save(const filesystem::path& metadataDir, const FolderRewindFormat::MetadataState& state, const FolderRewindFormat::ChangeRecord& record) {
-    try {
-        return SaveRecord(metadataDir, record) && SaveState(metadataDir, state);
-    }
-    catch (...) {
-        return false;
-    }
+    return SaveDetailed(metadataDir, state, record).IsCommitted();
 }
 
 bool DeleteRecord(const filesystem::path& metadataDir, const wstring& archiveFileName) {
