@@ -267,7 +267,7 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 	arguments.push_back(othersPath.wstring() + L"\\*");
 
 	if (RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority))) {
-		if (!UpdateMetadataFiles(storagePaths.metadataDir, archiveFileName, archiveFileName, L"Full", currentState, changeSet)) {
+		if (!UpdateMetadataFiles(storagePaths.metadataDir, archiveFileName, archiveFileName, L"", L"Full", std::move(currentState), changeSet)) {
 			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(archiveFileName).c_str());
 			BACKUP_INFO(L("LOG_BACKUP_OTHERS_END"));
 			return;

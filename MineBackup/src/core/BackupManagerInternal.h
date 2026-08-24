@@ -75,8 +75,9 @@ bool UpdateMetadataFiles(
 	const std::filesystem::path& metadataDirectory,
 	const std::wstring& currentBackupFile,
 	const std::wstring& baseBackupFile,
+	const std::wstring& previousLastBackupFile,
 	const std::wstring& backupType,
-	const std::map<std::wstring, FolderRewindFormat::FileState>& currentState,
+	std::map<std::wstring, FolderRewindFormat::FileState> currentState,
 	const BackupChangeSet& changeSet);
 void InvalidateBackupMetadata(
 	const Config& config,
