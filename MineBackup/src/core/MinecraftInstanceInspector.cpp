@@ -24,6 +24,19 @@ path NormalizePath(const path& input) {
 		? path{} : PathIdentity::NormalizeExistingOrProspectivePath(input);
 }
 
+// 校验并清洗外部传入的实例名称提示：去除首尾空白，拒绝全空白或包含 NUL 的名称
+std::optional<std::wstring> SanitizeSuggestedName(const std::optional<std::wstring>& input) {
+	if (!input.has_value()) return std::nullopt;
+	const auto& raw = *input;
+	if (raw.empty() || raw.find(L'\0') != std::wstring::npos) return std::nullopt;
+	auto start = raw.begin();
+	while (start != raw.end() && std::iswspace(*start)) ++start;
+	if (start == raw.end()) return std::nullopt;
+	auto end = raw.end() - 1;
+	while (end > start && std::iswspace(*end)) --end;
+	return std::wstring(start, end + 1);
+}
+
 std::wstring LowerForSort(std::wstring value) {
 	std::transform(value.begin(), value.end(), value.begin(),
 		[](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
@@ -260,7 +273,8 @@ bool AddBedrockWorlds(
 	instance.edition = MinecraftEdition::Bedrock;
 	instance.instanceRoot = NormalizePath(instanceRoot);
 	instance.savesRoot = NormalizePath(worldsRoot);
-	instance.suggestedName = L"Minecraft Bedrock";
+	const auto nameHint = SanitizeSuggestedName(location.suggestedName);
+	instance.suggestedName = nameHint.has_value() ? *nameHint : L"Minecraft Bedrock";
 	instance.evidence = LocationEvidence(location, instance.savesRoot);
 	for (const auto& worldPath : children) {
 		if (stopToken.stop_requested()) {
@@ -315,8 +329,9 @@ void InspectJavaRoot(
 	std::stop_token stopToken) {
 	if (!ValidateRoot(location, result, root, stopToken)) return;
 	std::set<std::wstring> seenSavesRoots;
-	AddJavaSavesRoot(location, result, root / L"saves", root, L"Minecraft",
-		stopToken, seenSavesRoots);
+	const auto rootNameHint = SanitizeSuggestedName(location.suggestedName);
+	AddJavaSavesRoot(location, result, root / L"saves", root,
+		rootNameHint.value_or(L"Minecraft"), stopToken, seenSavesRoots);
 	if (stopToken.stop_requested()) {
 		AddDiagnostic(result, location, "discovery_cancelled", root);
 		return;
@@ -338,6 +353,7 @@ void InspectJavaRoot(
 	}
 	for (const auto& versionRoot : ChildDirectories(location, result, versionsRoot, stopToken)) {
 		if (stopToken.stop_requested()) return;
+		// 版本隔离目录继续以 versions/<version> 的目录名作为实例名称，不被启动器名称覆盖
 		AddJavaSavesRoot(location, result, versionRoot / L"saves", versionRoot,
 			versionRoot.filename().wstring(), stopToken, seenSavesRoots);
 	}
@@ -351,7 +367,10 @@ void InspectJavaSavesRoot(
 	const auto parent = savesRoot.parent_path();
 	std::wstring suggestedName;
 	path instanceRoot = parent;
-	if (LowerForSort(parent.filename().wstring()) == L".minecraft") {
+	if (auto hint = SanitizeSuggestedName(location.suggestedName); hint.has_value()) {
+		suggestedName = std::move(*hint);
+	}
+	else if (LowerForSort(parent.filename().wstring()) == L".minecraft") {
 		suggestedName = L"Minecraft";
 	}
 	else {
@@ -371,8 +390,14 @@ void InspectJavaVersionRoot(
 	MinecraftInspectionResult& result,
 	const path& versionRoot,
 	std::stop_token stopToken) {
-	std::wstring suggestedName = versionRoot.filename().wstring();
-	if (suggestedName.empty()) suggestedName = L"Minecraft";
+	std::wstring suggestedName;
+	if (auto hint = SanitizeSuggestedName(location.suggestedName); hint.has_value()) {
+		suggestedName = std::move(*hint);
+	}
+	else {
+		suggestedName = versionRoot.filename().wstring();
+		if (suggestedName.empty()) suggestedName = L"Minecraft";
+	}
 	std::set<std::wstring> unused;
 	AddJavaSavesRoot(location, result, versionRoot / L"saves", versionRoot,
 		std::move(suggestedName), stopToken, unused);

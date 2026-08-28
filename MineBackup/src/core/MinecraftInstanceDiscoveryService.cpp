@@ -132,6 +132,13 @@ int BestEvidenceRank(const InspectedMinecraftInstance& instance) {
 	return rank;
 }
 
+bool HasValidSuggestedName(const std::optional<std::wstring>& name) {
+	if (!name.has_value() || name->empty() || name->find(L'\0') != std::wstring::npos) {
+		return false;
+	}
+	return !std::all_of(name->begin(), name->end(), [](wchar_t ch) { return std::iswspace(ch); });
+}
+
 } // namespace
 
 MinecraftInstanceDiscoveryService::MinecraftInstanceDiscoveryService(
@@ -182,6 +189,10 @@ MinecraftDiscoveryResult MinecraftInstanceDiscoveryService::Discover(
 		if (!inserted) {
 			if (LocationKindRank(location.kind) < LocationKindRank(position->second.kind)) {
 				position->second.kind = location.kind;
+			}
+			// 仅在现有位置缺少有效名称提示时，接受后来的有效名称提示
+			if (!HasValidSuggestedName(position->second.suggestedName) && HasValidSuggestedName(location.suggestedName)) {
+				position->second.suggestedName = std::move(location.suggestedName);
 			}
 			MergeEvidence(position->second.evidence, location.evidence);
 		}
