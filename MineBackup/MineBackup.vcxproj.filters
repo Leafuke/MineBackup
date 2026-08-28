@@ -222,6 +222,9 @@
 	<ClCompile Include="src\core\WorldIdentity.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
+	<ClCompile Include="src\core\PrismLauncherDiscoveryProvider.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
     <ClCompile Include="src\core\PathRuleSet.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -561,6 +564,9 @@
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\WorldIdentity.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\PrismLauncherDiscoveryProvider.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\RuntimeIntegration.h">

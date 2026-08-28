@@ -141,6 +141,7 @@
 	<ClCompile Include="src\core\MinecraftInstanceInspector.cpp" />
 	<ClCompile Include="src\core\PathIdentity.cpp" />
 	<ClCompile Include="src\core\Pcl2ProcessDiscoveryProvider.cpp" />
+	<ClCompile Include="src\core\PrismLauncherDiscoveryProvider.cpp" />
 	<ClCompile Include="src\core\ProcessInspectionService.cpp" />
 	<ClCompile Include="src\core\ProfileConfigCatalog.cpp" />
 	<ClCompile Include="src\core\ProfileConfigRepository.cpp" />
@@ -270,6 +271,7 @@
 	<ClInclude Include="src\core\MinecraftTypes.h" />
 	<ClInclude Include="src\core\PathIdentity.h" />
 	<ClInclude Include="src\core\Pcl2ProcessDiscoveryProvider.h" />
+	<ClInclude Include="src\core\PrismLauncherDiscoveryProvider.h" />
 	<ClInclude Include="src\core\ProcessInspectionService.h" />
 	<ClInclude Include="src\core\ProfileConfigCatalog.h" />
 	<ClInclude Include="src\core\ProfileConfigRepository.h" />
