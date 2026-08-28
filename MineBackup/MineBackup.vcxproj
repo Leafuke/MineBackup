@@ -135,6 +135,7 @@
 	<ClCompile Include="src\core\JobDocument.cpp" />
 	<ClCompile Include="src\core\JobRunner.cpp" />
 	<ClCompile Include="src\core\KnownMinecraftLocationProvider.cpp" />
+	<ClCompile Include="src\core\LauncherDiscoveryUtils.cpp" />
 	<ClCompile Include="src\core\MinecraftInstanceDiscoveryService.cpp" />
 	<ClCompile Include="src\core\MinecraftInstanceInspector.cpp" />
 	<ClCompile Include="src\core\PathIdentity.cpp" />
@@ -260,6 +261,7 @@
 	<ClInclude Include="src\core\JobModels.h" />
 	<ClInclude Include="src\core\JobRunner.h" />
 	<ClInclude Include="src\core\KnownMinecraftLocationProvider.h" />
+	<ClInclude Include="src\core\LauncherDiscoveryUtils.h" />
 	<ClInclude Include="src\core\MinecraftDiscovery.h" />
 	<ClInclude Include="src\core\MinecraftInstanceDiscoveryService.h" />
 	<ClInclude Include="src\core\MinecraftInstanceInspector.h" />
