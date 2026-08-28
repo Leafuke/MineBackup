@@ -140,6 +140,7 @@
 	<ClCompile Include="src\core\MinecraftInstanceDiscoveryService.cpp" />
 	<ClCompile Include="src\core\MinecraftInstanceInspector.cpp" />
 	<ClCompile Include="src\core\ModrinthDiscoveryProvider.cpp" />
+	<ClCompile Include="src\core\NeteaseMinecraftDiscoveryProvider.cpp" />
 	<ClCompile Include="src\core\PathIdentity.cpp" />
 	<ClCompile Include="src\core\Pcl2ProcessDiscoveryProvider.cpp" />
 	<ClCompile Include="src\core\PrismLauncherDiscoveryProvider.cpp" />
@@ -271,6 +272,7 @@
 	<ClInclude Include="src\core\MinecraftInstanceInspector.h" />
 	<ClInclude Include="src\core\MinecraftTypes.h" />
 	<ClInclude Include="src\core\ModrinthDiscoveryProvider.h" />
+	<ClInclude Include="src\core\NeteaseMinecraftDiscoveryProvider.h" />
 	<ClInclude Include="src\core\PathIdentity.h" />
 	<ClInclude Include="src\core\Pcl2ProcessDiscoveryProvider.h" />
 	<ClInclude Include="src\core\PrismLauncherDiscoveryProvider.h" />
