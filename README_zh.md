@@ -45,16 +45,18 @@ macOS 包尚未公证；若系统拦截，请使用“隐私与安全性 → 仍
 Gatekeeper，也不要执行 `xattr` 绕过安全检查。
 
 ### 2️⃣ 首次设置
-首次启动时，设置向导会异步扫描标准 Java/基岩版位置，以及 PCL2 当前活动目录或工作区的有界线索。
+首次启动时，设置向导会异步扫描标准 Java/基岩版位置，以及支持的启动器数据目录与工作区：
+- **HMCL**：探测用户主目录下的 `config/user-game-directories.json` 自动发现注册的游戏目录。
+- **Prism Launcher**：支持标准实例目录与 `prismlauncher.cfg` 中配置的自定义 `InstanceDir`，兼容 Prism 9+（`minecraft`）与旧版（`.minecraft`）目录结构。
+- **Modrinth App**：支持默认 `profiles` 实例目录（包括新版 `ModrinthApp` 及旧版 `com.modrinth.theseus` 迁移路径）。
+- **网易我的世界（中国版）**：仅在 Windows 环境下通过注册表 `DownloadPath` 自动识别 Java 版 `Game\.minecraft`，并识别 `%APPDATA%\MinecraftPE_Netease\minecraftWorlds` 基岩版存档。
+- **PCL2 / PCLCE**：通过运行中进程的工作区线索识别当前活动实例。
+
 扫描只生成候选，不会立即创建配置；用户勾选候选并确认后才会创建配置。每个实例都有独立的
 `Config` 条目和备份子目录。
 
 默认备份根为 `Documents/MineBackup-Backups`；如果 Documents 不可用，则回退到应用数据目录下的
-`backups`。也可以手动添加 Minecraft 目录，或通过高级入口保护普通自定义文件夹。PCL2 不保证枚举
-所有历史自定义目录，需要时请先运行 PCL2，再次执行扫描。重新扫描时，MineBackup 还会利用已有
-Minecraft 配置的目录结构识别所属 `.minecraft`，从而发现同一游戏目录中的其他标准或版本隔离实例。
-HMCL 自动发现本轮尚未支持，请手动添加其目录。之后可在 **设置 → 应用** 中重新扫描。
-在确认创建配置前退出首次设置不会写入新的配置。
+`backups`。对于便携版、自定义路径或暂未内置识别的启动器，可通过“手动添加”直接选择游戏或存档根目录，或通过高级入口保护普通自定义文件夹。之后可在 **设置 → 应用** 中重新扫描。在确认创建配置前退出首次设置不会写入新的配置。
 
 ### 3️⃣ 基础操作
 | 功能       | 操作方式 |
