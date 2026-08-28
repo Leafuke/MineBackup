@@ -132,6 +132,7 @@
     <ClCompile Include="src\core\MigrationCoordinator.cpp" />
 	<ClCompile Include="src\core\OperationResult.cpp" />
 	<ClCompile Include="src\core\HotRestoreCoordinator.cpp" />
+	<ClCompile Include="src\core\HmclDiscoveryProvider.cpp" />
 	<ClCompile Include="src\core\JobDocument.cpp" />
 	<ClCompile Include="src\core\JobRunner.cpp" />
 	<ClCompile Include="src\core\KnownMinecraftLocationProvider.cpp" />
@@ -257,6 +258,7 @@
 	<ClInclude Include="src\core\MigrationCoordinator.h" />
 	<ClInclude Include="src\core\OperationResult.h" />
 	<ClInclude Include="src\core\HotRestoreCoordinator.h" />
+	<ClInclude Include="src\core\HmclDiscoveryProvider.h" />
 	<ClInclude Include="src\core\JobDocument.h" />
 	<ClInclude Include="src\core\JobModels.h" />
 	<ClInclude Include="src\core\JobRunner.h" />

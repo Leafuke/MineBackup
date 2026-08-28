@@ -192,6 +192,9 @@
 	<ClCompile Include="src\core\HotRestoreCoordinator.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
+	<ClCompile Include="src\core\HmclDiscoveryProvider.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
 	<ClCompile Include="src\core\JobDocument.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
@@ -525,6 +528,9 @@
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\HotRestoreCoordinator.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\HmclDiscoveryProvider.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\JobDocument.h">
