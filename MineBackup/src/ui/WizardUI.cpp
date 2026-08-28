@@ -96,10 +96,20 @@ void SetPathBuffer(array<char, kWizardPathCapacity>& buffer, const filesystem::p
 
 const char* EvidenceLabel(const InspectedMinecraftInstance& instance) {
 	for (const auto& evidence : instance.evidence) {
-		if (evidence.kind == DiscoveryEvidenceKind::LauncherProcess
-			|| evidence.kind == DiscoveryEvidenceKind::LauncherSettings
-			|| evidence.kind == DiscoveryEvidenceKind::WorkspaceProbe) {
+		if (evidence.providerId == "pcl2") {
 			return L("WIZARD_SOURCE_PCL2");
+		}
+		if (evidence.providerId == "hmcl") {
+			return L("WIZARD_SOURCE_HMCL");
+		}
+		if (evidence.providerId == "prism-launcher") {
+			return L("WIZARD_SOURCE_PRISM");
+		}
+		if (evidence.providerId == "modrinth") {
+			return L("WIZARD_SOURCE_MODRINTH");
+		}
+		if (evidence.providerId == "netease-minecraft") {
+			return L("WIZARD_SOURCE_NETEASE");
 		}
 	}
 	for (const auto& evidence : instance.evidence) {
@@ -110,6 +120,13 @@ const char* EvidenceLabel(const InspectedMinecraftInstance& instance) {
 	for (const auto& evidence : instance.evidence) {
 		if (evidence.kind == DiscoveryEvidenceKind::Manual) {
 			return L("WIZARD_SOURCE_MANUAL");
+		}
+	}
+	for (const auto& evidence : instance.evidence) {
+		if (evidence.kind == DiscoveryEvidenceKind::LauncherProcess
+			|| evidence.kind == DiscoveryEvidenceKind::LauncherSettings
+			|| evidence.kind == DiscoveryEvidenceKind::WorkspaceProbe) {
+			return L("WIZARD_SOURCE_LAUNCHER");
 		}
 	}
 	return L("WIZARD_SOURCE_KNOWN");
@@ -321,7 +338,7 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 	if (!runtime.scanning && runtime.session.discovery.instances.empty()) {
 		ImGui::Spacing();
 		ImGui::TextWrapped("%s", L("WIZARD_DISCOVERY_EMPTY"));
-		ImGui::TextWrapped("%s", L("WIZARD_PCL2_HINT"));
+		ImGui::TextWrapped("%s", L("WIZARD_DISCOVERY_HINT"));
 	}
 	if (!runtime.errorKey.empty()) {
 		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),

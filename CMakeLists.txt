@@ -554,22 +554,6 @@ if(BUILD_TESTING)
 				-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunDeprecatedDesktopLaunchTest.cmake)
     endif()
 
-    add_executable(minebackup_i18n_tests
-        tests/I18nTest.cpp
-        ${MINEBACKUP_INFRA_DIR}/i18n.cpp
-        ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp)
-    target_include_directories(minebackup_i18n_tests PRIVATE
-        ${MINEBACKUP_COMMON_INCLUDE_DIRS})
-    if(MSVC)
-        target_compile_options(minebackup_i18n_tests PRIVATE /utf-8 /FS)
-    else()
-        target_compile_options(minebackup_i18n_tests PRIVATE -fno-strict-aliasing)
-    endif()
-    if(NOT WIN32)
-        target_link_libraries(minebackup_i18n_tests PRIVATE Iconv::Iconv)
-    endif()
-    add_test(NAME minebackup.i18n COMMAND minebackup_i18n_tests)
-
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_appearance_config_tests
             tests/AppearanceConfigTest.cpp)

@@ -1,6 +1,12 @@
 #include "MinecraftInstanceDiscoveryService.h"
 
 #include "KnownMinecraftLocationProvider.h"
+#include "HmclDiscoveryProvider.h"
+#include "PrismLauncherDiscoveryProvider.h"
+#include "ModrinthDiscoveryProvider.h"
+#ifdef _WIN32
+#include "NeteaseMinecraftDiscoveryProvider.h"
+#endif
 #include "Logging.h"
 #include "PathIdentity.h"
 #include "Pcl2ProcessDiscoveryProvider.h"
@@ -251,7 +257,16 @@ MinecraftDiscoveryResult MinecraftInstanceDiscoveryService::Discover(
 
 MinecraftInstanceDiscoveryService CreateDefaultMinecraftDiscoveryService() {
 	vector<shared_ptr<IMinecraftDiscoveryProvider>> providers;
+	// 静态文件系统与持久化配置发现优先
 	providers.push_back(make_shared<KnownMinecraftLocationProvider>());
+	providers.push_back(make_shared<HmclDiscoveryProvider>());
+	providers.push_back(make_shared<PrismLauncherDiscoveryProvider>());
+	providers.push_back(make_shared<ModrinthDiscoveryProvider>());
+#ifdef _WIN32
+	providers.push_back(make_shared<NeteaseMinecraftDiscoveryProvider>());
+#endif
+
+	// PCL2 运行中进程枚举最后执行
 	if (GetProcessInspectionAvailability() == ProcessInspectionAvailability::Available) {
 		providers.push_back(make_shared<Pcl2ProcessDiscoveryProvider>(
 			CreateProcessInspectionService()));
