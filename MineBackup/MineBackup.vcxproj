@@ -340,6 +340,7 @@
     <ClInclude Include="src\ui\SettingsUIPrivate.h" />
     <ClInclude Include="src\ui\imgui-all.h" />
     <ClInclude Include="src\ui\UIHelpers.h" />
+    <ClInclude Include="src\ui\ThemeManager.h" />
     <ClInclude Include="src\ui\WorldListController.h" />
     <ClInclude Include="src\ui\WorldListModel.h" />
     <ClInclude Include="src\utils\FileName.h" />
@@ -350,7 +351,6 @@
     <ClInclude Include="third_party\imgui\imgui_impl_opengl3.h" />
     <ClInclude Include="third_party\imgui\imgui_impl_opengl3_loader.h" />
     <ClInclude Include="third_party\imgui\imgui_internal.h" />
-    <ClInclude Include="third_party\imgui\imgui_style.h" />
     <ClInclude Include="third_party\imgui\imstb_rectpack.h" />
     <ClInclude Include="third_party\imgui\imstb_textedit.h" />
     <ClInclude Include="third_party\imgui\imstb_truetype.h" />

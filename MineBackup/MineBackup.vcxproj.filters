@@ -728,6 +728,9 @@
     <ClInclude Include="src\ui\UIHelpers.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\ThemeManager.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\WorldListController.h">
       <Filter>src\ui</Filter>
     </ClInclude>
@@ -756,9 +759,6 @@
       <Filter>third_party\imgui</Filter>
     </ClInclude>
     <ClInclude Include="third_party\imgui\imgui_internal.h">
-      <Filter>third_party\imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imgui_style.h">
       <Filter>third_party\imgui</Filter>
     </ClInclude>
     <ClInclude Include="third_party\imgui\imstb_rectpack.h">

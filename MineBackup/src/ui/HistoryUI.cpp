@@ -5,7 +5,7 @@
 #include "Globals.h"
 #include "UIHelpers.h"
 #include "imgui-all.h"
-#include "imgui_style.h"
+#include "ThemeManager.h"
 #include "i18n.h"
 #include "AppState.h"
 #include "IconsFontAwesome6.h"

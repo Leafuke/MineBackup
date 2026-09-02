@@ -8,7 +8,7 @@
 #include "NetworkBackendFactory.h"
 #include "NetworkService.h"
 #include "Sha256.h"
-#include "imgui_style.h"
+#include "ThemeManager.h"
 
 using namespace std;
 

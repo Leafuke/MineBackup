@@ -6,7 +6,7 @@
 #include "ProcessRunner.h"
 #include "i18n.h"
 #include "imgui-all.h"
-#include "imgui_style.h"
+#include "ThemeManager.h"
 #include "text_to_text.h"
 
 #include <filesystem>
