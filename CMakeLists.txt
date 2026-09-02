@@ -478,6 +478,16 @@ if(BUILD_TESTING)
     add_test(NAME minebackup.pcl2_discovery
         COMMAND minebackup_pcl2_discovery_tests)
 
+    add_executable(minebackup_launcher_discovery_tests
+        tests/LauncherDiscoveryProviderTests.cpp)
+    target_link_libraries(minebackup_launcher_discovery_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_launcher_discovery_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.launcher_discovery
+        COMMAND minebackup_launcher_discovery_tests)
+
     add_executable(minebackup_minecraft_discovery_service_tests
         tests/MinecraftInstanceDiscoveryServiceTests.cpp)
     target_link_libraries(minebackup_minecraft_discovery_service_tests PRIVATE

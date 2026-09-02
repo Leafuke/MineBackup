@@ -83,7 +83,8 @@ std::vector<DiscoveryLocation> ModrinthDiscoveryProvider::DiscoverLocations(
 		if (ec) {
 			context.reportDiagnostic({
 				"modrinth_profiles_unreadable", Id(), profilesDir, ec});
-			foundNewProfiles = true; // 存在但不可读，按规范不自动回退旧版，避免迁移残留
+			// 策略决策：若新版 ModrinthApp 存在但不可读，视为新版已被创建，不回退检查旧版，避免迁移残留造成重复候选
+			foundNewProfiles = true;
 			continue;
 		}
 		if (exists) {
@@ -99,7 +100,8 @@ std::vector<DiscoveryLocation> ModrinthDiscoveryProvider::DiscoverLocations(
 		}
 	}
 
-	// 2. 仅当新版数据根不存在 profiles 时，回退尝试旧版 com.modrinth.theseus/profiles
+	// 2. 仅当新版数据根不存在 profiles 时，回退尝试旧版 com.modrinth.theseus/profiles。
+	// 若新版目录已存在（即使为空），也不 fallback 到旧版，以避免应用升级迁移后残留旧实例导致重复发现。
 	if (!foundNewProfiles && activeProfilesDirs.empty()) {
 		for (const auto& root : ResolveLegacyModrinthDataRoots()) {
 			if (stopToken.stop_requested()) break;

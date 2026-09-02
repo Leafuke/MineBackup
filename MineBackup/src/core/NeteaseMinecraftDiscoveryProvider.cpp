@@ -124,8 +124,8 @@ std::optional<std::filesystem::path> ReadNeteaseDownloadPath(
 	}
 
 	if (type == REG_EXPAND_SZ) {
-		const DWORD expandedLen = ExpandEnvironmentStringsW(rawStr.c_str(), nullptr, 0);
-		if (expandedLen == 0) {
+		const auto expanded = LauncherDiscoveryUtils::ExpandEnvironmentString(rawStr);
+		if (!expanded.has_value()) {
 			context.reportDiagnostic({
 				"netease_download_path_expand_failed",
 				providerId,
@@ -134,19 +134,7 @@ std::optional<std::filesystem::path> ReadNeteaseDownloadPath(
 			});
 			return std::nullopt;
 		}
-		std::wstring expandedStr(expandedLen, L'\0');
-		const DWORD written = ExpandEnvironmentStringsW(rawStr.c_str(), expandedStr.data(), expandedLen);
-		if (written == 0 || written >= expandedLen) {
-			context.reportDiagnostic({
-				"netease_download_path_expand_failed",
-				providerId,
-				{},
-				std::error_code(static_cast<int>(GetLastError()), std::system_category())
-			});
-			return std::nullopt;
-		}
-		expandedStr.resize(written);
-		rawStr = std::move(expandedStr);
+		rawStr = *expanded;
 	}
 
 	std::filesystem::path pathVal(rawStr);
@@ -166,39 +154,56 @@ std::optional<std::filesystem::path> ReadNeteaseDownloadPath(
 
 } // namespace
 
+NeteaseMinecraftDiscoveryProvider::NeteaseMinecraftDiscoveryProvider(
+	NeteaseDiscoveryDependencies dependencies)
+	: dependencies_(std::move(dependencies)) {}
+
 std::vector<DiscoveryLocation> NeteaseMinecraftDiscoveryProvider::DiscoverLocations(
 	const MinecraftDiscoveryContext& context,
 	std::stop_token stopToken) {
 	std::vector<DiscoveryLocation> locations;
 	if (stopToken.stop_requested()) return locations;
 
+	auto readDownload = dependencies_.readDownloadPath;
 #ifdef _WIN32
+	if (!readDownload) {
+		readDownload = ReadNeteaseDownloadPath;
+	}
+#endif
+
+	auto readEnv = dependencies_.readEnvironmentPath ? dependencies_.readEnvironmentPath
+		: LauncherDiscoveryUtils::ReadEnvironmentPath;
+	auto isDir = dependencies_.isDirectory ? dependencies_.isDirectory
+		: LauncherDiscoveryUtils::IsDirectory;
+
 	// 1. Java 版发现（通过注册表 DownloadPath 定位 Game\.minecraft）
-	const auto downloadPath = ReadNeteaseDownloadPath(context, Id());
-	if (downloadPath.has_value() && !stopToken.stop_requested()) {
-		const auto javaRoot = *downloadPath / "Game" / ".minecraft";
-		std::error_code javaError;
-		const bool exists = std::filesystem::exists(javaRoot, javaError);
-		if (javaError) {
-			context.reportDiagnostic({
-				"netease_java_root_unreadable", Id(), javaRoot, javaError});
-		}
-		else if (exists) {
-			if (LauncherDiscoveryUtils::IsDirectory(javaRoot, javaError)) {
-				DiscoveryLocation loc;
-				loc.path = javaRoot;
-				loc.kind = DiscoveryLocationKind::MinecraftRoot;
-				loc.suggestedName = L"网易我的世界 Java版";
-				loc.evidence.push_back({
-					DiscoveryEvidenceKind::LauncherSettings,
-					Id(),
-					*downloadPath
-				});
-				locations.push_back(std::move(loc));
-			}
-			else if (javaError) {
+	if (readDownload) {
+		const auto downloadPath = readDownload(context, Id());
+		if (downloadPath.has_value() && !stopToken.stop_requested()) {
+			const auto javaRoot = *downloadPath / "Game" / ".minecraft";
+			std::error_code javaError;
+			const bool exists = std::filesystem::exists(javaRoot, javaError);
+			if (javaError) {
 				context.reportDiagnostic({
 					"netease_java_root_unreadable", Id(), javaRoot, javaError});
+			}
+			else if (exists) {
+				if (isDir(javaRoot, javaError)) {
+					DiscoveryLocation loc;
+					loc.path = javaRoot;
+					loc.kind = DiscoveryLocationKind::MinecraftRoot;
+					loc.suggestedName = L"网易我的世界 Java版";
+					loc.evidence.push_back({
+						DiscoveryEvidenceKind::LauncherSettings,
+						Id(),
+						*downloadPath
+					});
+					locations.push_back(std::move(loc));
+				}
+				else if (javaError) {
+					context.reportDiagnostic({
+						"netease_java_root_unreadable", Id(), javaRoot, javaError});
+				}
 			}
 		}
 	}
@@ -206,7 +211,7 @@ std::vector<DiscoveryLocation> NeteaseMinecraftDiscoveryProvider::DiscoverLocati
 	if (stopToken.stop_requested()) return locations;
 
 	// 2. 基岩版发现（%APPDATA%\MinecraftPE_Netease\minecraftWorlds）
-	if (auto appdata = LauncherDiscoveryUtils::ReadEnvironmentPath("APPDATA"); appdata.has_value()) {
+	if (auto appdata = readEnv("APPDATA"); appdata.has_value()) {
 		const auto bedrockRoot = *appdata / "MinecraftPE_Netease" / "minecraftWorlds";
 		std::error_code bedrockError;
 		const bool exists = std::filesystem::exists(bedrockRoot, bedrockError);
@@ -215,7 +220,7 @@ std::vector<DiscoveryLocation> NeteaseMinecraftDiscoveryProvider::DiscoverLocati
 				"netease_bedrock_root_unreadable", Id(), bedrockRoot, bedrockError});
 		}
 		else if (exists) {
-			if (LauncherDiscoveryUtils::IsDirectory(bedrockRoot, bedrockError)) {
+			if (isDir(bedrockRoot, bedrockError)) {
 				DiscoveryLocation loc;
 				loc.path = bedrockRoot;
 				loc.kind = DiscoveryLocationKind::BedrockWorldsRoot;
@@ -233,9 +238,6 @@ std::vector<DiscoveryLocation> NeteaseMinecraftDiscoveryProvider::DiscoverLocati
 			}
 		}
 	}
-#else
-	(void)context;
-#endif
 
 	return locations;
 }

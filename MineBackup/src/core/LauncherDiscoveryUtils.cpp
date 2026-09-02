@@ -205,4 +205,19 @@ bool IsMissingFilesystemError(std::error_code error) {
 	return false;
 }
 
+#ifdef _WIN32
+std::optional<std::wstring> ExpandEnvironmentString(std::wstring_view input) {
+	if (input.empty()) return std::wstring{};
+	std::wstring nullTerminatedInput(input);
+	const DWORD required = ExpandEnvironmentStringsW(nullTerminatedInput.c_str(), nullptr, 0);
+	if (required == 0) return std::nullopt;
+	std::wstring result(required, L'\0');
+	const DWORD written = ExpandEnvironmentStringsW(
+		nullTerminatedInput.c_str(), result.data(), required);
+	if (written == 0 || written > required) return std::nullopt;
+	result.resize(written - 1);
+	return result;
+}
+#endif
+
 } // namespace LauncherDiscoveryUtils

@@ -64,6 +64,11 @@ ListChildDirectories(
 	const std::filesystem::path& root,
 	std::error_code& error);
 
+#ifdef _WIN32
+// 展开 Windows 环境变量字符串（如 %USERPROFILE%\foo -> C:\Users\user\foo）
+std::optional<std::wstring> ExpandEnvironmentString(std::wstring_view input);
+#endif
+
 // 判断 filesystem 错误是否属于文件/路径不存在
 bool IsMissingFilesystemError(std::error_code error);
 
