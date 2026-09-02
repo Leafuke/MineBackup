@@ -12,6 +12,7 @@
 #include "MinecraftInstanceDiscoveryService.h"
 #include "TaskCoordinator.h"
 #include "UIHelpers.h"
+#include "ThemePalette.h"
 #include "WizardSession.h"
 #include "i18n.h"
 #include "imgui-all.h"
@@ -330,7 +331,7 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 	ImGui::EndDisabled();
 
 	if (runtime.scanning) {
-		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info),
 			"%s", L("WIZARD_SCANNING"));
 	}
 	// 空结果提示只负责解释“没扫到 Minecraft”；普通文件夹入口
@@ -341,7 +342,7 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 		ImGui::TextWrapped("%s", L("WIZARD_DISCOVERY_HINT"));
 	}
 	if (!runtime.errorKey.empty()) {
-		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error),
 			"%s", L(runtime.errorKey.c_str()));
 	}
 
@@ -366,7 +367,7 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 			"WIZARD_WORLD_COUNT", instance.worlds.size());
 		ImGui::TextUnformatted(wstring_to_utf8(count).c_str());
 		if (candidate.alreadyConfigured) {
-			ImGui::TextColored(ImVec4(0.55f, 0.75f, 0.55f, 1.0f),
+			ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Muted),
 				"%s", L("WIZARD_ALREADY_ADDED"));
 		}
 		ImGui::Unindent();
@@ -403,7 +404,7 @@ void DrawDiscoveryStage(WizardRuntime& runtime) {
 	// 此时“请选择至少一个实例”没有信息量，不再显示。
 	if (!runtime.session.discovery.instances.empty()
 		&& runtime.session.selectedInstanceKeys.empty()) {
-		ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.25f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning),
 			"%s", L("WIZARD_SELECT_AT_LEAST_ONE"));
 	}
 	ImGui::BeginDisabled(runtime.scanning
@@ -450,7 +451,7 @@ void DrawBackupStage(WizardRuntime& runtime) {
 	const bool rootValid = !runtime.session.defaultBackupRoot.empty()
 		&& runtime.session.defaultBackupRoot.is_absolute();
 	if (!rootValid) {
-		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error),
 			"%s", L("WIZARD_BACKUP_ABSOLUTE_REQUIRED"));
 	}
 	ImGui::Spacing();
@@ -483,17 +484,17 @@ void DrawReadyStage(WizardRuntime& runtime) {
 	ImGui::TextWrapped("%s", L("WIZARD_READY_DESC"));
 	ImGui::Spacing();
 	if (runtime.readinessRunning) {
-		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f), "%s",
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info), "%s",
 			L(runtime.finalizing
 				? "WIZARD_FINAL_CHECKING" : "WIZARD_READINESS_CHECKING"));
 	}
 	else if (runtime.session.readiness.report.ready) {
-		ImGui::TextColored(ImVec4(0.35f, 0.8f, 0.45f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success),
 			"%s", L("WIZARD_READY_OK"));
 	}
 	DrawMinecraftReadinessIssues(runtime.session.readiness);
 	if (!runtime.errorKey.empty()) {
-		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error),
 			"%s", L(runtime.errorKey.c_str()));
 	}
 
@@ -532,7 +533,7 @@ void DrawCoreValidationStage(WizardRuntime& runtime, bool& showConfigWizard) {
 	}
 	ImGui::TextUnformatted(L("WIZARD_CORE_VALIDATION_TITLE"));
 	if (runtime.coreValidationStartFailed) {
-		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error),
 			"%s", L("WIZARD_CORE_VALIDATION_START_FAILED"));
 		if (ImGui::Button(L("BUTTON_RETRY"), ImVec2(-1, 0))) {
 			runtime.coreValidationStartFailed = false;
@@ -544,7 +545,7 @@ void DrawCoreValidationStage(WizardRuntime& runtime, bool& showConfigWizard) {
 		return;
 	}
 	if (g_CoreValidationPassed.load()) {
-		ImGui::TextColored(ImVec4(0.35f, 0.8f, 0.45f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success),
 			"%s", L("WIZARD_CORE_VALIDATION_PASSED"));
 		if (ImGui::Button(L("WIZARD_ENTER_MAIN"), ImVec2(-1, 0))) {
 			FinishWizard(showConfigWizard, false);
@@ -552,7 +553,7 @@ void DrawCoreValidationStage(WizardRuntime& runtime, bool& showConfigWizard) {
 		return;
 	}
 
-	ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+	ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error),
 		"%s", L("WIZARD_CORE_VALIDATION_FAILED"));
 	ImGui::TextWrapped("%s", L("WIZARD_CORE_VALIDATION_FAILED_DESC"));
 	if (ImGui::Button(L("WIZARD_OPEN_LOGS"), ImVec2(-1, 0))) {

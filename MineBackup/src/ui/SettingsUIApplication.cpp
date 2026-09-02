@@ -8,6 +8,7 @@
 #include "MinecraftInstanceDiscoveryService.h"
 #include "MinecraftSetupUI.h"
 #include "TaskCoordinator.h"
+#include "ThemePalette.h"
 #include "WizardSession.h"
 
 #include <cstdint>
@@ -222,7 +223,7 @@ void DrawMinecraftCandidate(
 		"WIZARD_WORLD_COUNT", instance.worlds.size());
 	ImGui::TextUnformatted(wstring_to_utf8(worldCount).c_str());
 	if (candidate.alreadyConfigured) {
-		ImGui::TextColored(ImVec4(0.55f, 0.75f, 0.55f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Muted),
 			"%s", L("SETTINGS_MINECRAFT_ALREADY_ADDED"));
 	}
 	ImGui::Unindent();
@@ -243,21 +244,21 @@ void DrawMinecraftInstancesSection() {
 	}
 	ImGui::EndDisabled();
 	if (runtime.scanning) {
-		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info),
 			"%s", L("SETTINGS_MINECRAFT_SCANNING"));
 	}
 	if (runtime.checking) {
-		ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info),
 			"%s", L("SETTINGS_MINECRAFT_CHECKING"));
 	}
 	if (runtime.addSucceeded) {
 		const wstring message = MineFormatMessage(
 			"SETTINGS_MINECRAFT_ADDED_SUCCESS", runtime.lastAddedCount);
-		ImGui::TextColored(ImVec4(0.35f, 0.8f, 0.45f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success),
 			"%s", wstring_to_utf8(message).c_str());
 	}
 	if (!runtime.errorKey.empty()) {
-		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error),
 			"%s", L(runtime.errorKey.c_str()));
 	}
 

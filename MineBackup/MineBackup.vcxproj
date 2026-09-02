@@ -341,6 +341,7 @@
     <ClInclude Include="src\ui\imgui-all.h" />
     <ClInclude Include="src\ui\UIHelpers.h" />
     <ClInclude Include="src\ui\ThemeManager.h" />
+    <ClInclude Include="src\ui\ThemePalette.h" />
     <ClInclude Include="src\ui\WorldListController.h" />
     <ClInclude Include="src\ui\WorldListModel.h" />
     <ClInclude Include="src\utils\FileName.h" />

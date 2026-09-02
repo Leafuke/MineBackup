@@ -6,6 +6,7 @@
 #include "UIHelpers.h"
 #include "imgui-all.h"
 #include "ThemeManager.h"
+#include "ThemePalette.h"
 #include "i18n.h"
 #include "AppState.h"
 #include "IconsFontAwesome6.h"
@@ -326,12 +327,12 @@ void ShowHistoryWindow(int requestedConfigIndex,
 				: view.status == HistoryFileStatus::CloudOnly
 					? ICON_FA_CLOUD : ICON_FA_TRIANGLE_EXCLAMATION;
 			const ImVec4 statusIconColor = view.status == HistoryFileStatus::Normal
-				? ImVec4(0.4f, 0.85f, 0.5f, 1.0f)
+				? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success)
 				: view.status == HistoryFileStatus::CloudOnly
-					? ImVec4(0.45f, 0.75f, 1.0f, 1.0f)
+					? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info)
 					: view.status == HistoryFileStatus::SmallFile
-						? ImVec4(1.0f, 0.75f, 0.25f, 1.0f)
-						: ImVec4(0.95f, 0.45f, 0.35f, 1.0f);
+						? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning)
+						: ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error);
 
 			const string sizeLabel = view.fileSize == 0 ? "-"
 				: wstring_to_utf8(MineFormatMessage("HISTORY_SIZE_MB",
@@ -411,7 +412,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			if (entry.isImportant) {
 				const float starSize = ImGui::CalcTextSize(ICON_FA_STAR).x;
 				ImGui::SameLine(cardWidth - starSize - cardPadding * 2.0f);
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.2f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning));
 				ImGui::TextUnformatted(ICON_FA_STAR);
 				ImGui::PopStyleColor();
 			}
@@ -581,8 +582,8 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			}
 
 			ImGui::SeparatorText(L("HISTORY_DANGER_ZONE"));
-			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.40f, 0.40f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.30f, 0.30f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Button, ThemePalette::GetDangerButtonColor());
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ThemePalette::GetDangerButtonHoveredColor());
 			if (ImGui::Button(L("HISTORY_BUTTON_DELETE"))) {
 				deleteKey = selectedKey;
 				requestDeletePopup = true;

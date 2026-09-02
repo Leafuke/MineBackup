@@ -2,6 +2,7 @@
 
 #include "i18n.h"
 #include "imgui-all.h"
+#include "ThemePalette.h"
 #include "text_to_text.h"
 
 #include <cctype>
@@ -31,10 +32,10 @@ const char* MinecraftReadinessIssueLabel(const ReadinessIssue& issue) {
 void DrawMinecraftReadinessIssues(const BatchReadinessResult& readiness) {
 	for (const auto& issue : readiness.report.issues) {
 		const ImVec4 color = issue.severity == ReadinessSeverity::Blocking
-			? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+			? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error)
 			: issue.severity == ReadinessSeverity::Warning
-				? ImVec4(1.0f, 0.75f, 0.25f, 1.0f)
-				: ImVec4(0.45f, 0.7f, 1.0f, 1.0f);
+				? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning)
+				: ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info);
 		ImGui::TextColored(color, "• %s", MinecraftReadinessIssueLabel(issue));
 		if (!issue.relatedPath.empty()) {
 			ImGui::Indent();

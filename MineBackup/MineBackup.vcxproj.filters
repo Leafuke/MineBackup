@@ -731,6 +731,9 @@
     <ClInclude Include="src\ui\ThemeManager.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\ThemePalette.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\WorldListController.h">
       <Filter>src\ui</Filter>
     </ClInclude>

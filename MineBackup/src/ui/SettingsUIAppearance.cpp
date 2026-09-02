@@ -9,6 +9,7 @@
 #include "NetworkService.h"
 #include "Sha256.h"
 #include "ThemeManager.h"
+#include "ThemePalette.h"
 
 using namespace std;
 
@@ -163,11 +164,11 @@ void DrawAppearanceSettings(Config& cfg) {
 		ImGui::SameLine();
 		if (ImGui::Button(L("CUSTOM_THEME_VALIDATE"))) ApplyTheme();
 		if (!g_customThemeError.empty()) {
-			ImGui::TextColored(ImVec4(1.0f, 0.40f, 0.35f, 1.0f), "%s",
+			ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error), "%s",
 				g_customThemeError.c_str());
 		}
 		else {
-			ImGui::TextColored(ImVec4(0.35f, 0.80f, 0.45f, 1.0f), "%s",
+			ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success), "%s",
 				L("CUSTOM_THEME_VALID"));
 		}
 	}
@@ -399,7 +400,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	}
 	if (!canRunCloudActions) ImGui::EndDisabled();
 	if (!canRunCloudActions) {
-		ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.20f, 1.0f), "%s",
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning), "%s",
 			L("CLOUD_ACTION_UNAVAILABLE"));
 		if (!cloudUnavailableReason.empty()) {
 			ImGui::TextWrapped("%s", wstring_to_utf8(cloudUnavailableReason).c_str());
