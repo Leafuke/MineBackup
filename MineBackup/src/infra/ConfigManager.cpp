@@ -1,4 +1,4 @@
-﻿#include "ConfigManager.h"
+#include "ConfigManager.h"
 #include "AppState.h"
 #include "UIHelpers.h"
 #include "AppPaths.h"
@@ -679,7 +679,7 @@ void LoadConfigs(const filesystem::path& filename) {
 	}
 	if (configuredThemeFallback
 		&& *configuredThemeFallback >= static_cast<int>(ThemeId::ImGuiDark)
-		&& *configuredThemeFallback <= static_cast<int>(ThemeId::NordDark)) {
+		&& *configuredThemeFallback <= static_cast<int>(ThemeId::SystemAuto)) {
 		g_lastValidTheme = *configuredThemeFallback;
 	}
 	else if (g_theme != static_cast<int>(ThemeId::Custom)) {

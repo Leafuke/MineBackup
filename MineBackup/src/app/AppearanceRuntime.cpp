@@ -180,17 +180,23 @@ void ApplyTheme()
 	style.FontScaleDpi = dpiScale;
 
 	auto applyBuiltInTheme = [](int theme) {
-		switch (theme) {
-		case 0: ImGuiTheme::ApplyImGuiDark(); break;
-		case 1: ImGuiTheme::ApplyImGuiLight(); break;
-		case 2: ImGuiTheme::ApplyImGuiClassic(); break;
-		case 3: ImGuiTheme::ApplyWindows11(false); break;
-		case 4: ImGuiTheme::ApplyWindows11(true); break;
-
-		case 5: ImGuiTheme::ApplyNord(false); break;
-
-		case 6: ImGuiTheme::ApplyNord(true); break;
-		default: ImGuiTheme::ApplyImGuiLight(); break;
+		if (theme == static_cast<int>(ThemeId::SystemAuto)) {
+			theme = IsSystemDarkMode()
+				? static_cast<int>(ThemeId::WindowsDark)
+				: static_cast<int>(ThemeId::WindowsLight);
+		}
+		switch (static_cast<ThemeId>(theme)) {
+		case ThemeId::ImGuiDark: ImGuiTheme::ApplyImGuiDark(); break;
+		case ThemeId::ImGuiLight: ImGuiTheme::ApplyImGuiLight(); break;
+		case ThemeId::ImGuiClassic: ImGuiTheme::ApplyImGuiClassic(); break;
+		case ThemeId::WindowsLight: ImGuiTheme::ApplyWindows11(false); break;
+		case ThemeId::WindowsDark: ImGuiTheme::ApplyWindows11(true); break;
+		case ThemeId::NordLight: ImGuiTheme::ApplyNord(false); break;
+		case ThemeId::NordDark: ImGuiTheme::ApplyNord(true); break;
+		case ThemeId::VSCodeDark: ImGuiTheme::ApplyVSCodeDark(); break;
+		case ThemeId::SolarizedLight: ImGuiTheme::ApplySolarized(false); break;
+		case ThemeId::SolarizedDark: ImGuiTheme::ApplySolarized(true); break;
+		default: ImGuiTheme::ApplyWindows11(false); break;
 		}
 		ImGuiTheme::EnsureAccessibleThemeContrast(ImGui::GetStyle());
 	};

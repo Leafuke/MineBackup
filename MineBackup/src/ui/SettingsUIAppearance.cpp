@@ -124,7 +124,20 @@ void DrawAppearanceSettings(Config& cfg) {
 	ImGui::Spacing();
 
 	ImGui::Text("%s", L("THEME_SETTINGS"));
-	const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
+	const char* theme_names[] = {
+		L("THEME_DARK"),
+		L("THEME_LIGHT"),
+		L("THEME_CLASSIC"),
+		L("THEME_WIN_LIGHT"),
+		L("THEME_WIN_DARK"),
+		L("THEME_NORD_LIGHT"),
+		L("THEME_NORD_DARK"),
+		L("THEME_VSCODE_DARK"),
+		L("THEME_SOLARIZED_LIGHT"),
+		L("THEME_SOLARIZED_DARK"),
+		L("THEME_SYSTEM_AUTO"),
+		L("THEME_CUSTOM")
+	};
 	SetStandardControlWidth();
 	if (ImGui::Combo("##Theme", &g_theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";

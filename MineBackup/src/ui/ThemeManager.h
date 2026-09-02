@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "imgui.h"
 #include "json.hpp"
 #include <algorithm>
@@ -451,6 +451,7 @@ namespace ImGuiTheme {
     }
 
     inline void ApplyVSCodeDark() {
+        EnableDarkModeWin(true);
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 
@@ -753,6 +754,7 @@ namespace ImGuiTheme {
     }
 
     inline void ApplySolarized(bool dark_mode) {
+        EnableDarkModeWin(dark_mode);
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 

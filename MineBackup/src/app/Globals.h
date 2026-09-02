@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
@@ -26,7 +26,11 @@ enum class ThemeId : int {
 	WindowsDark = 4,
 	NordLight = 5,
 	NordDark = 6,
-	Custom = 7
+	VSCodeDark = 7,
+	SolarizedLight = 8,
+	SolarizedDark = 9,
+	SystemAuto = 10,
+	Custom = 11
 };
 
 inline bool IsValidThemeId(int value) {
