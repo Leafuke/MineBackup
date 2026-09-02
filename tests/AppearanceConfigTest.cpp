@@ -3,6 +3,7 @@
 #include "AppPaths.h"
 #include "Globals.h"
 #include "KnownUserFolders.h"
+#include "ThemePalette.h"
 
 #include <chrono>
 #include <filesystem>
@@ -216,6 +217,41 @@ int main() {
 	Check(!LastConfigLoadHasFatalDiagnostics()
 			&& ReadFile(migratedTasks).find("\"schemaVersion\":2") != std::string::npos,
 		"future legacy task schemas are retained but ignored");
+
+	Check(IsValidThemeId(static_cast<int>(ThemeId::ImGuiDark)), "ImGuiDark is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::VSCodeDark)), "VSCodeDark is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::SolarizedLight)), "SolarizedLight is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::SolarizedDark)), "SolarizedDark is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::SystemAuto)), "SystemAuto is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::Custom)), "Custom is valid theme");
+	Check(!IsValidThemeId(-1), "-1 is invalid theme");
+	Check(!IsValidThemeId(12), "12 is invalid theme");
+
+	const std::filesystem::path newThemesIni = root / "new-themes.ini";
+	g_theme = static_cast<int>(ThemeId::VSCodeDark);
+	Check(SaveConfigs(newThemesIni), "VSCodeDark theme saves");
+	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::VSCodeDark), "VSCodeDark theme round-trips");
+
+	g_theme = static_cast<int>(ThemeId::SolarizedLight);
+	Check(SaveConfigs(newThemesIni), "SolarizedLight theme saves");
+	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::SolarizedLight), "SolarizedLight theme round-trips");
+
+	g_theme = static_cast<int>(ThemeId::SystemAuto);
+	Check(SaveConfigs(newThemesIni), "SystemAuto theme saves");
+	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::SystemAuto), "SystemAuto theme round-trips");
+
+	const ImVec4 successDark = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, true);
+	const ImVec4 successLight = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, false);
+	Check(successDark.w == 1.0f && successLight.w == 1.0f, "ThemePalette status colors have solid alpha");
+	const ImVec4 infoLogDark = ThemePalette::GetLogLevelColor(minebackup::logging::LogLevel::Info, true);
+	const ImVec4 infoLogLight = ThemePalette::GetLogLevelColor(minebackup::logging::LogLevel::Info, false);
+	Check(infoLogDark.x > 0.8f && infoLogLight.x < 0.3f, "Log Info level contrasts correctly between dark and light");
 
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {
