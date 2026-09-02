@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #ifndef _PLATFORM_WIN_H
 #define _PLATFORM_WIN_H
 #include <iostream>
@@ -18,6 +18,7 @@ void TriggerHotkeyBackup(std::string comment = "Hotkey");
 void TriggerHotkeyRestore(const std::string& backupFile = "");
 void SetFileAttributesWin(const std::wstring& path, bool isHidden);
 void EnableDarkModeWin(bool enable);
+bool IsSystemDarkMode();
 void GetUserDefaultUILanguageWin();
 void MessageBoxWin(const std::string& title, const std::string& message, int iconType);
 bool ConfirmMessageBox(const std::string& title, const std::string& message);

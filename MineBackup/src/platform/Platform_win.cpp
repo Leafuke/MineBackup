@@ -1,4 +1,4 @@
-﻿#define GLFW_EXPOSE_NATIVE_WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
 #include <dwmapi.h>
 #include "Platform_win.h"
 #include "PlatformCompat.h"
@@ -45,6 +45,25 @@ void EnableDarkModeWin(bool enable) {
 	BOOL useDark = enable ? TRUE : FALSE;
 	DwmSetWindowAttribute(hwnd, 20 , &useDark, sizeof(useDark));
 	return;
+}
+
+bool IsSystemDarkMode() {
+#ifdef _WIN32
+	DWORD data = 1;
+	DWORD dataSize = sizeof(data);
+	LONG result = RegGetValueW(
+		HKEY_CURRENT_USER,
+		L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+		L"AppsUseLightTheme",
+		RRF_RT_REG_DWORD,
+		nullptr,
+		&data,
+		&dataSize);
+	if (result == ERROR_SUCCESS) {
+		return data == 0;
+	}
+#endif
+	return false;
 }
 
 
