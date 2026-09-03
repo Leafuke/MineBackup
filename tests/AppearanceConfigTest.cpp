@@ -4,6 +4,7 @@
 #include "Globals.h"
 #include "KnownUserFolders.h"
 #include "ThemePalette.h"
+#include "AppearanceRuntime.h"
 
 #include <chrono>
 #include <filesystem>
@@ -252,6 +253,16 @@ int main() {
 	const ImVec4 infoLogDark = ThemePalette::GetLogLevelColor(minebackup::logging::LogLevel::Info, true);
 	const ImVec4 infoLogLight = ThemePalette::GetLogLevelColor(minebackup::logging::LogLevel::Info, false);
 	Check(infoLogDark.x > 0.8f && infoLogLight.x < 0.3f, "Log Info level contrasts correctly between dark and light");
+
+	ImGui::CreateContext();
+	g_theme = static_cast<int>(ThemeId::ImGuiLight);
+	ApplyTheme();
+	const ImVec4 chkBg = ImGui::GetStyle().Colors[ImGuiCol_CheckboxSelectedBg];
+	const ImVec4 chkMark = ImGui::GetStyle().Colors[ImGuiCol_CheckMark];
+	Check(chkBg.w == 1.0f, "CheckboxSelectedBg has solid alpha");
+	Check(ImGuiTheme::RelativeLuminance(chkBg) > 0.6f, "CheckboxSelectedBg in ImGuiLight is not black");
+	Check(ImGuiTheme::ContrastRatio(chkMark, chkBg) >= 3.0f, "CheckMark contrasts with CheckboxSelectedBg in ImGuiLight");
+	ImGui::DestroyContext();
 
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {
