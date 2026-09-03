@@ -319,10 +319,17 @@ void LoadConfigs(const filesystem::path& filename) {
 
 	while (getline(in, line1)) {
 		++lineNumber;
+		while (!line1.empty() && (line1.back() == '\r' || line1.back() == ' ' || line1.back() == '\t')) {
+			line1.pop_back();
+		}
 		line = utf8_to_wstring(line1);
 		if (line.empty() || line.front() == L'#') continue;
 		if (line.front() == L'[' && line.back() == L']') {
 			section = line.substr(1, line.size() - 2);
+			while (!section.empty() && (section.back() == L' ' || section.back() == L'\t')) section.pop_back();
+			size_t secStart = 0;
+			while (secStart < section.size() && (section[secStart] == L' ' || section[secStart] == L'\t')) ++secStart;
+			if (secStart > 0) section = section.substr(secStart);
 			cur = nullptr;
 			if (section.find(L"Config", 0) == 0) {
 				int idx = 0;
@@ -343,6 +350,15 @@ void LoadConfigs(const filesystem::path& filename) {
 			if (pos == wstring::npos) continue;
 			wstring key = line.substr(0, pos);
 			wstring val = line.substr(pos + 1);
+			while (!key.empty() && (key.back() == L' ' || key.back() == L'\t')) key.pop_back();
+			size_t keyStart = 0;
+			while (keyStart < key.size() && (key[keyStart] == L' ' || key[keyStart] == L'\t')) ++keyStart;
+			if (keyStart > 0) key = key.substr(keyStart);
+
+			while (!val.empty() && (val.back() == L' ' || val.back() == L'\t')) val.pop_back();
+			size_t valStart = 0;
+			while (valStart < val.size() && (val[valStart] == L' ' || val[valStart] == L'\t')) ++valStart;
+			if (valStart > 0) val = val.substr(valStart);
 			auto readInt = [&](int& target, int minimum, int maximum, bool fatal) {
 				int parsed = 0;
 				if (LegacyIniConfigCodec::TryParseInt(val, minimum, maximum, parsed)) {
@@ -369,6 +385,33 @@ void LoadConfigs(const filesystem::path& filename) {
 					"expected a finite number in the supported range");
 				return false;
 			};
+			auto readTheme = [&](optional<int>& target) {
+				int parsed = 0;
+				if (LegacyIniConfigCodec::TryParseInt(val, -1, 32, parsed)) {
+					target = parsed;
+					return true;
+				}
+				if (val == L"ImGuiDark") target = static_cast<int>(ThemeId::ImGuiDark);
+				else if (val == L"ImGuiLight") target = static_cast<int>(ThemeId::ImGuiLight);
+				else if (val == L"ImGuiClassic") target = static_cast<int>(ThemeId::ImGuiClassic);
+				else if (val == L"WindowsLight") target = static_cast<int>(ThemeId::WindowsLight);
+				else if (val == L"WindowsDark") target = static_cast<int>(ThemeId::WindowsDark);
+				else if (val == L"NordLight") target = static_cast<int>(ThemeId::NordLight);
+				else if (val == L"NordDark") target = static_cast<int>(ThemeId::NordDark);
+				else if (val == L"VSCodeDark") target = static_cast<int>(ThemeId::VSCodeDark);
+				else if (val == L"SolarizedLight") target = static_cast<int>(ThemeId::SolarizedLight);
+				else if (val == L"SolarizedDark") target = static_cast<int>(ThemeId::SolarizedDark);
+				else if (val == L"SystemAuto") target = static_cast<int>(ThemeId::SystemAuto);
+				else if (val == L"Custom") target = static_cast<int>(ThemeId::Custom);
+				else {
+					RecordConfigDiagnostic(
+						LegacyIniConfigCodec::DiagnosticSeverity::Warning,
+						lineNumber, section, key,
+						"expected an integer in the supported range");
+					return false;
+				}
+				return true;
+			};
 
 			if (cur) { // Inside a [ConfigN] section
 				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
@@ -378,8 +421,12 @@ void LoadConfigs(const filesystem::path& filename) {
 					cur->saveRoot = val;
 				}
 				else if (key == L"WorldData") {
-					while (getline(in, line1) && line1 != "*") {
+					while (getline(in, line1)) {
 						++lineNumber;
+						while (!line1.empty() && (line1.back() == '\r' || line1.back() == ' ' || line1.back() == '\t')) {
+							line1.pop_back();
+						}
+						if (line1 == "*") break;
 						line = utf8_to_wstring(line1);
 						wstring name = line;
 						if (!getline(in, line1)) {
@@ -389,6 +436,9 @@ void LoadConfigs(const filesystem::path& filename) {
 							break;
 						}
 						++lineNumber;
+						while (!line1.empty() && (line1.back() == '\r' || line1.back() == ' ' || line1.back() == '\t')) {
+							line1.pop_back();
+						}
 						if (line1 == "*") {
 							RecordConfigDiagnostic(
 								LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
@@ -446,7 +496,8 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"EnableWEIntegration") cur->enableWEIntegration = (val != L"0");
 				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
 				else if (key == L"Theme") {
-					readInt(cur->theme, -1, 32, false);
+					optional<int> themeVal;
+					if (readTheme(themeVal) && themeVal) cur->theme = *themeVal;
 				}
 				else if (key == L"Font") {
 					cur->fontPath = val;
@@ -525,20 +576,16 @@ void LoadConfigs(const filesystem::path& filename) {
 					if (readInt(parsed, 1, 100, false)) configuredAppearanceSchema = parsed;
 				}
 				else if (key == L"Theme") {
-					int parsed = 0;
-					if (readInt(parsed, -1, 32, false)) configuredGlobalTheme = parsed;
+					readTheme(configuredGlobalTheme);
 				}
 				else if (key == L"ThemeFallback") {
-					int parsed = 0;
-					if (readInt(parsed, -1, 32, false)) configuredThemeFallback = parsed;
+					readTheme(configuredThemeFallback);
 				}
 				else if (key == L"SystemThemeLight") {
-					int parsed = 0;
-					if (readInt(parsed, -1, 32, false)) configuredSystemThemeLight = parsed;
+					readTheme(configuredSystemThemeLight);
 				}
 				else if (key == L"SystemThemeDark") {
-					int parsed = 0;
-					if (readInt(parsed, -1, 32, false)) configuredSystemThemeDark = parsed;
+					readTheme(configuredSystemThemeDark);
 				}
 				else if (key == L"Font") {
 					configuredGlobalFont = val;

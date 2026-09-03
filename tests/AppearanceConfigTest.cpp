@@ -286,6 +286,25 @@ int main() {
 	LoadConfigs(newThemesIni);
 	Check(g_windowWidth == 1440 && g_windowHeight == 900, "Window dimensions round-trip through LoadConfigs/SaveConfigs");
 
+	{
+		std::ofstream out(newThemesIni, std::ios::binary | std::ios::trunc);
+		out << "[General]\r\nTheme = 10 \r\nSystemThemeLight = 3\r\nSystemThemeDark = 4\r\n";
+	}
+	g_theme = 0;
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::SystemAuto), "Theme parses with CRLF and whitespace padding");
+	Check(GetLastConfigLoadDiagnostics().empty(), "No diagnostics for CRLF formatted config with whitespace");
+
+	{
+		std::ofstream out(newThemesIni, std::ios::binary | std::ios::trunc);
+		out << "[General]\r\nTheme = NordLight\r\nSystemThemeLight = WindowsLight\r\nSystemThemeDark = VSCodeDark\r\n";
+	}
+	g_theme = 0;
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::NordLight), "Theme parses symbolic name NordLight");
+	Check(g_systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight parses symbolic name WindowsLight");
+	Check(g_systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark parses symbolic name VSCodeDark");
+
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {
 		std::cerr << failures << " appearance configuration test(s) failed\n";
