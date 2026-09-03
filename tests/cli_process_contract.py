@@ -297,29 +297,35 @@ def main() -> int:
                 forced.kill()
                 forced.wait(timeout=5)
 
-        invalid = subprocess.run(
-            [
-                str(cli),
-                "--data-dir",
-                str(profile),
-                "--json",
-                "--no-network",
-                "job",
-                "run",
-                "--job",
-                INVALID_JOB_ID,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=environment,
-            timeout=15,
-            check=False,
-        )
-        invalid_json = parse_single_json(invalid.stdout, "invalid stderr direct job")
+        invalid_deadline = time.monotonic() + 5
+        while True:
+            invalid = subprocess.run(
+                [
+                    str(cli),
+                    "--data-dir",
+                    str(profile),
+                    "--json",
+                    "--no-network",
+                    "job",
+                    "run",
+                    "--job",
+                    INVALID_JOB_ID,
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment,
+                timeout=15,
+                check=False,
+            )
+            invalid_json = parse_single_json(invalid.stdout, "invalid stderr direct job")
+            if invalid.returncode == 3 and time.monotonic() < invalid_deadline:
+                time.sleep(0.1)
+                continue
+            break
         if invalid.returncode != 6 or invalid_json.get("code") != "job_failed":
             raise AssertionError(
                 f"invalid stderr job returned the wrong result: {invalid.returncode} {invalid_json!r}"

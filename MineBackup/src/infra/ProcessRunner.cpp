@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <thread>
@@ -171,6 +172,8 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
 
 #else
 
+atomic<pid_t> g_activeChildGroup{0};
+
 void DrainDescriptor(int descriptor, string& destination, size_t maximum, bool& truncated) {
     array<char, 8192> buffer{};
     for (;;) {
@@ -195,6 +198,12 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
         }
         result.error = L"Could not create process output pipes.";
         return result;
+    }
+    for (const int descriptor : {stdoutPipe[0], stdoutPipe[1], stderrPipe[0], stderrPipe[1]}) {
+        if (descriptor >= 0) {
+            const int flags = fcntl(descriptor, F_GETFD);
+            if (flags >= 0) fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
+        }
     }
 
     posix_spawn_file_actions_t actions{};
@@ -233,7 +242,13 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
         result.error = L"Could not initialize the process isolation group.";
         return result;
     }
-    int attributeError = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    short spawnFlags = POSIX_SPAWN_SETPGROUP;
+#if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
+    spawnFlags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#elif defined(__APPLE__)
+    spawnFlags |= 0x2000;
+#endif
+    int attributeError = posix_spawnattr_setflags(&attributes, spawnFlags);
     if (attributeError == 0) attributeError = posix_spawnattr_setpgroup(&attributes, 0);
     if (attributeError != 0) {
         posix_spawnattr_destroy(&attributes);
@@ -259,6 +274,12 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
         result.error = L"Could not start the process.";
         return result;
     }
+    g_activeChildGroup.store(process, memory_order_relaxed);
+    struct ActiveGroupGuard {
+        ~ActiveGroupGuard() {
+            g_activeChildGroup.store(0, memory_order_relaxed);
+        }
+    } groupGuard;
     if (spec.useLowPriority) setpriority(PRIO_PROCESS, process, 10);
     fcntl(stdoutPipe[0], F_SETFL, fcntl(stdoutPipe[0], F_GETFL) | O_NONBLOCK);
     fcntl(stderrPipe[0], F_SETFL, fcntl(stderrPipe[0], F_GETFL) | O_NONBLOCK);
@@ -319,6 +340,15 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
 
 ProcessResult Run(const ProcessSpec& spec, stop_token stopToken) {
     return RunPlatform(spec, stopToken);
+}
+
+void TerminateActiveProcess() {
+#ifndef _WIN32
+    const pid_t group = g_activeChildGroup.exchange(0);
+    if (group > 0) {
+        ::kill(-group, SIGKILL);
+    }
+#endif
 }
 
 } // namespace ProcessRunner

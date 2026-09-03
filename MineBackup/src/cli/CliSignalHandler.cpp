@@ -1,4 +1,5 @@
 #include "CliSignalHandler.h"
+#include "ProcessRunner.h"
 
 #include <atomic>
 #include <chrono>
@@ -30,7 +31,10 @@ BOOL WINAPI ConsoleHandler(DWORD type) {
 volatile sig_atomic_t g_signalCount = 0;
 
 void PosixHandler(int) {
-	if (g_signalCount >= 1) _exit(9);
+	if (g_signalCount >= 1) {
+		ProcessRunner::TerminateActiveProcess();
+		_exit(9);
+	}
 	g_signalCount = 1;
 }
 #endif

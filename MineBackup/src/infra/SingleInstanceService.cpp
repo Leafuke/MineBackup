@@ -418,6 +418,14 @@ bool SetBlockingDescriptor(int descriptor, wstring& error) {
 	return true;
 }
 
+void SetCloseOnExecDescriptor(int descriptor) {
+	if (descriptor < 0) return;
+	const int flags = ::fcntl(descriptor, F_GETFD);
+	if (flags >= 0) {
+		::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
+	}
+}
+
 bool WriteMessage(int descriptor, const vector<uint8_t>& message, wstring& error) {
 #ifdef SO_NOSIGPIPE
 	const int suppressSignal = 1;
@@ -650,11 +658,16 @@ InstanceAcquireResult SingleInstanceService::Acquire(
 	const auto socketDirectory = UserSocketDirectory(error);
 	if (socketDirectory.empty()) return InstanceAcquireResult::Failed;
 	impl_->socketPath = socketDirectory / (L"instance-" + impl_->token + L".sock");
+#ifdef O_CLOEXEC
+	impl_->lockDescriptor = ::open(lockPath.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+#else
 	impl_->lockDescriptor = ::open(lockPath.c_str(), O_RDWR | O_CREAT, 0600);
+#endif
 	if (impl_->lockDescriptor < 0) {
 		error = L"Could not open the profile instance lock.";
 		return InstanceAcquireResult::Failed;
 	}
+	SetCloseOnExecDescriptor(impl_->lockDescriptor);
 	if (::flock(impl_->lockDescriptor, LOCK_EX | LOCK_NB) != 0) {
 		::close(impl_->lockDescriptor);
 		impl_->lockDescriptor = -1;
@@ -667,6 +680,7 @@ InstanceAcquireResult SingleInstanceService::Acquire(
 		error = L"Could not create the profile instance socket.";
 		return InstanceAcquireResult::Failed;
 	}
+	SetCloseOnExecDescriptor(impl_->socketDescriptor);
 	sockaddr_un address{};
 	address.sun_family = AF_UNIX;
 	const string nativePath = impl_->socketPath.string();
@@ -705,6 +719,7 @@ bool SingleInstanceService::Send(const InstanceRequest& request, wstring& error)
 		error = L"Could not create a socket for the primary MineBackup instance.";
 		return false;
 	}
+	SetCloseOnExecDescriptor(client);
 	sockaddr_un address{};
 	address.sun_family = AF_UNIX;
 	const string nativePath = impl_->socketPath.string();
@@ -748,6 +763,7 @@ vector<InstanceRequest> SingleInstanceService::PollRequests(wstring& error) {
 			}
 			break;
 		}
+		SetCloseOnExecDescriptor(client);
 		// 监听端点需要非阻塞轮询；会话端点必须恢复阻塞，否则 macOS
 		// 可能继承 O_NONBLOCK，在发送大响应时把 EAGAIN 误判为连接失败。
 		if (!SetBlockingDescriptor(client, error)) {
@@ -790,6 +806,7 @@ bool SingleInstanceService::Exchange(
 		error = L"Could not create a socket for the primary MineBackup instance.";
 		return false;
 	}
+	SetCloseOnExecDescriptor(client);
 	sockaddr_un address{};
 	address.sun_family = AF_UNIX;
 	const string nativePath = impl_->socketPath.string();
@@ -858,6 +875,7 @@ vector<InstanceControlExchange> SingleInstanceService::PollControlRequests(wstri
 			}
 			break;
 		}
+		SetCloseOnExecDescriptor(client);
 		// 监听端点需要非阻塞轮询；会话端点必须恢复阻塞，否则 macOS
 		// 可能继承 O_NONBLOCK，在发送大响应时把 EAGAIN 误判为连接失败。
 		if (!SetBlockingDescriptor(client, error)) {
