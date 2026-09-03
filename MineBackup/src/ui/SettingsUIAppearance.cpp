@@ -151,6 +151,64 @@ void DrawAppearanceSettings(Config& cfg) {
 			ApplyTheme();
 		}
 	}
+	if (g_theme == static_cast<int>(ThemeId::SystemAuto)) {
+		struct ConcreteThemeOption {
+			ThemeId id;
+			const char* labelKey;
+		};
+		static const ConcreteThemeOption concreteThemes[] = {
+			{ ThemeId::ImGuiDark, "THEME_DARK" },
+			{ ThemeId::ImGuiLight, "THEME_LIGHT" },
+			{ ThemeId::ImGuiClassic, "THEME_CLASSIC" },
+			{ ThemeId::WindowsLight, "THEME_WIN_LIGHT" },
+			{ ThemeId::WindowsDark, "THEME_WIN_DARK" },
+			{ ThemeId::NordLight, "THEME_NORD_LIGHT" },
+			{ ThemeId::NordDark, "THEME_NORD_DARK" },
+			{ ThemeId::VSCodeDark, "THEME_VSCODE_DARK" },
+			{ ThemeId::SolarizedLight, "THEME_SOLARIZED_LIGHT" },
+			{ ThemeId::SolarizedDark, "THEME_SOLARIZED_DARK" },
+			{ ThemeId::Custom, "THEME_CUSTOM" }
+		};
+		const int concreteCount = IM_ARRAYSIZE(concreteThemes);
+		const char* concreteThemeNames[concreteCount];
+		for (int i = 0; i < concreteCount; ++i) {
+			concreteThemeNames[i] = L(concreteThemes[i].labelKey);
+		}
+
+		ImGui::Indent();
+
+		ImGui::Spacing();
+		ImGui::Text("%s", L("THEME_SYSTEM_LIGHT_CHOICE"));
+		int lightIndex = 3;
+		for (int i = 0; i < concreteCount; ++i) {
+			if (static_cast<int>(concreteThemes[i].id) == g_systemThemeLight) {
+				lightIndex = i;
+				break;
+			}
+		}
+		SetStandardControlWidth();
+		if (ImGui::Combo("##SystemThemeLight", &lightIndex, concreteThemeNames, concreteCount)) {
+			g_systemThemeLight = static_cast<int>(concreteThemes[lightIndex].id);
+			ApplyTheme();
+		}
+
+		ImGui::Spacing();
+		ImGui::Text("%s", L("THEME_SYSTEM_DARK_CHOICE"));
+		int darkIndex = 4;
+		for (int i = 0; i < concreteCount; ++i) {
+			if (static_cast<int>(concreteThemes[i].id) == g_systemThemeDark) {
+				darkIndex = i;
+				break;
+			}
+		}
+		SetStandardControlWidth();
+		if (ImGui::Combo("##SystemThemeDark", &darkIndex, concreteThemeNames, concreteCount)) {
+			g_systemThemeDark = static_cast<int>(concreteThemes[darkIndex].id);
+			ApplyTheme();
+		}
+
+		ImGui::Unindent();
+	}
 	if (g_theme == static_cast<int>(ThemeId::Custom)) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 		if (ImGui::Button(L("CUSTOM_THEME_OPEN"))) {

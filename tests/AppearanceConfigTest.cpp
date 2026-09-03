@@ -242,10 +242,24 @@ int main() {
 	Check(g_theme == static_cast<int>(ThemeId::SolarizedLight), "SolarizedLight theme round-trips");
 
 	g_theme = static_cast<int>(ThemeId::SystemAuto);
-	Check(SaveConfigs(newThemesIni), "SystemAuto theme saves");
+	g_systemThemeLight = static_cast<int>(ThemeId::NordLight);
+	g_systemThemeDark = static_cast<int>(ThemeId::VSCodeDark);
+	Check(SaveConfigs(newThemesIni), "SystemAuto theme and subthemes save");
 	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	g_systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
+	g_systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
 	LoadConfigs(newThemesIni);
 	Check(g_theme == static_cast<int>(ThemeId::SystemAuto), "SystemAuto theme round-trips");
+	Check(g_systemThemeLight == static_cast<int>(ThemeId::NordLight), "SystemThemeLight round-trips");
+	Check(g_systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark round-trips");
+
+	{
+		std::ofstream out(newThemesIni, std::ios::trunc);
+		out << "[General]\nTheme=10\nSystemThemeLight=10\nSystemThemeDark=999\n";
+	}
+	LoadConfigs(newThemesIni);
+	Check(g_systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight falls back when set to SystemAuto");
+	Check(g_systemThemeDark == static_cast<int>(ThemeId::WindowsDark), "SystemThemeDark falls back when set to out of range");
 
 	const ImVec4 successDark = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, true);
 	const ImVec4 successLight = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, false);

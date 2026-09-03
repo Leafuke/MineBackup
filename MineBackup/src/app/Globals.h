@@ -48,6 +48,8 @@ struct AppWindowState {
 struct AppAppearanceState {
 	int theme = static_cast<int>(ThemeId::NordLight);
 	int lastValidTheme = static_cast<int>(ThemeId::NordLight);
+	int systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
+	int systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
 	std::wstring fontPath;
 	std::string customThemeError;
 	float userScale = 1.0f;
@@ -160,6 +162,8 @@ inline int& g_windowHeight = g_globals.window.height;
 inline float& g_uiScale = g_globals.appearance.userScale;
 inline int& g_theme = g_globals.appearance.theme;
 inline int& g_lastValidTheme = g_globals.appearance.lastValidTheme;
+inline int& g_systemThemeLight = g_globals.appearance.systemThemeLight;
+inline int& g_systemThemeDark = g_globals.appearance.systemThemeDark;
 inline std::string& g_customThemeError = g_globals.appearance.customThemeError;
 inline int& g_appearanceSchema = g_globals.appearance.schema;
 inline bool& g_uiScaleV2 = g_globals.appearance.userScaleV2;

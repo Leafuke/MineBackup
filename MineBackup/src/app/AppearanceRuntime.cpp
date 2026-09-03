@@ -179,12 +179,17 @@ void ApplyTheme()
 	style = ImGuiStyle();
 	style.FontScaleDpi = dpiScale;
 
-	auto applyBuiltInTheme = [](int theme) {
-		if (theme == static_cast<int>(ThemeId::SystemAuto)) {
-			theme = IsSystemDarkMode()
+	int effectiveTheme = g_theme;
+	if (effectiveTheme == static_cast<int>(ThemeId::SystemAuto)) {
+		const int target = IsSystemDarkMode() ? g_systemThemeDark : g_systemThemeLight;
+		effectiveTheme = (IsValidThemeId(target) && target != static_cast<int>(ThemeId::SystemAuto))
+			? target
+			: (IsSystemDarkMode()
 				? static_cast<int>(ThemeId::WindowsDark)
-				: static_cast<int>(ThemeId::WindowsLight);
-		}
+				: static_cast<int>(ThemeId::WindowsLight));
+	}
+
+	auto applyBuiltInTheme = [](int theme) {
 		switch (static_cast<ThemeId>(theme)) {
 		case ThemeId::ImGuiDark: ImGuiTheme::ApplyImGuiDark(); break;
 		case ThemeId::ImGuiLight: ImGuiTheme::ApplyImGuiLight(); break;
@@ -203,21 +208,21 @@ void ApplyTheme()
 
 	bool applied = true;
 	g_customThemeError.clear();
-	if (g_theme == static_cast<int>(ThemeId::Custom)) {
+	if (effectiveTheme == static_cast<int>(ThemeId::Custom)) {
 		applied = ImGuiTheme::ApplyCustom(
 			GetAppPaths().configRoot / L"custom_theme.json", &g_customThemeError);
 		if (applied) {
 			applied = ImGuiTheme::ValidateTextContrast(style, &g_customThemeError);
 		}
 	}
-	else if (IsValidThemeId(g_theme)) {
-		applyBuiltInTheme(g_theme);
-		g_lastValidTheme = g_theme;
+	else if (IsValidThemeId(effectiveTheme)) {
+		applyBuiltInTheme(effectiveTheme);
+		g_lastValidTheme = effectiveTheme;
 	}
 	else {
-		g_theme = static_cast<int>(ThemeId::ImGuiLight);
-		g_lastValidTheme = g_theme;
-		applyBuiltInTheme(g_theme);
+		effectiveTheme = static_cast<int>(ThemeId::ImGuiLight);
+		g_lastValidTheme = effectiveTheme;
+		applyBuiltInTheme(effectiveTheme);
 	}
 
 	if (!applied) {

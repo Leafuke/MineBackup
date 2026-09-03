@@ -305,6 +305,8 @@ void LoadConfigs(const filesystem::path& filename) {
 	}
 	optional<int> configuredGlobalTheme;
 	optional<int> configuredThemeFallback;
+	optional<int> configuredSystemThemeLight;
+	optional<int> configuredSystemThemeDark;
 	optional<wstring> configuredGlobalFont;
 	optional<int> configuredAppearanceSchema;
 	bool configuredUiScaleV2 = false;
@@ -530,6 +532,14 @@ void LoadConfigs(const filesystem::path& filename) {
 					int parsed = 0;
 					if (readInt(parsed, -1, 32, false)) configuredThemeFallback = parsed;
 				}
+				else if (key == L"SystemThemeLight") {
+					int parsed = 0;
+					if (readInt(parsed, -1, 32, false)) configuredSystemThemeLight = parsed;
+				}
+				else if (key == L"SystemThemeDark") {
+					int parsed = 0;
+					if (readInt(parsed, -1, 32, false)) configuredSystemThemeDark = parsed;
+				}
 				else if (key == L"Font") {
 					configuredGlobalFont = val;
 				}
@@ -686,6 +696,23 @@ void LoadConfigs(const filesystem::path& filename) {
 		g_lastValidTheme = g_theme;
 	}
 
+	if (configuredSystemThemeLight
+		&& IsValidThemeId(*configuredSystemThemeLight)
+		&& *configuredSystemThemeLight != static_cast<int>(ThemeId::SystemAuto)) {
+		g_systemThemeLight = *configuredSystemThemeLight;
+	}
+	else {
+		g_systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
+	}
+	if (configuredSystemThemeDark
+		&& IsValidThemeId(*configuredSystemThemeDark)
+		&& *configuredSystemThemeDark != static_cast<int>(ThemeId::SystemAuto)) {
+		g_systemThemeDark = *configuredSystemThemeDark;
+	}
+	else {
+		g_systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
+	}
+
 	if (configuredGlobalFont && validFontPath(*configuredGlobalFont)) {
 		Fontss = *configuredGlobalFont;
 	}
@@ -781,6 +808,8 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 	buffer << L"AppearanceSchema=" << g_appearanceSchema << L"\n";
 	buffer << L"Theme=" << g_theme << L"\n";
 	buffer << L"ThemeFallback=" << g_lastValidTheme << L"\n";
+	buffer << L"SystemThemeLight=" << g_systemThemeLight << L"\n";
+	buffer << L"SystemThemeDark=" << g_systemThemeDark << L"\n";
 	buffer << L"Font=" << Fontss << L"\n";
 	buffer << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
 	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
