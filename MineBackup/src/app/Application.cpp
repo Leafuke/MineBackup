@@ -85,6 +85,14 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
+static void main_window_size_callback(GLFWwindow* window, int width, int height)
+{
+	if (window != nullptr && glfwGetWindowAttrib(window, GLFW_ICONIFIED) == 0 && width > 0 && height > 0) {
+		g_windowWidth = width;
+		g_windowHeight = height;
+	}
+}
+
 static void main_window_close_callback(GLFWwindow* window)
 {
 	if (g_OnboardingActive) {
@@ -105,6 +113,14 @@ static void main_window_close_callback(GLFWwindow* window)
 		}
 	}
 	else if (g_closeAction == 2) {
+		if (window != nullptr && glfwGetWindowAttrib(window, GLFW_ICONIFIED) == 0) {
+			int w = 0, h = 0;
+			glfwGetWindowSize(window, &w, &h);
+			if (w > 0 && h > 0) {
+				g_windowWidth = w;
+				g_windowHeight = h;
+			}
+		}
 		SaveConfigs();
 		g_appState.done = true;
 	}
@@ -537,6 +553,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		wc = uiSession.Window();
 		desktopServices->SetNativeWindow(wc);
 		glfwSetWindowCloseCallback(wc, main_window_close_callback);
+		glfwSetWindowSizeCallback(wc, main_window_size_callback);
 		return true;
 	};
 
@@ -827,6 +844,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		lock_guard<mutex> lock(g_appState.task_mutex);
 		g_appState.g_active_auto_backups.clear();
 	}
+	uiSession.SaveWindowState(g_windowWidth, g_windowHeight);
 	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
 

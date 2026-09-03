@@ -278,6 +278,14 @@ int main() {
 	Check(ImGuiTheme::ContrastRatio(chkMark, chkBg) >= 3.0f, "CheckMark contrasts with CheckboxSelectedBg in ImGuiLight");
 	ImGui::DestroyContext();
 
+	g_windowWidth = 1440;
+	g_windowHeight = 900;
+	Check(SaveConfigs(newThemesIni), "Custom window size saves to ini");
+	g_windowWidth = 800;
+	g_windowHeight = 600;
+	LoadConfigs(newThemesIni);
+	Check(g_windowWidth == 1440 && g_windowHeight == 900, "Window dimensions round-trip through LoadConfigs/SaveConfigs");
+
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {
 		std::cerr << failures << " appearance configuration test(s) failed\n";
