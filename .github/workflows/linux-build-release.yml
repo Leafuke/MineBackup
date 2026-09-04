@@ -47,6 +47,7 @@ jobs:
         run: |
           cmake --preset linux-x64 -DBUILD_TESTING=ON
           cmake --build build/linux-x64 --parallel
+          python3 tests/verify_rc_tests.py --build build/linux-x64
           ctest --preset linux-x64 --output-on-failure
 
       - name: Resolve version from CMake

@@ -28,6 +28,7 @@ jobs:
         shell: pwsh
         run: |
           cmake --build build/windows-shadow --config Release --parallel
+          python tests/verify_rc_tests.py --build build/windows-shadow
           ctest --test-dir build/windows-shadow -C Release --output-on-failure
           ./cmake/VerifyWindowsArtifact.ps1 -Executable build/windows-shadow/bin/Release/MineBackup.exe
           ./cmake/SmokeTestWindowsArtifact.ps1 -Executable build/windows-shadow/bin/Release/MineBackup.exe

@@ -46,6 +46,7 @@ jobs:
         run: |
           env -u DISPLAY -u WAYLAND_DISPLAY \
             build/linux-x64-cli-only/bin/minebackup-cli --version </dev/null
+          python3 tests/verify_rc_tests.py --build build/linux-x64-cli-only
           env -u DISPLAY -u WAYLAND_DISPLAY \
             ctest --preset linux-x64-cli-only --output-on-failure
 
@@ -149,6 +150,7 @@ jobs:
         run: |
           env -u DISPLAY -u WAYLAND_DISPLAY \
             build/macos-arm64-cli-only/bin/minebackup-cli --version </dev/null
+          python3 tests/verify_rc_tests.py --build build/macos-arm64-cli-only
           env -u DISPLAY -u WAYLAND_DISPLAY \
             ctest --preset macos-arm64-cli-only --output-on-failure
 
@@ -183,6 +185,7 @@ jobs:
       - name: Run CLI and process-contract tests
         shell: pwsh
         run: |
+          python tests/verify_rc_tests.py --build build/headless-windows
           ctest --test-dir build/headless-windows -C Release --output-on-failure
           cmake --build build/headless-windows --config Release `
             --target check_msbuild_source_parity

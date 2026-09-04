@@ -617,8 +617,9 @@ if(BUILD_TESTING)
                     COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_process_contract.py
                         --cli $<TARGET_FILE:minebackup-cli>
+                        --signal-host $<TARGET_FILE:minebackup_data_tests>
                         --work-root ${CMAKE_CURRENT_BINARY_DIR}/test-work/cli-process-contract)
-                set_tests_properties(minebackup.cli.process_contract PROPERTIES TIMEOUT 30)
+                set_tests_properties(minebackup.cli.process_contract PROPERTIES TIMEOUT 90)
                 add_test(NAME minebackup.cli.serve_contract
                     COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_serve_contract.py
