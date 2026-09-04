@@ -7,6 +7,7 @@
 #include "LegacyIniConfigCodecTests.h"
 #include "ProcessRunner.h"
 #include "ProcessToolTests.h"
+#include "ProcessLifecycleTests.h"
 #include "ProfileConfigCatalogTests.h"
 #include "ProfileManifestTests.h"
 #include "OperationResultTests.h"
@@ -38,6 +39,7 @@ extern char** environ;
 #endif
 
 int main(int argc, char** argv) {
+    if (const auto lifecycle = RunProcessLifecycleMode(argc, argv)) return *lifecycle;
     if (argc >= 2 && std::string(argv[1]) == "version") {
         const auto executable = std::filesystem::absolute(argv[0]).wstring();
         const bool managed = executable.find(ExternalToolManager::RcloneVersion) != std::wstring::npos;

@@ -403,6 +403,7 @@ if(BUILD_TESTING)
 		${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
 		${MINEBACKUP_SRC_DIR}/cli/CliJobResult.cpp
 		${MINEBACKUP_SRC_DIR}/cli/CliRenderer.cpp
+        ${MINEBACKUP_SRC_DIR}/cli/CliSignalHandler.cpp
         tests/BackupPipelineTest.cpp
         tests/BackupServiceTests.cpp
         tests/CloudSyncTests.cpp
@@ -413,6 +414,7 @@ if(BUILD_TESTING)
         tests/PathIdentityTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
+        tests/ProcessLifecycleTests.cpp
         tests/ProfileConfigCatalogTests.cpp
 		tests/ProfileManifestTests.cpp
 		tests/RestoreServiceTests.cpp
@@ -427,6 +429,10 @@ if(BUILD_TESTING)
         target_link_libraries(minebackup_data_tests PRIVATE shell32)
     endif()
     add_test(NAME minebackup.data_core COMMAND minebackup_data_tests)
+    if(NOT WIN32)
+        add_test(NAME minebackup.process_lifecycle COMMAND minebackup_data_tests --process-lifecycle-tests)
+        set_tests_properties(minebackup.process_lifecycle PROPERTIES TIMEOUT 90)
+    endif()
 
     add_executable(minebackup_known_user_folders_tests
         tests/KnownUserFoldersTests.cpp)
