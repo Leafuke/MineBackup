@@ -7,6 +7,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
+#include <utility>
 #include <thread>
 #include <vector>
 
@@ -172,7 +174,98 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
 
 #else
 
-atomic<pid_t> g_activeChildGroup{0};
+constexpr size_t kMaximumActiveGroups = 64;
+mutex g_lifecycleMutex;
+array<pid_t, kMaximumActiveGroups> g_activeGroups{};
+atomic<bool> g_closing{false};
+#ifdef MINEBACKUP_PROCESS_TEST_HOOKS
+size_t g_capacity = kMaximumActiveGroups;
+void (*g_afterSpawn)(void*) noexcept = nullptr;
+void* g_afterSpawnContext = nullptr;
+atomic<int> g_nextWaitError{0};
+#endif
+
+struct OutputPipe {
+    int descriptors[2]{-1, -1};
+    ~OutputPipe() { Close(0); Close(1); }
+    void Close(size_t index) noexcept {
+        if (descriptors[index] >= 0) close(exchange(descriptors[index], -1));
+    }
+    bool Open() {
+        if (pipe(descriptors) != 0) return false;
+        for (const int descriptor : descriptors) {
+            const int flags = fcntl(descriptor, F_GETFD);
+            if (flags < 0 || fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) < 0) return false;
+        }
+        const int flags = fcntl(descriptors[0], F_GETFL);
+        return flags >= 0 && fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) == 0;
+    }
+};
+
+struct SpawnSetup {
+    posix_spawn_file_actions_t actions{};
+    posix_spawnattr_t attributes{};
+    bool actionsReady = false;
+    bool attributesReady = false;
+    ~SpawnSetup() {
+        if (attributesReady) posix_spawnattr_destroy(&attributes);
+        if (actionsReady) posix_spawn_file_actions_destroy(&actions);
+    }
+};
+
+// The owning Run is the only reaper. Keep the leader waitable until all group
+// signals have been sent; otherwise PID reuse could turn cleanup into a signal
+// to an unrelated process group. Reaping and removal share the shutdown lock.
+struct OwnedGroup {
+    pid_t process = 0;
+    size_t slot = 0;
+    ~OwnedGroup() {
+        if (process > 0) {
+            int ignored = 0;
+            Reap(ignored);
+        }
+    }
+    void Signal(int signal) noexcept {
+        lock_guard lock(g_lifecycleMutex);
+        if (process > 1 && g_activeGroups[slot] == process) kill(-process, signal);
+    }
+    int Observe(siginfo_t& info) noexcept {
+        lock_guard lock(g_lifecycleMutex);
+        int result;
+        do {
+#ifdef MINEBACKUP_PROCESS_TEST_HOOKS
+            const int injected = g_nextWaitError.exchange(0);
+            if (injected) { errno = injected; result = -1; }
+            else
+#endif
+            result = waitid(P_PID, process, &info, WEXITED | WNOHANG | WNOWAIT);
+        } while (result < 0 && errno == EINTR);
+        if (result < 0 && errno == ECHILD) {
+            // Ownership was lost (e.g. an external reaper). Never signal a PID
+            // whose identity is no longer pinned by our unreaped child.
+            g_activeGroups[slot] = 0;
+            process = 0;
+        }
+        return result;
+    }
+    bool Reap(int& status) noexcept {
+        if (process == 0) return false;
+        Signal(SIGKILL);
+        for (;;) {
+            {
+                lock_guard lock(g_lifecycleMutex);
+                const pid_t waited = waitpid(process, &status, WNOHANG);
+                if (waited == process || (waited < 0 && errno != EINTR)) {
+                    g_activeGroups[slot] = 0;
+                    process = 0;
+                    return waited > 0;
+                }
+            }
+            // Never hold the lifecycle lock across a blocking wait.
+            this_thread::sleep_for(chrono::milliseconds(10));
+        }
+    }
+};
 
 void DrainDescriptor(int descriptor, string& destination, size_t maximum, bool& truncated) {
     array<char, 8192> buffer{};
@@ -186,62 +279,54 @@ void DrainDescriptor(int descriptor, string& destination, size_t maximum, bool& 
 
 ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
     ProcessResult result;
+    if (g_closing.load() || stopToken.stop_requested()) {
+        result.status = ProcessStatus::Cancelled;
+        return result;
+    }
     if (spec.executable.empty() || spec.maximumCapturedBytes == 0) {
         result.error = L"The process specification is incomplete.";
         return result;
     }
-    int stdoutPipe[2]{-1, -1};
-    int stderrPipe[2]{-1, -1};
-    if (pipe(stdoutPipe) != 0 || pipe(stderrPipe) != 0) {
-        for (const int descriptor : {stdoutPipe[0], stdoutPipe[1], stderrPipe[0], stderrPipe[1]}) {
-            if (descriptor >= 0) close(descriptor);
-        }
+    vector<string> encoded;
+    encoded.push_back(spec.executable.string());
+    for (const auto& argument : spec.arguments) encoded.push_back(wstring_to_utf8(argument));
+    vector<char*> arguments;
+    for (auto& value : encoded) arguments.push_back(value.data());
+    arguments.push_back(nullptr);
+
+    OutputPipe output, errorOutput;
+    if (!output.Open() || !errorOutput.Open()) {
         result.error = L"Could not create process output pipes.";
         return result;
     }
-    for (const int descriptor : {stdoutPipe[0], stdoutPipe[1], stderrPipe[0], stderrPipe[1]}) {
-        if (descriptor >= 0) {
-            const int flags = fcntl(descriptor, F_GETFD);
-            if (flags >= 0) fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
-        }
-    }
-
-    posix_spawn_file_actions_t actions{};
-    const int actionsInitError = posix_spawn_file_actions_init(&actions);
-    if (actionsInitError != 0) {
-        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
+    SpawnSetup setup;
+    setup.actionsReady = posix_spawn_file_actions_init(&setup.actions) == 0;
+    if (!setup.actionsReady) {
         result.error = L"Could not initialize process output redirection.";
         return result;
     }
-    int actionsError = posix_spawn_file_actions_adddup2(&actions, stdoutPipe[1], STDOUT_FILENO);
-    if (actionsError == 0) actionsError = posix_spawn_file_actions_adddup2(&actions, stderrPipe[1], STDERR_FILENO);
-    if (actionsError == 0) actionsError = posix_spawn_file_actions_addclose(&actions, stdoutPipe[0]);
-    if (actionsError == 0) actionsError = posix_spawn_file_actions_addclose(&actions, stderrPipe[0]);
+    auto& actions = setup.actions;
+    int actionsError = posix_spawn_file_actions_adddup2(&actions, output.descriptors[1], STDOUT_FILENO);
+    if (actionsError == 0) actionsError = posix_spawn_file_actions_adddup2(&actions, errorOutput.descriptors[1], STDERR_FILENO);
+    if (actionsError == 0) actionsError = posix_spawn_file_actions_addclose(&actions, output.descriptors[0]);
+    if (actionsError == 0) actionsError = posix_spawn_file_actions_addclose(&actions, errorOutput.descriptors[0]);
     if (actionsError != 0) {
-        posix_spawn_file_actions_destroy(&actions);
-        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
         result.error = L"Could not configure process output redirection.";
         return result;
     }
 #if defined(__APPLE__) || defined(__GLIBC__)
-    if (!spec.workingDirectory.empty()) {
-        const int directoryError = posix_spawn_file_actions_addchdir_np(&actions, spec.workingDirectory.c_str());
-        if (directoryError != 0) {
-            posix_spawn_file_actions_destroy(&actions);
-            close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
-            result.error = L"Could not apply the process working directory.";
-            return result;
-        }
+    if (!spec.workingDirectory.empty()
+        && posix_spawn_file_actions_addchdir_np(&actions, spec.workingDirectory.c_str()) != 0) {
+        result.error = L"Could not apply the process working directory.";
+        return result;
     }
 #endif
-    posix_spawnattr_t attributes{};
-    const int attributeInitError = posix_spawnattr_init(&attributes);
-    if (attributeInitError != 0) {
-        posix_spawn_file_actions_destroy(&actions);
-        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
+    setup.attributesReady = posix_spawnattr_init(&setup.attributes) == 0;
+    if (!setup.attributesReady) {
         result.error = L"Could not initialize the process isolation group.";
         return result;
     }
+    auto& attributes = setup.attributes;
     short spawnFlags = POSIX_SPAWN_SETPGROUP;
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
     spawnFlags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
@@ -251,51 +336,56 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
     int attributeError = posix_spawnattr_setflags(&attributes, spawnFlags);
     if (attributeError == 0) attributeError = posix_spawnattr_setpgroup(&attributes, 0);
     if (attributeError != 0) {
-        posix_spawnattr_destroy(&attributes);
-        posix_spawn_file_actions_destroy(&actions);
-        close(stdoutPipe[0]); close(stdoutPipe[1]); close(stderrPipe[0]); close(stderrPipe[1]);
         result.error = L"Could not configure the process isolation group.";
         return result;
     }
 
-    vector<string> encoded;
-    encoded.push_back(spec.executable.string());
-    for (const auto& argument : spec.arguments) encoded.push_back(wstring_to_utf8(argument));
-    vector<char*> arguments;
-    for (auto& value : encoded) arguments.push_back(value.data());
-    arguments.push_back(nullptr);
-    pid_t process = -1;
-    const int spawnError = posix_spawn(&process, spec.executable.c_str(), &actions, &attributes, arguments.data(), environ);
-    posix_spawnattr_destroy(&attributes);
-    posix_spawn_file_actions_destroy(&actions);
-    close(stdoutPipe[1]); close(stderrPipe[1]);
-    if (spawnError != 0) {
-        close(stdoutPipe[0]); close(stderrPipe[0]);
-        result.error = L"Could not start the process.";
-        return result;
-    }
-    g_activeChildGroup.store(process, memory_order_relaxed);
-    struct ActiveGroupGuard {
-        ~ActiveGroupGuard() {
-            g_activeChildGroup.store(0, memory_order_relaxed);
+    OwnedGroup owned;
+    {
+        lock_guard lock(g_lifecycleMutex);
+        if (g_closing.load() || stopToken.stop_requested()) {
+            result.status = ProcessStatus::Cancelled;
+            return result;
         }
-    } groupGuard;
-    if (spec.useLowPriority) setpriority(PRIO_PROCESS, process, 10);
-    fcntl(stdoutPipe[0], F_SETFL, fcntl(stdoutPipe[0], F_GETFL) | O_NONBLOCK);
-    fcntl(stderrPipe[0], F_SETFL, fcntl(stderrPipe[0], F_GETFL) | O_NONBLOCK);
+        size_t capacity = kMaximumActiveGroups;
+#ifdef MINEBACKUP_PROCESS_TEST_HOOKS
+        capacity = g_capacity;
+#endif
+        while (owned.slot < capacity && g_activeGroups[owned.slot] != 0) ++owned.slot;
+        if (owned.slot == capacity) {
+            result.error = L"Too many concurrent external processes are already active.";
+            return result;
+        }
+        g_activeGroups[owned.slot] = -1; // Reserved before spawn, under the lifecycle lock.
+        const int spawnError = posix_spawn(&owned.process, spec.executable.c_str(),
+            &actions, &attributes, arguments.data(), environ);
+        if (spawnError != 0) {
+            g_activeGroups[owned.slot] = 0;
+            owned.process = 0;
+            result.error = L"Could not start the process.";
+            return result;
+        }
+#ifdef MINEBACKUP_PROCESS_TEST_HOOKS
+        if (g_afterSpawn) g_afterSpawn(g_afterSpawnContext);
+#endif
+        g_activeGroups[owned.slot] = owned.process;
+    }
+    output.Close(1);
+    errorOutput.Close(1);
+    if (spec.useLowPriority) setpriority(PRIO_PROCESS, owned.process, 10);
 
     const auto started = chrono::steady_clock::now();
     bool terminated = false;
-    int waitStatus = 0;
     for (;;) {
-        DrainDescriptor(stdoutPipe[0], result.standardOutput, spec.maximumCapturedBytes, result.outputTruncated);
-        DrainDescriptor(stderrPipe[0], result.standardError, spec.maximumCapturedBytes, result.outputTruncated);
-        const pid_t waited = waitpid(process, &waitStatus, WNOHANG);
-        if (waited == process) break;
-        if (waited < 0) {
+        DrainDescriptor(output.descriptors[0], result.standardOutput, spec.maximumCapturedBytes, result.outputTruncated);
+        DrainDescriptor(errorOutput.descriptors[0], result.standardError, spec.maximumCapturedBytes, result.outputTruncated);
+        siginfo_t info{};
+        if (owned.Observe(info) < 0) {
+            result.status = ProcessStatus::ExitedWithError;
             result.error = L"Could not wait for the process.";
             break;
         }
+        if (info.si_pid != 0) break;
         if (stopToken.stop_requested()) {
             result.status = ProcessStatus::Cancelled;
             terminated = true;
@@ -305,28 +395,22 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
             terminated = true;
         }
         if (terminated) {
-            kill(-process, SIGTERM);
+            owned.Signal(SIGTERM);
+            // Keep the leader unreaped throughout grace. Its descendants may
+            // ignore TERM, even when the leader has already exited.
             const auto graceEnd = chrono::steady_clock::now() + chrono::seconds(1);
-            bool parentReaped = false;
-            while (chrono::steady_clock::now() < graceEnd) {
-                if (!parentReaped) {
-                    const pid_t graceWait = waitpid(process, &waitStatus, WNOHANG);
-                    if (graceWait == process) parentReaped = true;
-                    else if (graceWait < 0) parentReaped = true;
-                }
-                this_thread::sleep_for(chrono::milliseconds(20));
+            while (chrono::steady_clock::now() < graceEnd && !g_closing.load()) {
+                this_thread::sleep_for(chrono::milliseconds(10));
             }
-            // The direct child may exit on TERM while a descendant ignores it. Kill
-            // the process group after the grace period regardless of parent state.
-            kill(-process, SIGKILL);
-            if (!parentReaped) waitpid(process, &waitStatus, 0);
             break;
         }
         this_thread::sleep_for(chrono::milliseconds(20));
     }
-    DrainDescriptor(stdoutPipe[0], result.standardOutput, spec.maximumCapturedBytes, result.outputTruncated);
-    DrainDescriptor(stderrPipe[0], result.standardError, spec.maximumCapturedBytes, result.outputTruncated);
-    close(stdoutPipe[0]); close(stderrPipe[0]);
+    int waitStatus = 0;
+    const bool reaped = owned.Reap(waitStatus);
+    if (!reaped && result.error.empty()) result.error = L"Could not reap the process.";
+    DrainDescriptor(output.descriptors[0], result.standardOutput, spec.maximumCapturedBytes, result.outputTruncated);
+    DrainDescriptor(errorOutput.descriptors[0], result.standardError, spec.maximumCapturedBytes, result.outputTruncated);
     if (!terminated && result.error.empty()) {
         result.exitCode = WIFEXITED(waitStatus) ? WEXITSTATUS(waitStatus) : 128 + WTERMSIG(waitStatus);
         result.status = result.exitCode == 0 ? ProcessStatus::Succeeded : ProcessStatus::ExitedWithError;
@@ -344,11 +428,31 @@ ProcessResult Run(const ProcessSpec& spec, stop_token stopToken) {
 
 void TerminateActiveProcess() {
 #ifndef _WIN32
-    const pid_t group = g_activeChildGroup.exchange(0);
-    if (group > 0) {
-        ::kill(-group, SIGKILL);
+    // Close admission before waiting for an in-flight spawn to publish its PID.
+    g_closing.store(true);
+    lock_guard lock(g_lifecycleMutex);
+    for (const pid_t group : g_activeGroups) {
+        if (group > 1) ::kill(-group, SIGKILL);
     }
+    // Each Run remains the sole reaper and retires its own slot. Do not clear
+    // identities before signaling, or permit another launch after shutdown.
 #endif
 }
+
+#if defined(MINEBACKUP_PROCESS_TEST_HOOKS) && !defined(_WIN32)
+namespace Testing {
+void SetCapacity(size_t capacity) {
+    lock_guard lock(g_lifecycleMutex);
+    g_capacity = min(capacity, kMaximumActiveGroups);
+}
+void SetAfterSpawn(void (*hook)(void*) noexcept, void* context) {
+    lock_guard lock(g_lifecycleMutex);
+    g_afterSpawn = hook;
+    g_afterSpawnContext = context;
+}
+void FailNextWait(int error) { g_nextWaitError.store(error); }
+bool IsClosing() { return g_closing.load(); }
+}
+#endif
 
 } // namespace ProcessRunner
