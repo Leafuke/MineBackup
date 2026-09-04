@@ -358,6 +358,13 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(minebackup_i18n_tests tests/I18nTest.cpp ${MINEBACKUP_INFRA_DIR}/i18n.cpp)
+    target_link_libraries(minebackup_i18n_tests PRIVATE minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_i18n_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.i18n COMMAND minebackup_i18n_tests)
+
     if(MINEBACKUP_BUILD_GUI)
     add_executable(minebackup_knotlink_server_manager_tests
         tests/KnotLinkServerManagerTest.cpp)

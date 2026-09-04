@@ -13,7 +13,7 @@ result = subprocess.run(
     capture_output=True, text=True, check=True,
 )
 tests = {test["name"] for test in json.loads(result.stdout)["tests"]}
-required = {"minebackup.data_core", "minebackup.cli.process_contract", "minebackup.cli.serve_contract"}
+required = {"minebackup.data_core", "minebackup.i18n", "minebackup.cli.process_contract", "minebackup.cli.serve_contract"}
 if os.name != "nt":
     required.add("minebackup.process_lifecycle")
 missing = required - tests
