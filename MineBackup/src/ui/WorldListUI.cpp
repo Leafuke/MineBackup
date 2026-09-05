@@ -323,36 +323,35 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 
 		// --- 左侧图标区 ---
 		ImDrawList* draw_list = ImGui::GetWindowDrawList();
+		const float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
+		const float iconRounding = ImGui::GetStyle().FrameRounding;
 
-		float iconSz = ImGui::GetTextLineHeightWithSpacing() * 2.5f;
-		ImVec2 icon_pos = ImGui::GetCursorScreenPos();
-		ImVec2 icon_end_pos = ImVec2(icon_pos.x + iconSz, icon_pos.y + iconSz);
-
-		// 绘制占位符和边框
-		draw_list->AddRectFilled(icon_pos, icon_end_pos, IM_COL32(50, 50, 50, 200), 4.0f);
-		draw_list->AddRect(icon_pos, icon_end_pos, IM_COL32(200, 200, 200, 200), 4.0f);
-
+		// 使用单个 InvisibleButton 占据确切布局槽位与响应点击
+		ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
+		const ImVec2 icon_pos = ImGui::GetItemRectMin();
+		const ImVec2 icon_end_pos = ImGui::GetItemRectMax();
 
 		wstring iconKey = worldFolder;
-
-		// 渲染逻辑
 		GLuint current_texture = g_worldIconTextures[iconKey];
+
 		if (current_texture > 0) {
-			ImGui::Image(ImTextureRef(static_cast<ImTextureID>(current_texture)), ImVec2(iconSz, iconSz));
+			draw_list->AddImageRounded(
+				ImTextureRef(static_cast<ImTextureID>(current_texture)),
+				icon_pos, icon_end_pos,
+				ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+				IM_COL32_WHITE, iconRounding);
 		}
 		else {
+			draw_list->AddRectFilled(icon_pos, icon_end_pos, ImGui::GetColorU32(ImGuiCol_FrameBg), iconRounding);
 			const char* placeholder_icon = ICON_FA_FOLDER;
-			ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
-			ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
-			draw_list->AddText(text_pos, IM_COL32(200, 200, 200, 255), placeholder_icon);
+			const ImVec2 text_size = ImGui::CalcTextSize(placeholder_icon);
+			const ImVec2 text_pos = ImVec2(icon_pos.x + (iconSz - text_size.x) * 0.5f, icon_pos.y + (iconSz - text_size.y) * 0.5f);
+			draw_list->AddText(text_pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), placeholder_icon);
 		}
 
+		// 边框统一在图片/占位符之后绘制，保证边界一致
+		draw_list->AddRect(icon_pos, icon_end_pos, ImGui::GetColorU32(ImGuiCol_Border), iconRounding);
 
-		// 将光标移过图标区域
-		ImGui::Dummy(ImVec2(iconSz, iconSz));
-
-		ImGui::SetCursorScreenPos(icon_pos);
-		ImGui::InvisibleButton("##icon_button", ImVec2(iconSz, iconSz));
 		// 点击更换图标
 		if (ImGui::IsItemClicked()) {
 			wstring sel = desktopServices->SelectFile().path.wstring();
