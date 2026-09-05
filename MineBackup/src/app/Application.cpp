@@ -840,9 +840,13 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		glfwSwapBuffers(wc);
 	}
 
+	if (wc != nullptr) {
+		glfwHideWindow(wc);
+	}
+
 	// 清理
-	BroadcastEvent("app_shutdown", {});
 	const auto shutdownStart = std::chrono::steady_clock::now();
+	BroadcastEvent("app_shutdown", {});
 
 	TaskCoordinator::Instance().StopAndJoin();
 	{

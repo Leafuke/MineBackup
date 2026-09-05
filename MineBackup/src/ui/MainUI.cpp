@@ -230,8 +230,10 @@ if (ImGui::BeginMenuBar()) {
 		}
 		ImGui::Separator();
 		if (ImGui::MenuItem(L("EXIT"))) {
+			if (wc != nullptr) {
+				glfwHideWindow(wc);
+			}
 			g_appState.done = true;
-			SaveConfigs();
 		}
 		ImGui::EndMenu();
 	}
@@ -625,7 +627,9 @@ if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_A
 			g_closeAction = 2;
 			g_rememberCloseAction = true;
 		}
-		SaveConfigs();
+		if (wc != nullptr) {
+			glfwHideWindow(wc);
+		}
 		g_appState.done = true;
 		ImGui::CloseCurrentPopup();
 	}

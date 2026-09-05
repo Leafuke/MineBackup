@@ -127,9 +127,9 @@ namespace ThemePalette {
         return GetLogLevelColor(level, IsDarkMode());
     }
 
-    inline ImVec4 GetLogBackgroundColor() {
+    inline ImVec4 GetLogBackgroundColor(bool isDark = IsDarkMode()) {
         if (ImGui::GetCurrentContext() == nullptr) {
-            return IsDarkMode() ? ImVec4(0.12f, 0.12f, 0.12f, 1.0f) : ImVec4(0.95f, 0.95f, 0.95f, 1.0f);
+            return isDark ? ImVec4(0.12f, 0.12f, 0.12f, 1.0f) : ImVec4(0.95f, 0.95f, 0.95f, 1.0f);
         }
         const ImGuiStyle& style = ImGui::GetStyle();
         const ImVec4 childBg = style.Colors[ImGuiCol_ChildBg];
@@ -143,7 +143,7 @@ namespace ThemePalette {
     inline ImVec4 GetLogMarkerColor(minebackup::logging::LogLevel level, bool isDark) {
         using minebackup::logging::LogLevel;
         const ImVec4 fg = GetLogLevelColor(level, isDark);
-        const ImVec4 bg = GetLogBackgroundColor();
+        const ImVec4 bg = GetLogBackgroundColor(isDark);
         float amount = 0.50f;
         switch (level) {
         case LogLevel::Trace:    amount = 0.65f; break;

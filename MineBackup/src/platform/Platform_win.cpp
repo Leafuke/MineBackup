@@ -320,7 +320,9 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			break;
 		case 1002:  // 点击“关闭”
 			// 先移除托盘图标，再退出程序
-			SaveConfigs();
+			if (wc) {
+				glfwHideWindow(wc);
+			}
 			g_appState.done = true;
 			RemoveTrayIcon();
 			PostQuitMessage(0);
