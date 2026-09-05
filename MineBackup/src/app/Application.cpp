@@ -53,6 +53,7 @@
 
 #include <cstdio>
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <system_error>
 #ifdef __APPLE__
@@ -121,7 +122,9 @@ static void main_window_close_callback(GLFWwindow* window)
 				g_windowHeight = h;
 			}
 		}
-		SaveConfigs();
+		if (window != nullptr) {
+			glfwHideWindow(window);
+		}
 		g_appState.done = true;
 	}
 	else {
@@ -839,14 +842,23 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	// 清理
 	BroadcastEvent("app_shutdown", {});
+	const auto shutdownStart = std::chrono::steady_clock::now();
+
 	TaskCoordinator::Instance().StopAndJoin();
 	{
 		lock_guard<mutex> lock(g_appState.task_mutex);
 		g_appState.g_active_auto_backups.clear();
 	}
+	const auto tasksStopped = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.tasks_stopped", "Tasks stopped in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(tasksStopped - shutdownStart).count()));
+
 	uiSession.SaveWindowState(g_windowWidth, g_windowHeight);
 	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
+	const auto configSaved = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.config_saved", "Configs saved in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(configSaved - tasksStopped).count()));
 
 	(void)desktopServices->ConfigureGlobalHotkeys({});
 	(void)desktopServices->SetTrayVisible(false);
@@ -856,8 +868,14 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #ifdef _WIN32
 	DestroyWindow(hwnd_hidden);
 #endif
+	const auto uiReleased = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.ui_released", "UI resources released in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(uiReleased - configSaved).count()));
 
 	CleanupKnotLink();
+	const auto shutdownCompleted = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.completed", "Shutdown completed in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(shutdownCompleted - shutdownStart).count()));
 
 	return 0;
 }
