@@ -466,7 +466,7 @@ private:
                     auto* drawList = ImGui::GetWindowDrawList();
                     drawList->AddRectFilled(
                         rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y),
-                        ImGui::ColorConvertFloat4ToU32(LevelColor(record.level)),
+                        ImGui::ColorConvertFloat4ToU32(ThemePalette::GetLogMarkerColor(record.level)),
                         1.5f);
 
                     float textX = rowMin.x + ImGui::GetStyle().FramePadding.x + 7.0f;

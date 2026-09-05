@@ -440,7 +440,7 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 		ImGui::BeginGroup();
 		ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 0.25f)); // 垂直居中一点
 		if (is_task_running) {
-			ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info)); // 蓝色
+			ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Info)); // 蓝色
 			ImGui::Text(ICON_FA_ROTATE); // 旋转图标，表示正在运行
 
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_AUTOBACKUP_RUNNING"));
@@ -448,13 +448,13 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 			ImGui::PopStyleColor();
 		}
 		else if (needs_backup) {
-			ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning)); // 黄色
+			ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Warning)); // 黄色
 			ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION); // 警告图标
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_NEEDS_BACKUP"));
 			ImGui::PopStyleColor();
 		}
 		else {
-			ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success)); // 绿色
+			ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Success)); // 绿色
 			ImGui::Text(ICON_FA_CIRCLE_CHECK); // 对勾图标
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TOOLTIP_UP_TO_DATE"));
 			ImGui::PopStyleColor();

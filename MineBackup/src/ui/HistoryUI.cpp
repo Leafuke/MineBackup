@@ -327,12 +327,12 @@ void ShowHistoryWindow(int requestedConfigIndex,
 				: view.status == HistoryFileStatus::CloudOnly
 					? ICON_FA_CLOUD : ICON_FA_TRIANGLE_EXCLAMATION;
 			const ImVec4 statusIconColor = view.status == HistoryFileStatus::Normal
-				? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success)
+				? ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Success)
 				: view.status == HistoryFileStatus::CloudOnly
-					? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Info)
+					? ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Info)
 					: view.status == HistoryFileStatus::SmallFile
-						? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning)
-						: ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error);
+						? ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Warning)
+						: ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Error);
 
 			const string sizeLabel = view.fileSize == 0 ? "-"
 				: wstring_to_utf8(MineFormatMessage("HISTORY_SIZE_MB",
@@ -412,7 +412,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			if (entry.isImportant) {
 				const float starSize = ImGui::CalcTextSize(ICON_FA_STAR).x;
 				ImGui::SameLine(cardWidth - starSize - cardPadding * 2.0f);
-				ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning));
+				ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusIconColor(ThemePalette::StatusColor::Warning));
 				ImGui::TextUnformatted(ICON_FA_STAR);
 				ImGui::PopStyleColor();
 			}
