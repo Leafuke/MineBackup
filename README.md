@@ -41,7 +41,7 @@ For Windows 10 and above users, it is recommended to prioritize the combination 
 ### 1️⃣ Download & Run
 1. Go to the [latest release](https://github.com/Leafuke/MineBackup/releases).
 2. Download `MineBackup-windows-x64.exe`, the Ubuntu `.deb`, the Linux
-   AppImage, or `MineBackup-1.16.2-macos-arm64.dmg`.
+   AppImage, or `MineBackup-1.16.3-macos-arm64.dmg`.
 3. Verify the asset against `SHA256SUMS`, then install or run it normally.
 
 See the [platform support matrix](docs/platform-support.md) for supported OS

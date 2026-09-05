@@ -37,7 +37,7 @@
 ### 1️⃣ 下载 & 运行
 1. 前往 [最新发布页](https://github.com/Leafuke/MineBackup/releases)。
 2. 下载 `MineBackup-windows-x64.exe`、Ubuntu `.deb`、Linux AppImage 或
-   `MineBackup-1.16.2-macos-arm64.dmg`。
+   `MineBackup-1.16.3-macos-arm64.dmg`。
 3. 使用 `SHA256SUMS` 核对文件后再正常安装或运行。
 
 各系统版本与 Linux 桌面能力降级规则见[平台支持矩阵](docs/platform-support.md)。
