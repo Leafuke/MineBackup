@@ -158,7 +158,8 @@ ProcessResult RunPlatform(const ProcessSpec& spec, stop_token stopToken) {
         }
         if (terminated) {
             TerminateJobObject(job, 1);
-            WaitForSingleObject(process.hProcess, 5000);
+            constexpr DWORD kTerminationWaitMs = 300;
+            WaitForSingleObject(process.hProcess, kTerminationWaitMs);
             break;
         }
     }
