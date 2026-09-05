@@ -7,6 +7,7 @@
 #include "DesktopServices.h"
 #include "Globals.h"
 #include "Logging.h"
+#include "ThemePalette.h"
 #include "UIHelpers.h"
 #include "i18n.h"
 #include "imgui.h"
@@ -148,15 +149,7 @@ bool ContainsCaseInsensitive(std::string_view value, std::string_view query) {
 }
 
 ImVec4 LevelColor(LogLevel level) {
-    switch (level) {
-    case LogLevel::Trace: return ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
-    case LogLevel::Debug: return ImVec4(0.55f, 0.75f, 0.95f, 1.0f);
-    case LogLevel::Info: return ImVec4(0.82f, 0.82f, 0.82f, 1.0f);
-    case LogLevel::Warning: return ImVec4(1.0f, 0.78f, 0.28f, 1.0f);
-    case LogLevel::Error: return ImVec4(1.0f, 0.40f, 0.40f, 1.0f);
-    case LogLevel::Critical: return ImVec4(1.0f, 0.20f, 0.55f, 1.0f);
-    }
-    return ImVec4(1, 1, 1, 1);
+    return ThemePalette::GetLogLevelColor(level);
 }
 
 class LogPanel {
@@ -386,7 +379,7 @@ private:
             showBackendError_ = true;
         }
         if (showBackendError_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.38f, 0.38f, 1.0f),
+            ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error),
                 "%s: %s", L("LOG_BACKEND_ERROR"), lastBackendError_.c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton(L("LOG_DISMISS"))) showBackendError_ = false;
@@ -396,7 +389,7 @@ private:
                 static_cast<unsigned long long>(evictedCount_));
         }
         if (status.previousSessionAbnormal) {
-            ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.28f, 1.0f),
+            ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning),
                 "%s", L("LOG_PREVIOUS_SESSION_ABNORMAL"));
         }
     }
@@ -473,7 +466,7 @@ private:
                     auto* drawList = ImGui::GetWindowDrawList();
                     drawList->AddRectFilled(
                         rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y),
-                        ImGui::ColorConvertFloat4ToU32(LevelColor(record.level)),
+                        ImGui::ColorConvertFloat4ToU32(ThemePalette::GetLogMarkerColor(record.level)),
                         1.5f);
 
                     float textX = rowMin.x + ImGui::GetStyle().FramePadding.x + 7.0f;
@@ -622,7 +615,7 @@ private:
             static_cast<unsigned long long>(records_.size()));
         if (paused_) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.28f, 1.0f),
+            ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning),
                 "%s", L("LOG_PAUSED_STATUS"));
         }
     }

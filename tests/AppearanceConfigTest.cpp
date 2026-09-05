@@ -3,6 +3,8 @@
 #include "AppPaths.h"
 #include "Globals.h"
 #include "KnownUserFolders.h"
+#include "ThemePalette.h"
+#include "AppearanceRuntime.h"
 
 #include <chrono>
 #include <filesystem>
@@ -216,6 +218,92 @@ int main() {
 	Check(!LastConfigLoadHasFatalDiagnostics()
 			&& ReadFile(migratedTasks).find("\"schemaVersion\":2") != std::string::npos,
 		"future legacy task schemas are retained but ignored");
+
+	Check(IsValidThemeId(static_cast<int>(ThemeId::ImGuiDark)), "ImGuiDark is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::VSCodeDark)), "VSCodeDark is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::SolarizedLight)), "SolarizedLight is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::SolarizedDark)), "SolarizedDark is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::SystemAuto)), "SystemAuto is valid theme");
+	Check(IsValidThemeId(static_cast<int>(ThemeId::Custom)), "Custom is valid theme");
+	Check(!IsValidThemeId(-1), "-1 is invalid theme");
+	Check(!IsValidThemeId(12), "12 is invalid theme");
+
+	const std::filesystem::path newThemesIni = root / "new-themes.ini";
+	g_theme = static_cast<int>(ThemeId::VSCodeDark);
+	Check(SaveConfigs(newThemesIni), "VSCodeDark theme saves");
+	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::VSCodeDark), "VSCodeDark theme round-trips");
+
+	g_theme = static_cast<int>(ThemeId::SolarizedLight);
+	Check(SaveConfigs(newThemesIni), "SolarizedLight theme saves");
+	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::SolarizedLight), "SolarizedLight theme round-trips");
+
+	g_theme = static_cast<int>(ThemeId::SystemAuto);
+	g_systemThemeLight = static_cast<int>(ThemeId::NordLight);
+	g_systemThemeDark = static_cast<int>(ThemeId::VSCodeDark);
+	Check(SaveConfigs(newThemesIni), "SystemAuto theme and subthemes save");
+	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	g_systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
+	g_systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::SystemAuto), "SystemAuto theme round-trips");
+	Check(g_systemThemeLight == static_cast<int>(ThemeId::NordLight), "SystemThemeLight round-trips");
+	Check(g_systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark round-trips");
+
+	{
+		std::ofstream out(newThemesIni, std::ios::trunc);
+		out << "[General]\nTheme=10\nSystemThemeLight=10\nSystemThemeDark=999\n";
+	}
+	LoadConfigs(newThemesIni);
+	Check(g_systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight falls back when set to SystemAuto");
+	Check(g_systemThemeDark == static_cast<int>(ThemeId::WindowsDark), "SystemThemeDark falls back when set to out of range");
+
+	const ImVec4 successDark = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, true);
+	const ImVec4 successLight = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, false);
+	Check(successDark.w == 1.0f && successLight.w == 1.0f, "ThemePalette status colors have solid alpha");
+	const ImVec4 infoLogDark = ThemePalette::GetLogLevelColor(minebackup::logging::LogLevel::Info, true);
+	const ImVec4 infoLogLight = ThemePalette::GetLogLevelColor(minebackup::logging::LogLevel::Info, false);
+	Check(infoLogDark.x > 0.8f && infoLogLight.x < 0.3f, "Log Info level contrasts correctly between dark and light");
+
+	ImGui::CreateContext();
+	g_theme = static_cast<int>(ThemeId::ImGuiLight);
+	ApplyTheme();
+	const ImVec4 chkBg = ImGui::GetStyle().Colors[ImGuiCol_CheckboxSelectedBg];
+	const ImVec4 chkMark = ImGui::GetStyle().Colors[ImGuiCol_CheckMark];
+	Check(chkBg.w == 1.0f, "CheckboxSelectedBg has solid alpha");
+	Check(ImGuiTheme::RelativeLuminance(chkBg) > 0.6f, "CheckboxSelectedBg in ImGuiLight is not black");
+	Check(ImGuiTheme::ContrastRatio(chkMark, chkBg) >= 3.0f, "CheckMark contrasts with CheckboxSelectedBg in ImGuiLight");
+	ImGui::DestroyContext();
+
+	g_windowWidth = 1440;
+	g_windowHeight = 900;
+	Check(SaveConfigs(newThemesIni), "Custom window size saves to ini");
+	g_windowWidth = 800;
+	g_windowHeight = 600;
+	LoadConfigs(newThemesIni);
+	Check(g_windowWidth == 1440 && g_windowHeight == 900, "Window dimensions round-trip through LoadConfigs/SaveConfigs");
+
+	{
+		std::ofstream out(newThemesIni, std::ios::binary | std::ios::trunc);
+		out << "[General]\r\nTheme = 10 \r\nSystemThemeLight = 3\r\nSystemThemeDark = 4\r\n";
+	}
+	g_theme = 0;
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::SystemAuto), "Theme parses with CRLF and whitespace padding");
+	Check(GetLastConfigLoadDiagnostics().empty(), "No diagnostics for CRLF formatted config with whitespace");
+
+	{
+		std::ofstream out(newThemesIni, std::ios::binary | std::ios::trunc);
+		out << "[General]\r\nTheme = NordLight\r\nSystemThemeLight = WindowsLight\r\nSystemThemeDark = VSCodeDark\r\n";
+	}
+	g_theme = 0;
+	LoadConfigs(newThemesIni);
+	Check(g_theme == static_cast<int>(ThemeId::NordLight), "Theme parses symbolic name NordLight");
+	Check(g_systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight parses symbolic name WindowsLight");
+	Check(g_systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark parses symbolic name VSCodeDark");
 
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {

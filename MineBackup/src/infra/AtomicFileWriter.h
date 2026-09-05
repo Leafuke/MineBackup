@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 namespace AtomicFileWriter {
@@ -45,6 +46,14 @@ struct WriteResult {
         return commitState == WriteCommitState::Durable;
     }
 };
+
+using ChunkSink = std::function<bool(std::string_view)>;
+using StreamProducer = std::function<bool(const ChunkSink&)>;
+
+WriteResult WriteStreamed(
+    const std::filesystem::path& target,
+    const StreamProducer& producer,
+    const WriteOptions& options = {});
 
 WriteResult WriteText(
     const std::filesystem::path& target,

@@ -1,163 +1,96 @@
 #include "i18n.h"
 
-#include <array>
+#include <cctype>
 #include <iostream>
-#include <string>
-#include <unordered_set>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 namespace {
-
 int failures = 0;
-
 void Check(bool condition, const std::string& message) {
-    if (condition) return;
-    ++failures;
-    std::cerr << "[FAIL] " << message << '\n';
+    if (!condition) { ++failures; std::cerr << "[FAIL] " << message << '\n'; }
 }
 
+// Compare argument consumption, not wording, field width or precision. Each
+// '*' consumes an int before the converted value; '%%' consumes no argument.
+std::optional<std::vector<std::string>> Signature(std::string_view format) {
+    std::vector<std::string> result;
+    for (std::size_t i = 0; i < format.size(); ++i) {
+        if (format[i] != '%') continue;
+        if (++i == format.size()) return std::nullopt;
+        if (format[i] == '%') continue;
+        auto isDigit = [&] { return i < format.size() && std::isdigit(static_cast<unsigned char>(format[i])); };
+        while (i < format.size() && std::string_view("-+ #0'").find(format[i]) != std::string_view::npos) ++i;
+        if (i < format.size() && format[i] == '*') { result.emplace_back("*"); ++i; }
+        else while (isDigit()) ++i;
+        if (i < format.size() && format[i] == '.') {
+            ++i;
+            if (i < format.size() && format[i] == '*') { result.emplace_back("*"); ++i; }
+            else while (isDigit()) ++i;
+        }
+        std::string length;
+        if (i < format.size() && std::string_view("hljztL").find(format[i]) != std::string_view::npos) {
+            length += format[i++];
+            if (i < format.size() && (length == "h" || length == "l") && format[i] == length[0]) length += format[i++];
+        }
+        if (i == format.size() || std::string_view("diouxXfFeEgGaAcspn").find(format[i]) == std::string_view::npos)
+            return std::nullopt;
+        result.push_back(length + format[i]);
+    }
+    return result;
+}
+
+bool HasSignature(const char* key, std::vector<std::string> expected) {
+    const auto& table = g_LangTable.at(g_CurrentLang);
+    const auto entry = table.find(key);
+    const bool valid = entry != table.end() && Signature(entry->second.value) == expected;
+    Check(valid, g_CurrentLang + " unexpected smoke-test signature: " + key);
+    return valid; // Never call varargs with an unverified translated signature.
+}
 } // namespace
 
 int main() {
-    const auto zh = g_LangTable.find("zh_CN");
-    const auto en = g_LangTable.find("en_US");
-    Check(zh != g_LangTable.end(), "zh_CN translation table is missing");
-    Check(en != g_LangTable.end(), "en_US translation table is missing");
+    Check(Signature("%s %d %zu %llu %c %.2f %.*s %%")
+            == std::vector<std::string>{"s", "d", "zu", "llu", "c", "f", "*", "s"},
+        "format signatures must account for lengths, precision arguments and escaped percent");
+    Check(Signature("%*.*s") == std::vector<std::string>{"*", "*", "s"}
+            && !Signature("incomplete %") && !Signature("unsupported %q"),
+        "malformed formats must fail instead of silently dropping arguments");
+
+    const auto zh = g_LangTable.find("zh_CN"), en = g_LangTable.find("en_US");
+    Check(zh != g_LangTable.end(), "zh_CN table missing");
+    Check(en != g_LangTable.end(), "en_US table missing");
     if (zh == g_LangTable.end() || en == g_LangTable.end()) return 1;
-
-    Check(zh->second.size() == en->second.size(),
-        "Chinese and English translation tables have different sizes");
-    for (const auto& [key, value] : zh->second) {
-        Check(!value.value.empty(), "zh_CN translation is empty: " + key);
-        Check(en->second.contains(key), "en_US translation is missing: " + key);
-    }
-    for (const auto& [key, value] : en->second) {
-        Check(!value.value.empty(), "en_US translation is empty: " + key);
-        Check(zh->second.contains(key), "zh_CN translation is missing: " + key);
-    }
-
-    constexpr std::array criticalKeys = {
-        "BUTTON_CONFIRM",
-        "DIALOG_SELECT_FOLDER_TITLE",
-        "DIALOG_SELECT_FILE_TITLE",
-        "DIALOG_SAVE_FILE_TITLE",
-        "CAPABILITIES_HEADER",
-        "SETTINGS_CATEGORY_APPLICATION",
-        "DEFAULT_BACKUP_ROOT_TITLE",
-        "DEFAULT_BACKUP_ROOT_DESCRIPTION",
-        "BUTTON_RESTORE_RECOMMENDED",
-        "MIGRATION_STARTUP_TITLE",
-        "PORTABLE_BINDING_NOTICE",
-        "TASK_COMMAND_WARNING",
-        "RCLONE_INSTALL_BUTTON",
-        "CLOUD_HISTORY_IMPORT_SUCCEEDED",
-        "CLOUD_STATUS_DOWNLOADING_HISTORY",
-        "TAB_LOG_PANEL",
-        "TAB_COMMAND_CONSOLE",
-        "LOG_EXPORT_DIAGNOSTICS",
-        "LOG_EXPORT_DIAGNOSTICS_WARNING",
-        "SETTINGS_MINECRAFT_TITLE",
-        "SETTINGS_MINECRAFT_DESC",
-        "SETTINGS_MINECRAFT_RESCAN",
-        "SETTINGS_MINECRAFT_SCANNING",
-        "SETTINGS_MINECRAFT_CHECKING",
-        "SETTINGS_MINECRAFT_EMPTY",
-        "SETTINGS_MINECRAFT_NEW",
-        "SETTINGS_MINECRAFT_ADDED",
-        "SETTINGS_MINECRAFT_ALREADY_ADDED",
-        "SETTINGS_MINECRAFT_ADDED_SUCCESS",
-        "SETTINGS_MINECRAFT_TASK_FAILED",
-        "SETTINGS_MINECRAFT_SELECT_REQUIRED",
-        "SETTINGS_MINECRAFT_COMMIT_FAILED",
-        "SETTINGS_MINECRAFT_ADD_SELECTED",
-        "WIZARD_DISCOVER_TITLE",
-        "WIZARD_DISCOVER_DESC",
-        "WIZARD_RESCAN",
-        "WIZARD_MANUAL_ADD",
-        "WIZARD_SCANNING",
-        "WIZARD_DISCOVERY_EMPTY",
-        "WIZARD_PCL2_HINT",
-        "WIZARD_ADVANCED_CUSTOM_DESC",
-        "WIZARD_ADVANCED_CUSTOM",
-        "WIZARD_ADVANCED_CUSTOM_INVALID",
-        "WIZARD_SOURCE",
-        "WIZARD_SOURCE_KNOWN",
-        "WIZARD_SOURCE_MANUAL",
-        "WIZARD_SOURCE_PCL2",
-        "WIZARD_WORLD_COUNT",
-        "WIZARD_ALREADY_ADDED",
-        "WIZARD_SELECT_AT_LEAST_ONE",
-        "WIZARD_BACKUP_TITLE",
-        "WIZARD_BACKUP_DESC",
-        "WIZARD_BACKUP_ABSOLUTE_REQUIRED",
-        "WIZARD_BACKUP_PREVIEW",
-        "WIZARD_READY_TITLE",
-        "WIZARD_READY_DESC",
-        "WIZARD_READY_OK",
-        "WIZARD_READINESS_CHECKING",
-        "WIZARD_FINAL_CHECKING",
-        "WIZARD_CORE_VALIDATION_TITLE",
-        "WIZARD_CORE_VALIDATION_RUNNING",
-        "WIZARD_CORE_VALIDATION_START_FAILED",
-        "WIZARD_CORE_VALIDATION_PASSED",
-        "WIZARD_CORE_VALIDATION_FAILED",
-        "WIZARD_CORE_VALIDATION_FAILED_DESC",
-        "WIZARD_OPEN_LOGS",
-        "WIZARD_OPEN_SETTINGS",
-        "WIZARD_ENTER_MAIN",
-        "WIZARD_TASK_SUBMIT_FAILED",
-        "WIZARD_COMMIT_FAILED",
-        "WIZARD_READINESS_READINESS_CANCELLED",
-        "WIZARD_READINESS_READINESS_EMPTY_BATCH",
-        "WIZARD_READINESS_READINESS_UNEXPECTED_FAILURE",
-        "WIZARD_READINESS_SEVEN_ZIP_UNAVAILABLE",
-        "WIZARD_READINESS_SOURCE_MISSING",
-        "WIZARD_READINESS_SOURCE_NOT_DIRECTORY",
-        "WIZARD_READINESS_SOURCE_ALREADY_CONFIGURED",
-        "WIZARD_READINESS_SOURCE_DUPLICATE_IN_BATCH",
-        "WIZARD_READINESS_SOURCE_NO_WORLDS",
-        "WIZARD_READINESS_WORLD_RELATIVE_PATH_UNSAFE",
-        "WIZARD_READINESS_WORLD_MISSING",
-        "WIZARD_READINESS_JAVA_WORLD_INVALID",
-        "WIZARD_READINESS_BEDROCK_WORLD_INVALID",
-        "WIZARD_READINESS_BACKUP_PATH_NOT_ABSOLUTE",
-        "WIZARD_READINESS_BACKUP_PATH_EXISTING_COLLISION",
-        "WIZARD_READINESS_BACKUP_PATH_BATCH_COLLISION",
-        "WIZARD_READINESS_BACKUP_INSIDE_SOURCE",
-        "WIZARD_READINESS_BACKUP_INSIDE_WORLD",
-        "WIZARD_READINESS_BACKUP_WRITE_PROBE_FAILED",
-        "WIZARD_READINESS_STORAGE_IDENTITY_COLLISION"
-    };
-    for (const char* language : lang_codes) {
-        SetLanguage(language);
-        for (const char* key : criticalKeys) {
-            Check(std::string(L(key)) != key,
-                std::string(language) + " translation is missing or empty: " + key);
+    for (const char* language : {"zh_CN", "en_US"}) {
+        const auto& table = g_LangTable.at(language);
+        const auto& other = g_LangTable.at(std::string(language) == "zh_CN" ? "en_US" : "zh_CN");
+        for (const auto& [key, value] : table) {
+            Check(!value.value.empty(), std::string(language) + " empty translation: " + key);
+            Check(other.contains(key), std::string(language) + " key absent in other language: " + key);
+            const auto signature = Signature(value.value);
+            Check(signature.has_value(), std::string(language) + " malformed format: " + key);
+            if (other.contains(key)) Check(signature == Signature(other.at(key).value), "argument signature mismatch: " + key);
         }
-        const auto stringAndInteger = MineFormatMessage(
-            "CONFIRM_DELETE_MSG", 7, "Profile");
-        const auto sizeValue = MineFormatMessage(
-            "LOG_BACKUP_SMART_INFO", static_cast<std::size_t>(42));
-        const auto minecraftCount = MineFormatMessage(
-            "SETTINGS_MINECRAFT_ADDED_SUCCESS", static_cast<std::size_t>(2));
-        Check(!stringAndInteger.empty()
-                && stringAndInteger.find(L"%d") == std::wstring::npos
-                && stringAndInteger.find(L"%s") == std::wstring::npos,
-            std::string(language)
-                + " printf translation should format string/integer arguments");
-        Check(!sizeValue.empty()
-                && sizeValue.find(L"%zu") == std::wstring::npos,
-            std::string(language)
-                + " printf translation should format size_t arguments");
-        Check(!minecraftCount.empty()
-				&& minecraftCount.find(L"%zu") == std::wstring::npos,
-			std::string(language)
-				+ " Minecraft result translation should format size_t arguments");
     }
 
-    if (failures == 0) {
-        std::cout << "[PASS] MineBackup i18n tables\n";
-        return 0;
+    const auto previousLanguage = g_CurrentLang;
+    for (const char* language : {"zh_CN", "en_US"}) {
+        SetLanguage(language);
+        if (HasSignature("CONFIRM_DELETE_MSG", {"d", "s"})) {
+            const auto value = MineFormatMessage("CONFIRM_DELETE_MSG", 7, "Profile");
+            Check(value != L"CONFIRM_DELETE_MSG" && value.find(L"7") != std::wstring::npos
+                    && value.find(L"Profile") != std::wstring::npos && value.find(L'%') == std::wstring::npos,
+                std::string(language) + " must format both integer and string values");
+        }
+        if (HasSignature("LOG_BACKUP_SMART_INFO", {"zu"})) {
+            const auto value = MineFormatMessage("LOG_BACKUP_SMART_INFO", static_cast<std::size_t>(42));
+            Check(value != L"LOG_BACKUP_SMART_INFO" && value.find(L"42") != std::wstring::npos
+                    && value.find(L'%') == std::wstring::npos,
+                std::string(language) + " must format size_t values");
+        }
     }
-    std::cerr << failures << " i18n assertion(s) failed\n";
-    return 1;
+    SetLanguage(previousLanguage);
+    if (!failures) std::cout << "[PASS] i18n keys, values, argument signatures and formatting\n";
+    return failures ? 1 : 0;
 }

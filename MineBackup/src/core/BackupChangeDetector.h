@@ -34,6 +34,8 @@ struct BackupScanResult {
 	std::map<std::wstring, FolderRewindFormat::FileState> currentState;
 	BackupChangeSet changes;
 	std::vector<std::filesystem::path> changedFiles;
+	std::wstring previousLastBackupFileName;
+	std::wstring previousBasedOnFullBackup;
 };
 
 class BackupChangeDetector {

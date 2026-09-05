@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <system_error>
@@ -37,6 +38,8 @@ struct DiscoveryLocation {
 	std::filesystem::path path;
 	DiscoveryLocationKind kind = DiscoveryLocationKind::Manual;
 	std::vector<DiscoveryEvidence> evidence;
+	// 可选的实例名称提示（例如启动器配置中明确登记的实例名或游戏名）
+	std::optional<std::wstring> suggestedName;
 };
 
 struct DiscoveryDiagnostic {

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "imgui.h"
 #include "json.hpp"
 #include <algorithm>
@@ -138,8 +138,18 @@ namespace ImGuiTheme {
         }
         if (ContrastRatio(colors[ImGuiCol_CheckMark],
             colors[ImGuiCol_CheckboxSelectedBg]) < 3.0f) {
-            colors[ImGuiCol_CheckboxSelectedBg] =
-                MostContrastingBackground(colors[ImGuiCol_CheckMark]);
+            const bool isDarkWindow = RelativeLuminance(style.Colors[ImGuiCol_WindowBg]) < 0.45f;
+            if (isDarkWindow) {
+                colors[ImGuiCol_CheckboxSelectedBg] =
+                    MostContrastingBackground(colors[ImGuiCol_CheckMark]);
+            }
+            else {
+                colors[ImGuiCol_CheckMark] = Hex(0x005A9E);
+                if (ContrastRatio(colors[ImGuiCol_CheckMark],
+                    colors[ImGuiCol_CheckboxSelectedBg]) < 3.0f) {
+                    colors[ImGuiCol_CheckMark] = Hex(0x003A66);
+                }
+            }
         }
     }
 
@@ -186,6 +196,10 @@ namespace ImGuiTheme {
 
         ImGui::StyleColorsLight();
         ApplyNewWidgetDefaults(style);
+
+        ImVec4* colors = style.Colors;
+        colors[ImGuiCol_CheckMark] = Hex(0x0067C0);
+        colors[ImGuiCol_CheckboxSelectedBg] = Hex(0xE5F1FB);
 	}
     inline void ApplyImGuiDark() {
         EnableDarkModeWin(true);
@@ -451,6 +465,7 @@ namespace ImGuiTheme {
     }
 
     inline void ApplyVSCodeDark() {
+        EnableDarkModeWin(true);
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 
@@ -753,6 +768,7 @@ namespace ImGuiTheme {
     }
 
     inline void ApplySolarized(bool dark_mode) {
+        EnableDarkModeWin(dark_mode);
         ImGuiStyle& style = ImGui::GetStyle();
         ImVec4* colors = style.Colors;
 

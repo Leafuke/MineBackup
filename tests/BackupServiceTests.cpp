@@ -9,12 +9,15 @@
 #include "RuntimeIntegration.h"
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeRetentionService.h"
+#include "text_to_text.h"
 
 #include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
+#include <sstream>
 #include <stop_token>
 #include <string_view>
 
@@ -46,7 +49,8 @@ ArchiveRunner MakeFakeArchiveRunner(
 	const shared_ptr<int>& processCount,
 	stop_token stopToken,
 	size_t archiveSize = 128 * 1024,
-	bool createArchive = true) {
+	bool createArchive = true,
+	function<void(const ProcessSpec&)> inspect = {}) {
 	ExternalToolResolution resolution;
 	resolution.available = true;
 	resolution.executable = filesystem::path(L"fake-7zz");
@@ -54,13 +58,14 @@ ArchiveRunner MakeFakeArchiveRunner(
 	return ArchiveRunner(
 		std::move(resolution),
 		stopToken,
-		[processCount, archiveSize, createArchive](const ProcessSpec& spec, stop_token token) {
+		[processCount, archiveSize, createArchive, inspect](const ProcessSpec& spec, stop_token token) {
 			ProcessResult result;
 			if (token.stop_requested()) {
 				result.status = ProcessStatus::Cancelled;
 				return result;
 			}
 			++*processCount;
+			if (inspect) inspect(spec);
 			if (createArchive) {
 				for (const auto& argument : spec.arguments) {
 					const filesystem::path candidate(argument);
@@ -75,6 +80,140 @@ ArchiveRunner MakeFakeArchiveRunner(
 			result.exitCode = 0;
 			return result;
 		});
+}
+
+void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryRoot) {
+	for (const string mode : {"full", "forced-full", "smart", "excluded-only"}) {
+		const auto root = temporaryRoot / ("scan-reuse-" + mode);
+		const auto world = root / "saves" / "world";
+		WriteFixture(world / "level.dat", "original-level");
+		WriteFixture(world / "region" / "r.0.0.mca", "unchanged-region");
+		WriteFixture(world / "playerdata" / "player.dat", "player");
+		WriteFixture(world / "session.lock", "session");
+		WriteFixture(world / "region" / "write.lock", "nested-lock");
+		WriteFixture(world / "cache" / "temp.bin", "cache");
+
+		BackupRequest request;
+		auto& config = request.config;
+		config.configId = L"scan-reuse-" + utf8_to_wstring(mode);
+		config.saveRoot = (root / "saves").wstring();
+		config.backupPath = (root / "backups").wstring();
+		config.zipPath = L"fake-7zz";
+		config.zipFormat = L"7z";
+		config.backupMode = 1;
+		config.skipIfUnchanged = true;
+		config.maxSmartBackupsPerFull = 0;
+		config.worlds = {{L"world", L"World"}};
+		// Lock exclusions must come from the production mandatory rules.
+		config.blacklist = {L"cache"};
+		request.world = {config.configId, L"world"};
+		request.sourcePath = world;
+		request.displayName = L"World";
+		request.comment = L"baseline";
+
+		vector<vector<wstring>> submittedLists;
+		vector<HistoryEntry> history;
+		auto processCount = make_shared<int>(0);
+		BackupServiceDependencies dependencies;
+		dependencies.paths.runtimeRoot = root / "runtime";
+		dependencies.isFileLocked = [](const filesystem::path&) { return false; };
+		dependencies.addHistory = [&](const HistoryEntry& entry) { history.push_back(entry); return true; };
+		dependencies.archiveRunnerFactory = [&](const filesystem::path&, const AppPaths&, stop_token token) {
+			return MakeFakeArchiveRunner(processCount, token, 128 * 1024, true, [&](const ProcessSpec& spec) {
+				test.Expect(filesystem::equivalent(spec.workingDirectory, world),
+					"archive list paths must resolve against the actual source world");
+				int listCount = 0;
+				for (const auto& argument : spec.arguments) {
+					if (argument.empty() || argument.front() != L'@') continue;
+					++listCount;
+					const filesystem::path listPath(argument.substr(1));
+					test.Expect(filesystem::is_regular_file(listPath), "archive executor must receive a real file list");
+					istringstream input(ReadFixture(listPath));
+					vector<wstring> files;
+					string line;
+					while (getline(input, line)) {
+						if (!line.empty() && line.back() == '\r') line.pop_back();
+						files.push_back(FolderRewindFormat::NormalizeRelativePath(utf8_to_wstring(line)));
+					}
+					submittedLists.push_back(std::move(files));
+				}
+				test.Expect(listCount == 1, "archive creation must use exactly one captured file list");
+			});
+		};
+		BackupService service(dependencies);
+		const auto baseline = service.Run(request);
+		test.Expect(baseline.code == OperationCode::Success && baseline.historyEntry.has_value(),
+			"scan-reuse fixture must establish a valid Full checkpoint through the real service");
+		if (baseline.code != OperationCode::Success || !baseline.historyEntry || submittedLists.size() != 1) continue;
+		const set<wstring> original{L"level.dat", L"playerdata/player.dat", L"region/r.0.0.mca"};
+		test.Expect(set<wstring>(submittedLists.front().begin(), submittedLists.front().end()) == original,
+			"baseline Full must exclude user blacklists and both root and nested lock files");
+
+		config.backupMode = mode == "full" ? 1 : 2;
+		request.comment = utf8_to_wstring(mode); // Distinct archive names even within one clock second.
+		WriteFixture(world / "cache" / "temp.bin", "changed-excluded-cache");
+		WriteFixture(world / "session.lock", "changed-session-lock");
+		WriteFixture(world / "region" / "write.lock", "changed-nested-lock");
+		if (mode != "excluded-only") WriteFixture(world / "level.dat", "modified-allowed-level-with-new-size");
+		if (mode == "forced-full") filesystem::remove(baseline.archivePath);
+		if (mode == "smart") {
+			filesystem::remove(world / "playerdata" / "player.dat");
+			WriteFixture(world / "data" / "new.dat", "new-allowed-file");
+		}
+		const auto result = service.Run(request);
+		if (mode == "excluded-only") {
+			test.Expect(result.code == OperationCode::NoChanges && result.outcome == BackupOutcome::NoChanges
+				&& submittedLists.size() == 1 && *processCount == 1 && history.size() == 1,
+				"excluded-only changes must not create archives or history entries");
+			continue;
+		}
+		test.Expect(result.code == OperationCode::Success && result.historyEntry.has_value()
+			&& submittedLists.size() == 2 && history.size() == 2,
+			"each changed fixture must commit exactly one archive and history entry");
+		if (result.code != OperationCode::Success || !result.historyEntry || submittedLists.size() != 2) continue;
+
+		FolderRewindFormat::StoragePaths storage;
+		if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, L"world", world.wstring(), storage)) {
+			test.Expect(false, "fixture storage paths must resolve");
+			continue;
+		}
+		FolderRewindFormat::MetadataState state;
+		FolderRewindFormat::ChangeRecord record;
+		const auto filename = result.historyEntry->backupFile;
+		const bool loaded = FolderRewindMetadataStore::LoadState(storage.metadataDir, state)
+			&& FolderRewindMetadataStore::LoadRecord(storage.metadataDir, filename, record);
+		test.Expect(loaded, "contract must inspect metadata actually persisted by BackupService");
+		if (!loaded) continue;
+		set<wstring> stateFiles;
+		for (const auto& [path, ignored] : state.fileStates) stateFiles.insert(path);
+		const auto& submitted = submittedLists.back();
+		const set<wstring> archived(submitted.begin(), submitted.end());
+		test.Expect(archived.size() == submitted.size(), "archive file lists must not duplicate paths");
+		test.Expect(state.lastBackupFileName == filename && record.archiveFileName == filename,
+			"archive, history and persisted metadata must refer to the same committed backup");
+		if (mode == "smart") {
+			test.Expect(archived == set<wstring>{L"data/new.dat", L"level.dat"}
+				&& stateFiles == set<wstring>{L"data/new.dat", L"level.dat", L"region/r.0.0.mca"},
+				"Smart archives contain only allowed changes while state retains unchanged allowed files");
+			test.Expect(record.backupType == L"Smart" && record.fullFileList.empty()
+				&& record.addedFiles == vector<wstring>{L"data/new.dat"}
+				&& record.modifiedFiles == vector<wstring>{L"level.dat"}
+				&& record.deletedFiles == vector<wstring>{L"playerdata/player.dat"}
+				&& record.previousBackupFileName == baseline.historyEntry->backupFile
+				&& record.basedOnFullBackup == baseline.historyEntry->backupFile
+				&& state.basedOnFullBackup == record.basedOnFullBackup,
+				"Smart metadata must preserve filtered deltas and the existing Full chain");
+		}
+		else {
+			test.Expect(archived == original && stateFiles == archived
+				&& record.fullFileList == vector<wstring>(original.begin(), original.end()),
+				"Full and Forced Full must archive exactly the filtered metadata snapshot");
+			test.Expect(record.backupType == L"Full" && record.previousBackupFileName.empty()
+				&& record.basedOnFullBackup == filename && state.basedOnFullBackup == filename
+				&& record.addedFiles == record.fullFileList && record.modifiedFiles.empty() && record.deletedFiles.empty(),
+				"Full and Forced Full must establish a new complete checkpoint");
+		}
+	}
 }
 
 const BackupRuntimeEvent* FindLastEvent(
@@ -319,6 +458,7 @@ void RunDirectRemoveTransactionTests(
 void RunBackupServiceTests(
 	TestContext& test,
 	const filesystem::path& temporaryRoot) {
+	RunScanReuseContracts(test, temporaryRoot);
 	const filesystem::path root = temporaryRoot / "backup-service";
 	const filesystem::path world = root / "saves" / "world";
 	WriteFixture(world / "level.dat", "world-data");
@@ -793,14 +933,12 @@ void RunBackupServiceTests(
 		oneRecord.previousBackupFileName = fullFile;
 		oneRecord.basedOnFullBackup = fullFile;
 		oneRecord.addedFiles = {L"one.dat"};
-		oneRecord.fullFileList = {L"level.dat", L"one.dat"};
 		FolderRewindFormat::ChangeRecord twoRecord;
 		twoRecord.archiveFileName = smartTwoFile;
 		twoRecord.backupType = L"Smart";
 		twoRecord.previousBackupFileName = smartOneFile;
 		twoRecord.basedOnFullBackup = fullFile;
 		twoRecord.addedFiles = {L"two.dat"};
-		twoRecord.fullFileList = {L"level.dat", L"one.dat", L"two.dat"};
 		test.Expect(FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, fullRecord)
 			&& FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, oneRecord)
 			&& FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, twoRecord),

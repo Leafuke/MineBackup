@@ -2,6 +2,7 @@
 #include "SettingsUIPrivate.h"
 #include "MigrationReportUI.h"
 #include "SettingsAutoSave.h"
+#include "ThemePalette.h"
 
 using namespace std;
 
@@ -68,10 +69,10 @@ const char* CapabilityDetail(CapabilityState state) {
 
 void DrawCapability(const char* nameKey, const CapabilityStatus& status) {
 	const ImVec4 color = status.state == CapabilityState::Available
-		? ImVec4(0.35f, 0.8f, 0.45f, 1.0f)
+		? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success)
 		: status.state == CapabilityState::Failed
-			? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
-			: ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
+			? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error)
+			: ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning);
 	ImGui::BulletText("%s", L(nameKey));
 	ImGui::SameLine();
 	ImGui::TextColored(color, "%s", CapabilityStateLabel(status.state));
@@ -159,11 +160,11 @@ void DrawSaveStatus() {
 	case SettingsSaveState::Saving: key = "SETTINGS_SAVE_SAVING"; break;
 	case SettingsSaveState::Saved:
 		key = "SETTINGS_SAVE_SAVED";
-		color = ImVec4(0.35f, 0.80f, 0.45f, 1.0f);
+		color = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success);
 		break;
 	case SettingsSaveState::Failed:
 		key = "SETTINGS_SAVE_FAILED";
-		color = ImVec4(1.0f, 0.40f, 0.35f, 1.0f);
+		color = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error);
 		break;
 	case SettingsSaveState::Idle: break;
 	}

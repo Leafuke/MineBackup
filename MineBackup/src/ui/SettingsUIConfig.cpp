@@ -1,4 +1,4 @@
-﻿#include "SettingsUIPrivate.h"
+#include "SettingsUIPrivate.h"
 
 #include "ApplicationActions.h"
 #include "AppPaths.h"
@@ -10,6 +10,7 @@
 #include "MainUI.h"
 #include "PlatformCompat.h"
 #include "TaskCoordinator.h"
+#include "ThemePalette.h"
 
 using namespace std;
 
@@ -179,14 +180,14 @@ static void DrawResponsivePathField(
 	error_code error;
 	const bool exists = filesystem::exists(value, error) && !error;
 	ImGui::TextColored(exists
-		? ImVec4(0.35f, 0.80f, 0.45f, 1.0f)
-		: ImVec4(0.95f, 0.65f, 0.20f, 1.0f),
+		? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success)
+		: ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning),
 		"%s", L(exists ? "PATH_STATUS_VALID" : "PATH_STATUS_NOT_FOUND"));
 }
 
 void DrawPathSettings(Config& cfg) {
 	if (cfg.pendingLocalBinding) {
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning));
 		ImGui::TextWrapped("%s", L("PORTABLE_BINDING_NOTICE"));
 		ImGui::PopStyleColor();
 	}
@@ -234,8 +235,8 @@ void DrawPathSettings(Config& cfg) {
 	}
 	if (!toolStatus.empty()) {
 		ImGui::PushStyleColor(ImGuiCol_Text, toolStatusOk
-			? ImVec4(0.30f, 0.75f, 0.35f, 1.0f)
-			: ImVec4(0.85f, 0.45f, 0.30f, 1.0f));
+			? ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success)
+			: ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error));
 		ImGui::TextWrapped("%s", wstring_to_utf8(toolStatus).c_str());
 		ImGui::PopStyleColor();
 	}
@@ -386,7 +387,7 @@ void DrawWorldEditSettings(Config& cfg) {
 
 	ImGui::TextDisabled("%s", L("WE_ASCII_PATH_REQUIRED"));
 	if (!IsWEIntegrationPathValidForSave(cfg)) {
-		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", L("ERROR_NON_ASCII_PATH"));
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error), "%s", L("ERROR_NON_ASCII_PATH"));
 	}
 }
 

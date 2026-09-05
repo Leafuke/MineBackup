@@ -7,6 +7,7 @@
 #include "SettingsUI.h"
 #include "SettingsUIHotkeys.h"
 #include "UIHelpers.h"
+#include "ThemePalette.h"
 #include "imgui-all.h"
 #include "i18n.h"
 #include "AppState.h"
@@ -229,8 +230,10 @@ if (ImGui::BeginMenuBar()) {
 		}
 		ImGui::Separator();
 		if (ImGui::MenuItem(L("EXIT"))) {
+			if (wc != nullptr) {
+				glfwHideWindow(wc);
+			}
 			g_appState.done = true;
-			SaveConfigs();
 		}
 		ImGui::EndMenu();
 	}
@@ -367,7 +370,7 @@ if (ImGui::BeginMenuBar()) {
 				whichFunc = 2;
 			}
 			if (waitingForHotkey) {
-				ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "%s", L("WAITING"));
+				ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning), "%s", L("WAITING"));
 				for (int key = ImGuiKey_0; key <= ImGuiKey_Z; ++key) {
 					if (ImGui::IsKeyPressed((ImGuiKey)key)) {
 					waitingForHotkey = false;
@@ -464,9 +467,9 @@ if (ImGui::BeginMenuBar()) {
 	// 在菜单栏右侧显示更新按钮
 	if (g_NewVersionAvailable) {
 		ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(L("UPDATE_AVAILABLE_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2 - 100);
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.902f, 0.6f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.9f, 0.5f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Button, ThemePalette::GetSuccessButtonColor());
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ThemePalette::GetSuccessButtonHoveredColor());
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ThemePalette::GetSuccessButtonActiveColor());
 		if (ImGui::Button(L("UPDATE_AVAILABLE_BUTTON"))) {
 			ImGui::OpenPopup(L("UPDATE_POPUP_TITLE"));
 			open_update_popup = true;
@@ -624,7 +627,9 @@ if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_A
 			g_closeAction = 2;
 			g_rememberCloseAction = true;
 		}
-		SaveConfigs();
+		if (wc != nullptr) {
+			glfwHideWindow(wc);
+		}
 		g_appState.done = true;
 		ImGui::CloseCurrentPopup();
 	}

@@ -60,10 +60,8 @@ bool TryCaptureFileState(const filesystem::path& file, FolderRewindFormat::FileS
 
 bool CollectCurrentState(
 	const filesystem::path& root,
-	map<wstring, FolderRewindFormat::FileState>& state,
-	map<wstring, filesystem::path>& paths) {
+	map<wstring, FolderRewindFormat::FileState>& state) {
 	map<wstring, FolderRewindFormat::FileState> nextState;
-	map<wstring, filesystem::path> nextPaths;
 	error_code ec;
 	if (!filesystem::exists(root, ec) || ec) return false;
 
@@ -80,14 +78,12 @@ bool CollectCurrentState(
 				|| !TryCaptureFileState(entry.path(), fileState)) {
 				return false;
 			}
-			nextPaths[relative] = entry.path();
 			nextState[relative] = std::move(fileState);
 		}
 		iterator.increment(ec);
 		if (ec) return false;
 	}
 	state = std::move(nextState);
-	paths = std::move(nextPaths);
 	return true;
 }
 
@@ -98,9 +94,8 @@ BackupScanResult BackupChangeDetector::Scan(
 	const filesystem::path& metadataDirectory,
 	const filesystem::path& backupDirectory) const {
 	BackupScanResult result;
-	map<wstring, filesystem::path> currentPaths;
 	auto collectOrFail = [&](BackupScanStatus successStatus) {
-		if (CollectCurrentState(sourceRoot, result.currentState, currentPaths)) {
+		if (CollectCurrentState(sourceRoot, result.currentState)) {
 			result.status = successStatus;
 		}
 		else {
@@ -115,7 +110,6 @@ BackupScanResult BackupChangeDetector::Scan(
 		return result;
 	}
 
-	map<wstring, FolderRewindFormat::FileState> previousState;
 	for (const auto& [rawPath, state] : metadata.fileStates) {
 		wstring normalized;
 		try {
@@ -128,8 +122,9 @@ BackupScanResult BackupChangeDetector::Scan(
 			collectOrFail(BackupScanStatus::MetadataInvalid);
 			return result;
 		}
-		previousState.emplace(normalized, state);
 	}
+	result.previousLastBackupFileName = metadata.lastBackupFileName;
+	result.previousBasedOnFullBackup = metadata.basedOnFullBackup;
 
 	error_code ec;
 	if (metadata.lastBackupFileName.empty()
@@ -144,24 +139,24 @@ BackupScanResult BackupChangeDetector::Scan(
 		return result;
 	}
 
-	if (!CollectCurrentState(sourceRoot, result.currentState, currentPaths)) {
+	if (!CollectCurrentState(sourceRoot, result.currentState)) {
 		result.status = BackupScanStatus::ScanFailed;
 		return result;
 	}
 
 	for (const auto& [path, state] : result.currentState) {
-		const auto previous = previousState.find(path);
-		if (previous == previousState.end()) {
+		const auto previous = metadata.fileStates.find(path);
+		if (previous == metadata.fileStates.end()) {
 			result.changes.addedFiles.push_back(path);
-			result.changedFiles.push_back(currentPaths.at(path));
+			result.changedFiles.push_back(sourceRoot / filesystem::path(path));
 		}
 		else if (previous->second.size != state.size
 			|| previous->second.lastWriteTimeUtc != state.lastWriteTimeUtc) {
 			result.changes.modifiedFiles.push_back(path);
-			result.changedFiles.push_back(currentPaths.at(path));
+			result.changedFiles.push_back(sourceRoot / filesystem::path(path));
 		}
 	}
-	for (const auto& [path, ignored] : previousState) {
+	for (const auto& [path, ignored] : metadata.fileStates) {
 		if (!result.currentState.contains(path)) result.changes.deletedFiles.push_back(path);
 	}
 

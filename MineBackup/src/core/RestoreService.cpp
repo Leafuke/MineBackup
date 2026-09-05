@@ -126,11 +126,14 @@ bool BuildSmartFilePlan(
 		for (const auto& file : record.deletedFiles) owners.erase(file);
 		for (const auto& file : record.addedFiles) owners[file] = record.archiveFileName;
 		for (const auto& file : record.modifiedFiles) owners[file] = record.archiveFileName;
-		const set<wstring> expected(record.fullFileList.begin(), record.fullFileList.end());
-		if (owners.size() != expected.size()
-			|| any_of(owners.begin(), owners.end(), [&](const auto& owner) {
-				return !expected.contains(owner.first);
-			})) return false;
+		if (!record.fullFileList.empty()) {
+			if (owners.size() != record.fullFileList.size()) return false;
+			auto owner = owners.begin();
+			auto expected = record.fullFileList.begin();
+			for (; owner != owners.end(); ++owner, ++expected) {
+				if (owner->first != *expected) return false;
+			}
+		}
 	}
 	map<wstring, filesystem::path> archives;
 	map<wstring, size_t> order;

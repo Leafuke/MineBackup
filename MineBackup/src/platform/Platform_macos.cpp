@@ -152,6 +152,22 @@ void EnableDarkModeWin(bool enable) {
 	(void)enable;
 }
 
+bool IsSystemDarkMode() {
+	FILE* pipe = popen("defaults read -g AppleInterfaceStyle 2>/dev/null", "r");
+	if (pipe) {
+		char buffer[128];
+		bool isDark = false;
+		if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+			if (strstr(buffer, "Dark") != nullptr) {
+				isDark = true;
+			}
+		}
+		pclose(pipe);
+		return isDark;
+	}
+	return false;
+}
+
 bool Extract7zToTempFile(std::wstring& extractedPath) {
 	const auto resolved = ExternalToolManager::ResolveSevenZip({}, GetAppPaths());
 	if (!resolved.available) return false;

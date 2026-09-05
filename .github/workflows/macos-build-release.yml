@@ -40,6 +40,7 @@ jobs:
           test "$(uname -m)" = arm64
           cmake --preset macos-arm64 -DBUILD_TESTING=ON
           cmake --build build/macos-arm64 --parallel
+          python3 tests/verify_rc_tests.py --build build/macos-arm64
           ctest --preset macos-arm64 --output-on-failure
 
       - name: Resolve version from CMake

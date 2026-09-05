@@ -555,6 +555,9 @@ MigrationUnitResult EnsureWorldMigrated(const Config& config, int configIndex, c
 		}
 		for (auto* values : { &record.addedFiles, &record.modifiedFiles, &record.deletedFiles, &record.fullFileList })
 			for (auto& value : *values) value = FolderRewindFormat::NormalizeRelativePath(value);
+		if (FolderRewindFormat::IsSmartBackupType(record.backupType)) {
+			record.fullFileList.clear();
+		}
 		convertedRecords.push_back(std::move(record));
 	}
 

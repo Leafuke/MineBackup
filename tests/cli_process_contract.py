@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the headless CLI profile lock and graceful signal contract."""
+"""Exercise profile locks, graceful cancellation and forced tree cleanup."""
 
 from __future__ import annotations
 
@@ -7,12 +7,11 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import sys
 import tempfile
-import time
+from process_contract_support import wait_until, observe_ready, assert_terminated, cleanup
 
 
 CONFIG_ID = "11111111-1111-4111-8111-111111111111"
@@ -127,220 +126,111 @@ def parse_single_json(stdout: str, context: str) -> dict:
     return value
 
 
-def send_first_signal(process: subprocess.Popen[str]) -> None:
-    if os.name == "nt":
-        process.send_signal(signal.CTRL_BREAK_EVENT)
-    else:
-        process.send_signal(signal.SIGTERM)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--cli", required=True, type=Path)
-    parser.add_argument("--work-root", type=Path)
-    arguments = parser.parse_args()
-    cli = arguments.cli.resolve()
-    if not cli.is_file():
-        raise FileNotFoundError(cli)
-
-    owned_root = arguments.work_root is None
-    root = (
-        Path(tempfile.mkdtemp(prefix="minebackup-cli-process-"))
-        if owned_root
-        else arguments.work_root.resolve()
+def launch(command, environment):
+    return subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="strict", env=environment,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
     )
-    if not owned_root:
-        shutil.rmtree(root, ignore_errors=True)
-        root.mkdir(parents=True)
+
+
+def run(command, environment):
+    return subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, encoding="utf-8", env=environment, timeout=15)
+
+
+def case(cli: Path, root: Path, environment, signals=None, host_binary=None):
+    root.mkdir(parents=True)
     profile = root / "profile"
     write_profile(profile)
+    jobs_path = profile / "config" / "jobs.json"
+    jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+    steps = jobs["jobs"][0]["stages"][0]["steps"]
+    template = steps[0]
+    steps.clear()
+    helper = str(Path(__file__).with_name("process_contract_support.py"))
+    for index, name in enumerate(("a", "b")):
+        step = dict(template)
+        step["stepId"] = f"44444444-4444-4444-8444-{index + 1:012d}"
+        step["arguments"] = [helper, str(root), name]
+        steps.append(step)
+    jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
+    prefix = [str(cli), "--data-dir", str(profile), "--json", "--no-network"]
+    command = prefix + ["job", "run", "--job", JOB_ID]
+    if host_binary:
+        command = [str(host_binary), "--signal-contract-host", sys.executable, helper, str(root)]
+    host = launch(command, environment)
+    observed = []
+    try:
+        observed = observe_ready(root, host)
+        if not signals:
+            busy = run(prefix + ["config", "list"], environment)
+            if busy.returncode != 3 or parse_single_json(busy.stdout, "lock")["code"] != "profile_busy":
+                raise AssertionError(f"exclusive profile lock failed: {busy.stdout}")
+            host.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM)
+        else:
+            host.send_signal(signals[0])
+            if host_binary:
+                wait_until(lambda: (root / "cancel-blocked").exists(), "stop callback was not reached")
+            else:
+                wait_until(lambda: all((root / f"{name}.term").exists() for name in ("a", "b")),
+                           "first signal was not forwarded", timeout=3)
+            # Acknowledgment prevents signal coalescing and proves the first
+            # handler ran. An already-exited host is a failure, not success.
+            if host.poll() is not None:
+                raise AssertionError("host exited gracefully before the second signal")
+            host.send_signal(signals[1])
+        stdout, stderr = host.communicate(timeout=5 if signals else 15)
+        if host.returncode != 9:
+            raise AssertionError(f"expected exit 9, got {host.returncode}: {stdout!r} {stderr!r}")
+        if signals:
+            if stdout.strip():
+                raise AssertionError(f"force path emitted graceful JSON/output: {stdout!r}")
+        else:
+            envelope = parse_single_json(stdout, "graceful signal")
+            if envelope.get("code") != "cancelled" or envelope.get("ok") is not False:
+                raise AssertionError(f"wrong cancellation envelope: {envelope}")
+        assert_terminated(observed, root.name)
+        reopened = run(prefix + ["config", "list"], environment)
+        if reopened.returncode != 0:
+            raise AssertionError(f"profile did not reopen: {reopened.stdout!r} {reopened.stderr!r}")
+        if not signals:
+            invalid = run(prefix + ["job", "run", "--job", INVALID_JOB_ID], environment)
+            envelope = parse_single_json(invalid.stdout, "invalid stderr")
+            if invalid.returncode != 6 or envelope.get("code") != "job_failed":
+                raise AssertionError(f"wrong failing-job result: {envelope}")
+            if "\ufffd" not in json.dumps(envelope, ensure_ascii=False) or len(invalid.stdout.encode("utf-8")) >= 2 * 1024 * 1024:
+                raise AssertionError("external stderr was not UTF-8 sanitized and bounded")
+    finally:
+        cleanup(host, root, observed)
 
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cli", type=Path, required=True)
+    parser.add_argument("--signal-host", type=Path, required=True)
+    parser.add_argument("--work-root", type=Path)
+    args = parser.parse_args()
+    if args.work_root:
+        args.work_root.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix="signal-contract-", dir=args.work_root))
     environment = os.environ.copy()
     environment.pop("DISPLAY", None)
     environment.pop("WAYLAND_DISPLAY", None)
-    command = [
-        str(cli),
-        "--data-dir",
-        str(profile),
-        "--json",
-        "--no-network",
-        "job",
-        "run",
-        "--job",
-        JOB_ID,
-    ]
-    creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    running = subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=environment,
-        creationflags=creation_flags,
-    )
-    try:
-        # Let the designated long-running process claim the profile before a
-        # contender starts probing the same lock.
-        time.sleep(0.2)
-        busy = None
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if running.poll() is not None:
-                stdout, stderr = running.communicate()
-                raise AssertionError(
-                    f"recurring CLI exited before cancellation ({running.returncode}): "
-                    f"stderr={stderr!r} stdout={stdout!r}"
-                )
-            busy = subprocess.run(
-                [
-                    str(cli),
-                    "--data-dir",
-                    str(profile),
-                    "--json",
-                    "config",
-                    "list",
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=environment,
-                timeout=10,
-                check=False,
-            )
-            if busy.returncode == 3:
-                break
-            time.sleep(0.05)
-        if busy is None or busy.returncode != 3:
-            raise AssertionError("a second CLI did not observe the exclusive profile lock")
-        busy_json = parse_single_json(busy.stdout, "profile lock")
-        if busy_json.get("code") != "profile_busy":
-            raise AssertionError(f"profile lock returned the wrong code: {busy_json!r}")
-
-        # Lock acquisition happens before signal-handler installation. Give the
-        # first process enough time to complete preflight and enter its wait.
-        time.sleep(0.5)
-        send_first_signal(running)
-        stdout, stderr = running.communicate(timeout=15)
-        if running.returncode != 9:
-            raise AssertionError(
-                f"first signal returned {running.returncode}, expected 9: "
-                f"stderr={stderr!r} stdout={stdout!r}"
-            )
-        cancelled = parse_single_json(stdout, "signal cancellation")
-        if cancelled.get("code") != "cancelled" or cancelled.get("ok") is not False:
-            raise AssertionError(f"signal cancellation returned the wrong envelope: {cancelled!r}")
-
-        forced = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=environment,
-            creationflags=creation_flags,
-        )
-        try:
-            time.sleep(0.2)
-            forced_deadline = time.monotonic() + 10
-            while time.monotonic() < forced_deadline:
-                contender = subprocess.run(
-                    [
-                        str(cli),
-                        "--data-dir",
-                        str(profile),
-                        "--json",
-                        "config",
-                        "list",
-                    ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    env=environment,
-                    timeout=10,
-                    check=False,
-                )
-                if contender.returncode == 3:
-                    break
-                if forced.poll() is not None:
-                    raise AssertionError("second-signal CLI exited before acquiring its profile lock")
-                time.sleep(0.05)
-            else:
-                raise AssertionError("second-signal CLI did not acquire its profile lock")
-            time.sleep(0.5)
-            forced_started = time.monotonic()
-            send_first_signal(forced)
-            try:
-                send_first_signal(forced)
-            except (ProcessLookupError, OSError):
-                # Graceful cancellation may win the race, which still leaves
-                # the process in the required exit-9 state.
-                pass
-            forced_stdout, forced_stderr = forced.communicate(timeout=5)
-            if forced.returncode != 9 or time.monotonic() - forced_started >= 5:
-                raise AssertionError(
-                    f"second signal did not permit immediate exit 9 ({forced.returncode}): "
-                    f"stderr={forced_stderr!r} stdout={forced_stdout!r}"
-                )
-        finally:
-            if forced.poll() is None:
-                forced.kill()
-                forced.wait(timeout=5)
-
-        invalid = subprocess.run(
-            [
-                str(cli),
-                "--data-dir",
-                str(profile),
-                "--json",
-                "--no-network",
-                "job",
-                "run",
-                "--job",
-                INVALID_JOB_ID,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=environment,
-            timeout=15,
-            check=False,
-        )
-        invalid_json = parse_single_json(invalid.stdout, "invalid stderr direct job")
-        if invalid.returncode != 6 or invalid_json.get("code") != "job_failed":
-            raise AssertionError(
-                f"invalid stderr job returned the wrong result: {invalid.returncode} {invalid_json!r}"
-            )
-        details = json.dumps(invalid_json, ensure_ascii=False)
-        if "\ufffd" not in details or len(invalid.stdout.encode("utf-8")) >= 2 * 1024 * 1024:
-            raise AssertionError(
-                f"invalid stderr job was not sanitized and bounded: {len(invalid.stdout)} {invalid_json!r}"
-            )
-    finally:
-        if running.poll() is None:
-            running.kill()
-            running.wait(timeout=5)
-        if owned_root:
-            shutil.rmtree(root, ignore_errors=True)
+    case(args.cli, root / "graceful", environment)
+    if os.name != "nt":
+        for name, signals in (("term-term", (signal.SIGTERM, signal.SIGTERM)),
+                              ("int-int", (signal.SIGINT, signal.SIGINT)),
+                              ("term-int", (signal.SIGTERM, signal.SIGINT))):
+            case(args.cli, root / name, environment, signals)
+    if args.signal_host:
+        event = signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM
+        case(args.cli, root / "blocked-callback", environment, (event, event), args.signal_host)
+    print(f"[PASS] CLI process contract; evidence: {root}")
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as error:  # Keep CI diagnostics compact and actionable.
-        print(f"headless process contract failed: {error}", file=sys.stderr)
-        raise
+    raise SystemExit(main())

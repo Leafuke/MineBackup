@@ -8,7 +8,8 @@
 #include "NetworkBackendFactory.h"
 #include "NetworkService.h"
 #include "Sha256.h"
-#include "imgui_style.h"
+#include "ThemeManager.h"
+#include "ThemePalette.h"
 
 using namespace std;
 
@@ -124,7 +125,20 @@ void DrawAppearanceSettings(Config& cfg) {
 	ImGui::Spacing();
 
 	ImGui::Text("%s", L("THEME_SETTINGS"));
-	const char* theme_names[] = { L("THEME_DARK"), L("THEME_LIGHT"), L("THEME_CLASSIC"), L("THEME_WIN_LIGHT"), L("THEME_WIN_DARK"), L("THEME_NORD_LIGHT"), L("THEME_NORD_DARK"), L("THEME_CUSTOM") };
+	const char* theme_names[] = {
+		L("THEME_DARK"),
+		L("THEME_LIGHT"),
+		L("THEME_CLASSIC"),
+		L("THEME_WIN_LIGHT"),
+		L("THEME_WIN_DARK"),
+		L("THEME_NORD_LIGHT"),
+		L("THEME_NORD_DARK"),
+		L("THEME_VSCODE_DARK"),
+		L("THEME_SOLARIZED_LIGHT"),
+		L("THEME_SOLARIZED_DARK"),
+		L("THEME_SYSTEM_AUTO"),
+		L("THEME_CUSTOM")
+	};
 	SetStandardControlWidth();
 	if (ImGui::Combo("##Theme", &g_theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
@@ -136,6 +150,64 @@ void DrawAppearanceSettings(Config& cfg) {
 		else {
 			ApplyTheme();
 		}
+	}
+	if (g_theme == static_cast<int>(ThemeId::SystemAuto)) {
+		struct ConcreteThemeOption {
+			ThemeId id;
+			const char* labelKey;
+		};
+		static const ConcreteThemeOption concreteThemes[] = {
+			{ ThemeId::ImGuiDark, "THEME_DARK" },
+			{ ThemeId::ImGuiLight, "THEME_LIGHT" },
+			{ ThemeId::ImGuiClassic, "THEME_CLASSIC" },
+			{ ThemeId::WindowsLight, "THEME_WIN_LIGHT" },
+			{ ThemeId::WindowsDark, "THEME_WIN_DARK" },
+			{ ThemeId::NordLight, "THEME_NORD_LIGHT" },
+			{ ThemeId::NordDark, "THEME_NORD_DARK" },
+			{ ThemeId::VSCodeDark, "THEME_VSCODE_DARK" },
+			{ ThemeId::SolarizedLight, "THEME_SOLARIZED_LIGHT" },
+			{ ThemeId::SolarizedDark, "THEME_SOLARIZED_DARK" },
+			{ ThemeId::Custom, "THEME_CUSTOM" }
+		};
+		const int concreteCount = IM_ARRAYSIZE(concreteThemes);
+		const char* concreteThemeNames[concreteCount];
+		for (int i = 0; i < concreteCount; ++i) {
+			concreteThemeNames[i] = L(concreteThemes[i].labelKey);
+		}
+
+		ImGui::Indent();
+
+		ImGui::Spacing();
+		ImGui::Text("%s", L("THEME_SYSTEM_LIGHT_CHOICE"));
+		int lightIndex = 3;
+		for (int i = 0; i < concreteCount; ++i) {
+			if (static_cast<int>(concreteThemes[i].id) == g_systemThemeLight) {
+				lightIndex = i;
+				break;
+			}
+		}
+		SetStandardControlWidth();
+		if (ImGui::Combo("##SystemThemeLight", &lightIndex, concreteThemeNames, concreteCount)) {
+			g_systemThemeLight = static_cast<int>(concreteThemes[lightIndex].id);
+			ApplyTheme();
+		}
+
+		ImGui::Spacing();
+		ImGui::Text("%s", L("THEME_SYSTEM_DARK_CHOICE"));
+		int darkIndex = 4;
+		for (int i = 0; i < concreteCount; ++i) {
+			if (static_cast<int>(concreteThemes[i].id) == g_systemThemeDark) {
+				darkIndex = i;
+				break;
+			}
+		}
+		SetStandardControlWidth();
+		if (ImGui::Combo("##SystemThemeDark", &darkIndex, concreteThemeNames, concreteCount)) {
+			g_systemThemeDark = static_cast<int>(concreteThemes[darkIndex].id);
+			ApplyTheme();
+		}
+
+		ImGui::Unindent();
 	}
 	if (g_theme == static_cast<int>(ThemeId::Custom)) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
@@ -150,11 +222,11 @@ void DrawAppearanceSettings(Config& cfg) {
 		ImGui::SameLine();
 		if (ImGui::Button(L("CUSTOM_THEME_VALIDATE"))) ApplyTheme();
 		if (!g_customThemeError.empty()) {
-			ImGui::TextColored(ImVec4(1.0f, 0.40f, 0.35f, 1.0f), "%s",
+			ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error), "%s",
 				g_customThemeError.c_str());
 		}
 		else {
-			ImGui::TextColored(ImVec4(0.35f, 0.80f, 0.45f, 1.0f), "%s",
+			ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success), "%s",
 				L("CUSTOM_THEME_VALID"));
 		}
 	}
@@ -386,7 +458,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 	}
 	if (!canRunCloudActions) ImGui::EndDisabled();
 	if (!canRunCloudActions) {
-		ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.20f, 1.0f), "%s",
+		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Warning), "%s",
 			L("CLOUD_ACTION_UNAVAILABLE"));
 		if (!cloudUnavailableReason.empty()) {
 			ImGui::TextWrapped("%s", wstring_to_utf8(cloudUnavailableReason).c_str());

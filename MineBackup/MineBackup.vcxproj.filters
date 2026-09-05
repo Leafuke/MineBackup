@@ -105,6 +105,9 @@
     <ClCompile Include="src\core\ArchiveRunner.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\LauncherDiscoveryUtils.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\ChainSafeRetention.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -189,6 +192,9 @@
 	<ClCompile Include="src\core\HotRestoreCoordinator.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
+	<ClCompile Include="src\core\HmclDiscoveryProvider.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
 	<ClCompile Include="src\core\JobDocument.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
@@ -214,6 +220,15 @@
 	  <Filter>src\core</Filter>
 	</ClCompile>
 	<ClCompile Include="src\core\WorldIdentity.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\PrismLauncherDiscoveryProvider.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\ModrinthDiscoveryProvider.cpp">
+	  <Filter>src\core</Filter>
+	</ClCompile>
+	<ClCompile Include="src\core\NeteaseMinecraftDiscoveryProvider.cpp">
 	  <Filter>src\core</Filter>
 	</ClCompile>
     <ClCompile Include="src\core\PathRuleSet.cpp">
@@ -470,6 +485,9 @@
     <ClInclude Include="src\core\ArchiveRunner.h">
       <Filter>src\core</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\LauncherDiscoveryUtils.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\core\ChainSafeRetention.h">
       <Filter>src\core</Filter>
     </ClInclude>
@@ -521,6 +539,9 @@
 	<ClInclude Include="src\core\HotRestoreCoordinator.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
+	<ClInclude Include="src\core\HmclDiscoveryProvider.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
 	<ClInclude Include="src\core\JobDocument.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
@@ -549,6 +570,15 @@
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\WorldIdentity.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\PrismLauncherDiscoveryProvider.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\ModrinthDiscoveryProvider.h">
+	  <Filter>src\core</Filter>
+	</ClInclude>
+	<ClInclude Include="src\core\NeteaseMinecraftDiscoveryProvider.h">
 	  <Filter>src\core</Filter>
 	</ClInclude>
 	<ClInclude Include="src\core\RuntimeIntegration.h">
@@ -698,6 +728,12 @@
     <ClInclude Include="src\ui\UIHelpers.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\ThemeManager.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\ThemePalette.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\WorldListController.h">
       <Filter>src\ui</Filter>
     </ClInclude>
@@ -726,9 +762,6 @@
       <Filter>third_party\imgui</Filter>
     </ClInclude>
     <ClInclude Include="third_party\imgui\imgui_internal.h">
-      <Filter>third_party\imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imgui_style.h">
       <Filter>third_party\imgui</Filter>
     </ClInclude>
     <ClInclude Include="third_party\imgui\imstb_rectpack.h">

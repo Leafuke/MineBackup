@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #ifndef _PLATFORM_MACOS_H
 #define _PLATFORM_MACOS_H
 #include <iostream>
@@ -27,6 +27,7 @@ void OpenFolderWithFocus(const std::wstring folderPath, const std::wstring focus
 void ReStartApplication();
 void SetFileAttributesWin(const std::wstring& path, bool isHidden);
 void EnableDarkModeWin(bool enable);
+bool IsSystemDarkMode();
 bool Extract7zToTempFile(std::wstring& extractedPath);
 bool ExtractFontToTempFile(std::wstring& extractedPath);
 bool IsFileLocked(const std::wstring& path);

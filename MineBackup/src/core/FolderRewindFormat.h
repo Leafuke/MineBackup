@@ -53,6 +53,8 @@ struct ChangeRecord {
     std::vector<std::wstring> addedFiles;
     std::vector<std::wstring> modifiedFiles;
     std::vector<std::wstring> deletedFiles;
+    // Complete snapshots belong to Full/Overwrite checkpoints. Smart records
+    // keep this field empty and reconstruct state from their deltas.
     std::vector<std::wstring> fullFileList;
 };
 

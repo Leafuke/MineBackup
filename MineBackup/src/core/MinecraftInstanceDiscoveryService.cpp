@@ -1,6 +1,12 @@
 #include "MinecraftInstanceDiscoveryService.h"
 
 #include "KnownMinecraftLocationProvider.h"
+#include "HmclDiscoveryProvider.h"
+#include "PrismLauncherDiscoveryProvider.h"
+#include "ModrinthDiscoveryProvider.h"
+#ifdef _WIN32
+#include "NeteaseMinecraftDiscoveryProvider.h"
+#endif
 #include "Logging.h"
 #include "PathIdentity.h"
 #include "Pcl2ProcessDiscoveryProvider.h"
@@ -132,6 +138,13 @@ int BestEvidenceRank(const InspectedMinecraftInstance& instance) {
 	return rank;
 }
 
+bool HasValidSuggestedName(const std::optional<std::wstring>& name) {
+	if (!name.has_value() || name->empty() || name->find(L'\0') != std::wstring::npos) {
+		return false;
+	}
+	return !std::all_of(name->begin(), name->end(), [](wchar_t ch) { return std::iswspace(ch); });
+}
+
 } // namespace
 
 MinecraftInstanceDiscoveryService::MinecraftInstanceDiscoveryService(
@@ -182,6 +195,10 @@ MinecraftDiscoveryResult MinecraftInstanceDiscoveryService::Discover(
 		if (!inserted) {
 			if (LocationKindRank(location.kind) < LocationKindRank(position->second.kind)) {
 				position->second.kind = location.kind;
+			}
+			// 仅在现有位置缺少有效名称提示时，接受后来的有效名称提示
+			if (!HasValidSuggestedName(position->second.suggestedName) && HasValidSuggestedName(location.suggestedName)) {
+				position->second.suggestedName = std::move(location.suggestedName);
 			}
 			MergeEvidence(position->second.evidence, location.evidence);
 		}
@@ -240,7 +257,16 @@ MinecraftDiscoveryResult MinecraftInstanceDiscoveryService::Discover(
 
 MinecraftInstanceDiscoveryService CreateDefaultMinecraftDiscoveryService() {
 	vector<shared_ptr<IMinecraftDiscoveryProvider>> providers;
+	// 静态文件系统与持久化配置发现优先
 	providers.push_back(make_shared<KnownMinecraftLocationProvider>());
+	providers.push_back(make_shared<HmclDiscoveryProvider>());
+	providers.push_back(make_shared<PrismLauncherDiscoveryProvider>());
+	providers.push_back(make_shared<ModrinthDiscoveryProvider>());
+#ifdef _WIN32
+	providers.push_back(make_shared<NeteaseMinecraftDiscoveryProvider>());
+#endif
+
+	// PCL2 运行中进程枚举最后执行
 	if (GetProcessInspectionAvailability() == ProcessInspectionAvailability::Available) {
 		providers.push_back(make_shared<Pcl2ProcessDiscoveryProvider>(
 			CreateProcessInspectionService()));

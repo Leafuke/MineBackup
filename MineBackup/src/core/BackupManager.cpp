@@ -251,11 +251,7 @@ void WorldOperationGuard::Release() {
 		return filesystem::path(config.backupPath) / FolderRewindFormat::kMetadataRootDirName / FolderRewindFormat::SanitizePathSegment(worldName);
 	}
 
-	bool UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& backupType, const map<wstring, FolderRewindFormat::FileState>& currentState, const BackupChangeSet& changeSet) {
-		FolderRewindFormat::MetadataState previousState;
-		FolderRewindMetadataStore::LoadState(metadataDir, previousState);
-
-		const wstring previousLastBackupFile = previousState.lastBackupFileName;
+	FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& previousLastBackupFile, const wstring& backupType, map<wstring, FolderRewindFormat::FileState> currentState, const BackupChangeSet& changeSet) {
 		const wstring normalizedBase = FolderRewindFormat::IsSmartBackupType(backupType)
 			? (baseBackupFile.empty() ? currentBackupFile : baseBackupFile)
 			: currentBackupFile;
@@ -269,12 +265,13 @@ void WorldOperationGuard::Release() {
 		record.addedFiles = changeSet.addedFiles;
 		record.modifiedFiles = changeSet.modifiedFiles;
 		record.deletedFiles = changeSet.deletedFiles;
-		for (const auto& pair : currentState) {
-			record.fullFileList.push_back(FolderRewindFormat::NormalizeRelativePath(pair.first));
-		}
-		sort(record.fullFileList.begin(), record.fullFileList.end());
 
 		if (!FolderRewindFormat::IsSmartBackupType(backupType)) {
+			record.fullFileList.reserve(currentState.size());
+			for (const auto& pair : currentState) {
+				record.fullFileList.push_back(FolderRewindFormat::NormalizeRelativePath(pair.first));
+			}
+			sort(record.fullFileList.begin(), record.fullFileList.end());
 			record.previousBackupFileName.clear();
 			record.basedOnFullBackup = currentBackupFile;
 			record.addedFiles = record.fullFileList;
@@ -287,17 +284,9 @@ void WorldOperationGuard::Release() {
 		state.lastBackupTime = FolderRewindFormat::MakeLocalHistoryTimestampString();
 		state.lastBackupFileName = currentBackupFile;
 		state.basedOnFullBackup = record.basedOnFullBackup;
-		for (const auto& pair : currentState) {
-			state.fileStates[FolderRewindFormat::NormalizeRelativePath(pair.first)] = pair.second;
-		}
+		state.fileStates = std::move(currentState);
 
-		if (!FolderRewindMetadataStore::Save(metadataDir, state, record)) {
-			error_code ec;
-			filesystem::remove(FolderRewindMetadataStore::GetStatePath(metadataDir), ec);
-			FolderRewindMetadataStore::DeleteRecord(metadataDir, currentBackupFile);
-			return false;
-		}
-		return true;
+		return FolderRewindMetadataStore::SaveDetailed(metadataDir, state, record);
 	}
 
 	void InvalidateBackupMetadata(const Config& config, const wstring& worldName, const wstring& deletedBackupFile, const wstring& renamedOldFile, const wstring& renamedNewFile) {
@@ -661,6 +650,8 @@ BackupResult BackupService::RunCore(
 	vector<filesystem::path> candidate_files = std::move(scanResult.changedFiles);
 	auto currentState = std::move(scanResult.currentState);
 	auto changeSet = std::move(scanResult.changes);
+	const wstring previousLastBackupFile = std::move(scanResult.previousLastBackupFileName);
+	const wstring previousBasedOnFullBackup = std::move(scanResult.previousBasedOnFullBackup);
     if (scanResult.status == BackupScanStatus::NoChange && config.skipIfUnchanged) {
 		BACKUP_INFO("No world changes were found.");
 		publish("backup.no_changes", {{"config_id", wstring_to_utf8(config.configId)}, {"world", wstring_to_utf8(worldName)}});
@@ -686,22 +677,6 @@ BackupResult BackupService::RunCore(
         scanResult.status == BackupScanStatus::BaseBackupMissing ||
         forceFullBackupDueToLimit) || forceFullBackup;
 
-	if (!(config.backupMode == 2 && !forceFullBackup)) {
-        try {
-            candidate_files.clear();
-            for (const auto& entry : filesystem::recursive_directory_iterator(sourcePath)) {
-                if (entry.is_regular_file()) {
-                    candidate_files.push_back(entry.path());
-                }
-            }
-        } catch (const filesystem::filesystem_error& e) {
-            BACKUP_ERROR("Failed to scan source directory %s: %s", wstring_to_utf8(sourcePath).c_str(), e.what());
-			return MakeBackupFailure(
-				OperationCode::BackupFailed, BackupOutcome::Failed,
-				"backup.scan.failed", e.what());
-        }
-    }
-
 	const PathRuleSet backupRules(effectiveBlacklist);
     auto is_relative_blacklisted = [&](const wstring& relativePath) {
 		filesystem::path absolutePath = filesystem::path(sourcePath) / relativePath;
@@ -726,12 +701,21 @@ BackupResult BackupService::RunCore(
 	filter_relative_changes(changeSet.modifiedFiles);
 	filter_relative_changes(changeSet.deletedFiles);
 
-    vector<filesystem::path> files_to_backup;
-    for (const auto& file : candidate_files) {
-		if (!backupRules.Matches(file, sourcePath, originalSourcePath)) {
-            files_to_backup.push_back(file);
-        }
-    }
+	vector<filesystem::path> files_to_backup;
+	if (config.backupMode == 2 && !forceFullBackup) {
+		files_to_backup.reserve(candidate_files.size());
+		for (const auto& file : candidate_files) {
+			if (!backupRules.Matches(file, sourcePath, originalSourcePath)) {
+				files_to_backup.push_back(file);
+			}
+		}
+	}
+	else {
+		files_to_backup.reserve(currentState.size());
+		for (const auto& [relativePath, ignored] : currentState) {
+			files_to_backup.push_back(sourcePath / filesystem::path(relativePath));
+		}
+	}
 
 	if (!forceFullBackup && !changeSet.HasChanges() && (config.skipIfUnchanged || config.backupMode == 2)) {
 		BACKUP_INFO("No world changes were found.");
@@ -802,13 +786,9 @@ BackupResult BackupService::RunCore(
 
         // 智能备份需要找到它所基于的文件；扫描器已验证这些归档仍存在。
 		try {
-			FolderRewindFormat::MetadataState folderRewindState;
-			if (FolderRewindMetadataStore::LoadState(metadataFolder, folderRewindState)) {
-				basedOnBackupFile = folderRewindState.basedOnFullBackup.empty() ? folderRewindState.lastBackupFileName : folderRewindState.basedOnFullBackup;
-			}
-			else {
-				throw runtime_error("Cannot load FolderRewind metadata state");
-			}
+			basedOnBackupFile = previousBasedOnFullBackup.empty()
+				? previousLastBackupFile
+				: previousBasedOnFullBackup;
 			if (basedOnBackupFile.empty()) {
 				throw runtime_error("Metadata does not contain a base backup");
 			}
@@ -956,12 +936,39 @@ execute_backup:
             }
         }
 
-		if (!UpdateMetadataFiles(metadataFolder, completedBackupFile, basedOnBackupFile, backupTypeStr, currentState, changeSet)) {
+		const auto metadataUpdate = UpdateMetadataFiles(
+			metadataFolder,
+			completedBackupFile,
+			basedOnBackupFile,
+			previousLastBackupFile,
+			backupTypeStr,
+			std::move(currentState),
+			changeSet);
+		if (!metadataUpdate.IsCommitted()) {
 			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
+			const bool archiveWasNewlyCreated = config.backupMode != 3 || latestBackupPath.empty();
+			error_code cleanupError;
+			if (archiveWasNewlyCreated) filesystem::remove(filesystem::path(archivePath), cleanupError);
 			publish("backup.failed", {{"error", "metadata_write_failed"}});
-			return MakeBackupFailure(
+			BackupResult failure = MakeBackupFailure(
 				OperationCode::BackupFailed, BackupOutcome::Failed,
-				"backup.metadata.write_failed", wstring_to_utf8(completedBackupFile));
+				"backup.metadata.write_failed",
+				metadataUpdate.error.empty()
+					? wstring_to_utf8(completedBackupFile)
+					: wstring_to_utf8(metadataUpdate.error));
+			if (cleanupError) {
+				failure.diagnostics.push_back(MakeDiagnostic(
+					"backup.archive.cleanup_failed",
+					DiagnosticSeverity::Warning,
+					cleanupError.message()));
+			}
+			return failure;
+		}
+		const bool metadataDurabilityWarning = !metadataUpdate.IsDurable();
+		if (metadataDurabilityWarning) {
+			BACKUP_WARNING("FolderRewind metadata was committed but directory durability could not be confirmed: %s",
+				wstring_to_utf8(metadataUpdate.error).c_str());
+			publish("backup.metadata.committed_not_durable");
 		}
 
 		HistoryEntry historyEntry;
@@ -999,11 +1006,19 @@ execute_backup:
 			{"result", "created"}});
 
 		BackupResult result;
-		result.code = OperationCode::Success;
+		result.code = metadataDurabilityWarning
+			? OperationCode::PartialSuccess
+			: OperationCode::Success;
 		result.outcome = BackupOutcome::Created;
 		result.archivePath = filesystem::path(archivePath);
 		result.historyEntry = historyEntry;
 		result.diagnostics.push_back(MakeDiagnostic("backup.completed", DiagnosticSeverity::Info));
+		if (metadataDurabilityWarning) {
+			result.diagnostics.push_back(MakeDiagnostic(
+				"backup.metadata.committed_not_durable",
+				DiagnosticSeverity::Warning,
+				wstring_to_utf8(metadataUpdate.error)));
+		}
 		result.diagnostics.insert(result.diagnostics.end(),
 			deferredDiagnostics.begin(), deferredDiagnostics.end());
 		if (dependencies_.cloudPost && !cancelled()) {

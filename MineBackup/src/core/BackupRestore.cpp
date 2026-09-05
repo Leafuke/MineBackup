@@ -249,13 +249,12 @@ static bool TryBuildSmartRestorePlan(const filesystem::path& metadataDir, const 
 			owners[modified] = record.archiveFileName;
 		}
 
-		set<wstring> expected(record.fullFileList.begin(), record.fullFileList.end());
-		if (owners.size() != expected.size()) {
-			return false;
-		}
-		for (const auto& pair : owners) {
-			if (!expected.count(pair.first)) {
-				return false;
+		if (!record.fullFileList.empty()) {
+			if (owners.size() != record.fullFileList.size()) return false;
+			auto owner = owners.begin();
+			auto expected = record.fullFileList.begin();
+			for (; owner != owners.end(); ++owner, ++expected) {
+				if (owner->first != *expected) return false;
 			}
 		}
 	}

@@ -13,10 +13,20 @@ bool TryParseInt(
     int maximum,
     int& output) {
     if (minimum > maximum || value.empty()) return false;
+    std::wstring trimmed = value;
+    while (!trimmed.empty() && (trimmed.back() == L' ' || trimmed.back() == L'\t' || trimmed.back() == L'\r' || trimmed.back() == L'\n')) {
+        trimmed.pop_back();
+    }
+    size_t start = 0;
+    while (start < trimmed.size() && (trimmed[start] == L' ' || trimmed[start] == L'\t')) {
+        ++start;
+    }
+    if (start > 0) trimmed = trimmed.substr(start);
+    if (trimmed.empty()) return false;
     try {
         std::size_t consumed = 0;
-        const long long parsed = std::stoll(value, &consumed, 10);
-        if (consumed != value.size()
+        const long long parsed = std::stoll(trimmed, &consumed, 10);
+        if (consumed != trimmed.size()
             || parsed < minimum
             || parsed > maximum) {
             return false;
@@ -35,10 +45,20 @@ bool TryParseFloat(
     float maximum,
     float& output) {
     if (minimum > maximum || value.empty()) return false;
+    std::wstring trimmed = value;
+    while (!trimmed.empty() && (trimmed.back() == L' ' || trimmed.back() == L'\t' || trimmed.back() == L'\r' || trimmed.back() == L'\n')) {
+        trimmed.pop_back();
+    }
+    size_t start = 0;
+    while (start < trimmed.size() && (trimmed[start] == L' ' || trimmed[start] == L'\t')) {
+        ++start;
+    }
+    if (start > 0) trimmed = trimmed.substr(start);
+    if (trimmed.empty()) return false;
     try {
         std::size_t consumed = 0;
-        const float parsed = std::stof(value, &consumed);
-        if (consumed != value.size()
+        const float parsed = std::stof(trimmed, &consumed);
+        if (consumed != trimmed.size()
             || !std::isfinite(parsed)
             || parsed < minimum
             || parsed > maximum) {

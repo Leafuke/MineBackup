@@ -358,6 +358,13 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(minebackup_i18n_tests tests/I18nTest.cpp ${MINEBACKUP_INFRA_DIR}/i18n.cpp)
+    target_link_libraries(minebackup_i18n_tests PRIVATE minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_i18n_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.i18n COMMAND minebackup_i18n_tests)
+
     if(MINEBACKUP_BUILD_GUI)
     add_executable(minebackup_knotlink_server_manager_tests
         tests/KnotLinkServerManagerTest.cpp)
@@ -403,6 +410,7 @@ if(BUILD_TESTING)
 		${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
 		${MINEBACKUP_SRC_DIR}/cli/CliJobResult.cpp
 		${MINEBACKUP_SRC_DIR}/cli/CliRenderer.cpp
+		${MINEBACKUP_SRC_DIR}/cli/CliSignalHandler.cpp
         tests/BackupPipelineTest.cpp
         tests/BackupServiceTests.cpp
         tests/CloudSyncTests.cpp
@@ -413,6 +421,7 @@ if(BUILD_TESTING)
         tests/PathIdentityTests.cpp
         tests/StorageMigrationTests.cpp
         tests/ProcessToolTests.cpp
+        tests/ProcessLifecycleTests.cpp
         tests/ProfileConfigCatalogTests.cpp
 		tests/ProfileManifestTests.cpp
 		tests/RestoreServiceTests.cpp
@@ -427,6 +436,12 @@ if(BUILD_TESTING)
         target_link_libraries(minebackup_data_tests PRIVATE shell32)
     endif()
     add_test(NAME minebackup.data_core COMMAND minebackup_data_tests)
+    if(NOT WIN32)
+        target_compile_definitions(minebackup_data_core PRIVATE MINEBACKUP_PROCESS_TEST_HOOKS)
+        target_compile_definitions(minebackup_data_tests PRIVATE MINEBACKUP_PROCESS_TEST_HOOKS)
+        add_test(NAME minebackup.process_lifecycle COMMAND minebackup_data_tests --process-lifecycle-tests)
+        set_tests_properties(minebackup.process_lifecycle PROPERTIES TIMEOUT 90)
+    endif()
 
     add_executable(minebackup_known_user_folders_tests
         tests/KnownUserFoldersTests.cpp)
@@ -477,6 +492,16 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME minebackup.pcl2_discovery
         COMMAND minebackup_pcl2_discovery_tests)
+
+    add_executable(minebackup_launcher_discovery_tests
+        tests/LauncherDiscoveryProviderTests.cpp)
+    target_link_libraries(minebackup_launcher_discovery_tests PRIVATE
+        minebackup_data_core)
+    if(MSVC)
+        target_compile_options(minebackup_launcher_discovery_tests PRIVATE /utf-8 /FS)
+    endif()
+    add_test(NAME minebackup.launcher_discovery
+        COMMAND minebackup_launcher_discovery_tests)
 
     add_executable(minebackup_minecraft_discovery_service_tests
         tests/MinecraftInstanceDiscoveryServiceTests.cpp)
@@ -554,22 +579,6 @@ if(BUILD_TESTING)
 				-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/RunDeprecatedDesktopLaunchTest.cmake)
     endif()
 
-    add_executable(minebackup_i18n_tests
-        tests/I18nTest.cpp
-        ${MINEBACKUP_INFRA_DIR}/i18n.cpp
-        ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp)
-    target_include_directories(minebackup_i18n_tests PRIVATE
-        ${MINEBACKUP_COMMON_INCLUDE_DIRS})
-    if(MSVC)
-        target_compile_options(minebackup_i18n_tests PRIVATE /utf-8 /FS)
-    else()
-        target_compile_options(minebackup_i18n_tests PRIVATE -fno-strict-aliasing)
-    endif()
-    if(NOT WIN32)
-        target_link_libraries(minebackup_i18n_tests PRIVATE Iconv::Iconv)
-    endif()
-    add_test(NAME minebackup.i18n COMMAND minebackup_i18n_tests)
-
     if(MINEBACKUP_BUILD_GUI)
         add_executable(minebackup_appearance_config_tests
             tests/AppearanceConfigTest.cpp)
@@ -615,8 +624,9 @@ if(BUILD_TESTING)
                     COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_process_contract.py
                         --cli $<TARGET_FILE:minebackup-cli>
+                        --signal-host $<TARGET_FILE:minebackup_data_tests>
                         --work-root ${CMAKE_CURRENT_BINARY_DIR}/test-work/cli-process-contract)
-                set_tests_properties(minebackup.cli.process_contract PROPERTIES TIMEOUT 30)
+                set_tests_properties(minebackup.cli.process_contract PROPERTIES TIMEOUT 90)
                 add_test(NAME minebackup.cli.serve_contract
                     COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_serve_contract.py

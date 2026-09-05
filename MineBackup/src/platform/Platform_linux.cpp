@@ -400,6 +400,23 @@ void SetFileAttributesWin(const std::wstring& path, bool isHidden) {
 }
 
 void EnableDarkModeWin(bool enable) {
+	(void)enable;
+}
+
+bool IsSystemDarkMode() {
+	FILE* pipe = popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
+	if (pipe) {
+		char buffer[128];
+		bool isDark = false;
+		if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+			if (strstr(buffer, "prefer-dark") != nullptr || strstr(buffer, "dark") != nullptr) {
+				isDark = true;
+			}
+		}
+		pclose(pipe);
+		return isDark;
+	}
+	return false;
 }
 
 bool Extract7zToTempFile(std::wstring& extractedPath) {

@@ -2,6 +2,9 @@
 
 #include <stop_token>
 #include <thread>
+#ifndef _WIN32
+#include <csignal>
+#endif
 
 class CliSignalHandler {
 public:
@@ -16,4 +19,9 @@ public:
 private:
 	std::stop_source stopSource_;
 	std::jthread monitor_;
+#ifndef _WIN32
+	std::jthread forceMonitor_;
+	struct sigaction previousInt_ {};
+	struct sigaction previousTerm_ {};
+#endif
 };

@@ -53,6 +53,7 @@
 
 #include <cstdio>
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <system_error>
 #ifdef __APPLE__
@@ -85,6 +86,14 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
+static void main_window_size_callback(GLFWwindow* window, int width, int height)
+{
+	if (window != nullptr && glfwGetWindowAttrib(window, GLFW_ICONIFIED) == 0 && width > 0 && height > 0) {
+		g_windowWidth = width;
+		g_windowHeight = height;
+	}
+}
+
 static void main_window_close_callback(GLFWwindow* window)
 {
 	if (g_OnboardingActive) {
@@ -105,7 +114,17 @@ static void main_window_close_callback(GLFWwindow* window)
 		}
 	}
 	else if (g_closeAction == 2) {
-		SaveConfigs();
+		if (window != nullptr && glfwGetWindowAttrib(window, GLFW_ICONIFIED) == 0) {
+			int w = 0, h = 0;
+			glfwGetWindowSize(window, &w, &h);
+			if (w > 0 && h > 0) {
+				g_windowWidth = w;
+				g_windowHeight = h;
+			}
+		}
+		if (window != nullptr) {
+			glfwHideWindow(window);
+		}
 		g_appState.done = true;
 	}
 	else {
@@ -537,6 +556,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		wc = uiSession.Window();
 		desktopServices->SetNativeWindow(wc);
 		glfwSetWindowCloseCallback(wc, main_window_close_callback);
+		glfwSetWindowSizeCallback(wc, main_window_size_callback);
 		return true;
 	};
 
@@ -820,15 +840,29 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		glfwSwapBuffers(wc);
 	}
 
+	if (wc != nullptr) {
+		glfwHideWindow(wc);
+	}
+
 	// 清理
+	const auto shutdownStart = std::chrono::steady_clock::now();
 	BroadcastEvent("app_shutdown", {});
+
 	TaskCoordinator::Instance().StopAndJoin();
 	{
 		lock_guard<mutex> lock(g_appState.task_mutex);
 		g_appState.g_active_auto_backups.clear();
 	}
+	const auto tasksStopped = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.tasks_stopped", "Tasks stopped in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(tasksStopped - shutdownStart).count()));
+
+	uiSession.SaveWindowState(g_windowWidth, g_windowHeight);
 	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
+	const auto configSaved = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.config_saved", "Configs saved in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(configSaved - tasksStopped).count()));
 
 	(void)desktopServices->ConfigureGlobalHotkeys({});
 	(void)desktopServices->SetTrayVisible(false);
@@ -838,8 +872,14 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #ifdef _WIN32
 	DestroyWindow(hwnd_hidden);
 #endif
+	const auto uiReleased = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.ui_released", "UI resources released in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(uiReleased - configSaved).count()));
 
 	CleanupKnotLink();
+	const auto shutdownCompleted = std::chrono::steady_clock::now();
+	APP_PRINTF_INFO("application.shutdown.completed", "Shutdown completed in %lld ms",
+		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(shutdownCompleted - shutdownStart).count()));
 
 	return 0;
 }

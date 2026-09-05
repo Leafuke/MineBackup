@@ -24,7 +24,9 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <stop_token>
 #include <string_view>
+#include <thread>
 #include <tuple>
 
 using namespace std;
@@ -372,8 +374,19 @@ namespace {
 		return false;
 	}
 
-	static void SleepForUniqueBackupName() {
-		this_thread::sleep_for(chrono::milliseconds(1100));
+	static bool SleepForUniqueBackupName(stop_token stopToken = {}) {
+		constexpr auto kTotalDuration = chrono::milliseconds(1100);
+		constexpr auto kSliceDuration = chrono::milliseconds(50);
+		auto elapsed = chrono::milliseconds(0);
+		while (elapsed < kTotalDuration) {
+			if (stopToken.stop_requested()) {
+				return false;
+			}
+			const auto step = (std::min)(kSliceDuration, kTotalDuration - elapsed);
+			this_thread::sleep_for(step);
+			elapsed += step;
+		}
+		return !stopToken.stop_requested();
 	}
 
 	class SharedWriteHandle {
@@ -450,7 +463,12 @@ namespace {
 
 	struct ValidationContext {
 		bool automatic = false;
+		stop_token stopToken;
 		vector<string> failures;
+
+		bool StopRequested() const noexcept {
+			return stopToken.stop_requested();
+		}
 
 		void Info(const string& message) {
 			VALIDATION_INFO("%s", message.c_str());
@@ -754,6 +772,7 @@ namespace {
 	}
 
 	static bool RunSmartBackupScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
+		if (ctx.StopRequested()) return false;
 		ctx.Info(L("VAL_INFO_SCENARIO_SMART"));
 
 		const filesystem::path saveRoot = sandboxRoot / L"worlds";
@@ -801,6 +820,7 @@ namespace {
 			world,
 			L"CoreValidation_Base",
 			TaskCoordinator::CurrentStopToken());
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, initialFull, BackupOutcome::Created)) return false;
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_INITIAL_FULL_CREATED"), L("VAL_ERR_INITIAL_FULL_NOT_CREATED"))) return false;
@@ -812,17 +832,18 @@ namespace {
 		if (!AssertFolderRewindHistoryItem(ctx, cfg, world, fullBackupFile, L"Full")) return false;
 
 		world.config.skipIfUnchanged = true;
-		SleepForUniqueBackupName();
+		if (ctx.StopRequested() || !SleepForUniqueBackupName(ctx.stopToken)) return false;
 		const BackupResult noChange = RunDesktopBackup(
 			world,
 			L"CoreValidation_NoChange",
 			TaskCoordinator::CurrentStopToken());
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, noChange, BackupOutcome::NoChanges)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_SKIP_NO_CHANGE"), L("VAL_ERR_NO_CHANGE_CREATED"))) return false;
 
 		world.config.skipIfUnchanged = false;
-		SleepForUniqueBackupName();
+		if (ctx.StopRequested() || !SleepForUniqueBackupName(ctx.stopToken)) return false;
 		WriteTextFile(worldPath / L"notes.txt", state2.at(L"notes.txt"));
 		WriteTextFile(worldPath / L"data" / L"add.txt", state2.at(L"data/add.txt"));
 		SharedWriteHandle sharedWriteHandle;
@@ -837,6 +858,7 @@ namespace {
 			L"CoreValidation_Smart_Locked",
 			TaskCoordinator::CurrentStopToken());
 		sharedWriteHandle.Close();
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, firstSmart, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_FIRST_SMART_CREATED"), L("VAL_ERR_FIRST_SMART_NOT_CREATED"))) return false;
@@ -845,7 +867,7 @@ namespace {
 		if (!AssertArchiveIntegrity(ctx, cfg, filesystem::path(cfg.backupPath) / world.name / firstSmartBackupFile)) return false;
 		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, firstSmartBackupFile, L"Smart")) return false;
 
-		SleepForUniqueBackupName();
+		if (ctx.StopRequested() || !SleepForUniqueBackupName(ctx.stopToken)) return false;
 		WriteTextFile(worldPath / L"notes.txt", state3.at(L"notes.txt"));
 		WriteTextFile(worldPath / L"data" / L"base.txt", state3.at(L"data/base.txt"));
 		WriteTextFile(worldPath / L"data" / L"fresh.txt", state3.at(L"data/fresh.txt"));
@@ -854,18 +876,20 @@ namespace {
 			world,
 			L"CoreValidation_Smart_Delete",
 			TaskCoordinator::CurrentStopToken());
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, secondSmart, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SECOND_SMART_CREATED"), L("VAL_ERR_SECOND_SMART_NOT_CREATED"))) return false;
 		const wstring secondSmartBackupFile = historyEntries.back().backupFile;
 		if (!AssertFolderRewindMetadata(ctx, cfg, world.name, secondSmartBackupFile, L"Smart")) return false;
 
-		SleepForUniqueBackupName();
+		if (ctx.StopRequested() || !SleepForUniqueBackupName(ctx.stopToken)) return false;
 		RemoveIfExists(worldPath / L"data" / L"fresh.txt");
 		const BackupResult deletionOnly = RunDesktopBackup(
 			world,
 			L"CoreValidation_DeleteOnly",
 			TaskCoordinator::CurrentStopToken());
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, deletionOnly, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 4, L("VAL_OK_DELETION_ONLY_CREATED"), L("VAL_ERR_DELETION_ONLY_NOT_CREATED"))) return false;
@@ -877,13 +901,17 @@ namespace {
 		WriteTextFile(worldPath / L"manual_only.txt", "should-be-removed\n");
 		WriteTextFile(worldPath / L"session.lock", "should-not-survive-restore\n");
 		WriteTextFile(worldPath / L"locks" / L"runtime.lock", "should-not-survive-restore\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, fullBackupFile, 0, ""), L("VAL_OK_RESTORE_FULL_SUCCESS"), L("VAL_ERR_RESTORE_FULL_FAILED"))) return false;
+		const bool fullRestoreOk = DoRestore(cfg, world.name, fullBackupFile, 0, "");
+		if (ctx.StopRequested()) return false;
+		if (!ctx.Require(fullRestoreOk, L("VAL_OK_RESTORE_FULL_SUCCESS"), L("VAL_ERR_RESTORE_FULL_FAILED"))) return false;
 		string diff;
 		if (!ctx.Require(CompareWorldState(state1, CaptureWorldState(worldPath), diff), L("VAL_OK_RESTORE_FULL_MATCH"), MsgFmt("VAL_ERR_RESTORE_FULL_MISMATCH", diff))) return false;
 		if (!AssertLockArtifactsAbsent(ctx, worldPath)) return false;
 
 		WriteTextFile(worldPath / L"notes.txt", "custom-restore-target\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, secondSmartBackupFile, 3, "notes.txt"), L("VAL_OK_CUSTOM_RESTORE_SUCCESS"), L("VAL_ERR_CUSTOM_RESTORE_FAILED"))) return false;
+		const bool customRestoreOk = DoRestore(cfg, world.name, secondSmartBackupFile, 3, "notes.txt");
+		if (ctx.StopRequested()) return false;
+		if (!ctx.Require(customRestoreOk, L("VAL_OK_CUSTOM_RESTORE_SUCCESS"), L("VAL_ERR_CUSTOM_RESTORE_FAILED"))) return false;
 		WorldState customExpected = state1;
 		customExpected[L"notes.txt"] = state3.at(L"notes.txt");
 		if (!ctx.Require(CompareWorldState(customExpected, CaptureWorldState(worldPath), diff), L("VAL_OK_CUSTOM_RESTORE_MATCH"), MsgFmt("VAL_ERR_CUSTOM_RESTORE_MISMATCH", diff))) return false;
@@ -893,6 +921,7 @@ namespace {
 		});
 		if (!ctx.Require(safeDeleteTarget != historyEntries.end(), L("VAL_OK_SAFEDELETE_TARGET_FOUND"), L("VAL_ERR_SAFEDELETE_TARGET_NOT_FOUND"))) return false;
 		DoSafeDeleteBackup(cfg, *safeDeleteTarget, kValidationConfigIndex);
+		if (ctx.StopRequested()) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 3, L("VAL_OK_SAFEDELETE_HISTORY_SIZE"), L("VAL_ERR_SAFEDELETE_HISTORY_SIZE"))) return false;
 		if (!ctx.Require(!filesystem::exists(filesystem::path(cfg.backupPath) / world.name / firstSmartBackupFile), L("VAL_OK_SAFEDELETE_ARCHIVE_REMOVED"), L("VAL_ERR_SAFEDELETE_ARCHIVE_PRESENT"))) return false;
@@ -900,7 +929,9 @@ namespace {
 		WriteTextFile(worldPath / L"notes.txt", "corrupted-before-final-restore\n");
 		WriteTextFile(worldPath / L"manual_only.txt", "should-be-removed-again\n");
 		WriteTextFile(worldPath / L"LOCK", "should-not-survive-restore\n");
-		if (!ctx.Require(DoRestore(cfg, world.name, latestBackupFile, 0, ""), L("VAL_OK_FINAL_RESTORE_SUCCESS"), L("VAL_ERR_FINAL_RESTORE_FAILED"))) return false;
+		const bool finalRestoreOk = DoRestore(cfg, world.name, latestBackupFile, 0, "");
+		if (ctx.StopRequested()) return false;
+		if (!ctx.Require(finalRestoreOk, L("VAL_OK_FINAL_RESTORE_SUCCESS"), L("VAL_ERR_FINAL_RESTORE_FAILED"))) return false;
 		if (!ctx.Require(CompareWorldState(state4, CaptureWorldState(worldPath), diff), L("VAL_OK_FINAL_RESTORE_MATCH"), MsgFmt("VAL_ERR_FINAL_RESTORE_MISMATCH", diff))) return false;
 		if (!AssertLockArtifactsAbsent(ctx, worldPath)) return false;
 
@@ -908,6 +939,7 @@ namespace {
 	}
 
 	static bool RunKeepCountScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
+		if (ctx.StopRequested()) return false;
 		ctx.Info(L("VAL_INFO_SCENARIO_LIMIT"));
 
 		const filesystem::path saveRoot = sandboxRoot / L"worlds";
@@ -930,28 +962,31 @@ namespace {
 			world,
 			L"CoreValidation_Limit_1",
 			TaskCoordinator::CurrentStopToken());
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, limitFirst, BackupOutcome::Created)) return false;
 		auto historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 1, L("VAL_OK_LIMIT_FIRST_CREATED"), L("VAL_ERR_LIMIT_FIRST_FAILED"))) return false;
 		const wstring oldestBackupFile = historyEntries.front().backupFile;
 
-		SleepForUniqueBackupName();
+		if (ctx.StopRequested() || !SleepForUniqueBackupName(ctx.stopToken)) return false;
 		WriteTextFile(worldPath / L"counter.txt", MakeDeterministicPayload("limit-case-v2", 160 * 1024, 0x56789abcu));
 		const BackupResult limitSecond = RunDesktopBackup(
 			world,
 			L"CoreValidation_Limit_2",
 			TaskCoordinator::CurrentStopToken());
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, limitSecond, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(historyEntries.size() == 2, L("VAL_OK_LIMIT_SECOND_CREATED"), L("VAL_ERR_LIMIT_SECOND_FAILED"))) return false;
 		if (!ctx.Require(historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_SECOND_IS_SMART"), L("VAL_ERR_LIMIT_SECOND_NOT_SMART"))) return false;
 
-		SleepForUniqueBackupName();
+		if (ctx.StopRequested() || !SleepForUniqueBackupName(ctx.stopToken)) return false;
 		WriteTextFile(worldPath / L"counter.txt", MakeDeterministicPayload("limit-case-v3", 192 * 1024, 0x6789abcdu));
 		const BackupResult limitThird = RunDesktopBackup(
 			world,
 			L"CoreValidation_Limit_3",
 			TaskCoordinator::CurrentStopToken());
+		if (ctx.StopRequested()) return false;
 		if (!RequireExpectedBackup(ctx, limitThird, BackupOutcome::Created)) return false;
 		historyEntries = GetHistoryEntriesForWorld(kValidationConfigIndex, world.name);
 		if (!ctx.Require(!historyEntries.empty() && historyEntries.back().backupType == L"Smart", L("VAL_OK_LIMIT_THIRD_IS_SMART"), L("VAL_ERR_LIMIT_THIRD_NOT_SMART"))) return false;
@@ -967,6 +1002,7 @@ namespace {
 	}
 
 	static bool RunLegacyMigrationScenario(ValidationContext& ctx, const Config& templateConfig, const filesystem::path& sandboxRoot) {
+		if (ctx.StopRequested()) return false;
 		const wstring worldName = L"__CoreValidationMigration";
 		Config cfg = BuildValidationConfig(templateConfig, sandboxRoot / L"worlds", sandboxRoot / L"migration-backups", 2, 0, true);
 		cfg.name = "LegacyCloudConfig";
@@ -1013,7 +1049,9 @@ namespace {
 		writeRecord(fullName, "Full", L"");
 		writeRecord(smartName, "Smart", fullName);
 
+		if (ctx.StopRequested()) return false;
 		const MigrationUnitResult result = MigrationCoordinator::EnsureWorldMigrated(cfg, kValidationConfigIndex, worldName);
+		if (ctx.StopRequested()) return false;
 		if (!ctx.Require(result.status == MigrationStatus::Succeeded, "[Validation] 1.15 metadata migrated.", "[Validation] 1.15 metadata migration failed.")) return false;
 		const filesystem::path snapshotRoot(result.snapshotPath);
 		if (!ctx.Require(filesystem::exists(snapshotRoot / L"metadata.json")
@@ -1037,8 +1075,13 @@ namespace {
 			"[Validation] Legacy archives were not renamed.", "[Validation] Legacy archive files changed during migration.");
 	}
 
-	static bool RunCoreValidation(bool automatic) {
-		ValidationContext ctx{ automatic };
+	static bool RunCoreValidation(bool automatic, stop_token stopToken, bool& wasCancelled) {
+		wasCancelled = false;
+		ValidationContext ctx{ automatic, stopToken };
+		if (ctx.StopRequested()) {
+			wasCancelled = true;
+			return false;
+		}
 		minebackup::logging::ScopedLogContext validationContext{{
 			"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
 			{"task", automatic ? "automatic_validation" : "manual_validation"}};
@@ -1055,6 +1098,11 @@ namespace {
 				"VAL_INFO_LEGACY_HISTORY_CLEANED",
 				to_string(legacyCleanup.removedEntries)));
 		}
+		if (ctx.StopRequested()) {
+			wasCancelled = true;
+			return false;
+		}
+
 		const CoreValidationHistorySnapshot realHistoryBefore =
 			CaptureRealHistorySnapshot();
 
@@ -1062,6 +1110,10 @@ namespace {
 		string resolveError;
 		if (!TryResolveValidationTemplate(templateConfig, resolveError)) {
 			ctx.Require(false, "", resolveError);
+			return false;
+		}
+		if (ctx.StopRequested()) {
+			wasCancelled = true;
 			return false;
 		}
 
@@ -1084,12 +1136,19 @@ namespace {
 		try {
 			filesystem::create_directories(sandboxRoot / L"worlds");
 			filesystem::create_directories(sandboxRoot / L"backups");
-			RunLegacyMigrationScenario(ctx, templateConfig, sandboxRoot);
-			RunSmartBackupScenario(ctx, templateConfig, sandboxRoot);
-			RunKeepCountScenario(ctx, templateConfig, sandboxRoot);
+			if (!ctx.StopRequested()) RunLegacyMigrationScenario(ctx, templateConfig, sandboxRoot);
+			if (!ctx.StopRequested()) RunSmartBackupScenario(ctx, templateConfig, sandboxRoot);
+			if (!ctx.StopRequested()) RunKeepCountScenario(ctx, templateConfig, sandboxRoot);
 		}
 		catch (const exception& ex) {
-			ctx.Require(false, "", MsgFmt("VAL_ERR_UNEXPECTED_EXCEPTION", ex.what()));
+			if (!ctx.StopRequested()) {
+				ctx.Require(false, "", MsgFmt("VAL_ERR_UNEXPECTED_EXCEPTION", ex.what()));
+			}
+		}
+
+		if (ctx.StopRequested()) {
+			wasCancelled = true;
+			return false;
 		}
 
 		size_t changedConfigCount = 0;
@@ -1148,13 +1207,25 @@ bool StartCoreValidationAsync(bool automatic) {
 	}
 
 	VALIDATION_INFO("%s", automatic ? L("VAL_INFO_QUEUED_AUTO") : L("VAL_INFO_QUEUED_MANUAL"));
-	if (!TaskCoordinator::Instance().Submit(L"core-validation", {L"validation"}, [automatic](stop_token) {
+	if (!TaskCoordinator::Instance().Submit(L"core-validation", {L"validation"}, [automatic](stop_token token) {
 		bool passed = false;
+		bool wasCancelled = false;
 		try {
-			passed = RunCoreValidation(automatic);
+			passed = RunCoreValidation(automatic, token, wasCancelled);
 		}
 		catch (const exception& ex) {
-			VALIDATION_ERROR("%s", MsgFmt("VAL_ERR_WORKER_CRASHED", ex.what()).c_str());
+			if (token.stop_requested()) {
+				wasCancelled = true;
+			}
+			else {
+				VALIDATION_ERROR("%s", MsgFmt("VAL_ERR_WORKER_CRASHED", ex.what()).c_str());
+			}
+		}
+
+		if (wasCancelled || token.stop_requested()) {
+			VALIDATION_INFO("Core validation cancelled due to application shutdown.");
+			g_CoreValidationRunning.store(false);
+			return;
 		}
 
 		g_CoreValidationPassed.store(passed);

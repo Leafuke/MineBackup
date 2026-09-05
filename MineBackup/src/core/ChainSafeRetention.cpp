@@ -1,4 +1,5 @@
 #include "ChainSafeRetention.h"
+#include "PlatformCompat.h"
 
 #include "BackupManagerInternal.h"
 #include "FolderRewindFormat.h"
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <system_error>
 
@@ -31,6 +33,67 @@ struct MetadataBackup {
 
 vector<wstring> Sorted(const set<wstring>& values) {
 	return {values.begin(), values.end()};
+}
+
+enum class DeltaKind {
+	Added,
+	Modified,
+	Deleted,
+};
+
+optional<DeltaKind> ComposeDelta(DeltaKind current, DeltaKind next) {
+	switch (current) {
+	case DeltaKind::Added:
+		if (next == DeltaKind::Deleted) return nullopt;
+		return DeltaKind::Added;
+	case DeltaKind::Modified:
+		return next == DeltaKind::Deleted ? DeltaKind::Deleted : DeltaKind::Modified;
+	case DeltaKind::Deleted:
+		return next == DeltaKind::Deleted ? DeltaKind::Deleted : DeltaKind::Modified;
+	}
+	return next;
+}
+
+void ApplyDelta(map<wstring, DeltaKind>& deltas, const wstring& path, DeltaKind next) {
+	const auto current = deltas.find(path);
+	if (current == deltas.end()) {
+		deltas[path] = next;
+		return;
+	}
+	const auto composed = ComposeDelta(current->second, next);
+	if (composed) current->second = *composed;
+	else deltas.erase(current);
+}
+
+void ApplyRecordDelta(
+	map<wstring, DeltaKind>& deltas,
+	const FolderRewindFormat::ChangeRecord& record) {
+	for (const auto& path : record.deletedFiles) ApplyDelta(deltas, path, DeltaKind::Deleted);
+	for (const auto& path : record.addedFiles) ApplyDelta(deltas, path, DeltaKind::Added);
+	for (const auto& path : record.modifiedFiles) ApplyDelta(deltas, path, DeltaKind::Modified);
+}
+
+void BuildDeltaLists(
+	const map<wstring, DeltaKind>& deltas,
+	FolderRewindFormat::ChangeRecord& record) {
+	record.addedFiles.clear();
+	record.modifiedFiles.clear();
+	record.deletedFiles.clear();
+	for (const auto& [path, kind] : deltas) {
+		switch (kind) {
+		case DeltaKind::Added: record.addedFiles.push_back(path); break;
+		case DeltaKind::Modified: record.modifiedFiles.push_back(path); break;
+		case DeltaKind::Deleted: record.deletedFiles.push_back(path); break;
+		}
+	}
+}
+
+bool SameArchiveReference(const wstring& left, const wstring& right) {
+	return !left.empty() && !right.empty() && _wcsicmp(left.c_str(), right.c_str()) == 0;
+}
+
+void ReleaseFullFileList(FolderRewindFormat::ChangeRecord& record) {
+	vector<wstring>().swap(record.fullFileList);
 }
 
 string SaveFailureDetail(
@@ -74,70 +137,44 @@ bool RepairMetadata(
 	const wstring& mergedOldFile,
 	const wstring& mergedFinalFile,
 	const wstring& mergedBackupType,
+	const FolderRewindFormat::ChangeRecord& deletedRecord,
+	const FolderRewindFormat::ChangeRecord& mergedRecord,
 	string& errorText) {
-	FolderRewindFormat::ChangeRecord deletedRecord;
-	FolderRewindFormat::ChangeRecord mergedRecord;
-	if (!FolderRewindMetadataStore::LoadRecord(metadataDirectory, deletedFile, deletedRecord)
-		|| !FolderRewindMetadataStore::LoadRecord(metadataDirectory, mergedOldFile, mergedRecord)) {
-		errorText = "required chain metadata is missing";
-		return false;
-	}
-	set<wstring> fullAfterDeleted(
-		deletedRecord.fullFileList.begin(), deletedRecord.fullFileList.end());
-	set<wstring> fullBeforeDeleted = fullAfterDeleted;
-	for (const auto& path : deletedRecord.addedFiles) fullBeforeDeleted.erase(path);
-	for (const auto& path : deletedRecord.deletedFiles) fullBeforeDeleted.insert(path);
-	const set<wstring> fullAfterMerged(
-		mergedRecord.fullFileList.begin(), mergedRecord.fullFileList.end());
-	set<wstring> mergedAdded;
-	set<wstring> mergedDeleted;
-	set_difference(fullAfterMerged.begin(), fullAfterMerged.end(),
-		fullBeforeDeleted.begin(), fullBeforeDeleted.end(),
-		inserter(mergedAdded, mergedAdded.end()));
-	set_difference(fullBeforeDeleted.begin(), fullBeforeDeleted.end(),
-		fullAfterMerged.begin(), fullAfterMerged.end(),
-		inserter(mergedDeleted, mergedDeleted.end()));
-	set<wstring> modifiedCandidates(
-		deletedRecord.modifiedFiles.begin(), deletedRecord.modifiedFiles.end());
-	modifiedCandidates.insert(
-		mergedRecord.modifiedFiles.begin(), mergedRecord.modifiedFiles.end());
-	for (const auto& path : mergedRecord.addedFiles) {
-		if (fullBeforeDeleted.contains(path) && fullAfterMerged.contains(path)) {
-			modifiedCandidates.insert(path);
-		}
-	}
-	set<wstring> mergedModified;
-	for (const auto& path : modifiedCandidates) {
-		if (fullBeforeDeleted.contains(path) && fullAfterMerged.contains(path)
-			&& !mergedAdded.contains(path) && !mergedDeleted.contains(path)) {
-			mergedModified.insert(path);
-		}
-	}
-
 	FolderRewindFormat::ChangeRecord repaired = mergedRecord;
 	repaired.archiveFileName = mergedFinalFile;
 	repaired.backupType = mergedBackupType;
 	repaired.createdAtUtc = mergedRecord.createdAtUtc.empty()
 		? FolderRewindFormat::MakeUtcTimestampString() : mergedRecord.createdAtUtc;
 	if (FolderRewindFormat::IsSmartBackupType(mergedBackupType)) {
+		map<wstring, DeltaKind> deltas;
+		ApplyRecordDelta(deltas, deletedRecord);
+		ApplyRecordDelta(deltas, mergedRecord);
 		repaired.previousBackupFileName = deletedRecord.previousBackupFileName;
 		repaired.basedOnFullBackup = mergedRecord.basedOnFullBackup.empty()
 			? deletedRecord.basedOnFullBackup : mergedRecord.basedOnFullBackup;
-		repaired.addedFiles = Sorted(mergedAdded);
-		repaired.deletedFiles = Sorted(mergedDeleted);
-		repaired.modifiedFiles = Sorted(mergedModified);
+		BuildDeltaLists(deltas, repaired);
+		repaired.fullFileList.clear();
 	}
 	else {
+		if (deletedRecord.fullFileList.empty()) {
+			errorText = "full checkpoint metadata has no complete file list";
+			return false;
+		}
+		set<wstring> fullAfterMerged(
+			deletedRecord.fullFileList.begin(), deletedRecord.fullFileList.end());
+		for (const auto& path : mergedRecord.deletedFiles) fullAfterMerged.erase(path);
+		for (const auto& path : mergedRecord.addedFiles) fullAfterMerged.insert(path);
+		for (const auto& path : mergedRecord.modifiedFiles) fullAfterMerged.insert(path);
 		repaired.previousBackupFileName.clear();
 		repaired.basedOnFullBackup = mergedFinalFile;
 		repaired.addedFiles = Sorted(fullAfterMerged);
 		repaired.deletedFiles.clear();
 		repaired.modifiedFiles.clear();
+		repaired.fullFileList = repaired.addedFiles;
 	}
-	repaired.fullFileList = Sorted(fullAfterMerged);
 	const auto repairedSave = FolderRewindMetadataStore::SaveRecordDetailed(
 		metadataDirectory, repaired);
-	if (!repairedSave.success) {
+	if (!repairedSave.WasCommitted()) {
 		errorText = SaveFailureDetail(
 			"failed to save repaired chain metadata", repairedSave);
 		return false;
@@ -151,26 +188,40 @@ bool RepairMetadata(
 		errorText = "failed to remove replaced chain metadata";
 		return false;
 	}
-	auto loaded = FolderRewindMetadataStore::Load(metadataDirectory);
-	if (loaded.recordLoadFailed) {
-		errorText = "failed to reload chain metadata after repair";
+	vector<wstring> recordNames;
+	if (!FolderRewindMetadataStore::ListRecordArchiveFileNames(
+			metadataDirectory, recordNames)) {
+		errorText = "failed to enumerate chain metadata after repair";
 		return false;
 	}
-	for (auto& [unused, record] : loaded.records) {
-		(void)unused;
-		if (record.previousBackupFileName == deletedFile
+	for (const auto& recordName : recordNames) {
+		FolderRewindFormat::ChangeRecord record;
+		if (!FolderRewindMetadataStore::LoadRecord(metadataDirectory, recordName, record)) {
+			errorText = "failed to load chain metadata record during reference repair";
+			return false;
+		}
+		bool changed = false;
+		if (SameArchiveReference(record.previousBackupFileName, deletedFile)
 			|| (mergedOldFile != mergedFinalFile
-				&& record.previousBackupFileName == mergedOldFile)) {
+				&& SameArchiveReference(record.previousBackupFileName, mergedOldFile))) {
 			record.previousBackupFileName = mergedFinalFile;
+			changed = true;
 		}
-		if (record.basedOnFullBackup == deletedFile
+		if (SameArchiveReference(record.basedOnFullBackup, deletedFile)
 			|| (mergedOldFile != mergedFinalFile
-				&& record.basedOnFullBackup == mergedOldFile)) {
+				&& SameArchiveReference(record.basedOnFullBackup, mergedOldFile))) {
 			record.basedOnFullBackup = mergedFinalFile;
+			changed = true;
 		}
+		if (FolderRewindFormat::IsSmartBackupType(record.backupType)
+			&& !record.fullFileList.empty()) {
+			ReleaseFullFileList(record);
+			changed = true;
+		}
+		if (!changed) continue;
 		const auto referenceSave = FolderRewindMetadataStore::SaveRecordDetailed(
 			metadataDirectory, record);
-		if (!referenceSave.success) {
+		if (!referenceSave.WasCommitted()) {
 			errorText = SaveFailureDetail(
 				"failed to repair references in chain metadata", referenceSave);
 			return false;
@@ -178,16 +229,22 @@ bool RepairMetadata(
 	}
 	FolderRewindFormat::MetadataState state;
 	if (FolderRewindMetadataStore::LoadState(metadataDirectory, state)) {
-		if (state.lastBackupFileName == deletedFile || state.lastBackupFileName == mergedOldFile) {
+		bool changed = false;
+		if (SameArchiveReference(state.lastBackupFileName, deletedFile)
+			|| SameArchiveReference(state.lastBackupFileName, mergedOldFile)) {
 			state.lastBackupFileName = mergedFinalFile;
+			changed = true;
 		}
-		if (state.basedOnFullBackup == deletedFile
-			|| (mergedOldFile != mergedFinalFile && state.basedOnFullBackup == mergedOldFile)) {
+		if (SameArchiveReference(state.basedOnFullBackup, deletedFile)
+			|| (mergedOldFile != mergedFinalFile
+				&& SameArchiveReference(state.basedOnFullBackup, mergedOldFile))) {
 			state.basedOnFullBackup = mergedFinalFile;
+			changed = true;
 		}
+		if (!changed) return true;
 		const auto stateSave = FolderRewindMetadataStore::SaveStateDetailed(
 			metadataDirectory, state);
-		if (!stateSave.success) {
+		if (!stateSave.WasCommitted()) {
 			errorText = SaveFailureDetail(
 				"failed to repair chain metadata state", stateSave);
 			return false;
@@ -360,6 +417,28 @@ Result Remove(Request request) {
 		result.detail = "chain archive is missing";
 		return result;
 	}
+	const bool deletingFullCheckpoint =
+		FolderRewindFormat::IsFullLikeBackupType(request.entry.backupType)
+		|| FolderRewindFormat::IsFullLikeBackupType(request.entry.backupFile);
+	FolderRewindFormat::ChangeRecord mergedRecord;
+	FolderRewindFormat::ChangeRecord deletedRecord;
+	// Load the Smart record first and release any legacy complete snapshot before
+	// loading the checkpoint. This bounds compatibility handling to one large
+	// FullFileList at a time.
+	if (!FolderRewindMetadataStore::LoadRecord(
+			request.metadataDirectory, next->backupFile, mergedRecord)) {
+		result.warning = true;
+		result.detail = "required next-chain metadata is missing";
+		return result;
+	}
+	ReleaseFullFileList(mergedRecord);
+	if (!FolderRewindMetadataStore::LoadRecord(
+			request.metadataDirectory, request.entry.backupFile, deletedRecord)) {
+		result.warning = true;
+		result.detail = "required current-chain metadata is missing";
+		return result;
+	}
+	if (!deletingFullCheckpoint) ReleaseFullFileList(deletedRecord);
 	const filesystem::path tempRoot = request.paths.runtimeRoot
 		/ (L"MineBackup_Merge_" + FolderRewindFormat::GenerateGuidString());
 	const filesystem::path workspace = tempRoot / L"merge_workspace";
@@ -403,6 +482,11 @@ Result Remove(Request request) {
 		error_code error;
 		filesystem::remove_all(
 			workspace / FolderRewindFormat::kInternalRestoreMarkerDirectoryName, error);
+		for (const auto& deletedPath : mergedRecord.deletedFiles) {
+			error.clear();
+			filesystem::remove(workspace / filesystem::path(deletedPath), error);
+			if (error) throw runtime_error("failed to remove deleted content from merged smart archive");
+		}
 		auto createArguments = ArchiveRunner::BuildCreateArguments(
 			request.config,
 			NormalizeCompressionLevel(request.config.zipMethod, request.config.zipLevel),
@@ -424,8 +508,7 @@ Result Remove(Request request) {
 			filesystem::remove(rebuilt, error);
 		}
 		targetReplaced = true;
-		if (FolderRewindFormat::IsFullLikeBackupType(request.entry.backupType)
-			|| FolderRewindFormat::IsFullLikeBackupType(request.entry.backupFile)) {
+		if (deletingFullCheckpoint) {
 			finalType = L"Full";
 			finalName = next->backupFile;
 			const size_t smartMarker = finalName.find(L"[Smart]");
@@ -442,7 +525,8 @@ Result Remove(Request request) {
 		error.clear();
 		filesystem::last_write_time(finalArchive, originalTime, error);
 		if (!RepairMetadata(request.metadataDirectory, request.entry.backupFile,
-				next->backupFile, finalName, finalType, result.detail)) {
+				next->backupFile, finalName, finalType,
+				deletedRecord, mergedRecord, result.detail)) {
 			throw runtime_error(result.detail);
 		}
 		error.clear();

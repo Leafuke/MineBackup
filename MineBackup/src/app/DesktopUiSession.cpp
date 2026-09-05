@@ -9,7 +9,7 @@
 #include "SettingsUI.h"
 #include "i18n.h"
 #include "imgui-all.h"
-#include "imgui_style.h"
+#include "ThemeManager.h"
 #include "text_to_text.h"
 
 #include <chrono>
@@ -320,7 +320,14 @@ void DesktopUiSession::DestroySecondaryPlatformWindows() noexcept {
 
 void DesktopUiSession::SaveWindowState(int& width, int& height) noexcept {
 	if (!active_ || runtime_.Window() == nullptr) return;
-	glfwGetWindowSize(runtime_.Window(), &width, &height);
+	if (glfwGetWindowAttrib(runtime_.Window(), GLFW_ICONIFIED) == 0) {
+		int w = 0, h = 0;
+		glfwGetWindowSize(runtime_.Window(), &w, &h);
+		if (w > 0 && h > 0) {
+			width = w;
+			height = h;
+		}
+	}
 	if (ImGui::GetCurrentContext() != nullptr && !iniPath_.empty()) {
 		ImGui::SaveIniSettingsToDisk(iniPath_.c_str());
 	}
