@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "GameSessionManager.h"
 #include "HistoryManager.h"
+#include "WorldIdentity.h"
 #include "PlatformCompat.h"
 #include "TaskCoordinator.h"
 #include "i18n.h"
@@ -128,14 +129,18 @@ void DrawHistoryDialogs(
 				ImGui::InputTextWithHint("##CustomRestore", L("CUSTOM_RESTORE_ITEMS_HINT"),
 					customItems, IM_ARRAYSIZE(customItems));
 			}
+			WorldIdentity::Value identity;
+			const bool resolved = WorldIdentity::TryResolveHistory(config, *entry, identity);
+			if (!resolved) ImGui::TextWrapped("%s", L("HISTORY_ENTRY_DISAPPEARED"));
+			ImGui::BeginDisabled(!resolved);
 			if (ImGui::Button(L("BUTTON_CONFIRM_RESTORE"))) {
 				const Config copy = config;
 				const HistoryEntry entryCopy = *entry;
 				const int index = lockedConfigIndex;
 				const int method = restoreMethod;
 				const string items = customItems;
-				const auto worldPath = JoinPath(copy.saveRoot, entryCopy.worldName);
-				MyFolder world = {worldPath.wstring(), entryCopy.worldName,
+				const auto worldPath = identity.sourcePath;
+				MyFolder world = {worldPath.wstring(), identity.relativeWorldPath,
 					L"", copy, index, -1};
 				SubmitUserRestore(world, entryCopy.backupFile, method, items,
 					copy.backupBefore);
@@ -143,7 +148,7 @@ void DrawHistoryDialogs(
 			}
 			SameLineFits(L("BUTTON_SELECT_CUSTOM_FILE"));
 			if (ImGui::Button(L("BUTTON_SELECT_CUSTOM_FILE"))) {
-				const filesystem::path worldPath = JoinPath(config.saveRoot, entry->worldName);
+				const filesystem::path worldPath = identity.sourcePath;
 				if (IsWorldOccupied(worldPath)) {
 					MessageBoxWin(L("RESTORE_OVER_RUNNING_WORLD_TITLE"),
 						L("RESTORE_EXTERNAL_ACTIVE_BLOCKED"), 1);
@@ -152,7 +157,7 @@ void DrawHistoryDialogs(
 					const wstring selectedFile = GetDesktopServices()->SelectFile().path.wstring();
 					if (!selectedFile.empty()) {
 						const Config copy = config;
-						const wstring worldName = entry->worldName;
+						const wstring worldName = identity.relativeWorldPath;
 						const int method = restoreMethod;
 						TaskCoordinator::Instance().Submit(L"Restore custom backup",
 							{TaskCoordinator::WorldResourceKey(copy.configId,
@@ -164,6 +169,7 @@ void DrawHistoryDialogs(
 					}
 				}
 			}
+			ImGui::EndDisabled();
 			SameLineFits(L("BUTTON_CANCEL"));
 			if (ImGui::Button(L("BUTTON_CANCEL"))) ImGui::CloseCurrentPopup();
 		}

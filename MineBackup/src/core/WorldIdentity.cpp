@@ -92,6 +92,8 @@ bool TryBuildFromHistory(
 			value.backupFile = entry.backupFile;
 			return true;
 		}
+		// A recorded source identity must not be redirected through a legacy storage alias.
+		return false;
 	}
 	const auto found = find_if(identities.begin(), identities.end(), [&](const Value& candidate) {
 		return StorageKey(candidate.storageFolderName) == StorageKey(entry.worldName);
@@ -157,6 +159,14 @@ bool TryBuild(
 	return false;
 }
 
+bool TryResolveHistory(const Config& config, const HistoryEntry& entry, Value& value) {
+ if (!TryBuildFromHistory(config, entry, value)) return false;
+ const auto conflicts = FindStorageConflicts({{0, config}});
+ return none_of(conflicts.begin(), conflicts.end(), [&](const auto& conflict) {
+  return StorageKey(conflict.storageFolderName) == StorageKey(value.storageFolderName);
+ });
+}
+
 bool Matches(
 	const Config& config,
 	const wstring& requestedWorldPath,
@@ -168,8 +178,12 @@ bool Matches(
 	if (!TryBuild(config, requestedWorldPath, target, nullptr)) return false;
 	if (!entry.worldPath.empty()
 		&& SamePath(filesystem::path(entry.worldPath), target.sourcePath)) return true;
-	if (StorageKey(entry.worldName) == StorageKey(target.storageFolderName)) return true;
 	if (!entry.worldPath.empty()) return false;
+	if (StorageKey(entry.worldName) == StorageKey(target.storageFolderName)) {
+		Value resolved;
+		return TryBuildFromHistory(config, entry, resolved)
+			&& SamePath(resolved.sourcePath, target.sourcePath);
+	}
 	const auto identities = ConfigWorldIdentities(config);
 	const auto sameStorageCount = count_if(identities.begin(), identities.end(),
 		[&](const Value& candidate) {
@@ -192,7 +206,8 @@ bool SameHistoryEntry(
 	if (TryBuildFromHistory(config, left, identity)) {
 		return Matches(config, identity.relativeWorldPath, right, left.backupFile);
 	}
-	if (left.worldName != right.worldName) return false;
+	if (!left.worldPath.empty() || !right.worldPath.empty()
+		|| left.worldName != right.worldName) return false;
 	const auto identities = ConfigWorldIdentities(config);
 	const auto storageMatches = count_if(identities.begin(), identities.end(),
 		[&](const Value& candidate) {

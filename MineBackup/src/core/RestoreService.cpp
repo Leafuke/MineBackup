@@ -5,6 +5,7 @@
 #include "FolderRewindMetadataStore.h"
 #include "JobDocument.h"
 #include "RestoreWorkspace.h"
+#include "WorldIdentity.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -225,6 +226,17 @@ RestorePlan RestoreService::BuildAndVerify(
 		plan.diagnostics.push_back(Failure("restore.world.invalid"));
 		return plan;
 	}
+	WorldIdentity::Value identity;
+ if (none_of(request.config.worlds.begin(), request.config.worlds.end(), [&](const auto& world) { return world.first == normalized; })
+  || !WorldIdentity::TryBuild(request.config, normalized, identity)) {
+  plan.diagnostics.push_back(Failure("restore.world.unconfigured")); return plan;
+ }
+ for (const auto& conflict : WorldIdentity::FindStorageConflicts({{0,request.config}})) {
+  if (conflict.leftWorldPath == normalized || conflict.rightWorldPath == normalized) {
+   plan.diagnostics.push_back(Failure("restore.world.ambiguous")); return plan;
+  }
+ }
+ plan.targetWorld = identity.sourcePath;
 	FolderRewindFormat::StoragePaths storagePaths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(
 			request.config.backupPath,

@@ -17,6 +17,7 @@
 #include "PlatformCompat.h"
 #include "RestoreService.h"
 #include "RestoreWorkspace.h"
+#include "WorldIdentity.h"
 #include "text_to_text.h"
 #include "i18n.h"
 #include "TaskCoordinator.h"
@@ -454,7 +455,14 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		RESTORE_WARNING("Restore is disabled until local paths are bound.");
 		return false;
 	}
-	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	WorldIdentity::Value identity;
+	if (!WorldIdentity::TryBuild(config, worldName, identity)
+		|| identity.relativeWorldPath != worldName
+		|| !WorldIdentity::FindStorageConflicts({{0, config}}).empty()) {
+		RESTORE_ERROR(L("RESTORE_WORLD_IDENTITY_INVALID"));
+		return false;
+	}
+	filesystem::path destinationFolder = identity.sourcePath;
 	if (IsWorldOccupied(destinationFolder)) {
 		RESTORE_WARNING(L("LOG_RESTORE_ACTIVE_WORLD_BLOCKED"),
 			wstring_to_utf8(worldName).c_str());
@@ -570,7 +578,14 @@ bool DoRestore(
 		RESTORE_WARNING("Restore is disabled until local paths are bound.");
 		return false;
 	}
-	filesystem::path destinationFolder = JoinPath(config.saveRoot, worldName);
+	WorldIdentity::Value identity;
+	if (!WorldIdentity::TryBuild(config, worldName, identity)
+		|| identity.relativeWorldPath != worldName
+		|| !WorldIdentity::FindStorageConflicts({{0, config}}).empty()) {
+		RESTORE_ERROR(L("RESTORE_WORLD_IDENTITY_INVALID"));
+		return false;
+	}
+	filesystem::path destinationFolder = identity.sourcePath;
 	if (IsWorldOccupied(destinationFolder)) {
 		RESTORE_WARNING(L("LOG_RESTORE_ACTIVE_WORLD_BLOCKED"),
 			wstring_to_utf8(worldName).c_str());

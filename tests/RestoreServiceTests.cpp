@@ -3,6 +3,7 @@
 #include "ExternalToolManager.h"
 #include "RestoreService.h"
 #include "RestoreWorkspace.h"
+#include "WorldIdentity.h"
 
 #include <fstream>
 #include <memory>
@@ -80,6 +81,7 @@ RestoreRequest FixtureRequest(const filesystem::path& root) {
 	request.config.saveRoot = (root / "saves").wstring();
 	request.config.backupPath = (root / "backups").wstring();
 	request.config.zipPath = L"fake-7zz";
+	request.config.worlds = {{L"world",L""},{L"missing-world",L""},{L"missing-overlay-world",L""},{L"cancelled-world",L""}};
 	request.world = {request.config.configId, L"world"};
 	request.archive = L"[Full]-World.7z";
 	request.restorePreserve = {L"session.lock"};
@@ -275,4 +277,24 @@ void RunRestoreServiceTests(
 			&& !missingMetadata.diagnostics.empty()
 			&& missingMetadata.diagnostics.front().eventId == "restore.metadata.missing",
 		"Smart restore should reject a missing exact metadata chain");
+ auto nested = FixtureRequest(root); nested.config.worlds = {{L"nested/world",L""}}; nested.world.relativePath=L"nested/world";
+ Write(root/"saves"/"nested"/"world"/"level.dat","before"); Write(root/"saves"/"nested_world"/"unrelated.txt","keep");
+ Write(root/"backups"/"nested_world"/nested.archive,"archive");
+ HistoryEntry entry; entry.configId=nested.config.configId; entry.worldName=L"nested_world"; entry.worldPath=(root/"saves"/"nested"/"world").wstring();
+ WorldIdentity::Value identity;
+ test.Expect(WorldIdentity::TryResolveHistory(nested.config,entry,identity) && identity.relativeWorldPath==L"nested/world", "history resolves configured nested source");
+ test.Expect(service.Run(nested,false).code==OperationCode::Success && Read(root/"saves"/"nested_world"/"unrelated.txt")=="keep", "nested restore does not touch flattened sibling");
+ nested.world.relativePath=L"nested_world";
+ test.Expect(service.Run(nested,false).code==OperationCode::RestoreFailed, "unconfigured storage alias cannot become restore target");
+ entry.worldPath=(root/"saves"/"deleted-world").wstring();
+ test.Expect(!WorldIdentity::TryResolveHistory(nested.config,entry,identity)
+  && !WorldIdentity::Matches(nested.config,L"nested/world",entry),
+  "recorded unconfigured source cannot fall back to a matching storage alias");
+ auto other=entry; other.worldPath=(root/"saves"/"nested"/"world").wstring();
+ test.Expect(!WorldIdentity::SameHistoryEntry(nested.config,entry,other),
+  "history mutations cannot redirect a removed source to another world");
+ entry.worldPath.clear(); test.Expect(WorldIdentity::TryResolveHistory(nested.config,entry,identity),"unique legacy history alias remains supported");
+ nested.config.worlds.push_back({L"nested_world",L""});
+ test.Expect(!WorldIdentity::TryResolveHistory(nested.config,entry,identity),"ambiguous history aliases are rejected");
+
 }

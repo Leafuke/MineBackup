@@ -33,6 +33,8 @@ bool TryBuild(
 	Value& value,
 	std::string* errorText = nullptr);
 
+bool TryResolveHistory(const Config& config, const HistoryEntry& entry, Value& value);
+
 bool Matches(
 	const Config& config,
 	const std::wstring& requestedWorldPath,

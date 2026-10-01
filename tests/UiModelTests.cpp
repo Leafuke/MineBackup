@@ -1,3 +1,4 @@
+#include "BackupManager.h"
 #include "HistoryViewModel.h"
 #include "ConfigSelection.h"
 #include "DesktopUiLifecycle.h"
@@ -238,6 +239,22 @@ namespace {
 int main() {
 	const filesystem::path root = TemporaryRoot();
 	filesystem::create_directories(root);
+	Config restoreConfig;
+	restoreConfig.configId = L"legacy-restore-target";
+	restoreConfig.saveRoot = (root / "saves").wstring();
+	restoreConfig.backupPath = (root / "backups").wstring();
+	restoreConfig.worlds = {{L"nested/world", L""}};
+	const auto unrelated = root / "saves" / "nested_world" / "keep.txt";
+	filesystem::create_directories(unrelated.parent_path());
+	ofstream(unrelated) << "keep";
+	Expect(!DoRestore2(restoreConfig, L"nested_world", root / "external.7z", 0)
+		&& !DoRestore(restoreConfig, L"nested_world", L"[Full]-external.7z", 2),
+		"legacy external/custom restore must reject an unconfigured storage alias");
+	ifstream unchanged(unrelated);
+	string content; unchanged >> content;
+	Expect(content == "keep" && !filesystem::exists(root / "saves" / "nested/world"),
+		"legacy target rejection must leave worlds untouched before workspace preparation");
+	unchanged.close();
 	TestResponsiveLayouts();
 	TestDesktopUiLifecycle();
 	TestSettingsExternalPersistenceAcknowledgement();
