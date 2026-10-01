@@ -14,6 +14,11 @@ for that exact tag and makes the draft public only after every upload succeeds.
 A rerun can resume that same draft but refuses to modify an already-published
 release.
 
+Curated bilingual Release notes are tracked in `docs/release-notes/vX.Y.Z.md`.
+The publishing job reads the notes from the exact annotated tag and appends
+the audited commit and platform-gate statement. When no versioned notes exist,
+it retains the generic release summary.
+
 A security-only missing-platform release must be started manually, select the
 one omitted platform, provide a reason and pass the protected-environment
 approval. The omission and reason are recorded in the release manifest. Normal

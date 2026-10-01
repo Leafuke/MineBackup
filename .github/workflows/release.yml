@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Existing annotated tag that points at this workflow commit
         required: true
-        default: v1.16.3
+        default: v1.16.4
         type: string
       omit_platform:
         description: Security-only waiver; normal releases must use none
@@ -274,6 +274,13 @@ jobs:
           name: minebackup-${{ needs.assemble.outputs.version }}-release-candidate
           path: candidate
 
+      - name: Checkout versioned release notes
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          path: release-source
+          sparse-checkout: docs/release-notes
+
       - name: Create or resume draft for this exact tag
         shell: bash
         env:
@@ -297,6 +304,12 @@ jobs:
             echo
             echo "See \`release-manifest.json\` for asset hashes, dependency provenance and gate status."
           } >"$notes_file"
+          versioned_notes="release-source/docs/release-notes/$RELEASE_TAG.md"
+          if [[ -f "$versioned_notes" ]]; then
+            # Keep the gate/waiver statement even when using curated notes.
+            cat "$versioned_notes" <(printf '\n\n---\n\n') "$notes_file" >"$notes_file.curated"
+            mv "$notes_file.curated" "$notes_file"
+          fi
 
           if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
             [[ "$(jq -r .draft <<<"$release_json")" == true ]] || {
