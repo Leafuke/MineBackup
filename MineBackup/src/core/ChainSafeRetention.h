@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AppPaths.h"
+#include "AtomicFileWriter.h"
 #include "ArchiveRunner.h"
 #include "DataModels.h"
 
@@ -22,12 +23,16 @@ struct Request {
 	ArchiveRunner* archiveRunner = nullptr;
 	std::stop_token stopToken;
 	std::function<bool(std::vector<HistoryEntry>)> commitHistory;
+	// Optional file-operation/phase injection for deterministic transaction tests.
+	std::function<AtomicFileWriter::WriteResult(const std::filesystem::path&, const std::filesystem::path&)> replacePrepared;
+	std::function<void()> beforeMetadataCommit;
 };
 
 struct Result {
 	bool changed = false;
 	bool warning = false;
 	std::string detail;
+	std::filesystem::path recoveryPath;
 };
 
 Result Remove(Request request);

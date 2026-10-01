@@ -50,6 +50,12 @@ struct WriteResult {
 using ChunkSink = std::function<bool(std::string_view)>;
 using StreamProducer = std::function<bool(const ChunkSink&)>;
 
+// Source is a fully prepared file on the target filesystem. Failure before replacement
+// leaves the existing target intact; source is consumed only on replacement.
+WriteResult ReplacePreparedFile(
+    const std::filesystem::path& source, const std::filesystem::path& target,
+    const WriteOptions& options = {});
+
 WriteResult WriteStreamed(
     const std::filesystem::path& target,
     const StreamProducer& producer,

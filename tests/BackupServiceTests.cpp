@@ -458,6 +458,34 @@ void RunDirectRemoveTransactionTests(
 void RunBackupServiceTests(
 	TestContext& test,
 	const filesystem::path& temporaryRoot) {
+ for (const string fault : {"deploy", "metadata", "history", "rollback"}) {
+  const auto r = temporaryRoot / ("merge-fault-" + fault); const auto backup = r / "backups" / "world"; const auto meta = r / "backups" / "_metadata" / "world";
+  Config cfg; cfg.configId=L"merge"; cfg.saveRoot=(r/"saves").wstring(); cfg.backupPath=(r/"backups").wstring(); cfg.worlds={{L"world",L""}};
+  HistoryEntry full; full.configId=cfg.configId; full.worldName=L"world"; full.worldPath=(r/"saves"/"world").wstring(); full.backupFile=L"[Full]-base.7z"; full.backupType=L"Full"; full.timestamp_str=L"2024-01-01T00:00:00";
+  auto smart=full; smart.backupFile=L"[Smart]-tail.7z"; smart.backupType=L"Smart"; smart.timestamp_str=L"2024-01-01T00:01:00";
+  WriteFixture(backup/full.backupFile,"full"); WriteFixture(backup/smart.backupFile,"original");
+  FolderRewindFormat::ChangeRecord base; base.archiveFileName=full.backupFile; base.backupType=L"Full"; base.basedOnFullBackup=full.backupFile; base.fullFileList={L"level.dat"};
+  auto delta=base; delta.archiveFileName=smart.backupFile; delta.backupType=L"Smart"; delta.previousBackupFileName=full.backupFile;
+  FolderRewindMetadataStore::SaveRecord(meta,base); FolderRewindMetadataStore::SaveRecord(meta,delta);
+  ExternalToolResolution resolution; resolution.available=true; resolution.executable=L"fake";
+  ArchiveRunner runner(resolution,{},[](const ProcessSpec& spec,stop_token){
+   if(spec.arguments.front()==L"a") for(const auto& arg:spec.arguments) if(filesystem::path(arg).extension()==L".7z") WriteFixture(arg,"rebuilt");
+   ProcessResult result; result.status=ProcessStatus::Succeeded; return result;
+  });
+  ChainSafeRetention::Request req; req.config=cfg; req.entry=full; req.history={full,smart}; req.backupDirectory=backup; req.metadataDirectory=meta; req.archiveRunner=&runner;
+  req.commitHistory=[&](vector<HistoryEntry>){return fault!="history" && fault!="rollback";};
+  int replacements=0;
+  req.replacePrepared=[&](const filesystem::path& from,const filesystem::path& to){
+   ++replacements; if(fault=="deploy" || (fault=="rollback" && replacements>1)) return AtomicFileWriter::WriteResult{};
+   return AtomicFileWriter::ReplacePreparedFile(from,to);
+  };
+  if(fault=="metadata") req.beforeMetadataCommit=[] {throw runtime_error("metadata injection");};
+  const auto result=ChainSafeRetention::Remove(req);
+  test.Expect(result.warning && (fault=="rollback" ? filesystem::exists(result.recoveryPath/"target_backup.7z") : ReadFixture(backup/smart.backupFile)=="original"),
+   "failed merge preserves original archive or explicit recovery copy");
+  test.Expect(ReadFixture(backup/full.backupFile)=="full", "failed merge preserves deleted checkpoint");
+ }
+
 	RunScanReuseContracts(test, temporaryRoot);
 	const filesystem::path root = temporaryRoot / "backup-service";
 	const filesystem::path world = root / "saves" / "world";
@@ -978,6 +1006,7 @@ void RunBackupServiceTests(
 				result.status = ProcessStatus::Succeeded;
 				return result;
 			}
+			if (!spec.arguments.empty() && spec.arguments.front() == L"t") { result.status = ProcessStatus::Succeeded; return result; }
 			if (!spec.arguments.empty() && spec.arguments.front() == L"x") {
 				filesystem::path destination;
 				for (const auto& argument : spec.arguments) {

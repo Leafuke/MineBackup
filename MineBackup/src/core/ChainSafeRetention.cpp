@@ -307,6 +307,8 @@ Result DirectRemove(Request& request) {
 		tempRoot / L"metadata",
 		false};
 	MetadataBackup savedMetadata;
+	bool archiveRemoved = false;
+	bool metadataMutated = false;
 	try {
 		if (IsCancelled(request)) {
 			result.warning = true;
@@ -323,6 +325,8 @@ Result DirectRemove(Request& request) {
 		if (!filesystem::remove(archive, error) || error) {
 			throw runtime_error("failed to remove retained archive");
 		}
+		archiveRemoved = true;
+		metadataMutated = true;
 		if (!FolderRewindMetadataStore::DeleteRecord(
 				request.metadataDirectory, request.entry.backupFile)) {
 			throw runtime_error("failed to remove retention metadata");
@@ -334,19 +338,17 @@ Result DirectRemove(Request& request) {
 		// history 已成功持久化，此处是事务提交点；提交后的清理不得重新进入回滚路径。
 	}
 	catch (const exception& exception) {
-		error_code restoreError;
-		filesystem::copy_file(archiveBackup, archive,
-			filesystem::copy_options::overwrite_existing, restoreError);
-		if (savedMetadata.existed && !RestoreMetadata(savedMetadata)) {
-			result.detail = "retention rollback also failed after: " + string(exception.what());
-		}
-		else {
-			result.detail = exception.what();
-		}
-		filesystem::remove_all(tempRoot, restoreError);
-		result.warning = true;
-		return result;
-	}
+  error_code restoreError; bool recovered = true;
+  if (archiveRemoved) {
+   filesystem::copy_file(archiveBackup, archive, filesystem::copy_options::overwrite_existing, restoreError);
+   recovered = !restoreError;
+  }
+  if (metadataMutated && !RestoreMetadata(savedMetadata)) recovered = false;
+  result.detail = exception.what(); result.warning = true;
+  if (!recovered) { result.recoveryPath = tempRoot; result.detail += "; recovery retained at: " + tempRoot.string(); }
+  else filesystem::remove_all(tempRoot, restoreError);
+  return result;
+ }
 
 	result.changed = true;
 	error_code cleanupError;
@@ -439,7 +441,7 @@ Result Remove(Request request) {
 		return result;
 	}
 	if (!deletingFullCheckpoint) ReleaseFullFileList(deletedRecord);
-	const filesystem::path tempRoot = request.paths.runtimeRoot
+	const filesystem::path tempRoot = request.backupDirectory.parent_path()
 		/ (L"MineBackup_Merge_" + FolderRewindFormat::GenerateGuidString());
 	const filesystem::path workspace = tempRoot / L"merge_workspace";
 	const filesystem::path rebuilt = tempRoot / (L"rebuilt." + request.config.zipFormat);
@@ -452,6 +454,7 @@ Result Remove(Request request) {
 	wstring finalType = next->backupType;
 	bool targetReplaced = false;
 	bool deletedArchiveRemoved = false;
+	bool metadataMutated = false;
 	try {
 		if (IsCancelled(request)) {
 			result.warning = true;
@@ -497,17 +500,15 @@ Result Remove(Request request) {
 			throw runtime_error("failed to rebuild merged smart archive");
 		}
 		if (IsCancelled(request)) throw runtime_error("retention was cancelled after archive rebuild");
-		filesystem::remove(mergeTarget, error);
-		if (error) throw runtime_error("failed to replace next smart archive");
-		filesystem::rename(rebuilt, mergeTarget, error);
-		if (error) {
-			error.clear();
-			filesystem::copy_file(rebuilt, mergeTarget,
-				filesystem::copy_options::overwrite_existing, error);
-			if (error) throw runtime_error("failed to deploy merged smart archive");
-			filesystem::remove(rebuilt, error);
-		}
-		targetReplaced = true;
+
+  if (request.archiveRunner->Execute({L"t", rebuilt.wstring()}, {}, request.config.useLowPriority).status != ProcessStatus::Succeeded)
+   throw runtime_error("failed to verify rebuilt archive");
+  const auto replacement = request.replacePrepared ? request.replacePrepared(rebuilt, mergeTarget)
+   : AtomicFileWriter::ReplacePreparedFile(rebuilt, mergeTarget);
+  targetReplaced = replacement.WasReplaced();
+  if (!targetReplaced) throw runtime_error("failed to deploy merged smart archive");
+  if (!replacement.IsDurable()) { result.warning = true; result.detail = "merged archive replaced but durability is unconfirmed"; }
+
 		if (deletingFullCheckpoint) {
 			finalType = L"Full";
 			finalName = next->backupFile;
@@ -524,6 +525,8 @@ Result Remove(Request request) {
 		}
 		error.clear();
 		filesystem::last_write_time(finalArchive, originalTime, error);
+		metadataMutated = true;
+		if (request.beforeMetadataCommit) request.beforeMetadataCommit();
 		if (!RepairMetadata(request.metadataDirectory, request.entry.backupFile,
 				next->backupFile, finalName, finalType,
 				deletedRecord, mergedRecord, result.detail)) {
@@ -550,31 +553,30 @@ Result Remove(Request request) {
 		return result;
 	}
 	catch (const exception& exception) {
-		error_code restoreError;
-		if (targetReplaced) {
-			filesystem::remove(finalArchive, restoreError);
-			if (finalArchive != mergeTarget) filesystem::remove(mergeTarget, restoreError);
-			restoreError.clear();
-			filesystem::copy_file(originalTarget, mergeTarget,
-				filesystem::copy_options::overwrite_existing, restoreError);
-			if (!restoreError) filesystem::last_write_time(mergeTarget, originalTime, restoreError);
-		}
-		if (deletedArchiveRemoved) {
-			restoreError.clear();
-			filesystem::copy_file(deletedBackup, archiveToDelete,
-				filesystem::copy_options::overwrite_existing, restoreError);
-		}
-		if (!RestoreMetadata(metadataBackup)) {
-			result.detail = "retention rollback also failed after: "
-				+ string(exception.what());
-		}
-		else if (result.detail.empty()) {
-			result.detail = exception.what();
-		}
-		filesystem::remove_all(tempRoot, restoreError);
-		result.warning = true;
-		return result;
-	}
+  error_code restoreError; bool recovered = true;
+  if (targetReplaced) {
+   const auto pending = tempRoot / (L"rollback." + request.config.zipFormat);
+   filesystem::copy_file(originalTarget, pending, filesystem::copy_options::overwrite_existing, restoreError);
+   if (restoreError) recovered = false;
+   else {
+    const auto restored = request.replacePrepared ? request.replacePrepared(pending, mergeTarget)
+     : AtomicFileWriter::ReplacePreparedFile(pending, mergeTarget);
+    recovered = restored.WasReplaced();
+   }
+   if (recovered && finalArchive != mergeTarget) { filesystem::remove(finalArchive, restoreError); if (restoreError) recovered = false; }
+   if (recovered) filesystem::last_write_time(mergeTarget, originalTime, restoreError);
+  }
+  if (deletedArchiveRemoved) {
+   restoreError.clear(); filesystem::copy_file(deletedBackup, archiveToDelete, filesystem::copy_options::overwrite_existing, restoreError);
+   if (restoreError) recovered = false;
+  }
+  if (metadataMutated && !RestoreMetadata(metadataBackup)) recovered = false;
+  result.detail = exception.what(); result.warning = true;
+  if (!recovered) { result.recoveryPath = tempRoot; result.detail += "; rollback incomplete; recovery files retained at: " + tempRoot.string(); }
+  else filesystem::remove_all(tempRoot, restoreError);
+  return result;
+ }
+
 }
 
 } // namespace ChainSafeRetention
