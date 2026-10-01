@@ -180,7 +180,7 @@ bool ParseConfig(
 			|| !HasOnly(*backup, {"mode", "skipIfUnchanged", "maxSmartBackupsPerFull"})
 			|| !ReadString(*backup, "mode", mode)
 			|| !ReadBoolean(*backup, "skipIfUnchanged", config.skipIfUnchanged)
-			|| !ReadInteger(*backup, "maxSmartBackupsPerFull", 0, 100000,
+			|| !ReadInteger(*backup, "maxSmartBackupsPerFull", BackupPolicy::MinimumSmartCount, BackupPolicy::MaximumSmartCount,
 				config.maxSmartBackupsPerFull)) {
 			diagnostics.push_back(Error("manifest.config.invalid_backup",
 				wstring_to_utf8(config.configId)));

@@ -4,6 +4,7 @@
 #include "AppState.h"
 #include "BackupManagerInternal.h"
 #include "BackupService.h"
+#include "RuntimeRetentionService.h"
 #include "Broadcast.h"
 #include "CloudSyncService.h"
 #include "HistoryManager.h"
@@ -74,7 +75,7 @@ BackupResult RunDesktopBackup(
 	BackupExecutionOptions options) {
 	const int configIndex = ResolveDesktopConfigIndex(
 		folder.configIndex,
-		g_appState.currentConfigIndex);
+		SelectedConfigIndex());
 	BackupRequest request;
 	request.config = folder.config;
 	request.world = {folder.config.configId, folder.name};
@@ -105,24 +106,12 @@ BackupResult RunDesktopBackup(
 		RemoveHistoryEntry(configIndex, worldName, backupFile);
 		return true;
 	};
-	dependencies.enforceRetention = [configIndex](
-		const BackupRequest& value,
-		const HistoryEntry& entry,
-		stop_token) {
-		(void)entry;
-		FolderRewindFormat::StoragePaths storage;
-		if (!FolderRewindFormat::TryResolveStoragePaths(
-				value.config.backupPath,
-				value.world.relativePath,
-				value.sourcePath.wstring(),
-				storage)) return;
-		BackupManagerInternal::LimitBackupFiles(
-			value.config,
-			configIndex,
-			storage.backupSubDir.wstring(),
-			value.config.keepCount);
-	};
-	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([configIndex](
+	dependencies.enforceRetention = [](
+        const BackupRequest& request, const HistoryEntry& entry, stop_token token) {
+        RuntimeRetentionService retention(GetHistoryRepository(), GetAppPaths().HistoryFile(),
+            SnapshotConfigState().configs, GetAppPaths());
+        retention.Enforce(request, entry, token);
+    };	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([configIndex](
 		const BackupRequest& value,
 		const HistoryEntry& entry,
 		stop_token) {

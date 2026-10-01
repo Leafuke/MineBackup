@@ -141,12 +141,12 @@ ProfileCatalogLoadResult ProfileConfigCatalogLoader::Load(
 			else if (key == L"ZipLevel") invalid |= !ReadInteger(result, value, 0, 22, config->zipLevel, lineNumber, key);
 			else if (key == L"ZipMethod") config->zipMethod = value;
 			else if (key == L"KeepCount") invalid |= !ReadInteger(result, value, 0, 100000, config->keepCount, lineNumber, key);
-			else if (key == L"SmartBackup") invalid |= !ReadInteger(result, value, 0, 3, config->backupMode, lineNumber, key);
+			else if (key == L"SmartBackup") invalid |= !ReadInteger(result, value, BackupPolicy::MinimumMode, BackupPolicy::MaximumMode, config->backupMode, lineNumber, key);
 			else if (key == L"RestoreBeforeBackup") invalid |= !ReadBoolean(result, value, config->backupBefore, lineNumber, key);
 			else if (key == L"CpuThreads") invalid |= !ReadInteger(result, value, 0, 1024, config->cpuThreads, lineNumber, key);
 			else if (key == L"UseLowPriority") invalid |= !ReadBoolean(result, value, config->useLowPriority, lineNumber, key);
 			else if (key == L"SkipIfUnchanged") invalid |= !ReadBoolean(result, value, config->skipIfUnchanged, lineNumber, key);
-			else if (key == L"MaxSmartBackups") invalid |= !ReadInteger(result, value, 0, 100000, config->maxSmartBackupsPerFull, lineNumber, key);
+			else if (key == L"MaxSmartBackups") invalid |= !ReadInteger(result, value, BackupPolicy::MinimumSmartCount, BackupPolicy::MaximumSmartCount, config->maxSmartBackupsPerFull, lineNumber, key);
 			else if (key == L"BackupOnStart") invalid |= !ReadBoolean(result, value, config->backupOnGameStart, lineNumber, key);
 			else if (key == L"BlacklistItem") config->blacklist.push_back(value);
 			else if (key == L"CloudSyncEnabled") invalid |= !ReadBoolean(result, value, config->cloudSyncEnabled, lineNumber, key);

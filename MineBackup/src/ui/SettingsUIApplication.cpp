@@ -59,8 +59,8 @@ MinecraftSettingsRuntime& MinecraftRuntime() {
 }
 
 map<int, Config> ConfigSnapshot() {
-	lock_guard<mutex> lock(g_appState.configsMutex);
-	return g_appState.configs;
+
+	return UiConfigs();
 }
 
 filesystem::path CurrentDefaultBackupRoot() {

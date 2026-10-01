@@ -129,4 +129,4 @@ bool ContainsHistoryText(const HistoryEntry& entry, const std::string& needle);
 HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
 	float availableWidth,
 	float em,
-	float spacing = 0.0f);
+	float spacing = -1.0f);

@@ -277,7 +277,7 @@ if (ImGui::BeginMenuBar()) {
 		float histBtnW = CalcPairButtonWidth(L("BUTTON_CONFIRM"), L("BUTTON_CANCEL"));
 		if (ImGui::Button(L("BUTTON_CONFIRM"), ImVec2(histBtnW, 0))) {
 			try {
-				if (ImportHistoryFromFile(pendingImportPath, g_appState.currentConfigIndex, true)) {
+				if (ImportHistoryFromFile(pendingImportPath, UiSelectedConfigIndex(), true)) {
 					LoadHistory();
 					MB_LOG_I18N_INFO(minebackup::logging::LogCategory::History,
 						"history.import.completed", "LOG_HISTORY_IMPORTED",
@@ -743,6 +743,6 @@ if (showSettings) {
 	ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 }
 if (showHistoryWindow) {
-	ShowHistoryWindow(g_appState.currentConfigIndex);
+	ShowHistoryWindow(UiSelectedConfigIndex());
 }
 }

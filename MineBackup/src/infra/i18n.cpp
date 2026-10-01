@@ -7,6 +7,7 @@ const char* lang_codes[2] = { "zh_CN", "en_US" };
 const char* langs[2] = { as_utf8(u8"简体中文"), "English" };
 std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_LangTable = {
 	{ "zh_CN", {
+		{"RESTORE_ARCHIVE_PATHS_UNSUPPORTED", u8"备份使用不受支持的路径布局，已拒绝还原且保留原归档：%s"},
 		{"SETTINGS", u8"设置"},
 		{"SETTINGS_GROUP_APPLICATION", u8"应用"},
 		{"SETTINGS_GROUP_NORMAL", u8"普通配置"},
@@ -255,6 +256,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{"COMPRESSION_FORMAT", u8"压缩格式:"},
 		{"COMPRESSION_LEVEL", u8"压缩等级"},
 		{"BACKUPS_TO_KEEP", u8"保留数量"},
+        {"RESTORE_WORLD_IDENTITY_INVALID", u8"恢复目标未配置或世界身份存在歧义，已拒绝恢复。"},
+        {"BACKUP_POLICY_INVALID", u8"备份模式必须为 0–3，智能备份数量必须为 0–100000（0 表示不限）。"},
 		{"SMART_BACKUP", u8"智能备份"},
 		{"BACKUP_BEFORE_RESTORE", u8"还原前备份"},
 		{"ALWAYS_ON_TOP", u8"置顶窗口"},
@@ -792,7 +795,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "CLOUD_HISTORY_IMPORT_FAILED", u8"导入云端历史失败。" },
 		{ "CLOUD_ANALYSIS_SUMMARY", u8"云端共 %d 条，已匹配 %d 条，可导入 %d 条，未映射 %d 条，歧义 %d 条。" },
 		{ "CLOUD_SYNC_HISTORY_SUMMARY", u8"历史同步完成：导入 %d 条，跳过重复 %d 条。" },
-		{ "CLOUD_SYNC_DOWNLOADED_SUMMARY", u8"云同步完成：导入 %d 条历史，跳过重复 %d 条，补回 %d 个备份包。" },
+		{ "CLOUD_SYNC_DOWNLOADED_SUMMARY", u8"云同步完成：导入 %d 条历史，跳过重复 %d 条，下载成功 %d 个备份包，失败 %d 个。" },
+        {"CLOUD_SYNC_PARTIAL_SUMMARY", u8"云同步未完成：导入 %d 条历史，跳过重复 %d 条，下载成功 %d 个备份包，失败 %d 个。成功内容已保留。"},
 		{ "CLOUD_RESTORE_CHAIN_SKIPPED", u8"未能从历史记录中构建云补链信息。" },
 		{ "CLOUD_RESTORE_CHAIN_READY", u8"缺失的云还原链已补齐。" },
 		{ "CLOUD_RESTORE_CHAIN_ALREADY_READY", u8"本地还原链已完整，无需下载。" },
@@ -1170,6 +1174,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "UPDATE_AVAILABLE_LINK_TEXT", u8"发现新版本\n%s\n点击查看" }
 }},
 	{ "en_US", {
+		{"RESTORE_ARCHIVE_PATHS_UNSUPPORTED", u8"Restore rejected: unsupported archive paths; the original archive was retained: %s"},
 		{"SETTINGS", "Settings"},
 		{"SETTINGS_GROUP_APPLICATION", "Application"},
 		{"SETTINGS_GROUP_NORMAL", "Normal configuration"},
@@ -1418,6 +1423,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{"COMPRESSION_FORMAT", "Compression Format:"},
 		{"COMPRESSION_LEVEL", "Compression Level"},
 		{"BACKUPS_TO_KEEP", "Backups to Keep"},
+        {"RESTORE_WORLD_IDENTITY_INVALID", "Restore target is not configured or its world identity is ambiguous; restore was refused."},
+        {"BACKUP_POLICY_INVALID", "Backup mode must be 0–3; Smart backup count must be 0–100000 (0 means unlimited)."},
 		{"SMART_BACKUP", "Smart Backup"},
 		{"BACKUP_BEFORE_RESTORE", "Backup Before Restore"},
 		{"ALWAYS_ON_TOP", "Always on Top"},
@@ -1953,7 +1960,8 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "CLOUD_HISTORY_IMPORT_FAILED", "Failed to import cloud history." },
 		{ "CLOUD_ANALYSIS_SUMMARY", "Remote total %d, matched %d, importable %d, unmapped %d, ambiguous %d." },
 		{ "CLOUD_SYNC_HISTORY_SUMMARY", "History sync completed: imported %d, skipped duplicates %d." },
-		{ "CLOUD_SYNC_DOWNLOADED_SUMMARY", "Cloud sync completed: imported %d history items, skipped %d duplicates, recovered %d archives." },
+		{ "CLOUD_SYNC_DOWNLOADED_SUMMARY", "Cloud sync completed: imported %d history items, skipped %d duplicates, recovered %d archives, failed %d." },
+        {"CLOUD_SYNC_PARTIAL_SUMMARY", "Cloud sync incomplete: imported %d history items, skipped %d duplicates, recovered %d archives, failed %d. Successful items were retained."},
 		{ "CLOUD_RESTORE_CHAIN_SKIPPED", "No cloud restore-chain information could be built from history." },
 		{ "CLOUD_RESTORE_CHAIN_READY", "The missing cloud restore-chain has been recovered." },
 		{ "CLOUD_RESTORE_CHAIN_ALREADY_READY", "The local restore-chain is already complete." },

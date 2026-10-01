@@ -276,8 +276,9 @@ namespace CloudSyncInternal {
 
 	CloudActiveHistoryManifest BuildActiveManifest(int configIndex) {
 		CloudActiveHistoryManifest manifest;
-		auto cfgIt = g_appState.configs.find(configIndex);
-		if (cfgIt == g_appState.configs.end()) return manifest;
+		const auto configs = SnapshotConfigState().configs;
+		auto cfgIt = configs.find(configIndex);
+		if (cfgIt == configs.end()) return manifest;
 
 		manifest.configId = cfgIt->second.configId;
 		manifest.configName = utf8_to_wstring(cfgIt->second.name);
@@ -607,6 +608,7 @@ namespace CloudSyncInternal {
 		// A 1.15 cloud state used the state.json destination but contained metadata v2 camelCase.
 		// Convert the downloaded small JSON files locally; the archive remains untouched.
 		bool downloadedLegacyState = false;
+        bool legacyMigrationFailed = false;
 		try {
 			ifstream stateIn(paths.metadataStateLocalPath, ios::binary);
 			nlohmann::json stateRoot = nlohmann::json::parse(stateIn, nullptr, false);
@@ -624,8 +626,10 @@ namespace CloudSyncInternal {
 			filesystem::remove(paths.metadataStateLocalPath, migrateEc);
 			filesystem::remove(paths.metadataRecordLocalPath, migrateEc);
 			const MigrationUnitResult migrated = MigrationCoordinator::EnsureWorldMigrated(config, configIndex, entry.worldName, entry.worldPath);
-			if (migrated.status == MigrationStatus::Failed || migrated.status == MigrationStatus::Degraded)
-				warningMessage = L"Downloaded legacy metadata could not be migrated completely: " + migrated.message;
+			if (migrated.status == MigrationStatus::Failed || migrated.status == MigrationStatus::Degraded) {
+                legacyMigrationFailed = true;
+                warningMessage = L"Downloaded legacy metadata could not be migrated completely: " + migrated.message;
+            }
 		}
 
 		UpdateHistoryCloudState(
@@ -637,6 +641,16 @@ namespace CloudSyncInternal {
 			paths.archiveRemotePath,
 			paths.metadataRecordRemotePath,
 			paths.metadataStateRemotePath);
+
+        if (IsIncrementalBackupType(entry.backupType) || IsIncrementalBackupType(entry.backupFile)) {
+            if (!metadataStateResult.success || !metadataRecordResult.success || legacyMigrationFailed) {
+                auto failed = !metadataStateResult.success ? metadataStateResult : metadataRecordResult;
+                failed.success = false;
+                if (failed.exitCode == 0) failed.exitCode = -1;
+                failed.message = warningMessage;
+                return failed;
+            }
+        }
 
 		result.success = true;
 		result.exitCode = 0;
@@ -697,7 +711,7 @@ namespace CloudSyncInternal {
 						nlohmann::json converted = nlohmann::json::array();
 						for (const auto& entry : entries) {
 							const Config* owner = nullptr;
-							for (const auto& [candidateIndex, candidate] : g_appState.configs)
+							for (const auto& [candidateIndex, candidate] : SnapshotConfigState().configs)
 								if (_wcsicmp(candidate.configId.c_str(), entry.configId.c_str()) == 0) { owner = &candidate; break; }
 							if (!owner) { outResult.success = false; break; }
 							converted.push_back(FolderRewindHistoryStore::SerializeHistoryItem(*owner, entry));

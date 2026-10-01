@@ -337,13 +337,13 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	LoadHistory();
 	if (!launchOptions.selectConfigId.empty()) {
 		const int index = FindConfigByStableId(
-			g_appState.configs,
+			SnapshotConfigState().configs,
 			launchOptions.selectConfigId);
 		if (index < 0) {
 			MessageBoxWin("MineBackup", L("REQUESTED_CONFIG_MISSING"), 2);
 			return 4;
 		}
-		g_appState.currentConfigIndex = index;
+		SelectConfigIndex(index);
 	}
 
 #ifdef _WIN32
@@ -641,10 +641,10 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			activationRequested = true;
 			if (request.type == InstanceRequestType::SelectConfig) {
 				const int index = FindConfigByStableId(
-					g_appState.configs,
+					SnapshotConfigState().configs,
 					request.stableId);
 				if (index >= 0) {
-					g_appState.currentConfigIndex = index;
+					SelectConfigIndex(index);
 				}
 			}
 		}
@@ -654,6 +654,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 				wstring_to_utf8(instanceError).c_str());
 		}
 		eventRouter.Dispatch(TaskCoordinator::Instance().PollEvents());
+		UiConfigDraft configFrame;
 		if (!knotLinkStartupStatusHandled && g_KnotLinkStartupStatusReady) {
 			knotLinkStartupStatusHandled = true;
 			showKnotLinkUpdateReminder =

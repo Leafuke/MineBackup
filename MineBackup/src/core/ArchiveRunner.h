@@ -33,7 +33,11 @@ public:
 	ProcessResult Execute(
 		std::vector<std::wstring> arguments,
 		const std::filesystem::path& workingDirectory = {},
-		bool useLowPriority = false) const;
+		bool useLowPriority = false,
+		std::size_t maximumCapturedBytes = 4u * 1024u * 1024u) const;
+	bool ValidateMembers(const std::filesystem::path& archive, std::string& error, bool lowPriority = false) const;
+	static bool ValidateMemberListing(const std::string& listing, std::string& error);
+
 	bool ExecuteLogged(
 		std::vector<std::wstring> arguments,
 		const std::filesystem::path& workingDirectory = {},

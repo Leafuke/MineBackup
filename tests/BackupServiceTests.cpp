@@ -7,6 +7,7 @@
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
 #include "RuntimeIntegration.h"
+#include "RestoreService.h"
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeRetentionService.h"
 #include "text_to_text.h"
@@ -64,6 +65,7 @@ ArchiveRunner MakeFakeArchiveRunner(
 				result.status = ProcessStatus::Cancelled;
 				return result;
 			}
+			if (!spec.arguments.empty() && spec.arguments.front() == L"t") { result.status=ProcessStatus::Succeeded; return result; }
 			++*processCount;
 			if (inspect) inspect(spec);
 			if (createArchive) {
@@ -83,7 +85,7 @@ ArchiveRunner MakeFakeArchiveRunner(
 }
 
 void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryRoot) {
-	for (const string mode : {"full", "forced-full", "smart", "excluded-only"}) {
+	for (const string mode : {"full", "forced-full", "smart", "excluded-only", "overwrite"}) {
 		const auto root = temporaryRoot / ("scan-reuse-" + mode);
 		const auto world = root / "saves" / "world";
 		WriteFixture(world / "level.dat", "original-level");
@@ -149,7 +151,7 @@ void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryR
 		test.Expect(set<wstring>(submittedLists.front().begin(), submittedLists.front().end()) == original,
 			"baseline Full must exclude user blacklists and both root and nested lock files");
 
-		config.backupMode = mode == "full" ? 1 : 2;
+		config.backupMode = mode == "overwrite" ? 3 : mode == "full" ? 1 : 2;
 		request.comment = utf8_to_wstring(mode); // Distinct archive names even within one clock second.
 		WriteFixture(world / "cache" / "temp.bin", "changed-excluded-cache");
 		WriteFixture(world / "session.lock", "changed-session-lock");
@@ -208,7 +210,7 @@ void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryR
 			test.Expect(archived == original && stateFiles == archived
 				&& record.fullFileList == vector<wstring>(original.begin(), original.end()),
 				"Full and Forced Full must archive exactly the filtered metadata snapshot");
-			test.Expect(record.backupType == L"Full" && record.previousBackupFileName.empty()
+			test.Expect(record.backupType == (mode == "overwrite" ? L"Overwrite" : L"Full") && record.previousBackupFileName.empty()
 				&& record.basedOnFullBackup == filename && state.basedOnFullBackup == filename
 				&& record.addedFiles == record.fullFileList && record.modifiedFiles.empty() && record.deletedFiles.empty(),
 				"Full and Forced Full must establish a new complete checkpoint");
@@ -367,10 +369,10 @@ void RunDirectRemoveTransactionTests(
 		request.backupDirectory = storage.backupSubDir;
 		request.metadataDirectory = storage.metadataDir;
 		request.paths = paths;
-		request.commitHistory = [&](vector<HistoryEntry> updated) {
+		request.commitHistory = [&](const ChainSafeRetention::HistoryChanges& changes) {
 			commitCalled = true;
 			if (!commitSucceeds) return false;
-			currentHistory = std::move(updated);
+			if (!ChainSafeRetention::ApplyHistoryChanges(config, currentHistory, changes)) return false;
 			if (!injectCleanupFailure) return true;
 
 			error_code scanError;
@@ -458,6 +460,153 @@ void RunDirectRemoveTransactionTests(
 void RunBackupServiceTests(
 	TestContext& test,
 	const filesystem::path& temporaryRoot) {
+ for (const string fault : {"deploy", "metadata", "history", "rollback"}) {
+  const auto r = temporaryRoot / ("merge-fault-" + fault); const auto backup = r / "backups" / "world"; const auto meta = r / "backups" / "_metadata" / "world";
+  Config cfg; cfg.configId=L"merge"; cfg.saveRoot=(r/"saves").wstring(); cfg.backupPath=(r/"backups").wstring(); cfg.worlds={{L"world",L""}};
+  HistoryEntry full; full.configId=cfg.configId; full.worldName=L"world"; full.worldPath=(r/"saves"/"world").wstring(); full.backupFile=L"[Full]-base.7z"; full.backupType=L"Full"; full.timestamp_str=L"2024-01-01T00:00:00";
+  auto smart=full; smart.backupFile=L"[Smart]-tail.7z"; smart.backupType=L"Smart"; smart.timestamp_str=L"2024-01-01T00:01:00";
+  WriteFixture(backup/full.backupFile,"full"); WriteFixture(backup/smart.backupFile,"original");
+  FolderRewindFormat::ChangeRecord base; base.archiveFileName=full.backupFile; base.backupType=L"Full"; base.basedOnFullBackup=full.backupFile; base.fullFileList={L"level.dat"};
+  auto delta=base; delta.archiveFileName=smart.backupFile; delta.backupType=L"Smart"; delta.previousBackupFileName=full.backupFile;
+  FolderRewindMetadataStore::SaveRecord(meta,base); FolderRewindMetadataStore::SaveRecord(meta,delta);
+  ExternalToolResolution resolution; resolution.available=true; resolution.executable=L"fake";
+  ArchiveRunner runner(resolution,{},[](const ProcessSpec& spec,stop_token){
+   if(spec.arguments.front()==L"a") for(const auto& arg:spec.arguments) if(filesystem::path(arg).extension()==L".7z") WriteFixture(arg,"rebuilt");
+   ProcessResult result; result.status=ProcessStatus::Succeeded; return result;
+  });
+  ChainSafeRetention::Request req; req.config=cfg; req.entry=full; req.history={full,smart}; req.backupDirectory=backup; req.metadataDirectory=meta; req.archiveRunner=&runner;
+  req.commitHistory=[&](const ChainSafeRetention::HistoryChanges&){return fault!="history" && fault!="rollback";};
+  int replacements=0;
+  req.replacePrepared=[&](const filesystem::path& from,const filesystem::path& to){
+   ++replacements; if(fault=="deploy" || (fault=="rollback" && replacements>1)) return AtomicFileWriter::WriteResult{};
+   return AtomicFileWriter::ReplacePreparedFile(from,to);
+  };
+  if(fault=="metadata") req.beforeMetadataCommit=[] {throw runtime_error("metadata injection");};
+  const auto result=ChainSafeRetention::Remove(req);
+  test.Expect(result.warning && (fault=="rollback" ? filesystem::exists(result.recoveryPath/"target_backup.7z") : ReadFixture(backup/smart.backupFile)=="original"),
+   "failed merge preserves original archive or explicit recovery copy");
+  test.Expect(ReadFixture(backup/full.backupFile)=="full", "failed merge preserves deleted checkpoint");
+ }
+
+ {
+  const auto r=temporaryRoot/"unique-archives"; WriteFixture(r/"saves"/"world"/"level.dat","baseline");
+  BackupRequest req; req.config.configId=L"unique"; req.config.saveRoot=(r/"saves").wstring(); req.config.backupPath=(r/"backups").wstring(); req.config.worlds={{L"world",L""}}; req.config.backupMode=2; req.config.maxSmartBackupsPerFull=0; req.config.skipIfUnchanged=false; req.world={L"unique",L"world"}; req.sourcePath=r/"saves"/"world";
+  BackupServiceDependencies deps; deps.paths.runtimeRoot=r/"runtime"; deps.addHistory=[](const HistoryEntry&){return true;};
+  deps.archiveRunnerFactory=[](const filesystem::path&,const AppPaths&,stop_token token){return MakeFakeArchiveRunner(make_shared<int>(0),token);};
+  BackupService service(deps); const auto full=service.Run(req);
+  WriteFixture(req.sourcePath/"level.dat","first-change"); const auto one=service.Run(req);
+  WriteFixture(req.sourcePath/"level.dat","second-longer-change"); const auto two=service.Run(req);
+  FolderRewindFormat::ChangeRecord record;
+  test.Expect(IsSuccessful(full.code) && IsSuccessful(one.code) && IsSuccessful(two.code) && one.archivePath!=two.archivePath
+   && filesystem::exists(one.archivePath) && FolderRewindMetadataStore::LoadRecord(r/"backups"/"_metadata"/"world",two.archivePath.filename().wstring(),record)
+   && record.previousBackupFileName==one.archivePath.filename().wstring(),"rapid Smart checkpoints have unique archives and committed noncyclic predecessors");
+  set<wstring> names; for(int i=0;i<32;++i) names.insert(FolderRewindFormat::GenerateArchiveFileName(L"Full",L"world",L"same",L"7z"));
+  test.Expect(names.size()==32,"same-second archive allocation includes unique identifiers");
+  filesystem::path collision;
+  deps.archiveRunnerFactory=[&](const filesystem::path&,const AppPaths&,stop_token token){
+   auto fake=MakeFakeArchiveRunner(make_shared<int>(0),token);
+   ExternalToolResolution resolution; resolution.available=true; resolution.executable=L"fake";
+   return ArchiveRunner(resolution,token,[&,fake](const ProcessSpec& spec,stop_token){
+    if(spec.arguments.front()==L"t" && collision.empty()) {
+     collision=r/"backups"/"world"/filesystem::path(spec.arguments.back()).filename();
+     WriteFixture(collision,"existing-archive");
+    }
+    return fake.Execute(spec.arguments,spec.workingDirectory,spec.useLowPriority);
+   });
+  };
+  req.config.backupMode=1;
+  const auto collided=BackupService(deps).Run(req);
+  test.Expect(IsSuccessful(collided.code) && collided.archivePath!=collision
+   && ReadFixture(collision)=="existing-archive"
+   && FolderRewindMetadataStore::LoadRecord(r/"backups"/"_metadata"/"world",collided.archivePath.filename().wstring(),record)
+   && record.basedOnFullBackup==collided.archivePath.filename().wstring(),
+   "a destination collision detected after compression reallocates without modifying the existing archive");
+  vector<HistoryEntry> tied;
+  for(int i=0;i<32;++i) {HistoryEntry e;e.configId=req.config.configId;e.worldName=L"world";e.backupFile=L"[Full]-"+to_wstring(32-i)+L".7z";e.timestamp_str=L"2024-01-01T00:00:00";tied.push_back(e);}
+  const auto manifest=FolderRewindHistoryStore::SerializeActiveHistoryManifest(req.config,tied);
+  test.Expect(manifest["Entries"][0]["FileName"]=="[Full]-32.7z"
+   && manifest["Entries"][31]["FileName"]=="[Full]-1.7z",
+   "same-second history serialization preserves committed order independently of GUID filenames");
+ }
+
+#ifdef _WIN32
+ for(const wstring format:{L"7z",L"zip"}) {
+  const auto tool=filesystem::path(__FILE__).parent_path().parent_path()/"MineBackup"/"Assets"/"7za.exe";
+  const auto r=temporaryRoot/L"真实覆盖 空格"/format; const auto world=r/L"saves"/L"world";
+  WriteFixture(world/"level.dat","before"); WriteFixture(world/"deleted.txt","gone"); WriteFixture(world/"session.lock","excluded"); WriteFixture(world/"cache"/"secret.txt","excluded");
+  BackupRequest req; req.config.configId=L"real-overwrite"; req.config.saveRoot=(r/"saves").wstring(); req.config.backupPath=(r/"backups").wstring(); req.config.zipPath=tool.wstring(); req.config.zipFormat=format; req.config.zipMethod=format==L"zip"?L"Deflate":L"LZMA2"; req.config.backupMode=3; req.config.skipIfUnchanged=false; req.config.blacklist={L"cache"}; req.config.worlds={{L"world",L""}}; req.world={req.config.configId,L"world"}; req.sourcePath=world;
+  BackupServiceDependencies deps; deps.paths.runtimeRoot=r/"runtime"; deps.addHistory=[](const HistoryEntry&){return true;};
+  BackupService backup(deps);
+  req.config.backupMode=2; req.config.maxSmartBackupsPerFull=0;
+  const auto full=backup.Run(req); const auto originalFull=ReadFixture(full.archivePath);
+  WriteFixture(world/"level.dat","smart-content"); const auto smart=backup.Run(req);
+  const auto originalSmart=ReadFixture(smart.archivePath);
+  req.config.backupMode=3;
+  const auto before=backup.Run(req); filesystem::remove(world/"deleted.txt"); WriteFixture(world/"level.dat","after"); const auto after=backup.Run(req);
+  test.Expect(IsSuccessful(full.code) && IsSuccessful(smart.code)
+   && smart.archivePath.filename().wstring().starts_with(L"[Smart]")
+   && ReadFixture(full.archivePath)==originalFull && ReadFixture(smart.archivePath)==originalSmart,
+   "switching Smart to Overwrite preserves the original chain archives byte for byte");
+  const auto runner=ArchiveRunner::Resolve(tool,deps.paths); string error;
+  const auto listing=runner.Execute({L"l",L"-slt",after.archivePath.wstring()});
+  test.Expect(IsSuccessful(before.code) && IsSuccessful(after.code) && runner.ValidateMembers(after.archivePath,error)
+   && listing.standardOutput.find("deleted.txt")==string::npos && listing.standardOutput.find("session.lock")==string::npos && listing.standardOutput.find("secret.txt")==string::npos,
+   "real overwrite archives synchronize deletions and exclude mandatory locks and user rules");
+  RestoreRequest restore; restore.config=req.config; restore.world=req.world; restore.archive=after.archivePath;
+  RestoreServiceDependencies restoreDeps; restoreDeps.paths=deps.paths; RestoreService restoreService(restoreDeps);
+  WriteFixture(world/"level.dat","changed");
+  test.Expect(restoreService.Run(restore,false).code==OperationCode::Success && ReadFixture(world/"level.dat")=="after", "real overwrite restores level.dat at world root");
+  restore.archive=smart.archivePath;
+  test.Expect(restoreService.Run(restore,false).code==OperationCode::Success
+   && ReadFixture(world/"level.dat")=="smart-content" && ReadFixture(world/"deleted.txt")=="gone"
+   && !filesystem::exists(world/"cache"/"secret.txt"),
+   "real Smart chain remains restorable after Overwrite creates an independent checkpoint");
+  const auto legacy=r/"backups"/"world"/(L"[Overwrite]-legacy."+format);
+  runner.Execute({L"a",L"-t"+format,legacy.wstring(),L"-spf",world.wstring()+L"/*"}); restore.archive=legacy;
+  WriteFixture(world/"level.dat","keep-original");
+  test.Expect(restoreService.Run(restore,false).code==OperationCode::VerificationFailed && ReadFixture(world/"level.dat")=="keep-original" && filesystem::exists(legacy),"legacy absolute-path archive is rejected before world mutation");
+ }
+#endif
+
+	for (bool realLock : {false, true}) {
+#ifndef _WIN32
+		if (realLock) continue;
+#endif
+		const auto r = temporaryRoot / (realLock ? "record-rollback-lock" : "record-rollback-injection");
+		BackupRequest req; req.config.configId=L"record-rollback"; req.config.saveRoot=(r/"saves").wstring();
+		req.config.backupPath=(r/"backups").wstring(); req.config.worlds={{L"world",L""}};
+		req.config.backupMode=1; req.config.skipIfUnchanged=false; req.world={req.config.configId,L"world"}; req.sourcePath=r/"saves/world";
+		WriteFixture(req.sourcePath/"level.dat","original");
+		BackupServiceDependencies deps; deps.paths.runtimeRoot=r/"runtime"; bool failHistory=false; wstring failedName;
+#ifdef _WIN32
+		ScopedCleanupHandle recordLock;
+#endif
+		deps.archiveRunnerFactory=[](const filesystem::path&,const AppPaths&,stop_token token){return MakeFakeArchiveRunner(make_shared<int>(0),token);};
+		deps.addHistory=[&](const HistoryEntry& entry){
+			if (!failHistory) return true;
+			failedName=entry.backupFile;
+#ifdef _WIN32
+			if(realLock) test.Expect(recordLock.Open(r/"backups/_metadata/world/records"/(failedName+L".json")),"lock new metadata record before rollback");
+#endif
+			return false;
+		};
+		deps.deleteMetadataRecord=[&](const filesystem::path& metadata,const wstring& archive){
+			return realLock ? FolderRewindMetadataStore::DeleteRecord(metadata,archive) : false;
+		};
+		BackupService service(deps); const auto original=service.Run(req);
+		const auto originalState=ReadFixture(r/"backups/_metadata/world/state.json");
+		failHistory=true; WriteFixture(req.sourcePath/"level.dat","changed contents longer"); const auto failed=service.Run(req);
+		filesystem::path retained;
+		for(const auto& item:filesystem::directory_iterator(r/"backups")) if(item.path().filename().wstring().starts_with(L"MineBackup_Create_")) retained=item.path();
+		test.Expect(failed.code==OperationCode::BackupFailed && filesystem::exists(original.archivePath)
+			&& ReadFixture(r/"backups/_metadata/world/state.json")==originalState
+			&& filesystem::exists(failed.archivePath)
+			&& ReadFixture(retained/"metadata-recovery/state.json")==originalState
+			&& filesystem::exists(r/"backups/_metadata/world/records"/(failedName+L".json"))
+			&& any_of(failed.diagnostics.begin(),failed.diagnostics.end(),[&](const auto& d){return d.eventId=="backup.rollback.incomplete" && d.detail.find(wstring_to_utf8(retained.wstring()))!=string::npos;}),
+			"failed record rollback retains old archive, exact old state, new archive and reported recovery copy");
+	}
+
 	RunScanReuseContracts(test, temporaryRoot);
 	const filesystem::path root = temporaryRoot / "backup-service";
 	const filesystem::path world = root / "saves" / "world";
@@ -885,6 +1034,122 @@ void RunBackupServiceTests(
 		"Runtime retention should atomically remove the oldest ordinary archive and history entry");
 	RunDirectRemoveTransactionTests(test, temporaryRoot / "direct-remove-transactions");
 
+    for (const string scenario : {"mods", "arbitrary", "important", "history-failed"}) {
+        const auto root = temporaryRoot / ("aux-" + scenario);
+        Config cfg = retentionConfig; cfg.configId = L"auxiliary-" + root.filename().wstring();
+        cfg.backupPath = (root / "backups").wstring(); cfg.backupMode = 3;
+        cfg.skipIfUnchanged = true; // Auxiliary backups retain their existing always-Full behavior.
+        const auto source = root / "outside" / (scenario == "mods" ? "mods" : "custom folder");
+        WriteFixture(source / "payload.dat", "auxiliary payload");
+        BackupRequest req; req.config = cfg; req.world = {cfg.configId, source.filename().wstring()};
+        req.sourcePath = source; req.auxiliarySource = true;
+        map<int,Config> configs{{5,cfg},{1,config}}; // UI could select another configuration.
+        HistoryRepository history; AppPaths app; app.runtimeRoot = root / "runtime";
+        const auto historyFile = root / "history.json";
+        BackupServiceDependencies deps; deps.paths = app;
+        deps.archiveRunnerFactory = [](const auto&,const auto&,stop_token token) {
+            return MakeFakeArchiveRunner(make_shared<int>(0), token);
+        };
+        bool failHistory = false; int retentionCalls = 0;
+        deps.addHistory = [&](const HistoryEntry& entry) {
+            if (failHistory) return false;
+            const auto result = history.Mutate(cfg.configId, historyFile, configs, true,
+                [&](auto& entries){entries.push_back(entry);return true;});
+            return result.changed && result.persisted;
+        };
+        deps.enforceRetention = [&](const BackupRequest& request, const HistoryEntry& entry, stop_token token) {
+            ++retentionCalls;
+            RuntimeRetentionService(history, historyFile, configs, app).Enforce(request, entry, token);
+        };
+        BackupService service(deps);
+        const auto first = service.Run(req);
+        test.Expect(first.historyEntry && first.historyEntry->backupType == L"Full", "Auxiliary mode remains Full even with world Overwrite configured");
+        if (!first.historyEntry) continue;
+        const auto old = *first.historyEntry;
+        filesystem::last_write_time(first.archivePath, filesystem::file_time_type::clock::now() - chrono::hours(1));
+        if (scenario == "important") history.Mutate(cfg.configId, historyFile, configs, true,
+            [](auto& entries){entries.front().isImportant = true;return true;});
+        auto unrelated = old; unrelated.worldPath = (root / "another-source").wstring(); unrelated.backupFile = L"unrelated.7z";
+        history.Mutate(cfg.configId, historyFile, configs, true,
+            [&](auto& entries){entries.push_back(unrelated);return true;});
+        WriteFixture(first.archivePath.parent_path() / unrelated.backupFile, "other source");
+        failHistory = scenario == "history-failed";
+        FolderRewindFormat::StoragePaths auxiliaryStorage;
+        FolderRewindFormat::TryResolveStoragePaths(cfg.backupPath, old.worldName, old.worldPath, auxiliaryStorage);
+        const auto statePath = auxiliaryStorage.metadataDir / "state.json";
+        const auto oldState = ReadFixture(statePath);
+        const auto second = service.Run(req);
+        test.Expect(!history.EntriesForConfig(config.configId)->size(), "Auxiliary backup history belongs to its config ID rather than UI selection");
+        test.Expect(ReadFixture(first.archivePath.parent_path() / unrelated.backupFile) == "other source", "Auxiliary retention never deletes another recorded source");
+        if (failHistory) {
+            test.Expect(!IsSuccessful(second.code) && retentionCalls == 1 && filesystem::exists(first.archivePath)
+                && history.EntriesForConfig(cfg.configId)->size() == 2 && ReadFixture(statePath) == oldState,
+                "Auxiliary history commit failure restores state and never runs retention");
+        } else {
+            const bool important = scenario == "important";
+            test.Expect(second.historyEntry && second.archivePath != first.archivePath && filesystem::exists(second.archivePath)
+                && filesystem::exists(first.archivePath) == important
+                && history.EntriesForConfig(cfg.configId)->size() == (important ? 3 : 2),
+                ("Auxiliary keepCount removes only old independent Full backups and preserves important snapshots: " + scenario).c_str());
+        }
+        auto alias = old; alias.worldPath = (source / ".").wstring();
+        test.Expect(ChainSafeRetention::SameAuxiliarySource(cfg, old, alias), "Auxiliary source paths are canonicalized");
+        alias.worldPath.clear();
+        test.Expect(!ChainSafeRetention::SameAuxiliarySource(cfg, old, alias)
+            && !ChainSafeRetention::SameAuxiliarySource(cfg, old, unrelated), "Unknown and different auxiliary source identities remain protected");
+        ChainSafeRetention::HistoryChanges changes; changes.auxiliarySource = true; changes.deletions = {old};
+        vector<HistoryEntry> latest{old}; latest.front().isImportant = true;
+        test.Expect(!ChainSafeRetention::ApplyHistoryChanges(cfg, latest, changes), "Concurrent important flag conflicts also protect auxiliary backups");
+    }
+
+
+    for (const string scenario : {"plain", "unrelated", "important", "referenced", "missing-record", "history-named"}) {
+        const auto root = temporaryRoot / ("overwrite-retention-" + scenario);
+        Config cfg = retentionConfig; cfg.backupPath = (root / "backups").wstring(); cfg.backupMode = 3;
+        FolderRewindFormat::StoragePaths paths;
+        FolderRewindFormat::TryResolveStoragePaths(cfg.backupPath, L"world", world.wstring(), paths);
+        auto old = oldEntry; old.backupFile = L"[Overwrite]-old.7z"; old.backupType = L"Overwrite";
+        old.isImportant = scenario == "important";
+        auto latest = old; latest.backupFile = L"[Overwrite]-latest.7z"; latest.isImportant = false;
+        WriteFixture(paths.backupSubDir / old.backupFile, "old payload");
+        WriteFixture(paths.backupSubDir / latest.backupFile, "latest payload");
+        filesystem::last_write_time(paths.backupSubDir / old.backupFile, filesystem::file_time_type::clock::now() - chrono::hours(1));
+        vector<HistoryEntry> entries{old, latest};
+        for (const auto& entry : entries) {
+            FolderRewindFormat::ChangeRecord record; record.archiveFileName = entry.backupFile; record.backupType = L"Overwrite";
+            test.Expect(FolderRewindMetadataStore::SaveRecord(paths.metadataDir, record), "Overwrite retention records persist");
+        }
+        if (scenario == "unrelated") {
+            WriteFixture(paths.backupSubDir / "README.md", "explanation");
+            WriteFixture(paths.backupSubDir / "random.zip", "unmanaged archive");
+        }
+        if (scenario == "referenced" || scenario == "missing-record" || scenario == "history-named") {
+            auto smart = old; smart.backupFile = scenario == "history-named" ? L"legacy.zip" : L"[Smart]-dependent.7z";
+            smart.backupType = L"Smart"; smart.isImportant = false; entries.push_back(smart);
+            WriteFixture(paths.backupSubDir / smart.backupFile, "dependent");
+            if (scenario == "referenced") {
+                FolderRewindFormat::ChangeRecord record; record.archiveFileName = smart.backupFile;
+                record.backupType = L"Smart"; record.previousBackupFileName = old.backupFile;
+                test.Expect(FolderRewindMetadataStore::SaveRecord(paths.metadataDir, record), "Reference record persists");
+            }
+        }
+        HistoryRepository repository; map<int,Config> configs{{1,cfg}};
+        test.Expect(repository.ReplaceAll({{cfg.configId,entries}}, root / "history.json", configs, true), "Overwrite history persists");
+        BackupRequest req; req.config = cfg;
+        AppPaths appPaths; appPaths.runtimeRoot = root / "runtime";
+        RuntimeRetentionService service(repository, root / "history.json", configs, appPaths);
+        service.Enforce(req, latest);
+        const bool preserved = scenario != "plain" && scenario != "unrelated";
+        test.Expect(filesystem::exists(paths.backupSubDir / old.backupFile) == preserved
+            && ReadFixture(paths.backupSubDir / latest.backupFile) == "latest payload"
+            && repository.EntriesForConfig(cfg.configId)->size() == entries.size() - (preserved ? 0 : 1),
+            "Overwrite retention ignores unrelated files but preserves important/referenced/uncertain managed archives");
+        if (preserved) test.Expect(ReadFixture(paths.backupSubDir / old.backupFile) == "old payload", "Preserved archive bytes are unchanged");
+        if (scenario == "unrelated") test.Expect(ReadFixture(paths.backupSubDir / "README.md") == "explanation"
+            && ReadFixture(paths.backupSubDir / "random.zip") == "unmanaged archive", "Unrelated files remain untouched");
+    }
+
+
 	auto runSmartRetention = [&](const filesystem::path& chainRoot,
 		bool importantTail, bool failMerge, bool cancelMerge, const string& message) {
 		Config chainConfig = retentionConfig;
@@ -978,6 +1243,7 @@ void RunBackupServiceTests(
 				result.status = ProcessStatus::Succeeded;
 				return result;
 			}
+			if (!spec.arguments.empty() && spec.arguments.front() == L"t") { result.status = ProcessStatus::Succeeded; return result; }
 			if (!spec.arguments.empty() && spec.arguments.front() == L"x") {
 				filesystem::path destination;
 				for (const auto& argument : spec.arguments) {

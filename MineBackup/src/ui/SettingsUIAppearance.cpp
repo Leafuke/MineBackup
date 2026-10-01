@@ -285,7 +285,7 @@ void DrawAppearanceSettings(Config& cfg) {
 }
 
 void DrawCloudSyncSettings(Config& cfg) {
-	const int configIndex = g_appState.currentConfigIndex;
+	const int configIndex = UiSelectedConfigIndex();
 
 	ImGui::SeparatorText(L("CLOUD_TOOLS_CARD"));
 	BeginUiCard("##CloudTools");
@@ -483,8 +483,8 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		map<int, Config> configsCopy;
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			configsCopy = g_appState.configs;
+
+			configsCopy = UiConfigs();
 		}
 		TaskCoordinator::Instance().Submit(L"Export cloud configuration",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
@@ -504,8 +504,8 @@ void DrawCloudSyncSettings(Config& cfg) {
 		const Config configCopy = cfg;
 		map<int, Config> configsCopy;
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			configsCopy = g_appState.configs;
+
+			configsCopy = UiConfigs();
 		}
 		TaskCoordinator::Instance().Submit(L"Import cloud configuration",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
@@ -552,8 +552,8 @@ void DrawCloudSyncSettings(Config& cfg) {
 			const Config configCopy = cfg;
 			map<int, Config> configsCopy;
 			{
-				lock_guard<mutex> lock(g_appState.configsMutex);
-				configsCopy = g_appState.configs;
+
+				configsCopy = UiConfigs();
 			}
 			TaskCoordinator::Instance().Submit(L"Prepare legacy remote configuration import",
 				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},

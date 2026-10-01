@@ -20,6 +20,39 @@ namespace {
 		return result;
 	}
 
+    void TestDownloadAggregation(TestContext& test) {
+        vector<HistoryEntry> entries(3);
+        for (int i = 0; i < 3; ++i) {
+            entries[i].configId = L"config"; entries[i].worldName = L"world";
+            entries[i].backupFile = to_wstring(i) + L".7z";
+        }
+        for (int failCount : {0, 1, 3}) {
+            int calls = 0;
+            const auto result = AggregateCloudDownloads(entries, CloudSyncMode::HistoryAndBackups, {}, [&](const auto&) {
+                CloudCommandResult item; item.success = calls++ >= failCount;
+                item.exitCode = item.success ? 0 : 9; item.detail = L"remote unavailable"; return item;
+            });
+            test.Expect(calls == 3 && result.success == (failCount == 0) && result.failedDownloadCount == failCount
+                && result.recoveredBackupCount == 3 - failCount && result.exitCode == (failCount ? 9 : 0),
+                "cloud aggregation reports full, partial and complete failure while continuing every item");
+            if (failCount) test.Expect(result.downloadFailures[0].backupFile == L"0.7z"
+                && result.downloadFailures[0].configId == L"config" && result.downloadFailures[0].error.find(L"remote unavailable") != wstring::npos,
+                "download failures retain archive identity and error detail");
+        }
+        const auto timeout = AggregateCloudDownloads(entries, CloudSyncMode::HistoryAndBackups, {}, [](const auto&) {
+            CloudCommandResult item; item.timedOut = true; item.exitCode = 124; return item;
+        });
+        test.Expect(!timeout.success && timeout.exitCode == 124 && timeout.downloadFailures[0].timedOut,
+            "cloud timeouts are recorded as failed downloads with nonzero completion status");
+        int calls = 0;
+        const auto historyOnly = AggregateCloudDownloads(entries, CloudSyncMode::HistoryOnly, {}, [&](const auto&) { ++calls; return CloudCommandResult{}; });
+        test.Expect(historyOnly.success && calls == 0 && historyOnly.failedDownloadCount == 0 && historyOnly.exitCode == 0,
+            "HistoryOnly does not download archives or report spurious failures");
+        const auto present = AggregateCloudDownloads(entries, CloudSyncMode::HistoryAndBackups, [](const auto&) { return true; },
+            [&](const auto&) { ++calls; return CloudCommandResult{}; });
+        test.Expect(present.success && calls == 0 && present.recoveredBackupCount == 0, "existing complete backups are skipped");
+    }
+
 	void TestRcloneTransport(TestContext& test) {
 		vector<ProcessSpec> invocations;
 		RcloneClientOptions options;
@@ -161,6 +194,7 @@ namespace {
 }
 
 void RunCloudSyncTests(TestContext& test) {
+	TestDownloadAggregation(test);
 	TestRcloneTransport(test);
 	TestRemoteHistoryAnalysis(test);
 }

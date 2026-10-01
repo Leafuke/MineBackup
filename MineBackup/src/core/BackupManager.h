@@ -7,6 +7,7 @@
 #include "DataModels.h"
 #include "OperationResult.h"
 #include "BackupService.h"
+#include "RestoreService.h"
 
 int ResolveDesktopConfigIndex(int requestedConfigIndex, int currentConfigIndex);
 
@@ -16,6 +17,8 @@ BackupResult RunDesktopBackup(
 	const std::wstring& comment,
 	std::stop_token stopToken,
 	BackupExecutionOptions options = {});
+RestorePlan PreflightDesktopRestore(const Config& config, const std::wstring& worldName,
+    const std::wstring& backupFile, int restoreMethod, std::stop_token token = {});
 bool DoRestore2(const Config& config, const std::wstring& worldName, const std::filesystem::path& fullBackupPath, int restoreMethod);
 bool DoRestore(
 	const Config& config,
@@ -24,7 +27,9 @@ bool DoRestore(
 	int restoreMethod,
 	const std::string& customRestoreList = "",
 	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr,
-	const std::string& requestId = "");
+	const std::string& requestId = "",
+	const RestoreSafetyBackup* safetyBackup = nullptr,
+	const RestorePlan* preparedPlan = nullptr);
 bool DoHotRestore(
 	const MyFolder& world,
 	bool deleteBackup,
@@ -32,7 +37,9 @@ bool DoHotRestore(
 	int restoreMethod = 0,
 	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr,
 	const std::string& customRestoreList = "",
-	const std::string& requestId = "");
+	const std::string& requestId = "",
+	const RestoreSafetyBackup* safetyBackup = nullptr,
+	const RestorePlan* preparedPlan = nullptr);
 void DoOthersBackup(const Config& config, std::filesystem::path backupWhat, const std::wstring& comment);
 void DoExportForSharing(
 	Config config,
@@ -40,7 +47,7 @@ void DoExportForSharing(
 	std::wstring worldPath,
 	std::wstring outputPath,
 	std::wstring description);
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, std::stop_token stopToken);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, std::stop_token stopToken, const MyFolder* initialTarget = nullptr);
 
 enum class BackupDeleteMode {
 	HistoryOnly = 0,

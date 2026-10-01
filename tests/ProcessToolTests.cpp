@@ -286,6 +286,31 @@ void TestPortableConfigDocument(TestContext& test) {
     test.Expect(PortableConfigDocument::Parse(serialized, parsed, error)
         && parsed.configs.at(localConfig.configId).zipMethod == L"zstd",
         "portable configuration should round-trip its explicit whitelist");
+    for (int mode = BackupPolicy::MinimumMode; mode <= BackupPolicy::MaximumMode; ++mode) {
+        for (int count : {0, 1, 100000}) {
+            auto legal = local; legal[0].backupMode = mode; legal[0].maxSmartBackupsPerFull = count;
+            PortableConfigDocument roundtrip;
+            test.Expect(PortableConfigDocument::Parse(PortableConfigDocument::FromLocalConfigs(legal).Serialize(), roundtrip, error)
+                && roundtrip.configs.at(localConfig.configId).backupMode == mode
+                && roundtrip.configs.at(localConfig.configId).maxSmartBackupsPerFull == count,
+                "portable policy supports all legacy numeric modes and unlimited Smart count");
+        }
+    }
+    for (int count : {-1, 100001}) {
+        auto illegal = local; illegal[0].maxSmartBackupsPerFull = count;
+        test.Expect(!PortableConfigDocument::Parse(PortableConfigDocument::FromLocalConfigs(illegal).Serialize(), parsed, error),
+            "portable policies reject negative and excessive Smart counts");
+    }
+    for (int mode : {-1, 4}) {
+        auto illegal = local; illegal[0].backupMode = mode;
+        test.Expect(!PortableConfigDocument::Parse(PortableConfigDocument::FromLocalConfigs(illegal).Serialize(), parsed, error),
+            "portable policies reject negative and excessive backup modes");
+    }
+    auto fractional = serialized;
+    const auto modePosition = fractional.find("\"mode\": 1");
+    if (modePosition != std::string::npos) fractional.replace(modePosition, std::string("\"mode\": 1").size(), "\"mode\": 1.5");
+    test.Expect(!PortableConfigDocument::Parse(fractional, parsed, error), "portable policies reject noninteger modes");
+
     PortableConfigDocument invalid;
     test.Expect(!PortableConfigDocument::Parse(R"({"schemaVersion":99,"configs":{}})", invalid, error),
         "an unknown portable configuration schema should be rejected");

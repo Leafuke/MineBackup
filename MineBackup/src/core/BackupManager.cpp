@@ -358,6 +358,9 @@ using namespace BackupManagerInternal;
 
 BackupService::BackupService(BackupServiceDependencies dependencies)
 	: dependencies_(std::move(dependencies)) {
+	if (!dependencies_.deleteMetadataRecord) {
+		dependencies_.deleteMetadataRecord = FolderRewindMetadataStore::DeleteRecord;
+	}
 }
 
 namespace {
@@ -442,7 +445,8 @@ BackupResult BackupService::RunCore(
 		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
 		{"config_id", wstring_to_utf8(request.config.configId)},
 		{"world", wstring_to_utf8(request.world.relativePath)}};
-	const Config& config = request.config;
+	Config config = request.config;
+	if (request.auxiliarySource) { config.backupMode = 1; config.skipIfUnchanged = false; }
 	const wstring worldName = request.world.relativePath;
 	const wstring displayName = request.displayName.empty() ? worldName : request.displayName;
 	const wstring comment = request.comment;
@@ -542,7 +546,8 @@ BackupResult BackupService::RunCore(
 
 	wstring originalSourcePath = request.sourcePath.wstring();
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
-	const vector<wstring> effectiveBlacklist = BuildEffectiveBackupBlacklist(config.blacklist);
+	const vector<wstring> effectiveBlacklist = request.auxiliarySource
+		? vector<wstring>{} : BuildEffectiveBackupBlacklist(config.blacklist);
 	FolderRewindFormat::StoragePaths storagePaths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, worldName, request.sourcePath.wstring(), storagePaths)) {
 		BACKUP_ERROR("Invalid FolderRewind storage folder name for world: %s", wstring_to_utf8(worldName).c_str());
@@ -555,8 +560,13 @@ BackupResult BackupService::RunCore(
 	const wstring storageFolderName = storagePaths.folderName;
 	PendingArchiveCommand command;
 	wstring archivePath;
+	filesystem::path finalArchivePath;
+	const auto stagingRoot = destinationFolder.parent_path() / (L"MineBackup_Create_" + FolderRewindFormat::GenerateGuidString());
+	ScopedRuntimeArtifact stagingCleanup(stagingRoot);
 	auto makeArchivePath = [&](const wstring& backupType) {
-		return (destinationFolder / FolderRewindFormat::GenerateArchiveFileName(backupType, storageFolderName, comment, config.zipFormat)).wstring();
+		do { finalArchivePath = destinationFolder / FolderRewindFormat::GenerateArchiveFileName(backupType, storageFolderName, comment, config.zipFormat); } while (filesystem::exists(finalArchivePath));
+		filesystem::create_directories(stagingRoot);
+		return (stagingRoot / finalArchivePath.filename()).wstring();
 	};
 
 	try {
@@ -730,7 +740,7 @@ BackupResult BackupService::RunCore(
 	}
 
 	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
-	if (files_to_backup.empty() && !(config.backupMode == 2 && deletionOnlyChange && !forceFullBackup)) {
+	if (files_to_backup.empty() && !(config.backupMode == 3 || (config.backupMode == 2 && deletionOnlyChange && !forceFullBackup))) {
 		BACKUP_INFO("No world changes were found.");
 		publish("backup.no_changes", {{"config_id", wstring_to_utf8(config.configId)}, {"world", wstring_to_utf8(worldName)}});
 		BackupResult result;
@@ -813,37 +823,11 @@ BackupResult BackupService::RunCore(
 			command = makeCommand(std::move(arguments), sourcePath);
 		}
     } else if (config.backupMode == 3) {
-        backupTypeStr = L"Overwrite";
-		BACKUP_INFO("Updating the most recent overwrite backup.");
-        auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
-        bool found = false;
-
-		for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-            if (entry.is_regular_file() && entry.path().extension().wstring() == L"." + config.zipFormat) {
-                if (entry.last_write_time() > latest_time) {
-                    latest_time = entry.last_write_time();
-                    latestBackupPath = entry.path();
-                    found = true;
-                }
-            }
-        }
-        if (found) {
-			BACKUP_INFO("Found latest overwrite archive: %s", wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = makeCommand(
-				{L"u", L"-ssw", latestBackupPath.wstring(), NormalizeSeparators(sourcePath) + L"/*",
-				 L"-mx=" + to_wstring(normalizedZipLevel)}, sourcePath);
-            archivePath = latestBackupPath.wstring(); // 记录被更新的文件
-        }
-        else {
-			BACKUP_INFO("No overwrite archive exists; creating one.");
-			archivePath = makeArchivePath(L"Overwrite");
-			auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
-			arguments.push_back(L"-spf");
-			arguments.push_back(NormalizeSeparators(sourcePath) + L"/*");
-			command = makeCommand(std::move(arguments), sourcePath);
-            // -spf 强制使用完整路径，-spf2 使用相对路径
-        }
-    }
+  backupTypeStr=L"Overwrite"; archivePath=makeArchivePath(L"Overwrite");
+  basedOnBackupFile=filesystem::path(archivePath).filename().wstring();
+  auto arguments=SevenZipCreateArguments(config,normalizedZipLevel,archivePath);
+  arguments.push_back(L"@"+filelist_path); command=makeCommand(std::move(arguments),sourcePath);
+ }
 
 execute_backup:
     {
@@ -871,7 +855,7 @@ execute_backup:
 		};
 
         bool backupSucceeded = false;
-		if (backupTypeStr == L"Smart" && deletionOnlyChange) {
+		if ((backupTypeStr == L"Smart" && deletionOnlyChange) || (config.backupMode == 3 && files_to_backup.empty())) {
 			backupSucceeded = createDeletionOnlyArchive();
 		}
 		else {
@@ -913,28 +897,30 @@ execute_backup:
 					wstring_to_utf8(createdArchivePath.filename().wstring()));
 			}
 
+
+   {
+    if (archiveRunner.Execute({L"t", archivePath}, {}, config.useLowPriority).status != ProcessStatus::Succeeded)
+     return MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed, "backup.archive.verify_failed");
+    while (filesystem::exists(finalArchivePath)) {
+     finalArchivePath = destinationFolder / FolderRewindFormat::GenerateArchiveFileName(
+      backupTypeStr, storageFolderName, comment, config.zipFormat);
+    }
+    if (backupTypeStr != L"Smart") basedOnBackupFile = finalArchivePath.filename().wstring();
+    filesystem::rename(archivePath, finalArchivePath);
+    archivePath = finalArchivePath.wstring();
+   }
+   if (backupTypeStr == L"Smart" && previousLastBackupFile == filesystem::path(archivePath).filename().wstring())
+    return MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed, "backup.chain.self_reference");
 		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
 
-        if (config.backupMode == 3) {
-            if (!latestBackupPath.empty()) {
-                wstring oldName = latestBackupPath.filename().wstring();
-                wstring newName = FolderRewindFormat::GenerateArchiveFileName(L"Overwrite", storageFolderName, comment, config.zipFormat);
-                filesystem::path newPath = latestBackupPath.parent_path() / newName;
-                if (latestBackupPath != newPath) {
-                    filesystem::rename(latestBackupPath, newPath);
-                    latestBackupPath = newPath;
-                    archivePath = latestBackupPath.wstring();
-                    completedBackupFile = latestBackupPath.filename().wstring();
-					if (dependencies_.removeHistory) {
-						(void)dependencies_.removeHistory(storageFolderName, oldName);
-					}
-                    InvalidateBackupMetadata(config, storageFolderName, oldName, oldName, completedBackupFile);
-                }
-            }
-            else {
-                completedBackupFile = filesystem::path(archivePath).filename().wstring();
-            }
-        }
+
+  const auto metadataRecovery=stagingRoot/L"metadata-recovery";
+  filesystem::create_directories(metadataRecovery);
+  const auto statePath=FolderRewindMetadataStore::GetStatePath(metadataFolder);
+  const bool stateExisted=filesystem::exists(statePath);
+  error_code snapshotError;
+  if(stateExisted) filesystem::copy_file(statePath,metadataRecovery/L"state.json",filesystem::copy_options::overwrite_existing,snapshotError);
+  if(snapshotError) return MakeBackupFailure(OperationCode::BackupFailed,BackupOutcome::Failed,"backup.metadata.snapshot_failed",snapshotError.message());
 
 		const auto metadataUpdate = UpdateMetadataFiles(
 			metadataFolder,
@@ -981,10 +967,32 @@ execute_backup:
 		historyEntry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(backupTypeStr);
 		historyEntry.comment = comment;
 		if (!dependencies_.addHistory || !dependencies_.addHistory(historyEntry)) {
-			publish("backup.failed", {{"error", "history_commit_failed"}});
-			return MakeBackupFailure(
-				OperationCode::BackupFailed, BackupOutcome::Failed,
+			error_code recoveryError;
+			if (stateExisted) {
+				const auto preparedState = metadataRecovery / L"restore-state.json";
+				filesystem::copy_file(metadataRecovery / L"state.json", preparedState,
+					filesystem::copy_options::overwrite_existing, recoveryError);
+				if (!recoveryError && !AtomicFileWriter::ReplacePreparedFile(preparedState, statePath).WasReplaced()) {
+					recoveryError = make_error_code(errc::io_error);
+				}
+			} else {
+				filesystem::remove(statePath, recoveryError);
+			}
+			if (!recoveryError && !dependencies_.deleteMetadataRecord(metadataFolder, completedBackupFile)) {
+				recoveryError = make_error_code(errc::io_error);
+			}
+			if (!recoveryError) filesystem::remove(filesystem::path(archivePath), recoveryError);
+			BackupResult failure = MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed,
 				"backup.history.commit_failed", wstring_to_utf8(completedBackupFile));
+			if (recoveryError) {
+				stagingCleanup.Release();
+				failure.archivePath = archivePath;
+				const auto detail = wstring_to_utf8(metadataRecovery.wstring()) + "; archive: " + wstring_to_utf8(archivePath);
+				failure.diagnostics.push_back(MakeDiagnostic("backup.rollback.incomplete", DiagnosticSeverity::Error, detail));
+				BACKUP_ERROR("Backup rollback is incomplete; recovery materials retained: %s", detail.c_str());
+			}
+			publish("backup.failed", {{"error", "history_commit_failed"}});
+			return failure;
 		}
 		if (dependencies_.enforceRetention && !options.deferRetention) {
 			dependencies_.enforceRetention(request, historyEntry, stopToken);

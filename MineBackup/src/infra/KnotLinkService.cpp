@@ -143,8 +143,8 @@ std::optional<ResolvedFolder> ResolveFolder(
     if (*currentSave) {
         std::vector<ResolvedFolder> occupied;
         {
-            std::lock_guard<std::mutex> lock(g_appState.configsMutex);
-            for (const auto& [configIndex, config] : g_appState.configs) {
+            const auto configs = SnapshotConfigState().configs;
+            for (const auto& [configIndex, config] : configs) {
                 for (std::size_t worldIndex = 0;
                      worldIndex < config.worlds.size(); ++worldIndex) {
                     const auto& world = config.worlds[worldIndex];

@@ -18,6 +18,7 @@ class ScopedRuntimeArtifact {
 public:
 	explicit ScopedRuntimeArtifact(std::filesystem::path path);
 	~ScopedRuntimeArtifact();
+	void Release() { path_.clear(); }
 	ScopedRuntimeArtifact(const ScopedRuntimeArtifact&) = delete;
 	ScopedRuntimeArtifact& operator=(const ScopedRuntimeArtifact&) = delete;
 
@@ -53,6 +54,7 @@ public:
 	WorldOperationGuard(WorldOperationGuard&& other) noexcept;
 	WorldOperationGuard& operator=(WorldOperationGuard&& other) noexcept;
 	~WorldOperationGuard();
+	void Reset() { Release(); }
 
 	bool Acquired() const;
 	FolderState Requested() const;
@@ -90,10 +92,4 @@ void ClearReadonlyAttributesRecursively(const std::filesystem::path& directory);
 bool CreateDeletionOnlyArchive(
 	const Config& config,
 	const std::filesystem::path& archivePath);
-void LimitBackupFiles(
-	const Config& config,
-	const int& configIndex,
-	const std::wstring& folderPath,
-	int limit);
-
 } // namespace BackupManagerInternal

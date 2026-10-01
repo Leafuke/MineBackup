@@ -268,10 +268,16 @@ wstring MakeLocalHistoryTimestampString() {
 }
 
 wstring FormatFileTimeUtc(filesystem::file_time_type fileTime) {
-    const auto systemTime = chrono::time_point_cast<chrono::system_clock::duration>(
-        fileTime - filesystem::file_time_type::clock::now() + chrono::system_clock::now()
-    );
-    return FormatSystemTimeUtc(systemTime);
+#ifdef _WIN32
+ const auto systemTime = chrono::clock_cast<chrono::system_clock>(fileTime);
+#else
+ const auto systemTime = filesystem::file_time_type::clock::to_sys(fileTime);
+#endif
+ const auto seconds = chrono::floor<chrono::seconds>(systemTime);
+ const auto nanos = chrono::duration_cast<chrono::nanoseconds>(systemTime - seconds).count();
+ wstring base = FormatSystemTimeUtc(seconds); base.pop_back();
+ wostringstream output; output << base << L'.' << setfill(L'0') << setw(9) << nanos << L'Z';
+ return output.str();
 }
 
 wstring MakeUtcTimestampString() {
@@ -342,9 +348,9 @@ wstring GenerateArchiveFileName(const wstring& backupType, const wstring& folder
     wstring safeComment = SanitizeArchiveComment(comment);
     wstring extension = NormalizeArchiveExtension(format);
     wstring commentPart = safeComment.empty() ? L"" : L" [" + safeComment + L"]";
-    wstring fileName = L"[" + safeBackupType + L"][" + MakeLocalTimestampString() + L"]" + safeFolder + commentPart + L"." + extension;
+    wstring fileName = L"[" + safeBackupType + L"][" + MakeLocalTimestampString() + L"]" + safeFolder + commentPart + L"-" + GenerateGuidString() + L"." + extension;
     if (IsSafeSinglePathSegment(fileName)) return fileName;
-    return L"[Backup][" + MakeLocalTimestampString() + L"].7z";
+    return L"[Backup][" + MakeLocalTimestampString() + L"]-" + GenerateGuidString() + L".7z";
 }
 
 bool IsSmartBackupType(const wstring& typeOrFileName) {

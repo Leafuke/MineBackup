@@ -34,7 +34,7 @@ public:
         const std::wstring& configId,
         const std::filesystem::path& worldPath);
     static std::wstring CloudResourceKey(const std::wstring& profileIdentity);
-    static std::wstring AutoBackupTaskName(int configIndex, int worldIndex);
+    static std::wstring AutoBackupTaskName(const std::wstring& configId, const std::filesystem::path& sourcePath);
 
 private:
     TaskCoordinator();

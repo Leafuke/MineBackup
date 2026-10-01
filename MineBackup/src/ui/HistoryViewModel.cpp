@@ -3,6 +3,7 @@
 #include "text_to_text.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <filesystem>
 #include <limits>
@@ -311,25 +312,22 @@ size_t RemoveUnavailableHistoryEntries(
 	return oldSize - destination;
 }
 
-HistoryResponsiveLayout ComputeHistoryResponsiveLayout(
-	float availableWidth,
-	float em,
-	float spacing) {
-	const float safeEm = (max)(em, 1.0f);
-	const float gap = spacing > 0.0f ? spacing : safeEm * 0.5f;
-	const float safeWidth = (max)(availableWidth, 0.0f);
-	HistoryResponsiveLayout layout;
-	layout.useSplitView = safeWidth >= 38.0f * safeEm;
-	if (layout.useSplitView) {
-		const float usable = (max)(safeWidth - gap, 0.0f);
-		layout.listWidth = (clamp)(
-			usable * 0.40f,
-			safeEm * 18.0f,
-			usable - safeEm * 22.0f);
-		layout.detailsWidth = (max)(usable - layout.listWidth, 0.0f);
-	}
-	else {
-		layout.listWidth = safeWidth;
-	}
-	return layout;
+HistoryResponsiveLayout ComputeHistoryResponsiveLayout(float availableWidth, float em, float spacing) {
+    const float safeEm = isfinite(em) ? (max)(em, 1.0f) : 1.0f;
+    const float gap = isfinite(spacing) && spacing >= 0.0f ? spacing : safeEm * 0.5f;
+    const float safeWidth = isfinite(availableWidth) ? (max)(availableWidth, 0.0f) : 0.0f;
+    const float minimumList = safeEm * 18.0f;
+    const float minimumDetails = safeEm * 22.0f;
+    const float minimumUsable = minimumList + minimumDetails;
+    const float usable = (max)(safeWidth - gap, 0.0f);
+    HistoryResponsiveLayout layout;
+    layout.useSplitView = safeWidth >= minimumUsable + gap && usable >= minimumUsable;
+    if (layout.useSplitView) {
+        const float upper = (max)(minimumList, usable - minimumDetails);
+        layout.listWidth = (clamp)(usable * 0.40f, minimumList, upper);
+        layout.detailsWidth = (max)(usable - layout.listWidth, 0.0f);
+    } else {
+        layout.listWidth = safeWidth;
+    }
+    return layout;
 }

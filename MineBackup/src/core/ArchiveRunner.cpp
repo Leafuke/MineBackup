@@ -2,6 +2,10 @@
 
 #include "Logging.h"
 #include "text_to_text.h"
+#include <sstream>
+#include <algorithm>
+#include <cctype>
+#include <limits>
 
 using namespace std;
 
@@ -36,7 +40,8 @@ const ExternalToolResolution& ArchiveRunner::Resolution() const {
 ProcessResult ArchiveRunner::Execute(
 	vector<wstring> arguments,
 	const filesystem::path& workingDirectory,
-	bool useLowPriority) const {
+	bool useLowPriority,
+	size_t maximumCapturedBytes) const {
 	ProcessResult unavailable;
 	if (!IsAvailable()) {
 		unavailable.status = ProcessStatus::FailedToStart;
@@ -51,7 +56,29 @@ ProcessResult ArchiveRunner::Execute(
 	spec.arguments = std::move(arguments);
 	spec.workingDirectory = workingDirectory;
 	spec.useLowPriority = useLowPriority;
+	spec.maximumCapturedBytes = maximumCapturedBytes;
 	return executor_(spec, stopToken_);
+}
+
+bool ArchiveRunner::ValidateMemberListing(const string& listing, string& error) {
+ error.clear(); istringstream input(listing); string line; bool members=false; bool sawPath=false;
+ while (getline(input,line)) {
+  if (!line.empty() && line.back()=='\r') line.pop_back();
+  if (line=="----------") {members=true; continue;}
+  if (!members || !line.starts_with("Path = ")) continue;
+  sawPath=true; string path=line.substr(7); replace(path.begin(),path.end(),'\\','/');
+  if (path.empty() || path.front()=='/' || path.find(':')!=string::npos) {error="unsupported absolute archive member: "+path; return false;}
+  istringstream parts(path); string part;
+  while(getline(parts,part,'/')) if(part==".." || part.empty()) {error="unsafe archive member: "+path; return false;}
+ }
+ if (!members || !sawPath) {error="archive member listing is missing or unrecognized"; return false;}
+ return true;
+}
+
+bool ArchiveRunner::ValidateMembers(const filesystem::path& archive, string& error, bool lowPriority) const {
+ const auto listed=Execute({L"l",L"-slt",L"-sccUTF-8",archive.wstring()}, {},lowPriority, numeric_limits<size_t>::max());
+ if(listed.status!=ProcessStatus::Succeeded || listed.outputTruncated) {error="could not inspect archive member paths"; return false;}
+ return ValidateMemberListing(listed.standardOutput,error);
 }
 
 bool ArchiveRunner::ExecuteLogged(

@@ -143,10 +143,10 @@ bool ParseEntry(const wstring& configId, const nlohmann::json& value, PortableCo
     const auto& compression = value["compression"];
     const auto& retention = value["retention"];
     const auto& cloud = value["cloudPolicy"];
-    if (!ReadInt(backup, "mode", 0, 2, entry.backupMode, error)
+    if (!ReadInt(backup, "mode", BackupPolicy::MinimumMode, BackupPolicy::MaximumMode, entry.backupMode, error)
         || !ReadBool(backup, "beforeBackup", entry.backupBefore, error)
         || !ReadBool(backup, "skipIfUnchanged", entry.skipIfUnchanged, error)
-        || !ReadInt(backup, "maxSmartBackupsPerFull", 1, 100000, entry.maxSmartBackupsPerFull, error)
+        || !ReadInt(backup, "maxSmartBackupsPerFull", BackupPolicy::MinimumSmartCount, BackupPolicy::MaximumSmartCount, entry.maxSmartBackupsPerFull, error)
         || !ReadWide(compression, "format", entry.zipFormat, 32, error)
         || !ReadWide(compression, "method", entry.zipMethod, 32, error)
         || !ReadInt(compression, "level", 0, 22, entry.zipLevel, error)
@@ -338,6 +338,11 @@ bool PortableConfigDocument::ApplyImport(
     wstring& error) {
     preview = PreviewImport(local, remote);
     error.clear();
+    for (const auto& [id, entry] : remote.configs) {
+        if (!BackupPolicy::IsValid(entry.backupMode, entry.maxSmartBackupsPerFull)) {
+            error = L"Invalid backup mode or Smart backup count."; return false;
+        }
+    }
     auto localIds = LocalIndicesById(local);
     int nextIndex = local.empty() ? 0 : local.rbegin()->first + 1;
     for (const auto& [configId, entry] : remote.configs) {

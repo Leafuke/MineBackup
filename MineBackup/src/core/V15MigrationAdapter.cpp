@@ -194,7 +194,7 @@ MigrationUnitResult MigrateHistory() {
 		return unit;
 	}
 	LegacyMineBackup15Reader::HistoryReadResult read;
-	if (!LegacyMineBackup15Reader::ReadHistory(path, g_appState.configs, read)) {
+	if (!LegacyMineBackup15Reader::ReadHistory(path, SnapshotConfigState().configs, read)) {
 		unit.status = MigrationStatus::Failed; unit.message = L"Could not parse the 1.15 history file.";
 		MigrationCoordinator::SetHistoryPersistenceBlocked(true); return unit;
 	}
@@ -217,12 +217,12 @@ MigrationUnitResult MigrateHistory() {
 		const auto lostPath = SnapshotPath(path, L"unmigrated");
 		AtomicFileWriter::WriteText(lostPath, read.unmigrated.dump(2), {false, true});
 	}
-	if (!FolderRewindHistoryStore::SaveHistoryFile(path, g_appState.configs, read.history)) {
+	if (!FolderRewindHistoryStore::SaveHistoryFile(path, SnapshotConfigState().configs, read.history)) {
 		unit.status = MigrationStatus::Failed; unit.message = L"Could not write converted history.";
 		MigrationCoordinator::SetHistoryPersistenceBlocked(true); return unit;
 	}
 	map<int, vector<HistoryEntry>> verify;
-	if (!FolderRewindHistoryStore::LoadHistoryFile(path, g_appState.configs, verify)) {
+	if (!FolderRewindHistoryStore::LoadHistoryFile(path, SnapshotConfigState().configs, verify)) {
 		unit.status = MigrationStatus::Failed; unit.message = L"Converted history failed validation after atomic replacement.";
 		MigrationCoordinator::SetHistoryPersistenceBlocked(true); return unit;
 	}
@@ -411,7 +411,7 @@ MigrationReport RunStartupMigration() {
 	MigrationUnitResult configUnit;
 	configUnit.unitId = L"startup:config";
 	bool changed = false;
-	for (auto& [index, config] : g_appState.configs) {
+	for (const auto& [index, config] : SnapshotConfigState().configs) {
 		if (!config.legacyConfigIdGenerated) continue;
 		changed = true;
 		configUnit.migratedItems++;
@@ -424,7 +424,8 @@ MigrationReport RunStartupMigration() {
 			if (SaveConfigs(configPath)) {
 				configUnit.status = MigrationStatus::Succeeded;
 				configUnit.message = L"Stable ConfigId values were persisted for 1.15 configurations.";
-				for (auto& [index, config] : g_appState.configs) config.legacyConfigIdGenerated = false;
+				for (const auto& [index, config] : SnapshotConfigState().configs)
+                    ModifyConfigById(config.configId, [](Config& current) { current.legacyConfigIdGenerated = false; });
 			}
 			else {
 				configUnit.status = MigrationStatus::Failed;
@@ -468,8 +469,9 @@ MigrationUnitResult EnsureWorldMigrated(int configIndex, const wstring& folderNa
 		AddOrReplaceUnit(pending);
 		return pending;
 	}
-	auto it = g_appState.configs.find(configIndex);
-	if (it == g_appState.configs.end()) {
+	const auto configs = SnapshotConfigState().configs;
+	auto it = configs.find(configIndex);
+	if (it == configs.end()) {
 		MigrationUnitResult result; result.unitId = L"world:" + to_wstring(configIndex) + L":" + folderName;
 		result.status = MigrationStatus::Failed; result.message = L"Configuration not found."; return result;
 	}
@@ -628,10 +630,11 @@ MigrationUnitResult EnsureCloudMigrated(int configIndex) {
 		AddOrReplaceUnit(unit);
 		return unit;
 	}
-	auto it = g_appState.configs.find(configIndex);
-	if (it == g_appState.configs.end()) { unit.status = MigrationStatus::Failed; unit.message = L"Configuration not found."; return unit; }
+	const auto configs = SnapshotConfigState().configs;
+	auto it = configs.find(configIndex);
+	if (it == configs.end()) { unit.status = MigrationStatus::Failed; unit.message = L"Configuration not found."; return unit; }
 	const wstring identity = LowerNormalized(it->second.rcloneRemotePath) + L"|" + LowerNormalized(utf8_to_wstring(it->second.name));
-	for (const auto& [otherIndex, other] : g_appState.configs) {
+	for (const auto& [otherIndex, other] : configs) {
 		if (otherIndex == configIndex || !other.cloudSyncEnabled) continue;
 		if (identity == LowerNormalized(other.rcloneRemotePath) + L"|" + LowerNormalized(utf8_to_wstring(other.name))) {
 			unit.status = MigrationStatus::Failed; unit.message = L"Two configurations share the same legacy cloud identity."; AddOrReplaceUnit(unit); return unit;

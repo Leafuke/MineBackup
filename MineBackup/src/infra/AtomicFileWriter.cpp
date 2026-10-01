@@ -400,6 +400,19 @@ WriteResult WriteStreamed(const filesystem::path& requestedTarget, const StreamP
     return result;
 }
 
+WriteResult ReplacePreparedFile(const filesystem::path& source, const filesystem::path& target,
+ const WriteOptions& options) {
+ WriteResult result;
+ if (HasLinkOrReparsePointInExistingPath(source) || HasLinkOrReparsePointInExistingPath(target)
+  || !SyncFile(source)) { result.error = L"Could not validate or flush prepared file."; return result; }
+ const auto replaced = Replace(source, target, options.replaceFailureObserver);
+ if (!replaced.success) { result.error = ErrorText(L"Could not replace prepared file", replaced.error, replaced.attempts); return result; }
+ result.commitState = WriteCommitState::ReplacedNotDurable;
+ const bool synced = options.directorySyncOverride ? options.directorySyncOverride(target.parent_path()) : SyncDirectory(target.parent_path());
+ if (!synced) { result.error = L"Prepared file replaced but directory sync failed."; return result; }
+ result.commitState = WriteCommitState::Durable; result.success = true; return result;
+}
+
 WriteResult WriteText(const filesystem::path& requestedTarget, const string& content, const WriteOptions& options) {
     return WriteStreamed(requestedTarget, [&](const ChunkSink& sink) {
         return sink(content);

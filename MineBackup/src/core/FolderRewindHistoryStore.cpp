@@ -249,9 +249,8 @@ bool SaveHistoryFileByConfigId(const filesystem::path& path, const map<int, Conf
 
 nlohmann::json SerializeActiveHistoryManifest(const Config& config, const vector<HistoryEntry>& entries) {
     vector<HistoryEntry> sortedEntries = entries;
-    sort(sortedEntries.begin(), sortedEntries.end(), [](const HistoryEntry& lhs, const HistoryEntry& rhs) {
-        if (lhs.timestamp_str != rhs.timestamp_str) return lhs.timestamp_str < rhs.timestamp_str;
-        return lhs.backupFile < rhs.backupFile;
+    stable_sort(sortedEntries.begin(), sortedEntries.end(), [](const HistoryEntry& lhs, const HistoryEntry& rhs) {
+        return lhs.timestamp_str < rhs.timestamp_str;
     });
 
     nlohmann::json root;

@@ -305,6 +305,32 @@ int main() {
 	Check(g_systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight parses symbolic name WindowsLight");
 	Check(g_systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark parses symbolic name VSCodeDark");
 
+    for (int mode = BackupPolicy::MinimumMode; mode <= BackupPolicy::MaximumMode; ++mode) {
+        for (int count : {0, 1, 100000}) {
+            Config config; config.configId = L"11111111-1111-4111-8111-111111111111";
+            config.name = "Policy"; config.backupMode = mode; config.maxSmartBackupsPerFull = count;
+            { std::lock_guard lock(g_appState.configsMutex); g_appState.configs = {{1, config}}; }
+            const auto policyFile = root / "policy.ini";
+            Check(SaveConfigs(policyFile), "legal policy saves");
+            LoadConfigs(policyFile);
+            const auto reloaded = SnapshotConfigState().configs.at(1);
+            Check(reloaded.backupMode == mode && reloaded.maxSmartBackupsPerFull == count, "all legal modes and Smart counts survive restart");
+        }
+    }
+    for (const auto value : {"-1", "4", "1.5"}) {
+        const auto invalidFile = root / "invalid-policy.ini";
+        { std::ofstream out(invalidFile); out << "[Config1]\nSmartBackup=" << value << "\n"; }
+        LoadConfigs(invalidFile);
+        Check(!GetLastConfigLoadDiagnostics().empty(), "invalid modes have explicit desktop diagnostics");
+    }
+
+    for (const auto value : {"-1", "100001", "1.5"}) {
+        const auto invalidFile = root / "invalid-policy.ini";
+        { std::ofstream out(invalidFile); out << "[Config1]\nMaxSmartBackups=" << value << "\n"; }
+        LoadConfigs(invalidFile);
+        Check(!GetLastConfigLoadDiagnostics().empty(), "invalid Smart counts have explicit desktop diagnostics");
+    }
+
 	std::filesystem::remove_all(root, error);
 	if (failures != 0) {
 		std::cerr << failures << " appearance configuration test(s) failed\n";

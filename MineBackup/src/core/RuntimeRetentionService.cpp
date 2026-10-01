@@ -2,13 +2,33 @@
 
 #include "ChainSafeRetention.h"
 #include "FolderRewindFormat.h"
+#include "FolderRewindMetadataStore.h"
 #include "Logging.h"
+#include "PathIdentity.h"
 #include "WorldIdentity.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <set>
 
 using namespace std;
+
+namespace {
+bool IsManagedArchive(const Config& config, const filesystem::path& directory,
+ const filesystem::path& archive, const vector<HistoryEntry>& history) {
+ auto extension = archive.extension().wstring();
+ transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+ if (extension != L".7z" && extension != L".zip") return false;
+ const auto name = archive.filename().wstring();
+ if (FolderRewindFormat::IsFullLikeBackupType(name) || FolderRewindFormat::IsSmartBackupType(name)) return true;
+ return any_of(history.begin(), history.end(), [&](const HistoryEntry& entry) {
+  FolderRewindFormat::StoragePaths storage;
+  return entry.configId == config.configId && entry.backupFile == name
+   && FolderRewindFormat::TryResolveStoragePaths(config.backupPath, entry.worldName, entry.worldPath, storage)
+   && PathIdentity::PathsEqual(storage.backupSubDir, directory);
+ });
+}
+}
 
 RuntimeRetentionService::RuntimeRetentionService(
 	HistoryRepository& history,
@@ -30,7 +50,9 @@ void RuntimeRetentionService::Enforce(
 	const HistoryEntry& createdEntry,
 	stop_token stopToken) {
 	const Config& config = request.config;
-	if (config.keepCount <= 0 || stopToken.stop_requested()) return;
+	const bool overwrite=!request.auxiliarySource && config.backupMode==3;
+	const int limit=overwrite ? 1 : config.keepCount;
+	if (limit <= 0 || stopToken.stop_requested()) return;
 	FolderRewindFormat::StoragePaths storage;
 	if (!FolderRewindFormat::TryResolveStoragePaths(
 			config.backupPath,
@@ -48,9 +70,13 @@ void RuntimeRetentionService::Enforce(
 		error_code error;
 		for (filesystem::directory_iterator iterator(storage.backupSubDir, error), end;
 			!error && iterator != end; iterator.increment(error)) {
-			if (iterator->is_regular_file()) archives.push_back(*iterator);
+			if (request.auxiliarySource && none_of(currentHistory.begin(), currentHistory.end(), [&](const auto& entry) {
+                return entry.backupFile == iterator->path().filename().wstring()
+                    && ChainSafeRetention::SameAuxiliarySource(config, createdEntry, entry);
+            })) continue;
+            if (iterator->is_regular_file() && (!overwrite || iterator->path().filename().wstring().starts_with(L"[Overwrite]"))) archives.push_back(*iterator);
 		}
-		if (error || static_cast<int>(archives.size()) <= config.keepCount) return;
+		if (error || static_cast<int>(archives.size()) <= limit) return;
 		sort(archives.begin(), archives.end(), [](const auto& left, const auto& right) {
 			return left.last_write_time() < right.last_write_time();
 		});
@@ -61,14 +87,37 @@ void RuntimeRetentionService::Enforce(
 			if (blocked.contains(fileName)) continue;
 			const auto found = find_if(currentHistory.begin(), currentHistory.end(),
 				[&](const HistoryEntry& entry) {
-					return WorldIdentity::Matches(config, storage.folderName, entry, fileName);
+					return request.auxiliarySource ? entry.backupFile == fileName
+                        && ChainSafeRetention::SameAuxiliarySource(config, createdEntry, entry)
+                        : WorldIdentity::Matches(config, storage.folderName, entry, fileName);
 				});
-			if (found == currentHistory.end() || found->isImportant) {
+			if (found == currentHistory.end() || found->isImportant
+                || (request.auxiliarySource && fileName == createdEntry.backupFile)) {
 				blocked.insert(fileName);
 				continue;
 			}
+
+   if (overwrite) {
+    if (fileName==createdEntry.backupFile) { blocked.insert(fileName); continue; }
+    bool uncertain=false,referenced=false;
+    for (const auto& item : filesystem::directory_iterator(storage.backupSubDir)) {
+     if(!item.is_regular_file()) continue;
+     if(!IsManagedArchive(config, storage.backupSubDir, item.path(), currentHistory)) continue;
+     FolderRewindFormat::ChangeRecord record;
+     if(!FolderRewindMetadataStore::LoadRecord(storage.metadataDir,item.path().filename().wstring(),record)) {uncertain=true;break;}
+     if(record.archiveFileName!=fileName && (record.previousBackupFileName==fileName || record.basedOnFullBackup==fileName)) referenced=true;
+    }
+    if(uncertain || referenced) {
+     MB_LOG_WARNING(minebackup::logging::LogCategory::Backup,
+      "backup.retention.overwrite_preserved",
+      "Retained Overwrite archive {}: {}", archive.path().string(),
+      uncertain ? "archive metadata is unavailable" : "archive is referenced by a backup chain");
+     blocked.insert(fileName); continue;
+    }
+   }
 			ChainSafeRetention::Request retentionRequest;
 			retentionRequest.config = config;
+            retentionRequest.auxiliarySource = request.auxiliarySource;
 			retentionRequest.entry = *found;
 			retentionRequest.history = currentHistory;
 			retentionRequest.backupDirectory = storage.backupSubDir;
@@ -76,14 +125,13 @@ void RuntimeRetentionService::Enforce(
 			retentionRequest.paths = paths_;
 			retentionRequest.archiveRunner = &archiveRunner;
 			retentionRequest.stopToken = stopToken;
-			retentionRequest.commitHistory = [&](vector<HistoryEntry> updated) {
+			retentionRequest.commitHistory = [&](const ChainSafeRetention::HistoryChanges& changes) {
 				const auto mutation = history_.Mutate(
 					config.configId, historyFile_, configs_, true,
 					[&](vector<HistoryEntry>& entries) {
-						entries = updated;
-						return true;
+						return ChainSafeRetention::ApplyHistoryChanges(config, entries, changes);
 					});
-				if (mutation.changed && mutation.persisted) currentHistory = std::move(updated);
+				if (mutation.changed && mutation.persisted) currentHistory = *history_.EntriesForConfig(config.configId);
 				return mutation.changed && mutation.persisted;
 			};
 			const auto retention = ChainSafeRetention::Remove(std::move(retentionRequest));

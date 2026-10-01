@@ -183,8 +183,8 @@ wstring TaskCoordinator::CloudResourceKey(const wstring& profileIdentity) {
     return L"cloud:" + profileIdentity;
 }
 
-wstring TaskCoordinator::AutoBackupTaskName(int configIndex, int worldIndex) {
+wstring TaskCoordinator::AutoBackupTaskName(const wstring& configId, const filesystem::path& sourcePath) {
     static atomic<unsigned long long> nextInstance{1};
-    return L"auto-backup:" + to_wstring(configIndex) + L":" + to_wstring(worldIndex)
+    return L"auto-backup:" + WorldResourceKey(configId, sourcePath)
         + L":" + to_wstring(nextInstance.fetch_add(1));
 }

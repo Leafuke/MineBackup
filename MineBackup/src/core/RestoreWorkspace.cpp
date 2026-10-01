@@ -49,7 +49,8 @@ bool CopyPreserved(
 	const filesystem::path& source,
 	const filesystem::path& target,
 	vector<wstring> rules,
-	string& errorText) {
+	string& errorText,
+	stop_token stopToken) {
 	// session.lock 由恢复工作区统一保留，避免桌面端与 headless 端出现不同语义。
 	if (none_of(rules.begin(), rules.end(), [](const wstring& item) {
 		return item == L"session.lock";
@@ -71,6 +72,10 @@ bool CopyPreserved(
 		iterator.increment(error)) {
 		if (error) {
 			errorText = "failed to enumerate preserved entries: " + error.message();
+			return false;
+		}
+		if (stopToken.stop_requested()) {
+			errorText = "restore cancelled before commit";
 			return false;
 		}
 		error_code entryError;
@@ -100,6 +105,10 @@ bool CopyPreserved(
 		iterator.increment(error)) {
 		if (error) {
 			errorText = "failed to enumerate preserved files: " + error.message();
+			return false;
+		}
+		if (stopToken.stop_requested()) {
+			errorText = "restore cancelled before commit";
 			return false;
 		}
 		error_code entryError;
@@ -157,7 +166,7 @@ bool Prepare(
 		errorText = "failed to inspect restore target: " + error.message();
 		return false;
 	}
-	state.prepared = true;
+	state.phase = Phase::Prepared;
 	if (!state.targetOriginallyExisted) {
 		filesystem::create_directories(target, error);
 		if (error) errorText = "failed to create restore target: " + error.message();
@@ -168,13 +177,13 @@ bool Prepare(
 		state.snapshot = NextSnapshotPath(target);
 	}
 	catch (const exception& exception) {
-		state.prepared = false;
+		state.phase = Phase::Empty;
 		errorText = exception.what();
 		return false;
 	}
 	if (mode == Mode::Overlay) {
 		if (!filesystem::is_directory(target, error) || error) {
-			state.prepared = false;
+			state.phase = Phase::Empty;
 			errorText = error
 				? "failed to inspect restore target: " + error.message()
 				: "restore target is not a directory";
@@ -190,7 +199,7 @@ bool Prepare(
 			error_code cleanupError;
 			filesystem::remove_all(state.snapshot, cleanupError);
 			state.snapshot.clear();
-			state.prepared = false;
+			state.phase = Phase::Empty;
 			errorText = "failed to snapshot overlay restore target: " + error.message();
 			return false;
 		}
@@ -209,56 +218,48 @@ bool Prepare(
 	return false;
 }
 
-bool Commit(State& state, const vector<wstring>& preserve, string& errorText) {
-	errorText.clear();
-	if (!state.prepared) {
-		errorText = "restore workspace is not prepared";
-		return false;
-	}
-	try {
-		if (state.snapshotIsCopy) {
-			if (!state.snapshot.empty()) {
-				BackupManagerInternal::ClearReadonlyAttributesRecursively(state.snapshot);
-				error_code error;
-				filesystem::remove_all(state.snapshot, error);
-				if (error) {
-					errorText = "failed to remove overlay restore snapshot: " + error.message();
-					return false;
-				}
-			}
-			state.prepared = false;
-			state.snapshot.clear();
-			state.snapshotIsCopy = false;
-			return true;
-		}
-		if (state.targetOriginallyExisted) {
-			if (state.snapshot.empty() || !filesystem::exists(state.snapshot)) {
-				errorText = "restore snapshot is missing";
-				return false;
-			}
-			if (!CopyPreserved(state.snapshot, state.target, preserve, errorText)) return false;
-			BackupManagerInternal::ClearReadonlyAttributesRecursively(state.snapshot);
-			error_code error;
-			filesystem::remove_all(state.snapshot, error);
-			if (error) {
-				errorText = "failed to remove restore snapshot: " + error.message();
-				return false;
-			}
-		}
-		state.prepared = false;
-		state.snapshot.clear();
-		state.snapshotIsCopy = false;
-		return true;
-	}
-	catch (const exception& exception) {
-		errorText = exception.what();
-		return false;
-	}
+CommitResult Commit(State& state, const vector<wstring>& preserve, string& errorText,
+ const CommitOptions& options) {
+ errorText.clear();
+ if (!state.CanRollback()) return {CommitStatus::NotCommitted, {}, "restore workspace is not prepared"};
+ try {
+  if (!state.snapshotIsCopy && state.targetOriginallyExisted) {
+   if (state.snapshot.empty() || !filesystem::exists(state.snapshot)) {
+    errorText = "restore snapshot is missing";
+    return {CommitStatus::NotCommitted, state.snapshot, errorText};
+   }
+   if (!CopyPreserved(state.snapshot, state.target, preserve, errorText, options.stopToken))
+    return {CommitStatus::NotCommitted, state.snapshot, errorText};
+  }
+  if (options.stopToken.stop_requested()) {
+   errorText = "restore cancelled before commit";
+   return {CommitStatus::NotCommitted, state.snapshot, errorText};
+  }
+  // Commit point: cleanup may partially destroy the snapshot; never roll back after this.
+  state.phase = Phase::Committed;
+  if (!state.snapshot.empty()) {
+   BackupManagerInternal::ClearReadonlyAttributesRecursively(state.snapshot);
+   error_code error;
+   if (options.removeSnapshot) options.removeSnapshot(state.snapshot, error);
+   else filesystem::remove_all(state.snapshot, error);
+   if (error) {
+    errorText = "restore committed; snapshot cleanup failed: " + error.message();
+    return {CommitStatus::CleanupWarning, state.snapshot, errorText};
+   }
+  }
+  state.snapshot.clear();
+  state.snapshotIsCopy = false;
+  return {CommitStatus::Committed, {}, {}};
+ } catch (const exception& exception) {
+  errorText = exception.what();
+  return {state.phase == Phase::Committed ? CommitStatus::CleanupWarning : CommitStatus::NotCommitted,
+   state.snapshot, errorText};
+ }
 }
 
 bool Rollback(State& state, string& errorText) {
 	errorText.clear();
-	if (!state.prepared) return true;
+	if (!state.CanRollback()) return true;
 	if (!state.targetOriginallyExisted && state.snapshot.empty()) {
 		error_code error;
 		if (filesystem::exists(state.target, error)) {
@@ -273,12 +274,12 @@ bool Rollback(State& state, string& errorText) {
 				return false;
 			}
 		}
-		state.prepared = false;
+		state.phase = Phase::RolledBack;
 		return true;
 	}
 	if (state.snapshot.empty()) {
 		// 原目标尚未移动成功，继续回滚不会再改变用户数据。
-		state.prepared = false;
+		state.phase = Phase::RolledBack;
 		return true;
 	}
 	error_code error;
@@ -312,7 +313,7 @@ bool Rollback(State& state, string& errorText) {
 		}
 		state.snapshot.clear();
 		state.snapshotIsCopy = false;
-		state.prepared = false;
+		state.phase = Phase::RolledBack;
 		return true;
 	}
 	if (!filesystem::exists(state.snapshot, error)) {
@@ -338,7 +339,7 @@ bool Rollback(State& state, string& errorText) {
 		return false;
 	}
 	state.snapshot.clear();
-	state.prepared = false;
+	state.phase = Phase::RolledBack;
 	return true;
 }
 

@@ -23,6 +23,8 @@ struct BackupRequest {
 	std::wstring displayName;
 	std::wstring comment;
 	int legacyConfigIndex = -1;
+	// Explicitly opt in for independent Full backups of mods/arbitrary folders.
+	bool auxiliarySource = false;
 };
 
 struct BackupExecutionOptions {
@@ -52,6 +54,7 @@ struct BackupServiceDependencies {
 	std::function<MigrationUnitResult(const BackupRequest&)> ensureMigration;
 	std::function<bool(const std::filesystem::path&)> isFileLocked;
 	std::function<bool(const HistoryEntry&)> addHistory;
+	std::function<bool(const std::filesystem::path&, const std::wstring&)> deleteMetadataRecord;
 	std::function<bool(const std::wstring&, const std::wstring&)> removeHistory;
 	std::function<void(
 		const BackupRequest&,

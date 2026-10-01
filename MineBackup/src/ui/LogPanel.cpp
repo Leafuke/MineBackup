@@ -95,8 +95,7 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
         AddPathRedaction(options, std::filesystem::path(home), "<user-home>");
     }
 
-    std::lock_guard lock(g_appState.configsMutex);
-    for (const auto& [index, config] : g_appState.configs) {
+    for (const auto& [index, config] : SnapshotConfigState().configs) {
         (void)index;
         AddRedaction(options, config.saveRoot, "<save-root>");
         AddRedaction(options, config.backupPath, "<backup-root>");

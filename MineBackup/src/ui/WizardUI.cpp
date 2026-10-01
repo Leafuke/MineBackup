@@ -84,8 +84,8 @@ WizardRuntime& Runtime() {
 }
 
 map<int, Config> ConfigSnapshot() {
-	lock_guard<mutex> lock(g_appState.configsMutex);
-	return g_appState.configs;
+
+	return SnapshotConfigState().configs;
 }
 
 void SetPathBuffer(array<char, kWizardPathCapacity>& buffer, const filesystem::path& path) {

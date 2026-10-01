@@ -1,6 +1,9 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
+#include <stop_token>
+#include <system_error>
 #include <string>
 #include <vector>
 
@@ -11,12 +14,15 @@ enum class Mode {
 	Overlay
 };
 
+enum class Phase { Empty, Prepared, Committed, RolledBack };
+
 struct State {
 	std::filesystem::path target;
 	std::filesystem::path snapshot;
 	bool targetOriginallyExisted = false;
 	bool snapshotIsCopy = false;
-	bool prepared = false;
+	Phase phase = Phase::Empty;
+	bool CanRollback() const { return phase == Phase::Prepared; }
 };
 
 bool Prepare(
@@ -25,10 +31,24 @@ bool Prepare(
 	std::string& errorText,
 	Mode mode = Mode::Clean);
 
-bool Commit(
+enum class CommitStatus { NotCommitted, Committed, CleanupWarning };
+struct CommitResult {
+	CommitStatus status = CommitStatus::NotCommitted;
+	std::filesystem::path retainedSnapshot;
+	std::string error;
+	bool WasCommitted() const { return status != CommitStatus::NotCommitted; }
+};
+struct CommitOptions {
+	// Optional deterministic cleanup fault injection; empty in production.
+	std::function<void(const std::filesystem::path&, std::error_code&)> removeSnapshot;
+	std::stop_token stopToken;
+};
+
+CommitResult Commit(
 	State& state,
 	const std::vector<std::wstring>& preserve,
-	std::string& errorText);
+	std::string& errorText,
+	const CommitOptions& options = {});
 
 bool Rollback(State& state, std::string& errorText);
 

@@ -5,6 +5,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "WorldIdentity.h"
+#include "PathIdentity.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -19,6 +20,17 @@ using namespace std;
 using namespace BackupManagerInternal;
 
 namespace ChainSafeRetention {
+
+bool SameAuxiliarySource(const Config& config, const HistoryEntry& left, const HistoryEntry& right) {
+    if (left.configId != config.configId || right.configId != config.configId
+        || left.worldPath.empty() || right.worldPath.empty()
+        || !PathIdentity::PathsEqual(left.worldPath, right.worldPath)) return false;
+    FolderRewindFormat::StoragePaths a, b;
+    return FolderRewindFormat::TryResolveStoragePaths(config.backupPath, left.worldName, left.worldPath, a)
+        && FolderRewindFormat::TryResolveStoragePaths(config.backupPath, right.worldName, right.worldPath, b)
+        && PathIdentity::PathsEqual(a.backupSubDir, b.backupSubDir);
+}
+
 namespace {
 
 bool IsCancelled(const Request& request) {
@@ -253,36 +265,25 @@ bool RepairMetadata(
 	return true;
 }
 
-bool IsSame(const Config& config, const HistoryEntry& left, const HistoryEntry& right) {
-	return WorldIdentity::SameHistoryEntry(config, left, right);
+bool IsSame(const Config& config, const HistoryEntry& left, const HistoryEntry& right, bool auxiliary = false) {
+	return auxiliary ? left.backupFile == right.backupFile && SameAuxiliarySource(config, left, right)
+        : WorldIdentity::SameHistoryEntry(config, left, right);
 }
 
 vector<HistoryEntry> WorldHistory(const Config& config, const vector<HistoryEntry>& history,
-	const HistoryEntry& target) {
+	const HistoryEntry& target, bool auxiliary) {
 	vector<HistoryEntry> result;
 	for (const auto& entry : history) {
 		if (entry.configId == config.configId
 			&& entry.backupFile.size()
-			&& WorldIdentity::Matches(config, target.worldName, entry)) {
+			&& (auxiliary ? SameAuxiliarySource(config, target, entry) : WorldIdentity::Matches(config, target.worldName, entry))) {
 			result.push_back(entry);
 		}
 	}
-	sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+	stable_sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
 		return left.timestamp_str < right.timestamp_str;
 	});
 	return result;
-}
-
-vector<HistoryEntry> RemoveHistoryEntry(
-	const Config& config,
-	const vector<HistoryEntry>& history,
-	const HistoryEntry& target) {
-	vector<HistoryEntry> updated;
-	updated.reserve(history.size());
-	for (const auto& entry : history) {
-		if (!IsSame(config, entry, target)) updated.push_back(entry);
-	}
-	return updated;
 }
 
 Result DirectRemove(Request& request) {
@@ -307,6 +308,8 @@ Result DirectRemove(Request& request) {
 		tempRoot / L"metadata",
 		false};
 	MetadataBackup savedMetadata;
+	bool archiveRemoved = false;
+	bool metadataMutated = false;
 	try {
 		if (IsCancelled(request)) {
 			result.warning = true;
@@ -323,30 +326,30 @@ Result DirectRemove(Request& request) {
 		if (!filesystem::remove(archive, error) || error) {
 			throw runtime_error("failed to remove retained archive");
 		}
+		archiveRemoved = true;
+		metadataMutated = true;
 		if (!FolderRewindMetadataStore::DeleteRecord(
 				request.metadataDirectory, request.entry.backupFile)) {
 			throw runtime_error("failed to remove retention metadata");
 		}
-		const auto updated = RemoveHistoryEntry(request.config, request.history, request.entry);
-		if (!request.commitHistory(updated)) {
+		HistoryChanges changes; changes.auxiliarySource = request.auxiliarySource; changes.deletions.push_back(request.entry);
+		if (!request.commitHistory(changes)) {
 			throw runtime_error("failed to persist retention history");
 		}
 		// history 已成功持久化，此处是事务提交点；提交后的清理不得重新进入回滚路径。
 	}
 	catch (const exception& exception) {
-		error_code restoreError;
-		filesystem::copy_file(archiveBackup, archive,
-			filesystem::copy_options::overwrite_existing, restoreError);
-		if (savedMetadata.existed && !RestoreMetadata(savedMetadata)) {
-			result.detail = "retention rollback also failed after: " + string(exception.what());
-		}
-		else {
-			result.detail = exception.what();
-		}
-		filesystem::remove_all(tempRoot, restoreError);
-		result.warning = true;
-		return result;
-	}
+  error_code restoreError; bool recovered = true;
+  if (archiveRemoved) {
+   filesystem::copy_file(archiveBackup, archive, filesystem::copy_options::overwrite_existing, restoreError);
+   recovered = !restoreError;
+  }
+  if (metadataMutated && !RestoreMetadata(savedMetadata)) recovered = false;
+  result.detail = exception.what(); result.warning = true;
+  if (!recovered) { result.recoveryPath = tempRoot; result.detail += "; recovery retained at: " + tempRoot.string(); }
+  else filesystem::remove_all(tempRoot, restoreError);
+  return result;
+ }
 
 	result.changed = true;
 	error_code cleanupError;
@@ -355,6 +358,41 @@ Result DirectRemove(Request& request) {
 }
 
 } // namespace
+
+bool ApplyHistoryChanges(const Config& config, vector<HistoryEntry>& latest, const HistoryChanges& changes) {
+    auto locate = [&](const HistoryEntry& expected) -> optional<size_t> {
+        optional<size_t> found;
+        for (size_t i = 0; i < latest.size(); ++i) {
+            const auto& entry = latest[i];
+            if (!IsSame(config, entry, expected, changes.auxiliarySource)) continue;
+            if (found || entry.configId != expected.configId || entry.worldName != expected.worldName
+                || entry.worldPath != expected.worldPath) return nullopt;
+            found = i;
+        }
+        return found;
+    };
+    for (const auto& expected : changes.deletions) {
+        const auto index = locate(expected);
+        if (!index || latest[*index].isImportant) return false;
+    }
+    for (const auto& rename : changes.renames) {
+        if (!locate(rename.expected)) return false;
+        auto collision = rename.expected; collision.backupFile = rename.backupFile;
+        if (rename.backupFile != rename.expected.backupFile && locate(collision)) return false;
+    }
+    auto next = latest;
+    for (const auto& rename : changes.renames) {
+        auto& entry = next[*locate(rename.expected)];
+        entry.backupFile = rename.backupFile;
+        entry.backupType = rename.backupType;
+    }
+    erase_if(next, [&](const HistoryEntry& entry) {
+        return any_of(changes.deletions.begin(), changes.deletions.end(),
+            [&](const HistoryEntry& expected) { return IsSame(config, entry, expected, changes.auxiliarySource); });
+    });
+    latest = std::move(next);
+    return true;
+}
 
 Result Remove(Request request) {
 	Result result;
@@ -368,16 +406,24 @@ Result Remove(Request request) {
 		result.detail = "important archive is retained";
 		return result;
 	}
-	const auto chain = WorldHistory(request.config, request.history, request.entry);
+	const auto chain = WorldHistory(request.config, request.history, request.entry, request.auxiliarySource);
 	const auto target = find_if(chain.begin(), chain.end(), [&](const auto& entry) {
-		return IsSame(request.config, entry, request.entry);
+		return IsSame(request.config, entry, request.entry, request.auxiliarySource);
 	});
 	if (target == chain.end()) {
 		result.warning = true;
 		result.detail = "archive is not present in the configured history chain";
 		return result;
 	}
-	const auto targetIndex = static_cast<size_t>(distance(chain.begin(), target));
+	if (request.auxiliarySource) {
+        // Auxiliary backups are independent Full snapshots; never merge them into world chains.
+        if (!FolderRewindFormat::IsFullLikeBackupType(request.entry.backupType)
+            || FolderRewindFormat::IsSmartBackupType(request.entry.backupFile)) {
+            result.warning = true; result.detail = "auxiliary archive is not an independent Full snapshot"; return result;
+        }
+        return DirectRemove(request);
+    }
+    const auto targetIndex = static_cast<size_t>(distance(chain.begin(), target));
 	const HistoryEntry* next = targetIndex + 1 < chain.size() ? &chain[targetIndex + 1] : nullptr;
 	if (!next
 		|| FolderRewindFormat::IsFullLikeBackupType(next->backupType)
@@ -439,7 +485,7 @@ Result Remove(Request request) {
 		return result;
 	}
 	if (!deletingFullCheckpoint) ReleaseFullFileList(deletedRecord);
-	const filesystem::path tempRoot = request.paths.runtimeRoot
+	const filesystem::path tempRoot = request.backupDirectory.parent_path()
 		/ (L"MineBackup_Merge_" + FolderRewindFormat::GenerateGuidString());
 	const filesystem::path workspace = tempRoot / L"merge_workspace";
 	const filesystem::path rebuilt = tempRoot / (L"rebuilt." + request.config.zipFormat);
@@ -452,6 +498,7 @@ Result Remove(Request request) {
 	wstring finalType = next->backupType;
 	bool targetReplaced = false;
 	bool deletedArchiveRemoved = false;
+	bool metadataMutated = false;
 	try {
 		if (IsCancelled(request)) {
 			result.warning = true;
@@ -497,17 +544,15 @@ Result Remove(Request request) {
 			throw runtime_error("failed to rebuild merged smart archive");
 		}
 		if (IsCancelled(request)) throw runtime_error("retention was cancelled after archive rebuild");
-		filesystem::remove(mergeTarget, error);
-		if (error) throw runtime_error("failed to replace next smart archive");
-		filesystem::rename(rebuilt, mergeTarget, error);
-		if (error) {
-			error.clear();
-			filesystem::copy_file(rebuilt, mergeTarget,
-				filesystem::copy_options::overwrite_existing, error);
-			if (error) throw runtime_error("failed to deploy merged smart archive");
-			filesystem::remove(rebuilt, error);
-		}
-		targetReplaced = true;
+
+  if (request.archiveRunner->Execute({L"t", rebuilt.wstring()}, {}, request.config.useLowPriority).status != ProcessStatus::Succeeded)
+   throw runtime_error("failed to verify rebuilt archive");
+  const auto replacement = request.replacePrepared ? request.replacePrepared(rebuilt, mergeTarget)
+   : AtomicFileWriter::ReplacePreparedFile(rebuilt, mergeTarget);
+  targetReplaced = replacement.WasReplaced();
+  if (!targetReplaced) throw runtime_error("failed to deploy merged smart archive");
+  if (!replacement.IsDurable()) { result.warning = true; result.detail = "merged archive replaced but durability is unconfirmed"; }
+
 		if (deletingFullCheckpoint) {
 			finalType = L"Full";
 			finalName = next->backupFile;
@@ -524,6 +569,8 @@ Result Remove(Request request) {
 		}
 		error.clear();
 		filesystem::last_write_time(finalArchive, originalTime, error);
+		metadataMutated = true;
+		if (request.beforeMetadataCommit) request.beforeMetadataCommit();
 		if (!RepairMetadata(request.metadataDirectory, request.entry.backupFile,
 				next->backupFile, finalName, finalType,
 				deletedRecord, mergedRecord, result.detail)) {
@@ -534,15 +581,10 @@ Result Remove(Request request) {
 			throw runtime_error("failed to remove deleted chain archive");
 		}
 		deletedArchiveRemoved = true;
-		auto updated = RemoveHistoryEntry(request.config, request.history, request.entry);
-		for (auto& entry : updated) {
-			if (IsSame(request.config, entry, *next)) {
-				entry.backupFile = finalName;
-				entry.backupType = finalType;
-				break;
-			}
-		}
-		if (!request.commitHistory(std::move(updated))) {
+        HistoryChanges changes;
+        changes.deletions.push_back(request.entry);
+        changes.renames.push_back({*next, finalName, finalType});
+        if (!request.commitHistory(changes)) {
 			throw runtime_error("failed to persist history after chain merge");
 		}
 		filesystem::remove_all(tempRoot, error);
@@ -550,31 +592,30 @@ Result Remove(Request request) {
 		return result;
 	}
 	catch (const exception& exception) {
-		error_code restoreError;
-		if (targetReplaced) {
-			filesystem::remove(finalArchive, restoreError);
-			if (finalArchive != mergeTarget) filesystem::remove(mergeTarget, restoreError);
-			restoreError.clear();
-			filesystem::copy_file(originalTarget, mergeTarget,
-				filesystem::copy_options::overwrite_existing, restoreError);
-			if (!restoreError) filesystem::last_write_time(mergeTarget, originalTime, restoreError);
-		}
-		if (deletedArchiveRemoved) {
-			restoreError.clear();
-			filesystem::copy_file(deletedBackup, archiveToDelete,
-				filesystem::copy_options::overwrite_existing, restoreError);
-		}
-		if (!RestoreMetadata(metadataBackup)) {
-			result.detail = "retention rollback also failed after: "
-				+ string(exception.what());
-		}
-		else if (result.detail.empty()) {
-			result.detail = exception.what();
-		}
-		filesystem::remove_all(tempRoot, restoreError);
-		result.warning = true;
-		return result;
-	}
+  error_code restoreError; bool recovered = true;
+  if (targetReplaced) {
+   const auto pending = tempRoot / (L"rollback." + request.config.zipFormat);
+   filesystem::copy_file(originalTarget, pending, filesystem::copy_options::overwrite_existing, restoreError);
+   if (restoreError) recovered = false;
+   else {
+    const auto restored = request.replacePrepared ? request.replacePrepared(pending, mergeTarget)
+     : AtomicFileWriter::ReplacePreparedFile(pending, mergeTarget);
+    recovered = restored.WasReplaced();
+   }
+   if (recovered && finalArchive != mergeTarget) { filesystem::remove(finalArchive, restoreError); if (restoreError) recovered = false; }
+   if (recovered) filesystem::last_write_time(mergeTarget, originalTime, restoreError);
+  }
+  if (deletedArchiveRemoved) {
+   restoreError.clear(); filesystem::copy_file(deletedBackup, archiveToDelete, filesystem::copy_options::overwrite_existing, restoreError);
+   if (restoreError) recovered = false;
+  }
+  if (metadataMutated && !RestoreMetadata(metadataBackup)) recovered = false;
+  result.detail = exception.what(); result.warning = true;
+  if (!recovered) { result.recoveryPath = tempRoot; result.detail += "; rollback incomplete; recovery files retained at: " + tempRoot.string(); }
+  else filesystem::remove_all(tempRoot, restoreError);
+  return result;
+ }
+
 }
 
 } // namespace ChainSafeRetention

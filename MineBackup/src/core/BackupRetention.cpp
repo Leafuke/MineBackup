@@ -3,6 +3,10 @@
 
 #include "AppPaths.h"
 #include "ChainSafeRetention.h"
+#include "AppState.h"
+#include "RuntimeRetentionService.h"
+#include "WorldIdentity.h"
+#include "TaskCoordinator.h"
 #include "CloudSyncService.h"
 #include "ConfigManager.h"
 #include "FolderRewindFormat.h"
@@ -53,103 +57,6 @@ void DoSafeDeleteBackupShared(
 	const Config& config,
 	const HistoryEntry& entry,
 	int configIndex);
-
-void BackupManagerInternal::LimitBackupFiles(
-	const Config& config,
-	const int& configIndex,
-	const wstring& folderPath,
-	int limit) {
-	if (limit <= 0) return;
-	vector<filesystem::directory_entry> files;
-	try {
-		if (!filesystem::is_directory(folderPath)) return;
-		for (const auto& entry : filesystem::directory_iterator(folderPath)) {
-			if (entry.is_regular_file()) files.push_back(entry);
-		}
-	}
-	catch (const filesystem::filesystem_error& error) {
-		BACKUP_ERROR(L("LOG_ERROR_SCAN_BACKUP_DIR"), error.what());
-		return;
-	}
-	if (static_cast<int>(files.size()) <= limit) return;
-
-	const vector<HistoryEntry> history = GetHistoryEntriesForConfig(configIndex);
-	const bool historyAvailable = !history.empty();
-	sort(files.begin(), files.end(), [](const auto& left, const auto& right) {
-		return left.last_write_time() < right.last_write_time();
-	});
-
-	vector<filesystem::directory_entry> deletable;
-	for (const auto& file : files) {
-		bool important = false;
-		if (historyAvailable) {
-			for (const auto& entry : history) {
-				if (entry.worldName == file.path().parent_path().filename().wstring()
-					&& entry.backupFile == file.path().filename().wstring()) {
-					important = entry.isImportant;
-					if (important) {
-						BACKUP_INFO(
-							L("LOG_INFO_BACKUP_MARKED_IMPORTANT"),
-							wstring_to_utf8(file.path().filename().wstring()).c_str());
-					}
-					break;
-				}
-			}
-		}
-		if (!important) deletable.push_back(file);
-	}
-	if (static_cast<int>(files.size() - deletable.size()) >= limit) {
-		BACKUP_INFO("Cannot delete more files; remaining backups are marked as important.");
-		return;
-	}
-
-	const size_t deleteCount = static_cast<size_t>(max(
-		0,
-		static_cast<int>(files.size()) - limit));
-	for (size_t index = 0; index < deleteCount && index < deletable.size(); ++index) {
-		const auto& file = deletable[index];
-		try {
-			if (FolderRewindFormat::IsSmartBackupType(file.path().filename().wstring())) {
-				// 记录实际选择的可删除文件，而不是原始文件列表中的同下标元素。
-				BACKUP_WARNING(
-					L("LOG_WARNING_DELETE_SMART_BACKUP"),
-					wstring_to_utf8(file.path().filename().wstring()).c_str());
-			}
-
-			bool handledThroughHistory = false;
-			if (historyAvailable) {
-				for (const auto& entry : history) {
-					if (entry.worldName == file.path().parent_path().filename().wstring()
-						&& entry.backupFile == file.path().filename().wstring()) {
-						if (isSafeDelete) {
-							DoSafeDeleteBackupShared(config, entry, configIndex);
-						}
-						else {
-							int mutableConfigIndex = configIndex;
-							DoDeleteBackup(config, entry, mutableConfigIndex);
-						}
-						handledThroughHistory = true;
-						break;
-					}
-				}
-			}
-			if (!isSafeDelete && !handledThroughHistory) {
-				filesystem::remove(file);
-				InvalidateBackupMetadata(
-					config,
-					file.path().parent_path().filename().wstring(),
-					file.path().filename().wstring());
-				RemoveHistoryEntry(configIndex, file.path().filename().wstring());
-			}
-			BACKUP_INFO(
-				L("LOG_DELETE_OLD_BACKUP"),
-				wstring_to_utf8(file.path().filename().wstring()).c_str());
-		}
-		catch (const filesystem::filesystem_error& error) {
-			BACKUP_ERROR(L("LOG_ERROR_DELETE_BACKUP"), error.what());
-		}
-	}
-}
 
 void DeleteBackupWithMode(
 	const Config& config,
@@ -252,9 +159,13 @@ void DoSafeDeleteBackupShared(
 	request.metadataDirectory = storage.metadataDir;
 	request.paths = GetAppPaths();
 	request.archiveRunner = &archiveRunner;
-	request.commitHistory = [configIndex](vector<HistoryEntry> updated) {
-		return ReplaceHistoryEntriesForConfig(configIndex, std::move(updated));
-	};
+	request.commitHistory = [config](const ChainSafeRetention::HistoryChanges& changes) {
+        const auto mutation = GetHistoryRepository().Mutate(config.configId, GetAppPaths().HistoryFile(),
+            SnapshotConfigState().configs, true, [&](vector<HistoryEntry>& latest) {
+                return ChainSafeRetention::ApplyHistoryChanges(config, latest, changes);
+            });
+        return mutation.changed && mutation.persisted;
+    };
 	const auto result = ChainSafeRetention::Remove(std::move(request));
 	if (result.warning) {
 		BACKUP_WARNING("Safe retention kept %s: %s",

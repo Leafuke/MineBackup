@@ -18,6 +18,16 @@
 #include <ctime>
 #include <tuple>
 
+namespace BackupPolicy {
+inline constexpr int MinimumMode = 0;
+inline constexpr int MaximumMode = 3;
+inline constexpr int MinimumSmartCount = 0; // unlimited
+inline constexpr int MaximumSmartCount = 100000;
+constexpr bool IsValidMode(int value) { return value >= MinimumMode && value <= MaximumMode; }
+constexpr bool IsValidSmartCount(int value) { return value >= MinimumSmartCount && value <= MaximumSmartCount; }
+constexpr bool IsValid(int mode, int smartCount) { return IsValidMode(mode) && IsValidSmartCount(smartCount); }
+}
+
 // 结构体们
 struct Config {
 	std::wstring saveRoot;
@@ -126,12 +136,21 @@ struct CloudHistoryAnalysisResult {
 	std::vector<HistoryEntry> mappedItems;
 };
 
+struct CloudDownloadFailure {
+    std::wstring configId, worldPath, worldName, backupFile;
+    int exitCode = -1;
+    bool timedOut = false;
+    std::wstring error;
+};
 struct CloudSyncResult {
 	bool success = false;
 	std::wstring message;
 	int importedHistoryCount = 0;
 	int duplicateHistoryCount = 0;
 	int recoveredBackupCount = 0;
+    int failedDownloadCount = 0;
+    int exitCode = -1;
+    std::vector<CloudDownloadFailure> downloadFailures;
 	CloudHistoryAnalysisResult analysis;
 };
 
@@ -154,6 +173,8 @@ struct CloudActiveHistoryManifest {
 
 struct AutoBackupTask {
 	std::wstring taskName;
+    std::wstring configId;
+    std::wstring sourcePath;
 };
 
 struct MyFolder {
