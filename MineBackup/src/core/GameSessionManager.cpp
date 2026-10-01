@@ -214,19 +214,21 @@ bool SubmitUserRestore(
 
 
    Config restoreConfig=world.config; restoreConfig.backupBefore=backupBeforeRestore;
-   RestoreRequest verification; verification.config=restoreConfig; verification.world={restoreConfig.configId,world.name}; verification.archive=pinnedBackup;
-   RestoreServiceDependencies verifyDeps; verifyDeps.paths=GetAppPaths();
-   if(!IsSuccessful(RestoreService(verifyDeps).Verify(verification).code)) {TASK_WARNING("Restore archive verification failed before safety backup.");return;}
+   const auto verification=PreflightDesktopRestore(restoreConfig,world.name,pinnedBackup,restoreMethod,TaskCoordinator::CurrentStopToken());
+   if(!IsSuccessful(verification.code)) {
+    for(const auto& diagnostic:verification.diagnostics) TASK_WARNING("%s: %s",diagnostic.eventId.c_str(),diagnostic.detail.c_str());
+    return;
+   }
    optional<RestoreSafetyBackup> safety;
    bool successfulHotPreBackup=false;
    if(backupBeforeRestore) {
-    RestoreSafetyBackup prepared; prepared.request.config=restoreConfig; prepared.request.world=verification.world; prepared.request.sourcePath=world.path;
+    RestoreSafetyBackup prepared; prepared.request.config=restoreConfig; prepared.request.world={restoreConfig.configId,world.name}; prepared.request.sourcePath=world.path;
     prepared.result=RunDesktopBackup(world,L"BeforeRestore",TaskCoordinator::CurrentStopToken(),BackupExecutionOptions{.deferRetention=true});
     if(!IsSuccessful(prepared.result.code)) {TASK_WARNING(L("KNOTLINK_PRE_RESTORE_BACKUP_FAILED"));return;}
     safety=std::move(prepared); successfulHotPreBackup=true;
    }
    if(!IsWorldOccupied(world.path)) {
-    DoRestore(restoreConfig,world.name,pinnedBackup,restoreMethod,customRestoreList,nullptr,"",safety?&*safety:nullptr);return;
+    DoRestore(restoreConfig,world.name,pinnedBackup,restoreMethod,customRestoreList,nullptr,"",safety?&*safety:nullptr,&verification);return;
    }
 
 			HotRestoreState expectedIdle = HotRestoreState::IDLE;
@@ -273,6 +275,6 @@ bool SubmitUserRestore(
 				g_appState.knotLinkMod.modVersion.c_str());
 			MyFolder restoreWorld=world; restoreWorld.config=restoreConfig;
 			DoHotRestore(restoreWorld, false, pinnedBackup, restoreMethod, nullptr,
-				customRestoreList, requestId, safety?&*safety:nullptr);
+				customRestoreList, requestId, safety?&*safety:nullptr,&verification);
 		});
 }

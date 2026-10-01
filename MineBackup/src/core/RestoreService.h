@@ -16,6 +16,10 @@ enum class RestoreMode {
 	Overwrite
 };
 
+// Verification-only modes preserve the desktop's legacy reverse/custom semantics.
+// Run always requires the managed plan.
+enum class RestoreVerificationMode { Managed, LegacyForward, Reverse };
+
 struct RestoreRequest {
 	Config config;
 	WorldRef world;
@@ -54,6 +58,8 @@ struct RestoreResult {
 };
 
 struct RestoreServiceDependencies {
+	// Attempt existing cloud/migration repair once, only after identity and storage checks.
+	std::function<void(const RestoreRequest&, std::stop_token)> repairArchiveChain;
 	AppPaths paths;
 	std::function<bool(const std::filesystem::path&)> isWorldOccupied;
 	std::function<BackupResult(
@@ -76,7 +82,8 @@ public:
 
 	RestorePlan Verify(
 		const RestoreRequest& request,
-		std::stop_token stopToken = {}) const;
+		std::stop_token stopToken = {},
+		RestoreVerificationMode verificationMode = RestoreVerificationMode::Managed) const;
 	RestoreResult Run(
 		const RestoreRequest& request,
 		bool dryRun,
@@ -87,7 +94,10 @@ private:
 	RestorePlan BuildAndVerify(
 		const RestoreRequest& request,
 		bool requireColdWorld,
-		std::stop_token stopToken) const;
+		std::stop_token stopToken,
+        RestoreVerificationMode verificationMode) const;
+    RestorePlan VerifyAndRepair(const RestoreRequest& request, bool requireColdWorld,
+        std::stop_token stopToken, RestoreVerificationMode verificationMode) const;
 
 	RestoreServiceDependencies dependencies_;
 };
