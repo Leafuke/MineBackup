@@ -505,7 +505,7 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
 	if (!RestoreWorkspace::Prepare(
 			destinationFolder, restoreWorkspace, workspaceError, workspaceMode)) {
-		if (restoreWorkspace.prepared) {
+		if (restoreWorkspace.CanRollback()) {
 			string rollbackError;
 			if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
 				RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
@@ -516,19 +516,25 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	}
 
 	bool restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config);
+	if (TaskCoordinator::CurrentStopToken().stop_requested()) restoreSucceeded = false;
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
 			? BuildEffectiveRestoreWhitelist(restoreWhitelist) : vector<wstring>{};
-		if (!RestoreWorkspace::Commit(
-				restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
+		const auto commit = RestoreWorkspace::Commit(
+			restoreWorkspace, effectiveRestoreWhitelist, workspaceError,
+			{.stopToken = TaskCoordinator::CurrentStopToken()});
+		if (commit.status == RestoreWorkspace::CommitStatus::CleanupWarning)
+			RESTORE_WARNING("Restore committed; retained snapshot: %s (%s)",
+				commit.retainedSnapshot.string().c_str(), commit.error.c_str());
+		if (!commit.WasCommitted()) {
 			restoreSucceeded = false;
 			RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 		}
 	}
 
 	if (!restoreSucceeded) {
-		if (restoreWorkspace.prepared) {
+		if (restoreWorkspace.CanRollback()) {
 			if (!RestoreWorkspace::Rollback(restoreWorkspace, workspaceError)) {
 				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}
@@ -704,7 +710,7 @@ bool DoRestore(
 		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
 	if (!RestoreWorkspace::Prepare(
 			destinationFolder, restoreWorkspace, workspaceError, workspaceMode)) {
-		if (restoreWorkspace.prepared) {
+		if (restoreWorkspace.CanRollback()) {
 			string rollbackError;
 			if (!RestoreWorkspace::Rollback(restoreWorkspace, rollbackError)) {
 				RESTORE_ERROR("Failed to rollback after workspace prepare failure: %s", rollbackError.c_str());
@@ -722,21 +728,27 @@ bool DoRestore(
 		restoreSucceeded = ApplyRestoreChain(backupsToApply, destinationFolder, config, filesToExtract);
 	}
 
+	if (TaskCoordinator::CurrentStopToken().stop_requested()) restoreSucceeded = false;
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
 			? BuildEffectiveRestoreWhitelist(
 				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist)
 			: vector<wstring>{};
-		if (!RestoreWorkspace::Commit(
-				restoreWorkspace, effectiveRestoreWhitelist, workspaceError)) {
+		const auto commit = RestoreWorkspace::Commit(
+			restoreWorkspace, effectiveRestoreWhitelist, workspaceError,
+			{.stopToken = TaskCoordinator::CurrentStopToken()});
+		if (commit.status == RestoreWorkspace::CommitStatus::CleanupWarning)
+			RESTORE_WARNING("Restore committed; retained snapshot: %s (%s)",
+				commit.retainedSnapshot.string().c_str(), commit.error.c_str());
+		if (!commit.WasCommitted()) {
 			restoreSucceeded = false;
 			RESTORE_ERROR("Failed to commit safe restore workspace: %s", workspaceError.c_str());
 		}
 	}
 
 	if (!restoreSucceeded) {
-		if (restoreWorkspace.prepared) {
+		if (restoreWorkspace.CanRollback()) {
 			if (!RestoreWorkspace::Rollback(restoreWorkspace, workspaceError)) {
 				RESTORE_ERROR("Failed to rollback safe restore workspace: %s", workspaceError.c_str());
 			}

@@ -2,6 +2,7 @@
 
 #include "ExternalToolManager.h"
 #include "RestoreService.h"
+#include "RestoreWorkspace.h"
 
 #include <fstream>
 #include <memory>
@@ -25,6 +26,7 @@ struct FakeArchiveState {
 	int extracts = 0;
 	bool failExtract = false;
 	bool cancelExtract = false;
+	bool cancelAfterSuccess = false;
 	shared_ptr<stop_source> cancelSource;
 };
 
@@ -58,7 +60,7 @@ ArchiveRunner FakeRunner(const shared_ptr<FakeArchiveState>& state, stop_token t
 				}
 				Write(destination / "level.dat", "restored");
 				Write(destination / "session.lock", "archive-session-lock");
-				if (state->cancelExtract && state->cancelSource) {
+				if ((state->cancelExtract || state->cancelAfterSuccess) && state->cancelSource) {
 					state->cancelSource->request_stop();
 				}
 				result.status = state->failExtract
@@ -89,6 +91,24 @@ RestoreRequest FixtureRequest(const filesystem::path& root) {
 void RunRestoreServiceTests(
 	TestContext& test,
 	const filesystem::path& temporaryRoot) {
+ for (auto mode : {RestoreWorkspace::Mode::Clean, RestoreWorkspace::Mode::Overlay}) {
+  const auto target = temporaryRoot / (mode == RestoreWorkspace::Mode::Clean ? "cleanup-clean" : "cleanup-overlay");
+  Write(target / "a-old.txt", "original"); Write(target / "z-locked.txt", "locked");
+  RestoreWorkspace::State workspace; string error;
+  test.Expect(RestoreWorkspace::Prepare(target, workspace, error, mode), "cleanup fixture prepares snapshot");
+  Write(target / "a-old.txt", "restored");
+  RestoreWorkspace::CommitOptions options;
+  options.removeSnapshot = [](const filesystem::path& snapshot, error_code& ec) {
+   filesystem::remove(snapshot / "a-old.txt"); ec = make_error_code(errc::permission_denied);
+  };
+  const auto committed = RestoreWorkspace::Commit(workspace, {}, error, options);
+  test.Expect(committed.status == RestoreWorkspace::CommitStatus::CleanupWarning
+   && filesystem::exists(committed.retainedSnapshot / "z-locked.txt") && !workspace.CanRollback(),
+   "partial snapshot cleanup is a committed warning with retained recovery path");
+  test.Expect(RestoreWorkspace::Rollback(workspace, error) && Read(target / "a-old.txt") == "restored",
+   "post-commit rollback never replaces restored world with partial snapshot");
+ }
+
 	const filesystem::path root = temporaryRoot / "restore-service";
 	const filesystem::path world = root / "saves" / "world";
 	Write(world / "level.dat", "before");
@@ -223,6 +243,20 @@ void RunRestoreServiceTests(
 			&& !filesystem::exists(cancelledWorld),
 		"Cancelled clean restore must remove a newly created target when no world existed before");
 	state->cancelExtract = false;
+	state->cancelSource.reset();
+	for (const auto mode : {RestoreMode::Clean, RestoreMode::Overwrite}) {
+		Write(cancelledWorld / "level.dat", "original");
+		Write(cancelledWorld / "keep.txt", "untouched");
+		request.mode = mode;
+		state->cancelAfterSuccess = true;
+		state->cancelSource = make_shared<stop_source>();
+		const auto raced = service.Run(request, false, state->cancelSource->get_token());
+		test.Expect(raced.code == OperationCode::Cancelled && raced.rollbackAttempted
+			&& raced.rollbackSucceeded && Read(cancelledWorld / "level.dat") == "original"
+			&& Read(cancelledWorld / "keep.txt") == "untouched",
+			"cancellation after successful extraction must roll back the complete original world");
+	}
+	state->cancelAfterSuccess = false;
 	state->cancelSource.reset();
 
 	occupied = true;

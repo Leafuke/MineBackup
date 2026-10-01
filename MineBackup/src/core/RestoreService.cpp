@@ -370,7 +370,7 @@ RestoreResult RestoreService::Run(
 			result.plan.targetWorld, workspace, errorText, workspaceMode)) {
 		result.code = OperationCode::RestoreFailed;
 		result.diagnostics.push_back(Failure("restore.snapshot.prepare_failed", errorText));
-		if (workspace.prepared) {
+		if (workspace.CanRollback()) {
 			result.rollbackAttempted = true;
 			result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
 			if (!result.rollbackSucceeded) {
@@ -386,18 +386,23 @@ RestoreResult RestoreService::Run(
 		runner,
 		dependencies_.paths,
 		request.config.useLowPriority);
-	bool committed = extracted;
-	if (extracted) {
+	bool committed = false;
+	if (extracted && !stopToken.stop_requested()) {
 		CleanupMarkers(result.plan.targetWorld);
 		const auto preserve = request.mode == RestoreMode::Clean
 			? request.restorePreserve : vector<wstring>{};
-		committed = RestoreWorkspace::Commit(workspace, preserve, errorText);
+		const auto commit = RestoreWorkspace::Commit(
+			workspace, preserve, errorText, {.stopToken = stopToken});
+		committed = commit.WasCommitted();
+		if (commit.status == RestoreWorkspace::CommitStatus::CleanupWarning)
+			result.diagnostics.push_back({"restore.snapshot.cleanup_failed", DiagnosticSeverity::Warning,
+				commit.error + "; retained snapshot: " + commit.retainedSnapshot.string()});
 	}
 	if (!committed) {
 		result.code = stopToken.stop_requested()
 			? OperationCode::Cancelled : OperationCode::RestoreFailed;
 		result.diagnostics.push_back(Failure("restore.extract.failed", errorText));
-		if (workspace.prepared) {
+		if (workspace.CanRollback()) {
 			result.rollbackAttempted = true;
 			result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
 			if (!result.rollbackSucceeded) {
