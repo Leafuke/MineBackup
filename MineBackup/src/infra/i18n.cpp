@@ -7,6 +7,7 @@ const char* lang_codes[2] = { "zh_CN", "en_US" };
 const char* langs[2] = { as_utf8(u8"简体中文"), "English" };
 std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_LangTable = {
 	{ "zh_CN", {
+		{"RESTORE_ARCHIVE_PATHS_UNSUPPORTED", u8"备份使用不受支持的路径布局，已拒绝还原且保留原归档：%s"},
 		{"SETTINGS", u8"设置"},
 		{"SETTINGS_GROUP_APPLICATION", u8"应用"},
 		{"SETTINGS_GROUP_NORMAL", u8"普通配置"},
@@ -1171,6 +1172,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, Utf8Value>> g_La
 		{ "UPDATE_AVAILABLE_LINK_TEXT", u8"发现新版本\n%s\n点击查看" }
 }},
 	{ "en_US", {
+		{"RESTORE_ARCHIVE_PATHS_UNSUPPORTED", u8"Restore rejected: unsupported archive paths; the original archive was retained: %s"},
 		{"SETTINGS", "Settings"},
 		{"SETTINGS_GROUP_APPLICATION", "Application"},
 		{"SETTINGS_GROUP_NORMAL", "Normal configuration"},

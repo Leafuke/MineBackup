@@ -7,6 +7,7 @@
 #include "FolderRewindHistoryStore.h"
 #include "FolderRewindMetadataStore.h"
 #include "RuntimeIntegration.h"
+#include "RestoreService.h"
 #include "RuntimeCloudPostHook.h"
 #include "RuntimeRetentionService.h"
 #include "text_to_text.h"
@@ -84,7 +85,7 @@ ArchiveRunner MakeFakeArchiveRunner(
 }
 
 void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryRoot) {
-	for (const string mode : {"full", "forced-full", "smart", "excluded-only"}) {
+	for (const string mode : {"full", "forced-full", "smart", "excluded-only", "overwrite"}) {
 		const auto root = temporaryRoot / ("scan-reuse-" + mode);
 		const auto world = root / "saves" / "world";
 		WriteFixture(world / "level.dat", "original-level");
@@ -150,7 +151,7 @@ void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryR
 		test.Expect(set<wstring>(submittedLists.front().begin(), submittedLists.front().end()) == original,
 			"baseline Full must exclude user blacklists and both root and nested lock files");
 
-		config.backupMode = mode == "full" ? 1 : 2;
+		config.backupMode = mode == "overwrite" ? 3 : mode == "full" ? 1 : 2;
 		request.comment = utf8_to_wstring(mode); // Distinct archive names even within one clock second.
 		WriteFixture(world / "cache" / "temp.bin", "changed-excluded-cache");
 		WriteFixture(world / "session.lock", "changed-session-lock");
@@ -209,7 +210,7 @@ void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryR
 			test.Expect(archived == original && stateFiles == archived
 				&& record.fullFileList == vector<wstring>(original.begin(), original.end()),
 				"Full and Forced Full must archive exactly the filtered metadata snapshot");
-			test.Expect(record.backupType == L"Full" && record.previousBackupFileName.empty()
+			test.Expect(record.backupType == (mode == "overwrite" ? L"Overwrite" : L"Full") && record.previousBackupFileName.empty()
 				&& record.basedOnFullBackup == filename && state.basedOnFullBackup == filename
 				&& record.addedFiles == record.fullFileList && record.modifiedFiles.empty() && record.deletedFiles.empty(),
 				"Full and Forced Full must establish a new complete checkpoint");
@@ -527,6 +528,45 @@ void RunBackupServiceTests(
    && manifest["Entries"][31]["FileName"]=="[Full]-1.7z",
    "same-second history serialization preserves committed order independently of GUID filenames");
  }
+
+#ifdef _WIN32
+ for(const wstring format:{L"7z",L"zip"}) {
+  const auto tool=filesystem::path(__FILE__).parent_path().parent_path()/"MineBackup"/"Assets"/"7za.exe";
+  const auto r=temporaryRoot/L"真实覆盖 空格"/format; const auto world=r/L"saves"/L"world";
+  WriteFixture(world/"level.dat","before"); WriteFixture(world/"deleted.txt","gone"); WriteFixture(world/"session.lock","excluded"); WriteFixture(world/"cache"/"secret.txt","excluded");
+  BackupRequest req; req.config.configId=L"real-overwrite"; req.config.saveRoot=(r/"saves").wstring(); req.config.backupPath=(r/"backups").wstring(); req.config.zipPath=tool.wstring(); req.config.zipFormat=format; req.config.zipMethod=format==L"zip"?L"Deflate":L"LZMA2"; req.config.backupMode=3; req.config.skipIfUnchanged=false; req.config.blacklist={L"cache"}; req.config.worlds={{L"world",L""}}; req.world={req.config.configId,L"world"}; req.sourcePath=world;
+  BackupServiceDependencies deps; deps.paths.runtimeRoot=r/"runtime"; deps.addHistory=[](const HistoryEntry&){return true;};
+  BackupService backup(deps);
+  req.config.backupMode=2; req.config.maxSmartBackupsPerFull=0;
+  const auto full=backup.Run(req); const auto originalFull=ReadFixture(full.archivePath);
+  WriteFixture(world/"level.dat","smart-content"); const auto smart=backup.Run(req);
+  const auto originalSmart=ReadFixture(smart.archivePath);
+  req.config.backupMode=3;
+  const auto before=backup.Run(req); filesystem::remove(world/"deleted.txt"); WriteFixture(world/"level.dat","after"); const auto after=backup.Run(req);
+  test.Expect(IsSuccessful(full.code) && IsSuccessful(smart.code)
+   && smart.archivePath.filename().wstring().starts_with(L"[Smart]")
+   && ReadFixture(full.archivePath)==originalFull && ReadFixture(smart.archivePath)==originalSmart,
+   "switching Smart to Overwrite preserves the original chain archives byte for byte");
+  const auto runner=ArchiveRunner::Resolve(tool,deps.paths); string error;
+  const auto listing=runner.Execute({L"l",L"-slt",after.archivePath.wstring()});
+  test.Expect(IsSuccessful(before.code) && IsSuccessful(after.code) && runner.ValidateMembers(after.archivePath,error)
+   && listing.standardOutput.find("deleted.txt")==string::npos && listing.standardOutput.find("session.lock")==string::npos && listing.standardOutput.find("secret.txt")==string::npos,
+   "real overwrite archives synchronize deletions and exclude mandatory locks and user rules");
+  RestoreRequest restore; restore.config=req.config; restore.world=req.world; restore.archive=after.archivePath;
+  RestoreServiceDependencies restoreDeps; restoreDeps.paths=deps.paths; RestoreService restoreService(restoreDeps);
+  WriteFixture(world/"level.dat","changed");
+  test.Expect(restoreService.Run(restore,false).code==OperationCode::Success && ReadFixture(world/"level.dat")=="after", "real overwrite restores level.dat at world root");
+  restore.archive=smart.archivePath;
+  test.Expect(restoreService.Run(restore,false).code==OperationCode::Success
+   && ReadFixture(world/"level.dat")=="smart-content" && ReadFixture(world/"deleted.txt")=="gone"
+   && !filesystem::exists(world/"cache"/"secret.txt"),
+   "real Smart chain remains restorable after Overwrite creates an independent checkpoint");
+  const auto legacy=r/"backups"/"world"/(L"[Overwrite]-legacy."+format);
+  runner.Execute({L"a",L"-t"+format,legacy.wstring(),L"-spf",world.wstring()+L"/*"}); restore.archive=legacy;
+  WriteFixture(world/"level.dat","keep-original");
+  test.Expect(restoreService.Run(restore,false).code==OperationCode::VerificationFailed && ReadFixture(world/"level.dat")=="keep-original" && filesystem::exists(legacy),"legacy absolute-path archive is rejected before world mutation");
+ }
+#endif
 
 	RunScanReuseContracts(test, temporaryRoot);
 	const filesystem::path root = temporaryRoot / "backup-service";

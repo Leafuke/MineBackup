@@ -4,6 +4,7 @@
 #include "AppState.h"
 #include "BackupManagerInternal.h"
 #include "BackupService.h"
+#include "RuntimeRetentionService.h"
 #include "Broadcast.h"
 #include "CloudSyncService.h"
 #include "HistoryManager.h"
@@ -109,6 +110,12 @@ BackupResult RunDesktopBackup(
 		const BackupRequest& value,
 		const HistoryEntry& entry,
 		stop_token) {
+
+  if(value.config.backupMode==3) {
+   map<int,Config> configs; {lock_guard<mutex> lock(g_appState.configsMutex); configs=g_appState.configs;}
+   RuntimeRetentionService retention(GetHistoryRepository(),GetAppPaths().HistoryFile(),configs,GetAppPaths());
+   retention.Enforce(value,entry,TaskCoordinator::CurrentStopToken()); return;
+  }
 		(void)entry;
 		FolderRewindFormat::StoragePaths storage;
 		if (!FolderRewindFormat::TryResolveStoragePaths(

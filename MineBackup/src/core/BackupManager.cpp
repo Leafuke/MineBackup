@@ -560,7 +560,6 @@ BackupResult BackupService::RunCore(
 	ScopedRuntimeArtifact stagingCleanup(stagingRoot);
 	auto makeArchivePath = [&](const wstring& backupType) {
 		do { finalArchivePath = destinationFolder / FolderRewindFormat::GenerateArchiveFileName(backupType, storageFolderName, comment, config.zipFormat); } while (filesystem::exists(finalArchivePath));
-		if (config.backupMode == 3) return finalArchivePath.wstring();
 		filesystem::create_directories(stagingRoot);
 		return (stagingRoot / finalArchivePath.filename()).wstring();
 	};
@@ -736,7 +735,7 @@ BackupResult BackupService::RunCore(
 	}
 
 	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
-	if (files_to_backup.empty() && !(config.backupMode == 2 && deletionOnlyChange && !forceFullBackup)) {
+	if (files_to_backup.empty() && !(config.backupMode == 3 || (config.backupMode == 2 && deletionOnlyChange && !forceFullBackup))) {
 		BACKUP_INFO("No world changes were found.");
 		publish("backup.no_changes", {{"config_id", wstring_to_utf8(config.configId)}, {"world", wstring_to_utf8(worldName)}});
 		BackupResult result;
@@ -819,37 +818,11 @@ BackupResult BackupService::RunCore(
 			command = makeCommand(std::move(arguments), sourcePath);
 		}
     } else if (config.backupMode == 3) {
-        backupTypeStr = L"Overwrite";
-		BACKUP_INFO("Updating the most recent overwrite backup.");
-        auto latest_time = filesystem::file_time_type{}; // 默认构造就是最小时间点，不需要::min()
-        bool found = false;
-
-		for (const auto& entry : filesystem::directory_iterator(destinationFolder)) {
-            if (entry.is_regular_file() && entry.path().extension().wstring() == L"." + config.zipFormat) {
-                if (entry.last_write_time() > latest_time) {
-                    latest_time = entry.last_write_time();
-                    latestBackupPath = entry.path();
-                    found = true;
-                }
-            }
-        }
-        if (found) {
-			BACKUP_INFO("Found latest overwrite archive: %s", wstring_to_utf8(latestBackupPath.filename().wstring()).c_str());
-			command = makeCommand(
-				{L"u", L"-ssw", latestBackupPath.wstring(), NormalizeSeparators(sourcePath) + L"/*",
-				 L"-mx=" + to_wstring(normalizedZipLevel)}, sourcePath);
-            archivePath = latestBackupPath.wstring(); // 记录被更新的文件
-        }
-        else {
-			BACKUP_INFO("No overwrite archive exists; creating one.");
-			archivePath = makeArchivePath(L"Overwrite");
-			auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
-			arguments.push_back(L"-spf");
-			arguments.push_back(NormalizeSeparators(sourcePath) + L"/*");
-			command = makeCommand(std::move(arguments), sourcePath);
-            // -spf 强制使用完整路径，-spf2 使用相对路径
-        }
-    }
+  backupTypeStr=L"Overwrite"; archivePath=makeArchivePath(L"Overwrite");
+  basedOnBackupFile=filesystem::path(archivePath).filename().wstring();
+  auto arguments=SevenZipCreateArguments(config,normalizedZipLevel,archivePath);
+  arguments.push_back(L"@"+filelist_path); command=makeCommand(std::move(arguments),sourcePath);
+ }
 
 execute_backup:
     {
@@ -877,7 +850,7 @@ execute_backup:
 		};
 
         bool backupSucceeded = false;
-		if (backupTypeStr == L"Smart" && deletionOnlyChange) {
+		if ((backupTypeStr == L"Smart" && deletionOnlyChange) || (config.backupMode == 3 && files_to_backup.empty())) {
 			backupSucceeded = createDeletionOnlyArchive();
 		}
 		else {
@@ -920,7 +893,7 @@ execute_backup:
 			}
 
 
-   if (config.backupMode != 3) {
+   {
     if (archiveRunner.Execute({L"t", archivePath}, {}, config.useLowPriority).status != ProcessStatus::Succeeded)
      return MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed, "backup.archive.verify_failed");
     while (filesystem::exists(finalArchivePath)) {
@@ -935,26 +908,14 @@ execute_backup:
     return MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed, "backup.chain.self_reference");
 		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
 
-        if (config.backupMode == 3) {
-            if (!latestBackupPath.empty()) {
-                wstring oldName = latestBackupPath.filename().wstring();
-                wstring newName = FolderRewindFormat::GenerateArchiveFileName(L"Overwrite", storageFolderName, comment, config.zipFormat);
-                filesystem::path newPath = latestBackupPath.parent_path() / newName;
-                if (latestBackupPath != newPath) {
-                    filesystem::rename(latestBackupPath, newPath);
-                    latestBackupPath = newPath;
-                    archivePath = latestBackupPath.wstring();
-                    completedBackupFile = latestBackupPath.filename().wstring();
-					if (dependencies_.removeHistory) {
-						(void)dependencies_.removeHistory(storageFolderName, oldName);
-					}
-                    InvalidateBackupMetadata(config, storageFolderName, oldName, oldName, completedBackupFile);
-                }
-            }
-            else {
-                completedBackupFile = filesystem::path(archivePath).filename().wstring();
-            }
-        }
+
+  const auto metadataRecovery=stagingRoot/L"metadata-recovery";
+  filesystem::create_directories(metadataRecovery);
+  const auto statePath=FolderRewindMetadataStore::GetStatePath(metadataFolder);
+  const bool stateExisted=filesystem::exists(statePath);
+  error_code snapshotError;
+  if(stateExisted) filesystem::copy_file(statePath,metadataRecovery/L"state.json",filesystem::copy_options::overwrite_existing,snapshotError);
+  if(snapshotError) return MakeBackupFailure(OperationCode::BackupFailed,BackupOutcome::Failed,"backup.metadata.snapshot_failed",snapshotError.message());
 
 		const auto metadataUpdate = UpdateMetadataFiles(
 			metadataFolder,
@@ -1001,6 +962,16 @@ execute_backup:
 		historyEntry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(backupTypeStr);
 		historyEntry.comment = comment;
 		if (!dependencies_.addHistory || !dependencies_.addHistory(historyEntry)) {
+			error_code recoveryError;
+   if(stateExisted) {
+    const auto restored=AtomicFileWriter::ReplacePreparedFile(metadataRecovery/L"state.json",statePath);
+    if(!restored.WasReplaced()) recoveryError=make_error_code(errc::io_error);
+   } else filesystem::remove(statePath,recoveryError);
+   if(!recoveryError) FolderRewindMetadataStore::DeleteRecord(metadataFolder,completedBackupFile);
+   if(recoveryError) {
+    stagingCleanup.Release();
+    BACKUP_ERROR("History commit failed; metadata recovery retained at %s",wstring_to_utf8(metadataRecovery.wstring()).c_str());
+   } else filesystem::remove(filesystem::path(archivePath),recoveryError);
 			publish("backup.failed", {{"error", "history_commit_failed"}});
 			return MakeBackupFailure(
 				OperationCode::BackupFailed, BackupOutcome::Failed,

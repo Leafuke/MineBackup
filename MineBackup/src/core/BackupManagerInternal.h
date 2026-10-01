@@ -18,6 +18,7 @@ class ScopedRuntimeArtifact {
 public:
 	explicit ScopedRuntimeArtifact(std::filesystem::path path);
 	~ScopedRuntimeArtifact();
+	void Release() { path_.clear(); }
 	ScopedRuntimeArtifact(const ScopedRuntimeArtifact&) = delete;
 	ScopedRuntimeArtifact& operator=(const ScopedRuntimeArtifact&) = delete;
 

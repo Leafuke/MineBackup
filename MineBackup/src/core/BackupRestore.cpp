@@ -79,7 +79,13 @@ void CleanupInternalRestoreMarkers(const filesystem::path& targetDirectory) {
 
 static bool ValidateRestoreArchives(const vector<filesystem::path>& archives, const Config& config) {
 	RESTORE_INFO(L("LOG_VERIFYING_BACKUPS"));
+	const auto runner=ArchiveRunner::Resolve(config.zipPath,GetAppPaths(),TaskCoordinator::CurrentStopToken());
 	for (const auto& backup : archives) {
+  string memberError;
+  if (!runner.ValidateMembers(backup,memberError,config.useLowPriority)) {
+   RESTORE_ERROR(L("RESTORE_ARCHIVE_PATHS_UNSUPPORTED"),memberError.c_str()); return false;
+  }
+
 		if (!RunInternalProcess(MakeInternalProcess(config.zipPath,
 			{L"t", backup.wstring(), L"-y"}, {}, config.useLowPriority))) {
 			RESTORE_ERROR(L("ERROR_BACKUP_CORRUPTED"), wstring_to_utf8(backup.filename().wstring()).c_str());

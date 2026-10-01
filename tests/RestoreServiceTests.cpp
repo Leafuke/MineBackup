@@ -43,6 +43,7 @@ ArchiveRunner FakeRunner(const shared_ptr<FakeArchiveState>& state, stop_token t
 				result.status = ProcessStatus::Cancelled;
 				return result;
 			}
+			if (!spec.arguments.empty() && spec.arguments.front() == L"l") { result.status=ProcessStatus::Succeeded; result.standardOutput="----------\nPath = level.dat\n\n"; return result; }
 			if (!spec.arguments.empty() && spec.arguments.front() == L"t") {
 				++state->tests;
 				result.status = ProcessStatus::Succeeded;
@@ -296,5 +297,27 @@ void RunRestoreServiceTests(
  entry.worldPath.clear(); test.Expect(WorldIdentity::TryResolveHistory(nested.config,entry,identity),"unique legacy history alias remains supported");
  nested.config.worlds.push_back({L"nested_world",L""});
  test.Expect(!WorldIdentity::TryResolveHistory(nested.config,entry,identity),"ambiguous history aliases are rejected");
+
+ {
+  ExternalToolResolution resolution; resolution.available=true; resolution.executable=L"fake";
+  ArchiveRunner largeListing(resolution,{},[](const ProcessSpec& spec,stop_token){
+   ProcessResult result; result.status=ProcessStatus::Succeeded;
+   const string member="Path = region/r.0.0.mca\nSize = 1024\n\n";
+   result.standardOutput="----------\n";
+   for(int i=0;i<160000;++i) result.standardOutput+=member;
+   if(result.standardOutput.size()>spec.maximumCapturedBytes) {
+    result.outputTruncated=true; result.standardOutput.resize(spec.maximumCapturedBytes);
+   }
+   return result;
+  });
+  string error;
+  test.Expect(largeListing.ValidateMembers("large.7z",error),
+   "valid large archive listings must not be rejected by the process log capture limit");
+ }
+ string pathError;
+ for(const string bad:{"C:\\world\\level.dat","//server/world/level.dat","/world/level.dat","../world/level.dat","folder/../../level.dat"})
+  test.Expect(!ArchiveRunner::ValidateMemberListing("----------\nPath = "+bad+"\n",pathError),"absolute and traversing archive members are rejected");
+ test.Expect(!ArchiveRunner::ValidateMemberListing("invalid",pathError),"unrecognized archive listings fail closed");
+ test.Expect(ArchiveRunner::ValidateMemberListing("----------\nPath = region/r.0.0.mca\n",pathError),"relative archive layouts remain supported");
 
 }

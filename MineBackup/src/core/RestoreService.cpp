@@ -306,6 +306,11 @@ RestorePlan RestoreService::BuildAndVerify(
 				wstring_to_utf8(archive.wstring())));
 			return plan;
 		}
+		string memberError;
+		if (!runner.ValidateMembers(archive, memberError, request.config.useLowPriority)) {
+			plan.code=OperationCode::VerificationFailed;
+			plan.diagnostics.push_back(Failure("restore.archive.paths_unsupported", memberError)); return plan;
+		}
 		++plan.checkedArchiveCount;
 	}
 	if (requireColdWorld && dependencies_.isWorldOccupied
