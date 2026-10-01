@@ -131,6 +131,29 @@ if(NOT job_code STREQUAL "success" OR NOT job_step_code STREQUAL "success")
     message(FATAL_ERROR "job run did not execute the explicit Process Step: ${job_json}")
 endif()
 
+# 7-Zip stores timestamps at archive precision, which can round nanoseconds
+# from POSIX filesystems. Commit that one observed timestamp change, then check
+# that repeated scans remain stable rather than discarding subsecond precision.
+run_cli(restored_checkpoint_json backup --config config-id --world world)
+string(JSON restored_checkpoint_code GET "${restored_checkpoint_json}" code)
+if(restored_checkpoint_code STREQUAL "success")
+    string(JSON restored_checkpoint_type GET "${restored_checkpoint_json}" data history backupType)
+    string(JSON restored_checkpoint_file GET "${restored_checkpoint_json}" data history backupFile)
+    file(READ "${PROFILE}/backups/_metadata/world/records/${restored_checkpoint_file}.json" checkpoint_record)
+    string(JSON checkpoint_added LENGTH "${checkpoint_record}" AddedFiles)
+    string(JSON checkpoint_deleted LENGTH "${checkpoint_record}" DeletedFiles)
+    string(JSON checkpoint_modified LENGTH "${checkpoint_record}" ModifiedFiles)
+    string(JSON checkpoint_modified_file GET "${checkpoint_record}" ModifiedFiles 0)
+    file(READ "${WORLD}/level.dat" unchanged_payload)
+    if(NOT restored_checkpoint_type STREQUAL "Smart" OR checkpoint_added OR checkpoint_deleted
+            OR NOT checkpoint_modified EQUAL 1 OR NOT checkpoint_modified_file STREQUAL "level.dat"
+            OR NOT unchanged_payload STREQUAL "${payload}")
+        message(FATAL_ERROR "post-restore checkpoint must only refresh the restored file timestamp: ${restored_checkpoint_json}")
+    endif()
+elseif(NOT restored_checkpoint_code STREQUAL "no_changes")
+    message(FATAL_ERROR "post-restore checkpoint failed: ${restored_checkpoint_json}")
+endif()
+
 run_cli(no_change_json backup --config config-id --world world)
 string(JSON no_change_code GET "${no_change_json}" code)
 if(NOT no_change_code STREQUAL "no_changes")
