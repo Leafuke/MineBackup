@@ -342,9 +342,9 @@ wstring GenerateArchiveFileName(const wstring& backupType, const wstring& folder
     wstring safeComment = SanitizeArchiveComment(comment);
     wstring extension = NormalizeArchiveExtension(format);
     wstring commentPart = safeComment.empty() ? L"" : L" [" + safeComment + L"]";
-    wstring fileName = L"[" + safeBackupType + L"][" + MakeLocalTimestampString() + L"]" + safeFolder + commentPart + L"." + extension;
+    wstring fileName = L"[" + safeBackupType + L"][" + MakeLocalTimestampString() + L"]" + safeFolder + commentPart + L"-" + GenerateGuidString() + L"." + extension;
     if (IsSafeSinglePathSegment(fileName)) return fileName;
-    return L"[Backup][" + MakeLocalTimestampString() + L"].7z";
+    return L"[Backup][" + MakeLocalTimestampString() + L"]-" + GenerateGuidString() + L".7z";
 }
 
 bool IsSmartBackupType(const wstring& typeOrFileName) {

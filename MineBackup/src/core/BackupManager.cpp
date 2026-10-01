@@ -555,8 +555,14 @@ BackupResult BackupService::RunCore(
 	const wstring storageFolderName = storagePaths.folderName;
 	PendingArchiveCommand command;
 	wstring archivePath;
+	filesystem::path finalArchivePath;
+	const auto stagingRoot = destinationFolder.parent_path() / (L"MineBackup_Create_" + FolderRewindFormat::GenerateGuidString());
+	ScopedRuntimeArtifact stagingCleanup(stagingRoot);
 	auto makeArchivePath = [&](const wstring& backupType) {
-		return (destinationFolder / FolderRewindFormat::GenerateArchiveFileName(backupType, storageFolderName, comment, config.zipFormat)).wstring();
+		do { finalArchivePath = destinationFolder / FolderRewindFormat::GenerateArchiveFileName(backupType, storageFolderName, comment, config.zipFormat); } while (filesystem::exists(finalArchivePath));
+		if (config.backupMode == 3) return finalArchivePath.wstring();
+		filesystem::create_directories(stagingRoot);
+		return (stagingRoot / finalArchivePath.filename()).wstring();
 	};
 
 	try {
@@ -913,6 +919,20 @@ execute_backup:
 					wstring_to_utf8(createdArchivePath.filename().wstring()));
 			}
 
+
+   if (config.backupMode != 3) {
+    if (archiveRunner.Execute({L"t", archivePath}, {}, config.useLowPriority).status != ProcessStatus::Succeeded)
+     return MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed, "backup.archive.verify_failed");
+    while (filesystem::exists(finalArchivePath)) {
+     finalArchivePath = destinationFolder / FolderRewindFormat::GenerateArchiveFileName(
+      backupTypeStr, storageFolderName, comment, config.zipFormat);
+    }
+    if (backupTypeStr != L"Smart") basedOnBackupFile = finalArchivePath.filename().wstring();
+    filesystem::rename(archivePath, finalArchivePath);
+    archivePath = finalArchivePath.wstring();
+   }
+   if (backupTypeStr == L"Smart" && previousLastBackupFile == filesystem::path(archivePath).filename().wstring())
+    return MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed, "backup.chain.self_reference");
 		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
 
         if (config.backupMode == 3) {

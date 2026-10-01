@@ -64,6 +64,7 @@ ArchiveRunner MakeFakeArchiveRunner(
 				result.status = ProcessStatus::Cancelled;
 				return result;
 			}
+			if (!spec.arguments.empty() && spec.arguments.front() == L"t") { result.status=ProcessStatus::Succeeded; return result; }
 			++*processCount;
 			if (inspect) inspect(spec);
 			if (createArchive) {
@@ -484,6 +485,47 @@ void RunBackupServiceTests(
   test.Expect(result.warning && (fault=="rollback" ? filesystem::exists(result.recoveryPath/"target_backup.7z") : ReadFixture(backup/smart.backupFile)=="original"),
    "failed merge preserves original archive or explicit recovery copy");
   test.Expect(ReadFixture(backup/full.backupFile)=="full", "failed merge preserves deleted checkpoint");
+ }
+
+ {
+  const auto r=temporaryRoot/"unique-archives"; WriteFixture(r/"saves"/"world"/"level.dat","baseline");
+  BackupRequest req; req.config.configId=L"unique"; req.config.saveRoot=(r/"saves").wstring(); req.config.backupPath=(r/"backups").wstring(); req.config.worlds={{L"world",L""}}; req.config.backupMode=2; req.config.maxSmartBackupsPerFull=0; req.config.skipIfUnchanged=false; req.world={L"unique",L"world"}; req.sourcePath=r/"saves"/"world";
+  BackupServiceDependencies deps; deps.paths.runtimeRoot=r/"runtime"; deps.addHistory=[](const HistoryEntry&){return true;};
+  deps.archiveRunnerFactory=[](const filesystem::path&,const AppPaths&,stop_token token){return MakeFakeArchiveRunner(make_shared<int>(0),token);};
+  BackupService service(deps); const auto full=service.Run(req);
+  WriteFixture(req.sourcePath/"level.dat","first-change"); const auto one=service.Run(req);
+  WriteFixture(req.sourcePath/"level.dat","second-longer-change"); const auto two=service.Run(req);
+  FolderRewindFormat::ChangeRecord record;
+  test.Expect(IsSuccessful(full.code) && IsSuccessful(one.code) && IsSuccessful(two.code) && one.archivePath!=two.archivePath
+   && filesystem::exists(one.archivePath) && FolderRewindMetadataStore::LoadRecord(r/"backups"/"_metadata"/"world",two.archivePath.filename().wstring(),record)
+   && record.previousBackupFileName==one.archivePath.filename().wstring(),"rapid Smart checkpoints have unique archives and committed noncyclic predecessors");
+  set<wstring> names; for(int i=0;i<32;++i) names.insert(FolderRewindFormat::GenerateArchiveFileName(L"Full",L"world",L"same",L"7z"));
+  test.Expect(names.size()==32,"same-second archive allocation includes unique identifiers");
+  filesystem::path collision;
+  deps.archiveRunnerFactory=[&](const filesystem::path&,const AppPaths&,stop_token token){
+   auto fake=MakeFakeArchiveRunner(make_shared<int>(0),token);
+   ExternalToolResolution resolution; resolution.available=true; resolution.executable=L"fake";
+   return ArchiveRunner(resolution,token,[&,fake](const ProcessSpec& spec,stop_token){
+    if(spec.arguments.front()==L"t" && collision.empty()) {
+     collision=r/"backups"/"world"/filesystem::path(spec.arguments.back()).filename();
+     WriteFixture(collision,"existing-archive");
+    }
+    return fake.Execute(spec.arguments,spec.workingDirectory,spec.useLowPriority);
+   });
+  };
+  req.config.backupMode=1;
+  const auto collided=BackupService(deps).Run(req);
+  test.Expect(IsSuccessful(collided.code) && collided.archivePath!=collision
+   && ReadFixture(collision)=="existing-archive"
+   && FolderRewindMetadataStore::LoadRecord(r/"backups"/"_metadata"/"world",collided.archivePath.filename().wstring(),record)
+   && record.basedOnFullBackup==collided.archivePath.filename().wstring(),
+   "a destination collision detected after compression reallocates without modifying the existing archive");
+  vector<HistoryEntry> tied;
+  for(int i=0;i<32;++i) {HistoryEntry e;e.configId=req.config.configId;e.worldName=L"world";e.backupFile=L"[Full]-"+to_wstring(32-i)+L".7z";e.timestamp_str=L"2024-01-01T00:00:00";tied.push_back(e);}
+  const auto manifest=FolderRewindHistoryStore::SerializeActiveHistoryManifest(req.config,tied);
+  test.Expect(manifest["Entries"][0]["FileName"]=="[Full]-32.7z"
+   && manifest["Entries"][31]["FileName"]=="[Full]-1.7z",
+   "same-second history serialization preserves committed order independently of GUID filenames");
  }
 
 	RunScanReuseContracts(test, temporaryRoot);

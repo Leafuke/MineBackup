@@ -325,7 +325,7 @@ vector<HistoryEntry> GetHistoryEntriesForWorld(
     for (const auto& entry : *GetHistoryEntriesViewForConfig(configIndex)) {
         if (entry.worldName == worldName) result.push_back(entry);
     }
-    sort(result.begin(), result.end(), [](const auto& lhs, const auto& rhs) {
+    stable_sort(result.begin(), result.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.timestamp_str < rhs.timestamp_str;
     });
     return result;

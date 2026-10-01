@@ -267,7 +267,7 @@ vector<HistoryEntry> WorldHistory(const Config& config, const vector<HistoryEntr
 			result.push_back(entry);
 		}
 	}
-	sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+	stable_sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
 		return left.timestamp_str < right.timestamp_str;
 	});
 	return result;
