@@ -568,6 +568,45 @@ void RunBackupServiceTests(
  }
 #endif
 
+	for (bool realLock : {false, true}) {
+#ifndef _WIN32
+		if (realLock) continue;
+#endif
+		const auto r = temporaryRoot / (realLock ? "record-rollback-lock" : "record-rollback-injection");
+		BackupRequest req; req.config.configId=L"record-rollback"; req.config.saveRoot=(r/"saves").wstring();
+		req.config.backupPath=(r/"backups").wstring(); req.config.worlds={{L"world",L""}};
+		req.config.backupMode=1; req.config.skipIfUnchanged=false; req.world={req.config.configId,L"world"}; req.sourcePath=r/"saves/world";
+		WriteFixture(req.sourcePath/"level.dat","original");
+		BackupServiceDependencies deps; deps.paths.runtimeRoot=r/"runtime"; bool failHistory=false; wstring failedName;
+#ifdef _WIN32
+		ScopedCleanupHandle recordLock;
+#endif
+		deps.archiveRunnerFactory=[](const filesystem::path&,const AppPaths&,stop_token token){return MakeFakeArchiveRunner(make_shared<int>(0),token);};
+		deps.addHistory=[&](const HistoryEntry& entry){
+			if (!failHistory) return true;
+			failedName=entry.backupFile;
+#ifdef _WIN32
+			if(realLock) test.Expect(recordLock.Open(r/"backups/_metadata/world/records"/(failedName+L".json")),"lock new metadata record before rollback");
+#endif
+			return false;
+		};
+		deps.deleteMetadataRecord=[&](const filesystem::path& metadata,const wstring& archive){
+			return realLock ? FolderRewindMetadataStore::DeleteRecord(metadata,archive) : false;
+		};
+		BackupService service(deps); const auto original=service.Run(req);
+		const auto originalState=ReadFixture(r/"backups/_metadata/world/state.json");
+		failHistory=true; WriteFixture(req.sourcePath/"level.dat","changed contents longer"); const auto failed=service.Run(req);
+		filesystem::path retained;
+		for(const auto& item:filesystem::directory_iterator(r/"backups")) if(item.path().filename().wstring().starts_with(L"MineBackup_Create_")) retained=item.path();
+		test.Expect(failed.code==OperationCode::BackupFailed && filesystem::exists(original.archivePath)
+			&& ReadFixture(r/"backups/_metadata/world/state.json")==originalState
+			&& filesystem::exists(failed.archivePath)
+			&& ReadFixture(retained/"metadata-recovery/state.json")==originalState
+			&& filesystem::exists(r/"backups/_metadata/world/records"/(failedName+L".json"))
+			&& any_of(failed.diagnostics.begin(),failed.diagnostics.end(),[&](const auto& d){return d.eventId=="backup.rollback.incomplete" && d.detail.find(wstring_to_utf8(retained.wstring()))!=string::npos;}),
+			"failed record rollback retains old archive, exact old state, new archive and reported recovery copy");
+	}
+
 	RunScanReuseContracts(test, temporaryRoot);
 	const filesystem::path root = temporaryRoot / "backup-service";
 	const filesystem::path world = root / "saves" / "world";

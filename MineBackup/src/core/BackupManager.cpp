@@ -358,6 +358,9 @@ using namespace BackupManagerInternal;
 
 BackupService::BackupService(BackupServiceDependencies dependencies)
 	: dependencies_(std::move(dependencies)) {
+	if (!dependencies_.deleteMetadataRecord) {
+		dependencies_.deleteMetadataRecord = FolderRewindMetadataStore::DeleteRecord;
+	}
 }
 
 namespace {
@@ -963,19 +966,31 @@ execute_backup:
 		historyEntry.comment = comment;
 		if (!dependencies_.addHistory || !dependencies_.addHistory(historyEntry)) {
 			error_code recoveryError;
-   if(stateExisted) {
-    const auto restored=AtomicFileWriter::ReplacePreparedFile(metadataRecovery/L"state.json",statePath);
-    if(!restored.WasReplaced()) recoveryError=make_error_code(errc::io_error);
-   } else filesystem::remove(statePath,recoveryError);
-   if(!recoveryError) FolderRewindMetadataStore::DeleteRecord(metadataFolder,completedBackupFile);
-   if(recoveryError) {
-    stagingCleanup.Release();
-    BACKUP_ERROR("History commit failed; metadata recovery retained at %s",wstring_to_utf8(metadataRecovery.wstring()).c_str());
-   } else filesystem::remove(filesystem::path(archivePath),recoveryError);
-			publish("backup.failed", {{"error", "history_commit_failed"}});
-			return MakeBackupFailure(
-				OperationCode::BackupFailed, BackupOutcome::Failed,
+			if (stateExisted) {
+				const auto preparedState = metadataRecovery / L"restore-state.json";
+				filesystem::copy_file(metadataRecovery / L"state.json", preparedState,
+					filesystem::copy_options::overwrite_existing, recoveryError);
+				if (!recoveryError && !AtomicFileWriter::ReplacePreparedFile(preparedState, statePath).WasReplaced()) {
+					recoveryError = make_error_code(errc::io_error);
+				}
+			} else {
+				filesystem::remove(statePath, recoveryError);
+			}
+			if (!recoveryError && !dependencies_.deleteMetadataRecord(metadataFolder, completedBackupFile)) {
+				recoveryError = make_error_code(errc::io_error);
+			}
+			if (!recoveryError) filesystem::remove(filesystem::path(archivePath), recoveryError);
+			BackupResult failure = MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed,
 				"backup.history.commit_failed", wstring_to_utf8(completedBackupFile));
+			if (recoveryError) {
+				stagingCleanup.Release();
+				failure.archivePath = archivePath;
+				const auto detail = wstring_to_utf8(metadataRecovery.wstring()) + "; archive: " + wstring_to_utf8(archivePath);
+				failure.diagnostics.push_back(MakeDiagnostic("backup.rollback.incomplete", DiagnosticSeverity::Error, detail));
+				BACKUP_ERROR("Backup rollback is incomplete; recovery materials retained: %s", detail.c_str());
+			}
+			publish("backup.failed", {{"error", "history_commit_failed"}});
+			return failure;
 		}
 		if (dependencies_.enforceRetention && !options.deferRetention) {
 			dependencies_.enforceRetention(request, historyEntry, stopToken);
