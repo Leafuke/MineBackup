@@ -18,6 +18,16 @@
 #include <ctime>
 #include <tuple>
 
+namespace BackupPolicy {
+inline constexpr int MinimumMode = 0;
+inline constexpr int MaximumMode = 3;
+inline constexpr int MinimumSmartCount = 0; // unlimited
+inline constexpr int MaximumSmartCount = 100000;
+constexpr bool IsValidMode(int value) { return value >= MinimumMode && value <= MaximumMode; }
+constexpr bool IsValidSmartCount(int value) { return value >= MinimumSmartCount && value <= MaximumSmartCount; }
+constexpr bool IsValid(int mode, int smartCount) { return IsValidMode(mode) && IsValidSmartCount(smartCount); }
+}
+
 // 结构体们
 struct Config {
 	std::wstring saveRoot;

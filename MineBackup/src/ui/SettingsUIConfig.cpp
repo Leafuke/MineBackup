@@ -518,10 +518,16 @@ void DrawBackupBehavior(Config& cfg) {
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("IS_SAFE_DELETE_TIP"));
 
 	SetStandardControlWidth();
-	ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5);
+	const int previousSmartCount = cfg.maxSmartBackupsPerFull;
+    if (ImGui::InputInt(L("MAX_SMART_BACKUPS"), &cfg.maxSmartBackupsPerFull, 1, 5)
+        && !BackupPolicy::IsValidSmartCount(cfg.maxSmartBackupsPerFull)) {
+        cfg.maxSmartBackupsPerFull = previousSmartCount;
+        ImGui::SetTooltip("%s", L("BACKUP_POLICY_INVALID"));
+    }
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
 
-	if (!isSafeDelete && cfg.keepCount <= cfg.maxSmartBackupsPerFull) {
+	if (!isSafeDelete && cfg.keepCount > 0 && cfg.maxSmartBackupsPerFull > 0
+        && cfg.keepCount <= cfg.maxSmartBackupsPerFull) {
 		cfg.keepCount = cfg.maxSmartBackupsPerFull + 1;
 	}
 }

@@ -206,6 +206,13 @@ ProfileConfigWriteResult ProfileConfigRepository::Save(
 	const vector<wstring>& restorePreserve,
 	bool pruneMissingConfigs) const {
 	ProfileConfigWriteResult result;
+    for (const auto& [index, config] : configs) {
+        if (!BackupPolicy::IsValid(config.backupMode, config.maxSmartBackupsPerFull)) {
+            result.diagnostics.push_back({"config.backup_policy.invalid", DiagnosticSeverity::Error, config.name});
+            return result;
+        }
+    }
+
 	vector<IniSection> sections;
 	error_code existsError;
 	if (filesystem::exists(configFile_, existsError) && !existsError) {

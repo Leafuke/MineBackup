@@ -488,13 +488,13 @@ void LoadConfigs(const filesystem::path& filename) {
 				else if (key == L"ZipLevel") readInt(cur->zipLevel, 0, 22, true);
 				else if (key == L"ZipMethod") cur->zipMethod = val;
 				else if (key == L"KeepCount") readInt(cur->keepCount, 0, 100000, true);
-				else if (key == L"SmartBackup") readInt(cur->backupMode, 0, 2, true);
+				else if (key == L"SmartBackup") readInt(cur->backupMode, BackupPolicy::MinimumMode, BackupPolicy::MaximumMode, true);
 				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
 				else if (key == L"SilenceMode") { /* ignored legacy setting */ }
 				else if (key == L"CpuThreads") readInt(cur->cpuThreads, 0, 1024, true);
 				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
 				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
-				else if (key == L"MaxSmartBackups") readInt(cur->maxSmartBackupsPerFull, 0, 100000, true);
+				else if (key == L"MaxSmartBackups") readInt(cur->maxSmartBackupsPerFull, BackupPolicy::MinimumSmartCount, BackupPolicy::MaximumSmartCount, true);
 				else if (key == L"BackupOnStart") cur->backupOnGameStart = (val != L"0");
 				else if (key == L"BlacklistItem") cur->blacklist.push_back(val);
 				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
@@ -857,6 +857,15 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 		(void)index;
 		config.configId = FolderRewindFormat::EnsureConfigId(config.configId);
 	}
+    for (const auto& [index, config] : configs) {
+        if (!BackupPolicy::IsValid(config.backupMode, config.maxSmartBackupsPerFull)) {
+            result.detail = utf8_to_wstring(L("BACKUP_POLICY_INVALID"));
+            MB_LOG_ERROR(minebackup::logging::LogCategory::Application, "config.backup_policy.invalid",
+                "Invalid backup policy for configuration {}", index);
+            return result;
+        }
+    }
+
 	wstring jobsWriteError;
 	if (!JobStorage::Save(JobsPathForConfig(target), jobs, jobsWriteError)) {
 		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,

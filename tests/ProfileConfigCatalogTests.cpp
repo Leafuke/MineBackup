@@ -170,5 +170,16 @@ void RunProfileConfigCatalogTests(
 		"Repository prune should retain Config sections present in the desired snapshot");
 	test.Expect(prunedText.find("[SpCfg8]") != string::npos,
 		"Repository prune should retain legacy non-Config sections");
+    ProfileConfigRepository policyRepository(root / "policy.ini");
+    for (int mode = 0; mode <= 3; ++mode) for (int count : {0, 1, 100000}) {
+        auto policy = identityConfig; policy.backupMode = mode; policy.maxSmartBackupsPerFull = count;
+        test.Expect(policyRepository.Save({{1, policy}}, {}, true).success, "CLI policy saves every legal mode and count");
+        const auto policyLoaded = policyRepository.Load();
+        test.Expect(policyLoaded.IsUsable() && policyLoaded.configs.begin()->second.backupMode == mode
+            && policyLoaded.configs.begin()->second.maxSmartBackupsPerFull == count, "CLI policy roundtrip preserves overwrite and unlimited Smart");
+    }
+    auto invalidPolicy = identityConfig; invalidPolicy.backupMode = 4;
+    test.Expect(!policyRepository.Save({{1, invalidPolicy}}, {}, true).success, "CLI writer rejects invalid backup policies");
+
 }
 
