@@ -6,6 +6,7 @@
 #include "PathRuleSet.h"
 
 #include <fstream>
+#include <chrono>
 
 using namespace std;
 
@@ -73,6 +74,24 @@ void TestChangeDetector(TestContext& test, const filesystem::path& root) {
 	const auto unchanged = detector.Scan(source, metadata, backups);
 	test.Expect(unchanged.status == BackupScanStatus::NoChange,
 		"identical file state should not create a smart backup");
+
+ const auto level=source/"level.dat";
+ const auto tick=chrono::floor<chrono::seconds>(filesystem::last_write_time(level));
+ filesystem::last_write_time(level,tick+chrono::milliseconds(200));
+ state.fileStates=detector.Scan(source,metadata,backups).currentState;
+ FolderRewindMetadataStore::SaveState(metadata,state);
+ WriteFile(level,"other"); filesystem::last_write_time(level,tick+chrono::milliseconds(400));
+ const auto subsecond=detector.Scan(source,metadata,backups);
+ test.Expect(subsecond.changes.modifiedFiles==vector<wstring>{L"level.dat"},"same-size subsecond changes are backed up");
+ state.fileStates=subsecond.currentState; FolderRewindMetadataStore::SaveState(metadata,state);
+ for(int i=0;i<10;++i) test.Expect(detector.Scan(source,metadata,backups).status==BackupScanStatus::NoChange,"precise unchanged timestamps remain stable across scans");
+ auto& legacyTime=state.fileStates[L"level.dat"].lastWriteTimeUtc;
+ test.Expect(legacyTime.size()==30 && legacyTime[19]==L'.',"file timestamp retains nine fractional UTC digits");
+ legacyTime=legacyTime.substr(0,19)+L"Z"; FolderRewindMetadataStore::SaveState(metadata,state);
+ const auto legacy=detector.Scan(source,metadata,backups);
+ test.Expect(legacy.status==BackupScanStatus::ChangesDetected,"legacy second precision conservatively refreshes file state");
+ state.fileStates=legacy.currentState; FolderRewindMetadataStore::SaveState(metadata,state);
+ test.Expect(detector.Scan(source,metadata,backups).status==BackupScanStatus::NoChange,"legacy refresh converges to unchanged state");
 
 	filesystem::remove(source / "region" / "r.0.0.mca");
 	WriteFile(source / "level.dat", "modified-content");
