@@ -41,7 +41,7 @@ struct AppState {
 	std::map<int, Config> configs;
 	JobDocument jobs;
 
-	std::map<std::pair<int, int>, AutoBackupTask> g_active_auto_backups; // Key: {configIdx, worldIdx}
+	std::map<std::pair<std::wstring, std::wstring>, AutoBackupTask> g_active_auto_backups; // Config ID + canonical source path
 
 	std::mutex configsMutex;			// 用于保护全局配置的互斥锁
 	std::mutex task_mutex;		// 专门用于保护 g_active_auto_backups

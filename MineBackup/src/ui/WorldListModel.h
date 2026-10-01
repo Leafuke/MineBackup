@@ -27,3 +27,5 @@ std::vector<DisplayWorld> BuildDisplayWorlds(
 	int selectedConfigIndex);
 
 bool IsNarrowWorldListLayout(float availableWidth, float em);
+
+std::pair<std::wstring, std::wstring> DisplayWorldTaskKey(const DisplayWorld& world);

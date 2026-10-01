@@ -1,3 +1,4 @@
+#include "GameSessionManager.h"
 #include "WorldListModel.h"
 
 using namespace std;
@@ -26,4 +27,11 @@ vector<DisplayWorld> BuildDisplayWorlds(
 
 bool IsNarrowWorldListLayout(float availableWidth, float em) {
 	return availableWidth < 38.0f * em;
+}
+
+std::pair<std::wstring, std::wstring> DisplayWorldTaskKey(const DisplayWorld& world) {
+    MyFolder folder;
+    folder.config = world.effectiveConfig;
+    folder.path = (std::filesystem::path(folder.config.saveRoot) / world.name).wstring();
+    return GameSessionWorldKey(folder);
 }

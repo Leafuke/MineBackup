@@ -188,7 +188,7 @@ if (refreshTimeCache || needsRebuild) {
 	lock_guard<mutex> taskLock(g_appState.task_mutex);
 	cachedTaskRunning.clear();
 	for (int i = 0; i < worldCount; ++i) {
-		auto key = make_pair(displayWorlds[i].baseConfigIndex, i);
+		auto key = DisplayWorldTaskKey(displayWorlds[i]);
 		cachedTaskRunning[key] = g_appState.g_active_auto_backups.count(key) > 0;
 	}
 }
@@ -377,7 +377,7 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 
 		ImGui::SameLine();
 		// --- 状态逻辑 (使用预计算缓存，避免每帧每项加锁和文件IO)
-		bool is_task_running = cachedTaskRunning[make_pair(displayWorlds[i].baseConfigIndex, i)];
+		bool is_task_running = cachedTaskRunning[DisplayWorldTaskKey(displayWorlds[i])];
 		bool needs_backup = false;
 		{
 			auto it = cachedNeedsBackup.find(worldFolder);
@@ -838,13 +838,13 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 		ImGui::SetNextWindowViewport(viewport->ID);
 		if (ImGui::BeginPopupModal(L("AUTOBACKUP_SETTINGS"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			bool is_task_running = false;
-			pair<int, int> taskKey = { -1,-1 };
+			SessionWorldKey taskKey;
 			vector<DisplayWorld> localDisplayWorlds = displayWorlds; // 供显示使用，避免每帧重建
 			{
 				lock_guard<mutex> lock(g_appState.task_mutex);
 				if (selectedWorldIndex >= 0) {
 					if (selectedWorldIndex < (int)localDisplayWorlds.size()) {
-						taskKey = { localDisplayWorlds[selectedWorldIndex].baseConfigIndex, localDisplayWorlds[selectedWorldIndex].baseWorldIndex };
+						taskKey = DisplayWorldTaskKey(localDisplayWorlds[selectedWorldIndex]);
 						is_task_running = (g_appState.g_active_auto_backups.count(taskKey) > 0);
 					}
 				}
@@ -887,24 +887,23 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 					if (last_interval < 1) last_interval = 1;
 					float autoBkpBtnWidth = CalcPairButtonWidth(L("BUTTON_START"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_START"), ImVec2(autoBkpBtnWidth, 0))) {
-						// 注册并启动线程
-						lock_guard<mutex> lock(g_appState.task_mutex);
-						if (taskKey.first >= 0) {
-							AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
-							task.taskName = TaskCoordinator::AutoBackupTaskName(taskKey.first, taskKey.second);
-                            const auto& displayed = localDisplayWorlds[selectedWorldIndex];
-                            const MyFolder initial{JoinPath(displayed.effectiveConfig.saveRoot, displayed.name).wstring(),
-                                displayed.name, displayed.desc, displayed.effectiveConfig, taskKey.first, taskKey.second};
+                        const auto& displayed = localDisplayWorlds[selectedWorldIndex];
+                        const MyFolder initial{JoinPath(displayed.effectiveConfig.saveRoot, displayed.name).wstring(),
+                            displayed.name, displayed.desc, displayed.effectiveConfig, displayed.baseConfigIndex, displayed.baseWorldIndex};
+                        FlushUiConfigDraft();
+                        lock_guard<mutex> lock(g_appState.task_mutex);
+                        if (!taskKey.first.empty() && !g_appState.g_active_auto_backups.contains(taskKey)) {
+                            AutoBackupTask task;
+                            task.taskName = TaskCoordinator::AutoBackupTaskName(initial.config.configId, initial.path);
                             task.configId = initial.config.configId;
                             task.sourcePath = initial.path;
-                            FlushUiConfigDraft();
-							const bool started = TaskCoordinator::Instance().Submit(task.taskName, {},
-								[taskName = task.taskName, initial, interval = last_interval](stop_token token) {
-									AutoBackupThreadFunction(initial.configIndex, initial.worldIndex, interval, token, &initial);
-									TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
-								});
-							if (!started) g_appState.g_active_auto_backups.erase(taskKey);
-
+                            g_appState.g_active_auto_backups.emplace(taskKey, task);
+                            const bool started = TaskCoordinator::Instance().Submit(task.taskName, {},
+                                [taskName = task.taskName, initial, interval = last_interval](stop_token token) {
+                                    AutoBackupThreadFunction(initial.configIndex, initial.worldIndex, interval, token, &initial);
+                                    TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
+                                });
+                            if (!started) g_appState.g_active_auto_backups.erase(taskKey);
 							ImGui::CloseCurrentPopup();
 						}
 					}

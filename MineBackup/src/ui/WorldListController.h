@@ -22,7 +22,7 @@ struct WorldListController {
 	std::map<std::wstring, std::wstring> cachedBackupTimes;
 	std::map<std::wstring, bool> cachedNeedsBackup;
 	std::chrono::steady_clock::time_point lastTimeCacheRefresh{};
-	std::map<std::pair<int, int>, bool> cachedTaskRunning;
+	std::map<std::pair<std::wstring, std::wstring>, bool> cachedTaskRunning;
 	WorldIconCache iconCache;
 
 	bool showAddConfigPopup = false;

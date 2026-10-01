@@ -3,6 +3,7 @@
 #include "CloudHistoryAnalysis.h"
 #include "CloudSyncInternal.h"
 #include "GameSessionManager.h"
+#include "TaskCoordinator.h"
 #include <barrier>
 #include "HistoryViewModel.h"
 #include "ConfigSelection.h"
@@ -10,6 +11,7 @@
 #include "SettingsAutoSave.h"
 #include "WorldListModel.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -85,6 +87,27 @@ namespace {
         const auto reordered = EnumerateOccupiedWorlds(configs, [](const auto&) { return true; });
         Expect(tracker.Poll(reordered).started.empty() && ResolveSessionWorld(configs, identity)->worldIndex == 1,
             "world reorder preserves session identity and resolves the new index");
+        const auto registered = GameSessionWorldKey(active[1]);
+        const auto display = BuildDisplayWorlds(configs, 2);
+        auto shown = find_if(display.begin(), display.end(), [](const auto& w){return w.name==L"world";});
+        const auto runningName = TaskCoordinator::AutoBackupTaskName(active[1].config.configId, active[1].path);
+        {
+            lock_guard lock(g_appState.task_mutex);
+            g_appState.g_active_auto_backups.clear();
+            g_appState.g_active_auto_backups.emplace(registered,AutoBackupTask{runningName,active[1].config.configId,active[1].path});
+            Expect(shown != display.end() && g_appState.g_active_auto_backups.contains(DisplayWorldTaskKey(*shown)),
+                "reordered world finds its original automatic-backup registry entry");
+            Expect(!g_appState.g_active_auto_backups.emplace(DisplayWorldTaskKey(*shown),AutoBackupTask{}).second,
+                "world reordering cannot register a duplicate timer");
+            const auto other = find_if(display.begin(),display.end(),[](const auto& w){return w.name==L"second";});
+            Expect(other != display.end() && !g_appState.g_active_auto_backups.contains(DisplayWorldTaskKey(*other)),
+                "another world does not inherit the reordered world's timer state");
+            auto timer=g_appState.g_active_auto_backups.find(DisplayWorldTaskKey(*shown));
+            Expect(timer->second.taskName==runningName,"stop lookup after reorder resolves the original task name");
+            g_appState.g_active_auto_backups.erase(timer);
+        }
+        Expect(TaskCoordinator::AutoBackupTaskName(active[1].config.configId, active[1].path)!=runningName,
+            "restarting a stable world timer still uses a distinct instance name for completion events");
         configs[2].worlds.pop_back();
         Expect(!ResolveSessionWorld(configs, identity), "removed world cannot redirect a queued backup to another world");
         configs.erase(2);
