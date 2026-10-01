@@ -127,18 +127,29 @@ namespace {
         Expect(!ModifyConfigById(L"first", [](Config& config) { config.name = "invalid"; }), "mutations reject deleted identity");
     }
 
-	void TestResponsiveLayouts() {
-		for (const float em : {16.0f, 20.0f, 32.0f}) {
-			Expect(!ComputeHistoryResponsiveLayout(38.0f * em - 0.1f, em).useSplitView,
-				"history layout should stay stacked below 38em at every DPI");
-			const auto wide = ComputeHistoryResponsiveLayout(38.0f * em, em);
-			Expect(wide.useSplitView && wide.listWidth > 0.0f && wide.detailsWidth > 0.0f,
-				"history layout should switch to split view exactly at 38em");
-			Expect(IsNarrowWorldListLayout(38.0f * em - 0.1f, em)
-				&& !IsNarrowWorldListLayout(38.0f * em, em),
-				"world list responsive threshold should use em instead of physical pixels");
-		}
-	}
+    void TestResponsiveLayouts() {
+        for (const float em : {16.0f, 20.0f, 32.0f, 23.25f}) {
+            Expect(!ComputeHistoryResponsiveLayout(38.0f * em, em).useSplitView,
+                "38em cannot fit the two history column minima and spacing");
+            for (const float gap : {0.0f, em * 0.5f, em * 1.75f}) {
+                const float threshold = 40.0f * em + gap;
+                Expect(!ComputeHistoryResponsiveLayout(threshold - 0.1f, em, gap).useSplitView,
+                    "history remains stacked below its actual column threshold");
+                for (float width : {threshold, threshold + 0.1f, threshold * 2.0f}) {
+                    const auto wide = ComputeHistoryResponsiveLayout(width, em, gap);
+                    Expect(wide.useSplitView && wide.listWidth >= 18.0f * em
+                        && wide.detailsWidth >= 22.0f * em - 0.01f
+                        && wide.listWidth + wide.detailsWidth <= width - gap + 0.01f,
+                        "split column constraints must be legal at every DPI and custom spacing");
+                }
+            }
+            const auto zero = ComputeHistoryResponsiveLayout(0.0f, em);
+            Expect(!zero.useSplitView && zero.listWidth == 0.0f && zero.detailsWidth == 0.0f,
+                "zero width produces a nonnegative stacked layout");
+            Expect(IsNarrowWorldListLayout(38.0f * em - 0.1f, em)
+                && !IsNarrowWorldListLayout(38.0f * em, em), "world list retains its independent responsive threshold");
+        }
+    }
 
 	void TestDesktopUiLifecycle() {
 		using namespace chrono;
