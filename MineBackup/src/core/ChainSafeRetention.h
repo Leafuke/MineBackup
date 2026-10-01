@@ -18,9 +18,12 @@ struct HistoryRename {
     std::wstring backupFile;
     std::wstring backupType;
 };
+bool SameAuxiliarySource(const Config& config, const HistoryEntry& left, const HistoryEntry& right);
+
 struct HistoryChanges {
     std::vector<HistoryEntry> deletions;
     std::vector<HistoryRename> renames;
+    bool auxiliarySource = false;
 };
 // Applies atomically to the latest entries. False means stale/missing identity,
 // a newly important deletion, or a colliding archive name; no entries changed.
@@ -28,6 +31,7 @@ bool ApplyHistoryChanges(const Config& config, std::vector<HistoryEntry>& latest
 
 struct Request {
 	Config config;
+	bool auxiliarySource = false;
 	HistoryEntry entry;
 	std::vector<HistoryEntry> history;
 	std::filesystem::path backupDirectory;

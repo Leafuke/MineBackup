@@ -23,6 +23,8 @@ struct BackupRequest {
 	std::wstring displayName;
 	std::wstring comment;
 	int legacyConfigIndex = -1;
+	// Explicitly opt in for independent Full backups of mods/arbitrary folders.
+	bool auxiliarySource = false;
 };
 
 struct BackupExecutionOptions {

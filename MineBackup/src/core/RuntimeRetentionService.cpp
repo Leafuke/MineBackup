@@ -50,7 +50,7 @@ void RuntimeRetentionService::Enforce(
 	const HistoryEntry& createdEntry,
 	stop_token stopToken) {
 	const Config& config = request.config;
-	const bool overwrite=config.backupMode==3;
+	const bool overwrite=!request.auxiliarySource && config.backupMode==3;
 	const int limit=overwrite ? 1 : config.keepCount;
 	if (limit <= 0 || stopToken.stop_requested()) return;
 	FolderRewindFormat::StoragePaths storage;
@@ -70,7 +70,11 @@ void RuntimeRetentionService::Enforce(
 		error_code error;
 		for (filesystem::directory_iterator iterator(storage.backupSubDir, error), end;
 			!error && iterator != end; iterator.increment(error)) {
-			if (iterator->is_regular_file() && (!overwrite || iterator->path().filename().wstring().starts_with(L"[Overwrite]"))) archives.push_back(*iterator);
+			if (request.auxiliarySource && none_of(currentHistory.begin(), currentHistory.end(), [&](const auto& entry) {
+                return entry.backupFile == iterator->path().filename().wstring()
+                    && ChainSafeRetention::SameAuxiliarySource(config, createdEntry, entry);
+            })) continue;
+            if (iterator->is_regular_file() && (!overwrite || iterator->path().filename().wstring().starts_with(L"[Overwrite]"))) archives.push_back(*iterator);
 		}
 		if (error || static_cast<int>(archives.size()) <= limit) return;
 		sort(archives.begin(), archives.end(), [](const auto& left, const auto& right) {
@@ -83,9 +87,12 @@ void RuntimeRetentionService::Enforce(
 			if (blocked.contains(fileName)) continue;
 			const auto found = find_if(currentHistory.begin(), currentHistory.end(),
 				[&](const HistoryEntry& entry) {
-					return WorldIdentity::Matches(config, storage.folderName, entry, fileName);
+					return request.auxiliarySource ? entry.backupFile == fileName
+                        && ChainSafeRetention::SameAuxiliarySource(config, createdEntry, entry)
+                        : WorldIdentity::Matches(config, storage.folderName, entry, fileName);
 				});
-			if (found == currentHistory.end() || found->isImportant) {
+			if (found == currentHistory.end() || found->isImportant
+                || (request.auxiliarySource && fileName == createdEntry.backupFile)) {
 				blocked.insert(fileName);
 				continue;
 			}
@@ -110,6 +117,7 @@ void RuntimeRetentionService::Enforce(
    }
 			ChainSafeRetention::Request retentionRequest;
 			retentionRequest.config = config;
+            retentionRequest.auxiliarySource = request.auxiliarySource;
 			retentionRequest.entry = *found;
 			retentionRequest.history = currentHistory;
 			retentionRequest.backupDirectory = storage.backupSubDir;

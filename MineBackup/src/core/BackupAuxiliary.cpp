@@ -1,5 +1,8 @@
 #include "BackupManager.h"
 #include "GameSessionManager.h"
+#include "HistoryManager.h"
+#include "MigrationCoordinator.h"
+#include "RuntimeRetentionService.h"
 #include "BackupManagerInternal.h"
 
 #include "AppPaths.h"
@@ -230,8 +233,6 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 	}
 
 	filesystem::path destinationFolder = storagePaths.backupSubDir;
-	wstring archiveFileName = FolderRewindFormat::GenerateArchiveFileName(L"Full", storagePaths.folderName, comment, config.zipFormat);
-	wstring archivePath = (destinationFolder / archiveFileName).wstring();
 
 	try {
 		filesystem::create_directories(destinationFolder);
@@ -244,58 +245,44 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 		return;
 	}
 
-	BackupScanResult scanResult = BackupChangeDetector{}.Scan(
-		othersPath,
-		storagePaths.metadataDir,
-		storagePaths.backupSubDir);
-	if (scanResult.status == BackupScanStatus::ScanFailed) {
-		BACKUP_ERROR("Failed to scan source directory for backup state.");
-		BACKUP_INFO(L("LOG_BACKUP_OTHERS_END"));
-		return;
-	}
-	auto currentState = std::move(scanResult.currentState);
-	auto changeSet = std::move(scanResult.changes);
-	changeSet.addedFiles.clear();
-	for (const auto& pair : currentState) {
-		changeSet.addedFiles.push_back(pair.first);
-	}
-	sort(changeSet.addedFiles.begin(), changeSet.addedFiles.end());
-	changeSet.modifiedFiles.clear();
-	changeSet.deletedFiles.clear();
-
-	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
-	auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
-	arguments.push_back(othersPath.wstring() + L"\\*");
-
-	if (RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), {}, config.useLowPriority))) {
-		const auto metadataUpdate = UpdateMetadataFiles(
-			storagePaths.metadataDir,
-			archiveFileName,
-			archiveFileName,
-			L"",
-			L"Full",
-			std::move(currentState),
-			changeSet);
-		if (!metadataUpdate.IsCommitted()) {
-			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(archiveFileName).c_str());
-			error_code cleanupError;
-			filesystem::remove(filesystem::path(archivePath), cleanupError);
-			BACKUP_INFO(L("LOG_BACKUP_OTHERS_END"));
-			return;
-		}
-		if (!metadataUpdate.IsDurable()) {
-			BACKUP_WARNING("FolderRewind metadata was committed but directory durability could not be confirmed: %s",
-				wstring_to_utf8(metadataUpdate.error).c_str());
-		}
-		const int configIndex = SelectedConfigIndex();
-		LimitBackupFiles(config, configIndex, destinationFolder.wstring(), config.keepCount);
-		AddHistoryEntry(configIndex, storagePaths.folderName, archiveFileName, L"Full", comment, othersPath.wstring());
-	}
+    BackupRequest request;
+    request.config = config;
+    request.world = {config.configId, backupName};
+    request.sourcePath = othersPath;
+    request.comment = comment;
+    request.auxiliarySource = true;
+    BackupServiceDependencies dependencies;
+    dependencies.paths = GetAppPaths();
+    dependencies.addHistory = [config](const HistoryEntry& entry) {
+        const auto configs = SnapshotConfigState().configs;
+        if (none_of(configs.begin(), configs.end(), [&](const auto& pair) {
+            return pair.second.configId == config.configId;
+        }) || MigrationCoordinator::IsHistoryPersistenceBlocked()) return false;
+        const auto result = GetHistoryRepository().Mutate(config.configId, GetAppPaths().HistoryFile(), configs, true,
+            [&](vector<HistoryEntry>& entries) {
+                if (any_of(entries.begin(), entries.end(), [&](const auto& old) {
+                    return old.worldName == entry.worldName && old.backupFile == entry.backupFile;
+                })) return false;
+                entries.push_back(entry); return true;
+            });
+        return result.changed && result.persisted;
+    };
+    dependencies.enforceRetention = [](const BackupRequest& req, const HistoryEntry& entry, stop_token token) {
+        RuntimeRetentionService retention(GetHistoryRepository(), GetAppPaths().HistoryFile(), SnapshotConfigState().configs, GetAppPaths());
+        retention.Enforce(req, entry, token);
+    };
+    const auto result = BackupService(std::move(dependencies)).Run(request, TaskCoordinator::CurrentStopToken());
+    for (const auto& diagnostic : result.diagnostics) {
+        if (diagnostic.severity == DiagnosticSeverity::Error)
+            BACKUP_ERROR("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+        else if (diagnostic.severity == DiagnosticSeverity::Warning)
+            BACKUP_WARNING("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
+    }
 
 	BACKUP_INFO(L("LOG_BACKUP_OTHERS_END"));
 }
 
-// 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
+// Resolve each timer tick using the captured stable configuration and source path.
 void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, stop_token stopToken, const MyFolder* initialTarget) {
 	minebackup::logging::ScopedLogContext taskContext{{
 		"config_index", std::to_string(configIdx)},

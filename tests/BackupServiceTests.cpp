@@ -1034,6 +1034,75 @@ void RunBackupServiceTests(
 		"Runtime retention should atomically remove the oldest ordinary archive and history entry");
 	RunDirectRemoveTransactionTests(test, temporaryRoot / "direct-remove-transactions");
 
+    for (const string scenario : {"mods", "arbitrary", "important", "history-failed"}) {
+        const auto root = temporaryRoot / ("aux-" + scenario);
+        Config cfg = retentionConfig; cfg.configId = L"auxiliary-" + root.filename().wstring();
+        cfg.backupPath = (root / "backups").wstring(); cfg.backupMode = 3;
+        cfg.skipIfUnchanged = true; // Auxiliary backups retain their existing always-Full behavior.
+        const auto source = root / "outside" / (scenario == "mods" ? "mods" : "custom folder");
+        WriteFixture(source / "payload.dat", "auxiliary payload");
+        BackupRequest req; req.config = cfg; req.world = {cfg.configId, source.filename().wstring()};
+        req.sourcePath = source; req.auxiliarySource = true;
+        map<int,Config> configs{{5,cfg},{1,config}}; // UI could select another configuration.
+        HistoryRepository history; AppPaths app; app.runtimeRoot = root / "runtime";
+        const auto historyFile = root / "history.json";
+        BackupServiceDependencies deps; deps.paths = app;
+        deps.archiveRunnerFactory = [](const auto&,const auto&,stop_token token) {
+            return MakeFakeArchiveRunner(make_shared<int>(0), token);
+        };
+        bool failHistory = false; int retentionCalls = 0;
+        deps.addHistory = [&](const HistoryEntry& entry) {
+            if (failHistory) return false;
+            const auto result = history.Mutate(cfg.configId, historyFile, configs, true,
+                [&](auto& entries){entries.push_back(entry);return true;});
+            return result.changed && result.persisted;
+        };
+        deps.enforceRetention = [&](const BackupRequest& request, const HistoryEntry& entry, stop_token token) {
+            ++retentionCalls;
+            RuntimeRetentionService(history, historyFile, configs, app).Enforce(request, entry, token);
+        };
+        BackupService service(deps);
+        const auto first = service.Run(req);
+        test.Expect(first.historyEntry && first.historyEntry->backupType == L"Full", "Auxiliary mode remains Full even with world Overwrite configured");
+        if (!first.historyEntry) continue;
+        const auto old = *first.historyEntry;
+        filesystem::last_write_time(first.archivePath, filesystem::file_time_type::clock::now() - chrono::hours(1));
+        if (scenario == "important") history.Mutate(cfg.configId, historyFile, configs, true,
+            [](auto& entries){entries.front().isImportant = true;return true;});
+        auto unrelated = old; unrelated.worldPath = (root / "another-source").wstring(); unrelated.backupFile = L"unrelated.7z";
+        history.Mutate(cfg.configId, historyFile, configs, true,
+            [&](auto& entries){entries.push_back(unrelated);return true;});
+        WriteFixture(first.archivePath.parent_path() / unrelated.backupFile, "other source");
+        failHistory = scenario == "history-failed";
+        FolderRewindFormat::StoragePaths auxiliaryStorage;
+        FolderRewindFormat::TryResolveStoragePaths(cfg.backupPath, old.worldName, old.worldPath, auxiliaryStorage);
+        const auto statePath = auxiliaryStorage.metadataDir / "state.json";
+        const auto oldState = ReadFixture(statePath);
+        const auto second = service.Run(req);
+        test.Expect(!history.EntriesForConfig(config.configId)->size(), "Auxiliary backup history belongs to its config ID rather than UI selection");
+        test.Expect(ReadFixture(first.archivePath.parent_path() / unrelated.backupFile) == "other source", "Auxiliary retention never deletes another recorded source");
+        if (failHistory) {
+            test.Expect(!IsSuccessful(second.code) && retentionCalls == 1 && filesystem::exists(first.archivePath)
+                && history.EntriesForConfig(cfg.configId)->size() == 2 && ReadFixture(statePath) == oldState,
+                "Auxiliary history commit failure restores state and never runs retention");
+        } else {
+            const bool important = scenario == "important";
+            test.Expect(second.historyEntry && second.archivePath != first.archivePath && filesystem::exists(second.archivePath)
+                && filesystem::exists(first.archivePath) == important
+                && history.EntriesForConfig(cfg.configId)->size() == (important ? 3 : 2),
+                ("Auxiliary keepCount removes only old independent Full backups and preserves important snapshots: " + scenario).c_str());
+        }
+        auto alias = old; alias.worldPath = (source / ".").wstring();
+        test.Expect(ChainSafeRetention::SameAuxiliarySource(cfg, old, alias), "Auxiliary source paths are canonicalized");
+        alias.worldPath.clear();
+        test.Expect(!ChainSafeRetention::SameAuxiliarySource(cfg, old, alias)
+            && !ChainSafeRetention::SameAuxiliarySource(cfg, old, unrelated), "Unknown and different auxiliary source identities remain protected");
+        ChainSafeRetention::HistoryChanges changes; changes.auxiliarySource = true; changes.deletions = {old};
+        vector<HistoryEntry> latest{old}; latest.front().isImportant = true;
+        test.Expect(!ChainSafeRetention::ApplyHistoryChanges(cfg, latest, changes), "Concurrent important flag conflicts also protect auxiliary backups");
+    }
+
+
     for (const string scenario : {"plain", "unrelated", "important", "referenced", "missing-record", "history-named"}) {
         const auto root = temporaryRoot / ("overwrite-retention-" + scenario);
         Config cfg = retentionConfig; cfg.backupPath = (root / "backups").wstring(); cfg.backupMode = 3;

@@ -92,10 +92,4 @@ void ClearReadonlyAttributesRecursively(const std::filesystem::path& directory);
 bool CreateDeletionOnlyArchive(
 	const Config& config,
 	const std::filesystem::path& archivePath);
-void LimitBackupFiles(
-	const Config& config,
-	const int& configIndex,
-	const std::wstring& folderPath,
-	int limit);
-
 } // namespace BackupManagerInternal

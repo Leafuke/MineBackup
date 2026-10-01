@@ -5,6 +5,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "WorldIdentity.h"
+#include "PathIdentity.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -19,6 +20,17 @@ using namespace std;
 using namespace BackupManagerInternal;
 
 namespace ChainSafeRetention {
+
+bool SameAuxiliarySource(const Config& config, const HistoryEntry& left, const HistoryEntry& right) {
+    if (left.configId != config.configId || right.configId != config.configId
+        || left.worldPath.empty() || right.worldPath.empty()
+        || !PathIdentity::PathsEqual(left.worldPath, right.worldPath)) return false;
+    FolderRewindFormat::StoragePaths a, b;
+    return FolderRewindFormat::TryResolveStoragePaths(config.backupPath, left.worldName, left.worldPath, a)
+        && FolderRewindFormat::TryResolveStoragePaths(config.backupPath, right.worldName, right.worldPath, b)
+        && PathIdentity::PathsEqual(a.backupSubDir, b.backupSubDir);
+}
+
 namespace {
 
 bool IsCancelled(const Request& request) {
@@ -253,17 +265,18 @@ bool RepairMetadata(
 	return true;
 }
 
-bool IsSame(const Config& config, const HistoryEntry& left, const HistoryEntry& right) {
-	return WorldIdentity::SameHistoryEntry(config, left, right);
+bool IsSame(const Config& config, const HistoryEntry& left, const HistoryEntry& right, bool auxiliary = false) {
+	return auxiliary ? left.backupFile == right.backupFile && SameAuxiliarySource(config, left, right)
+        : WorldIdentity::SameHistoryEntry(config, left, right);
 }
 
 vector<HistoryEntry> WorldHistory(const Config& config, const vector<HistoryEntry>& history,
-	const HistoryEntry& target) {
+	const HistoryEntry& target, bool auxiliary) {
 	vector<HistoryEntry> result;
 	for (const auto& entry : history) {
 		if (entry.configId == config.configId
 			&& entry.backupFile.size()
-			&& WorldIdentity::Matches(config, target.worldName, entry)) {
+			&& (auxiliary ? SameAuxiliarySource(config, target, entry) : WorldIdentity::Matches(config, target.worldName, entry))) {
 			result.push_back(entry);
 		}
 	}
@@ -319,7 +332,7 @@ Result DirectRemove(Request& request) {
 				request.metadataDirectory, request.entry.backupFile)) {
 			throw runtime_error("failed to remove retention metadata");
 		}
-		HistoryChanges changes; changes.deletions.push_back(request.entry);
+		HistoryChanges changes; changes.auxiliarySource = request.auxiliarySource; changes.deletions.push_back(request.entry);
 		if (!request.commitHistory(changes)) {
 			throw runtime_error("failed to persist retention history");
 		}
@@ -351,7 +364,7 @@ bool ApplyHistoryChanges(const Config& config, vector<HistoryEntry>& latest, con
         optional<size_t> found;
         for (size_t i = 0; i < latest.size(); ++i) {
             const auto& entry = latest[i];
-            if (!IsSame(config, entry, expected)) continue;
+            if (!IsSame(config, entry, expected, changes.auxiliarySource)) continue;
             if (found || entry.configId != expected.configId || entry.worldName != expected.worldName
                 || entry.worldPath != expected.worldPath) return nullopt;
             found = i;
@@ -375,7 +388,7 @@ bool ApplyHistoryChanges(const Config& config, vector<HistoryEntry>& latest, con
     }
     erase_if(next, [&](const HistoryEntry& entry) {
         return any_of(changes.deletions.begin(), changes.deletions.end(),
-            [&](const HistoryEntry& expected) { return IsSame(config, entry, expected); });
+            [&](const HistoryEntry& expected) { return IsSame(config, entry, expected, changes.auxiliarySource); });
     });
     latest = std::move(next);
     return true;
@@ -393,16 +406,24 @@ Result Remove(Request request) {
 		result.detail = "important archive is retained";
 		return result;
 	}
-	const auto chain = WorldHistory(request.config, request.history, request.entry);
+	const auto chain = WorldHistory(request.config, request.history, request.entry, request.auxiliarySource);
 	const auto target = find_if(chain.begin(), chain.end(), [&](const auto& entry) {
-		return IsSame(request.config, entry, request.entry);
+		return IsSame(request.config, entry, request.entry, request.auxiliarySource);
 	});
 	if (target == chain.end()) {
 		result.warning = true;
 		result.detail = "archive is not present in the configured history chain";
 		return result;
 	}
-	const auto targetIndex = static_cast<size_t>(distance(chain.begin(), target));
+	if (request.auxiliarySource) {
+        // Auxiliary backups are independent Full snapshots; never merge them into world chains.
+        if (!FolderRewindFormat::IsFullLikeBackupType(request.entry.backupType)
+            || FolderRewindFormat::IsSmartBackupType(request.entry.backupFile)) {
+            result.warning = true; result.detail = "auxiliary archive is not an independent Full snapshot"; return result;
+        }
+        return DirectRemove(request);
+    }
+    const auto targetIndex = static_cast<size_t>(distance(chain.begin(), target));
 	const HistoryEntry* next = targetIndex + 1 < chain.size() ? &chain[targetIndex + 1] : nullptr;
 	if (!next
 		|| FolderRewindFormat::IsFullLikeBackupType(next->backupType)

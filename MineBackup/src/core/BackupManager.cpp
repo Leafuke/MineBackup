@@ -445,7 +445,8 @@ BackupResult BackupService::RunCore(
 		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
 		{"config_id", wstring_to_utf8(request.config.configId)},
 		{"world", wstring_to_utf8(request.world.relativePath)}};
-	const Config& config = request.config;
+	Config config = request.config;
+	if (request.auxiliarySource) { config.backupMode = 1; config.skipIfUnchanged = false; }
 	const wstring worldName = request.world.relativePath;
 	const wstring displayName = request.displayName.empty() ? worldName : request.displayName;
 	const wstring comment = request.comment;
@@ -545,7 +546,8 @@ BackupResult BackupService::RunCore(
 
 	wstring originalSourcePath = request.sourcePath.wstring();
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
-	const vector<wstring> effectiveBlacklist = BuildEffectiveBackupBlacklist(config.blacklist);
+	const vector<wstring> effectiveBlacklist = request.auxiliarySource
+		? vector<wstring>{} : BuildEffectiveBackupBlacklist(config.blacklist);
 	FolderRewindFormat::StoragePaths storagePaths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, worldName, request.sourcePath.wstring(), storagePaths)) {
 		BACKUP_ERROR("Invalid FolderRewind storage folder name for world: %s", wstring_to_utf8(worldName).c_str());

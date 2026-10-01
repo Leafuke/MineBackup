@@ -58,28 +58,6 @@ void DoSafeDeleteBackupShared(
 	const HistoryEntry& entry,
 	int configIndex);
 
-void BackupManagerInternal::LimitBackupFiles(
-	const Config& config,
-	const int& configIndex,
-	const wstring& folderPath,
-	int limit) {
-    if (limit <= 0) return;
-    const auto history = GetHistoryEntriesForConfig(configIndex);
-    const auto folder = filesystem::path(folderPath).filename().wstring();
-    auto latest = history.end();
-    for (auto it = history.begin(); it != history.end(); ++it) {
-        if (!WorldIdentity::Matches(config, folder, *it)) continue;
-        if (latest == history.end() || it->timestamp_str > latest->timestamp_str) latest = it;
-    }
-    if (latest == history.end()) return; // Unknown archive identity is never deleted by retention.
-    BackupRequest request;
-    request.config = config; request.config.keepCount = limit;
-    request.legacyConfigIndex = configIndex;
-    RuntimeRetentionService retention(GetHistoryRepository(), GetAppPaths().HistoryFile(),
-        SnapshotConfigState().configs, GetAppPaths());
-    retention.Enforce(request, *latest, TaskCoordinator::CurrentStopToken());
-}
-
 void DeleteBackupWithMode(
 	const Config& config,
 	const HistoryEntry& entry,
