@@ -273,18 +273,6 @@ vector<HistoryEntry> WorldHistory(const Config& config, const vector<HistoryEntr
 	return result;
 }
 
-vector<HistoryEntry> RemoveHistoryEntry(
-	const Config& config,
-	const vector<HistoryEntry>& history,
-	const HistoryEntry& target) {
-	vector<HistoryEntry> updated;
-	updated.reserve(history.size());
-	for (const auto& entry : history) {
-		if (!IsSame(config, entry, target)) updated.push_back(entry);
-	}
-	return updated;
-}
-
 Result DirectRemove(Request& request) {
 	Result result;
 	if (!request.commitHistory) {
@@ -331,8 +319,8 @@ Result DirectRemove(Request& request) {
 				request.metadataDirectory, request.entry.backupFile)) {
 			throw runtime_error("failed to remove retention metadata");
 		}
-		const auto updated = RemoveHistoryEntry(request.config, request.history, request.entry);
-		if (!request.commitHistory(updated)) {
+		HistoryChanges changes; changes.deletions.push_back(request.entry);
+		if (!request.commitHistory(changes)) {
 			throw runtime_error("failed to persist retention history");
 		}
 		// history 已成功持久化，此处是事务提交点；提交后的清理不得重新进入回滚路径。
@@ -357,6 +345,41 @@ Result DirectRemove(Request& request) {
 }
 
 } // namespace
+
+bool ApplyHistoryChanges(const Config& config, vector<HistoryEntry>& latest, const HistoryChanges& changes) {
+    auto locate = [&](const HistoryEntry& expected) -> optional<size_t> {
+        optional<size_t> found;
+        for (size_t i = 0; i < latest.size(); ++i) {
+            const auto& entry = latest[i];
+            if (!IsSame(config, entry, expected)) continue;
+            if (found || entry.configId != expected.configId || entry.worldName != expected.worldName
+                || entry.worldPath != expected.worldPath) return nullopt;
+            found = i;
+        }
+        return found;
+    };
+    for (const auto& expected : changes.deletions) {
+        const auto index = locate(expected);
+        if (!index || latest[*index].isImportant) return false;
+    }
+    for (const auto& rename : changes.renames) {
+        if (!locate(rename.expected)) return false;
+        auto collision = rename.expected; collision.backupFile = rename.backupFile;
+        if (rename.backupFile != rename.expected.backupFile && locate(collision)) return false;
+    }
+    auto next = latest;
+    for (const auto& rename : changes.renames) {
+        auto& entry = next[*locate(rename.expected)];
+        entry.backupFile = rename.backupFile;
+        entry.backupType = rename.backupType;
+    }
+    erase_if(next, [&](const HistoryEntry& entry) {
+        return any_of(changes.deletions.begin(), changes.deletions.end(),
+            [&](const HistoryEntry& expected) { return IsSame(config, entry, expected); });
+    });
+    latest = std::move(next);
+    return true;
+}
 
 Result Remove(Request request) {
 	Result result;
@@ -537,15 +560,10 @@ Result Remove(Request request) {
 			throw runtime_error("failed to remove deleted chain archive");
 		}
 		deletedArchiveRemoved = true;
-		auto updated = RemoveHistoryEntry(request.config, request.history, request.entry);
-		for (auto& entry : updated) {
-			if (IsSame(request.config, entry, *next)) {
-				entry.backupFile = finalName;
-				entry.backupType = finalType;
-				break;
-			}
-		}
-		if (!request.commitHistory(std::move(updated))) {
+        HistoryChanges changes;
+        changes.deletions.push_back(request.entry);
+        changes.renames.push_back({*next, finalName, finalType});
+        if (!request.commitHistory(changes)) {
 			throw runtime_error("failed to persist history after chain merge");
 		}
 		filesystem::remove_all(tempRoot, error);

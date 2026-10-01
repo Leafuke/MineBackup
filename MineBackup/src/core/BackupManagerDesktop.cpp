@@ -106,30 +106,12 @@ BackupResult RunDesktopBackup(
 		RemoveHistoryEntry(configIndex, worldName, backupFile);
 		return true;
 	};
-	dependencies.enforceRetention = [configIndex](
-		const BackupRequest& value,
-		const HistoryEntry& entry,
-		stop_token) {
-
-  if(value.config.backupMode==3) {
-   map<int,Config> configs; {lock_guard<mutex> lock(g_appState.configsMutex); configs=g_appState.configs;}
-   RuntimeRetentionService retention(GetHistoryRepository(),GetAppPaths().HistoryFile(),configs,GetAppPaths());
-   retention.Enforce(value,entry,TaskCoordinator::CurrentStopToken()); return;
-  }
-		(void)entry;
-		FolderRewindFormat::StoragePaths storage;
-		if (!FolderRewindFormat::TryResolveStoragePaths(
-				value.config.backupPath,
-				value.world.relativePath,
-				value.sourcePath.wstring(),
-				storage)) return;
-		BackupManagerInternal::LimitBackupFiles(
-			value.config,
-			configIndex,
-			storage.backupSubDir.wstring(),
-			value.config.keepCount);
-	};
-	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([configIndex](
+	dependencies.enforceRetention = [](
+        const BackupRequest& request, const HistoryEntry& entry, stop_token token) {
+        RuntimeRetentionService retention(GetHistoryRepository(), GetAppPaths().HistoryFile(),
+            SnapshotConfigState().configs, GetAppPaths());
+        retention.Enforce(request, entry, token);
+    };	dependencies.cloudPost = make_shared<CallbackCloudPostHook>([configIndex](
 		const BackupRequest& value,
 		const HistoryEntry& entry,
 		stop_token) {

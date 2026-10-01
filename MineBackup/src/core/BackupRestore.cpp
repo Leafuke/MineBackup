@@ -408,23 +408,12 @@ bool RunSharedManagedRestore(
 		return RunDesktopBackup(
 			world, L"Automatic backup before restore", stopToken, options);
 	};
-	dependencies.enforceRetention = [configIndex](
-		const BackupRequest& value,
-		const HistoryEntry& entry,
-		stop_token) {
-		FolderRewindFormat::StoragePaths storage;
-		if (!FolderRewindFormat::TryResolveStoragePaths(
-				value.config.backupPath,
-				entry.worldName,
-				entry.worldPath,
-				storage)) return;
-		BackupManagerInternal::LimitBackupFiles(
-			value.config,
-			configIndex,
-			storage.backupSubDir.wstring(),
-			value.config.keepCount);
-	};
-
+	dependencies.enforceRetention = [](
+        const BackupRequest& request, const HistoryEntry& entry, stop_token token) {
+        RuntimeRetentionService retention(GetHistoryRepository(), GetAppPaths().HistoryFile(),
+            SnapshotConfigState().configs, GetAppPaths());
+        retention.Enforce(request, entry, token);
+    };
 	RESTORE_INFO(L("LOG_RESTORE_START_HEADER"));
 	RESTORE_INFO(L("LOG_RESTORE_PREPARE"), wstring_to_utf8(worldName).c_str());
 	RESTORE_INFO(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());

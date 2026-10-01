@@ -97,14 +97,13 @@ void RuntimeRetentionService::Enforce(
 			retentionRequest.paths = paths_;
 			retentionRequest.archiveRunner = &archiveRunner;
 			retentionRequest.stopToken = stopToken;
-			retentionRequest.commitHistory = [&](vector<HistoryEntry> updated) {
+			retentionRequest.commitHistory = [&](const ChainSafeRetention::HistoryChanges& changes) {
 				const auto mutation = history_.Mutate(
 					config.configId, historyFile_, configs_, true,
 					[&](vector<HistoryEntry>& entries) {
-						entries = updated;
-						return true;
+						return ChainSafeRetention::ApplyHistoryChanges(config, entries, changes);
 					});
-				if (mutation.changed && mutation.persisted) currentHistory = std::move(updated);
+				if (mutation.changed && mutation.persisted) currentHistory = *history_.EntriesForConfig(config.configId);
 				return mutation.changed && mutation.persisted;
 			};
 			const auto retention = ChainSafeRetention::Remove(std::move(retentionRequest));

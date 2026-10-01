@@ -369,10 +369,10 @@ void RunDirectRemoveTransactionTests(
 		request.backupDirectory = storage.backupSubDir;
 		request.metadataDirectory = storage.metadataDir;
 		request.paths = paths;
-		request.commitHistory = [&](vector<HistoryEntry> updated) {
+		request.commitHistory = [&](const ChainSafeRetention::HistoryChanges& changes) {
 			commitCalled = true;
 			if (!commitSucceeds) return false;
-			currentHistory = std::move(updated);
+			if (!ChainSafeRetention::ApplyHistoryChanges(config, currentHistory, changes)) return false;
 			if (!injectCleanupFailure) return true;
 
 			error_code scanError;
@@ -475,7 +475,7 @@ void RunBackupServiceTests(
    ProcessResult result; result.status=ProcessStatus::Succeeded; return result;
   });
   ChainSafeRetention::Request req; req.config=cfg; req.entry=full; req.history={full,smart}; req.backupDirectory=backup; req.metadataDirectory=meta; req.archiveRunner=&runner;
-  req.commitHistory=[&](vector<HistoryEntry>){return fault!="history" && fault!="rollback";};
+  req.commitHistory=[&](const ChainSafeRetention::HistoryChanges&){return fault!="history" && fault!="rollback";};
   int replacements=0;
   req.replacePrepared=[&](const filesystem::path& from,const filesystem::path& to){
    ++replacements; if(fault=="deploy" || (fault=="rollback" && replacements>1)) return AtomicFileWriter::WriteResult{};
