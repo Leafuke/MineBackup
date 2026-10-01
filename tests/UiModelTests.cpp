@@ -1,4 +1,6 @@
 #include "BackupManager.h"
+#include "AppState.h"
+#include <barrier>
 #include "HistoryViewModel.h"
 #include "ConfigSelection.h"
 #include "DesktopUiLifecycle.h"
@@ -42,6 +44,38 @@ namespace {
 		entry.isImportant = important;
 		return entry;
 	}
+
+    void TestConfigurationDrafts() {
+        Config first; first.configId = L"first"; first.worlds = {{L"old", L""}};
+        Config second; second.configId = L"second";
+        { lock_guard lock(g_appState.configsMutex); g_appState.configs = {{1, first}, {2, second}}; g_appState.currentConfigIndex = 1; }
+        barrier rendezvous(2);
+        {
+            UiConfigDraft draft;
+            UiConfigs().at(1).name = "edited";
+            UiConfigs().at(1).worlds = {{L"new", L"description"}};
+            jthread writer([&] {
+                rendezvous.arrive_and_wait();
+                ModifyConfigById(L"first", [](Config& config) { config.cloudLastExitCode = 17; config.cloudLastRunUtc = L"updated"; });
+                DeleteConfigById(L"second");
+                rendezvous.arrive_and_wait();
+            });
+            rendezvous.arrive_and_wait();
+            rendezvous.arrive_and_wait();
+            UiConfigs().at(2).name = "must not reappear";
+            draft.Flush();
+            const auto snapshot = SnapshotConfigState();
+            Expect(snapshot.configs.at(1).name == "edited" && snapshot.configs.at(1).cloudLastExitCode == 17
+                && snapshot.configs.at(1).worlds.front().first == L"new", "field patches preserve independent background updates");
+            Expect(!snapshot.configs.contains(2), "deleted configurations must never be resurrected by a stale frame");
+            ModifyConfigById(L"first", [](Config& config) { config.name = "later"; });
+        }
+        Expect(SnapshotConfigState().configs.at(1).name == "later", "an unchanged frame flush must not overwrite a later commit");
+        const auto stableSnapshot = SnapshotConfigState();
+        DeleteConfigById(L"first");
+        Expect(stableSnapshot.configs.at(1).worlds.front().first == L"new", "background snapshots own their world list across deletion");
+        Expect(!ModifyConfigById(L"first", [](Config& config) { config.name = "invalid"; }), "mutations reject deleted identity");
+    }
 
 	void TestResponsiveLayouts() {
 		for (const float em : {16.0f, 20.0f, 32.0f}) {
@@ -255,6 +289,7 @@ int main() {
 	Expect(content == "keep" && !filesystem::exists(root / "saves" / "nested/world"),
 		"legacy target rejection must leave worlds untouched before workspace preparation");
 	unchanged.close();
+	TestConfigurationDrafts();
 	TestResponsiveLayouts();
 	TestDesktopUiLifecycle();
 	TestSettingsExternalPersistenceAcknowledgement();

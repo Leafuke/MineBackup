@@ -1012,7 +1012,7 @@ namespace {
 		Config secondDevice = cfg;
 		if (!ctx.Require(cfg.configId == MigrationCoordinator::GenerateLegacyConfigId(secondDevice, 999),
 			"[Validation] Legacy ConfigId is deterministic across devices.", "[Validation] Legacy ConfigId is not deterministic.")) return false;
-		g_appState.configs[kValidationConfigIndex] = cfg;
+		{ lock_guard lock(g_appState.configsMutex); g_appState.configs[kValidationConfigIndex] = cfg; }
 
 		const filesystem::path archiveDir = filesystem::path(cfg.backupPath) / worldName;
 		const filesystem::path metadataDir = filesystem::path(cfg.backupPath) / L"_metadata" / worldName;

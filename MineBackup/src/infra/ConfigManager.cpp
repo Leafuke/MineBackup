@@ -226,17 +226,22 @@ vector<wstring> BuildEffectiveRestoreWhitelist(const vector<wstring>& userWhitel
 }
 
 int CreateNewNormalConfig(const string& name_hint) {
-	ConfigDraft draft;
-	draft.name = name_hint;
-	const auto resolved = ResolveUniqueConfigDrafts(
-		{draft}, GetEffectiveDefaultBackupRoot(), g_appState.configs);
-	if (!resolved.empty()) draft = resolved.front();
-
-	const int newId = AllocateNormalConfigIndex();
-	Config new_cfg = BuildRecommendedConfig(draft, {});
-	new_cfg.configId = FolderRewindFormat::GenerateGuidString();
-	g_appState.configs[newId] = new_cfg;
-	return newId;
+    FlushUiConfigDraft();
+    ConfigDraft draft;
+    draft.name = name_hint;
+    const auto snapshot = SnapshotConfigState();
+    const auto resolved = ResolveUniqueConfigDrafts({draft}, GetEffectiveDefaultBackupRoot(), snapshot.configs);
+    if (!resolved.empty()) draft = resolved.front();
+    Config config = BuildRecommendedConfig(draft, {});
+    config.configId = FolderRewindFormat::GenerateGuidString();
+    int index;
+    {
+        lock_guard lock(g_appState.configsMutex);
+        index = AllocateNormalConfigIndex();
+        g_appState.configs.emplace(index, config);
+    }
+    ObserveUiConfigInserted(index, config);
+    return index;
 }
 
 NormalConfigIndexAllocatorState SnapshotNormalConfigIndexAllocator() {
@@ -258,12 +263,14 @@ int AllocateNormalConfigIndex() {
 }
 
 void AssignFreshNormalConfigId(int configIndex) {
-	auto it = g_appState.configs.find(configIndex);
-	if (it == g_appState.configs.end()) return;
-	it->second.configId = FolderRewindFormat::GenerateGuidString();
+    lock_guard lock(g_appState.configsMutex);
+    auto it = g_appState.configs.find(configIndex);
+    if (it == g_appState.configs.end()) return;
+    it->second.configId = FolderRewindFormat::GenerateGuidString();
 }
 
 void EnsureConfigIds() {
+    lock_guard lock(g_appState.configsMutex);
 	for (auto& kv : g_appState.configs) {
 		kv.second.configId = FolderRewindFormat::EnsureConfigId(kv.second.configId);
 	}
@@ -274,11 +281,21 @@ void LoadConfigs() {
 }
 
 void LoadConfigs(const filesystem::path& filename) {
-	lock_guard<mutex> lock(g_appState.configsMutex);
+	map<int, Config> loadedConfigs;
+    JobDocument loadedJobs;
+    int loadedSelected = SelectedConfigIndex();
+    int loadedNext = 2;
+    auto publish = [&] {
+        lock_guard lock(g_appState.configsMutex);
+        g_appState.configs = std::move(loadedConfigs);
+        g_appState.jobs = std::move(loadedJobs);
+        g_appState.currentConfigIndex = loadedSelected;
+        nextConfigId = loadedNext;
+    };
 	g_configLoadDiagnostics.clear();
-	nextConfigId = 2;
-	g_appState.configs.clear();
-	g_appState.jobs = JobDocument{};
+	loadedNext = 2;
+	loadedConfigs.clear();
+	loadedJobs = JobDocument{};
 	g_theme = static_cast<int>(ThemeId::NordLight);
 	g_lastValidTheme = static_cast<int>(ThemeId::NordLight);
 	Fontss.clear();
@@ -301,6 +318,7 @@ void LoadConfigs(const filesystem::path& filename) {
 		EnsureDefaultRestoreWhitelist();
 		Fontss = GetDefaultFontPath();
 		minebackup::logging::SetFileLevel(g_logFileLevel);
+        publish();
 		return;
 	}
 	optional<int> configuredGlobalTheme;
@@ -313,7 +331,7 @@ void LoadConfigs(const filesystem::path& filename) {
 	bool configuredUiScaleFound = false;
 	string line1;
 	wstring line, section;
-	// cur作为一个指针，指向 g_appState.configs 这个全局 map<int, Config> 中的元素 Config
+	// cur作为一个指针，指向 loadedConfigs 这个全局 map<int, Config> 中的元素 Config
 	Config* cur = nullptr;
 	size_t lineNumber = 0;
 
@@ -341,8 +359,8 @@ void LoadConfigs(const filesystem::path& filename) {
 					section.clear();
 					continue;
 				}
-				g_appState.configs[idx] = Config();
-				cur = &g_appState.configs[idx];
+				loadedConfigs[idx] = Config();
+				cur = &loadedConfigs[idx];
 			}
 		}
 		else {
@@ -505,13 +523,13 @@ void LoadConfigs(const filesystem::path& filename) {
 			}
 			else if (section == L"General") { // Inside [General] section
 				if (key == L"CurrentConfig") {
-					readInt(g_appState.currentConfigIndex, 1, (numeric_limits<int>::max)(), false);
+					readInt(loadedSelected, 1, (numeric_limits<int>::max)(), false);
 				}
 				else if (key == L"NextConfigId") {
-					readInt(nextConfigId, 2, (numeric_limits<int>::max)(), false);
+					readInt(loadedNext, 2, (numeric_limits<int>::max)(), false);
 					int maxId = 0;
-					for (auto& kv : g_appState.configs) if (kv.first > maxId) maxId = kv.first;
-					if (nextConfigId <= maxId) nextConfigId = maxId + 1;
+					for (auto& kv : loadedConfigs) if (kv.first > maxId) maxId = kv.first;
+					if (loadedNext <= maxId) loadedNext = maxId + 1;
 				}
 				else if (key == L"Language") {
 					if (val.size() >= 3 && val[2] == L'-')
@@ -668,14 +686,14 @@ void LoadConfigs(const filesystem::path& filename) {
 	minebackup::logging::SetFileLevel(g_logFileLevel);
 	if (!configuredRestoreWhitelist) EnsureDefaultRestoreWhitelist();
 	set<wstring> usedConfigIds;
-	if (!g_appState.configs.empty()) {
-		const int maximumIndex = g_appState.configs.rbegin()->first;
-		if (nextConfigId <= maximumIndex) {
-			nextConfigId = maximumIndex == (numeric_limits<int>::max)()
+	if (!loadedConfigs.empty()) {
+		const int maximumIndex = loadedConfigs.rbegin()->first;
+		if (loadedNext <= maximumIndex) {
+			loadedNext = maximumIndex == (numeric_limits<int>::max)()
 				? maximumIndex : maximumIndex + 1;
 		}
 	}
-	for (auto& kv : g_appState.configs) {
+	for (auto& kv : loadedConfigs) {
 		Config& cfg = kv.second;
 		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
 		if (cfg.cloudSyncMode < static_cast<int>(CloudSyncMode::HistoryOnly)
@@ -712,7 +730,7 @@ void LoadConfigs(const filesystem::path& filename) {
 
 	const auto jobs = JobStorage::Load(JobsPathForConfig(filename));
 	if (jobs.status == JobStorage::LoadStatus::Loaded) {
-		g_appState.jobs = jobs.document;
+		loadedJobs = jobs.document;
 	}
 	else if (jobs.status != JobStorage::LoadStatus::Missing) {
 		for (const auto& diagnostic : jobs.diagnostics) {
@@ -729,8 +747,8 @@ void LoadConfigs(const filesystem::path& filename) {
 		g_theme = *configuredGlobalTheme;
 	}
 	else {
-		auto normal = g_appState.configs.find(g_appState.currentConfigIndex);
-		if (normal != g_appState.configs.end() && IsValidThemeId(normal->second.theme)) {
+		auto normal = loadedConfigs.find(loadedSelected);
+		if (normal != loadedConfigs.end() && IsValidThemeId(normal->second.theme)) {
 			g_theme = normal->second.theme;
 		}
 	}
@@ -764,12 +782,12 @@ void LoadConfigs(const filesystem::path& filename) {
 		Fontss = *configuredGlobalFont;
 	}
 	else {
-		auto normal = g_appState.configs.find(g_appState.currentConfigIndex);
-		if (normal != g_appState.configs.end() && validFontPath(normal->second.fontPath)) {
+		auto normal = loadedConfigs.find(loadedSelected);
+		if (normal != loadedConfigs.end() && validFontPath(normal->second.fontPath)) {
 			Fontss = normal->second.fontPath;
 		}
 		if (Fontss.empty()) {
-			for (const auto& [index, config] : g_appState.configs) {
+			for (const auto& [index, config] : loadedConfigs) {
 				(void)index;
 				if (validFontPath(config.fontPath)) {
 					Fontss = config.fontPath;
@@ -789,6 +807,7 @@ void LoadConfigs(const filesystem::path& filename) {
 	g_uiScaleV2 = configuredUiScaleV2 || !configuredUiScaleFound;
 	g_uiScaleMigrationPending = configuredUiScaleFound && !configuredUiScaleV2;
 	g_uiScale = (std::clamp)(g_uiScale, 0.75f, 2.5f);
+    publish();
 }
 
 void FinalizeUiScaleMigration(float primaryDpiScale) {
@@ -816,15 +835,30 @@ ConfigSaveResult SaveConfigsDetailed() {
 ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 	// 内部全程使用 error_code 明确状态的实现，不在 replacement 之后抛出
 	// 无法分类的异常；文件系统错误都转换为对应的 ConfigSaveState。
-	lock_guard<mutex> lock(g_appState.configsMutex);
+	FlushUiConfigDraft();
+    static mutex persistenceMutex;
+    lock_guard persistenceLock(persistenceMutex);
+    map<int, Config> configs;
+    int selectedIndex;
+    int nextIndex;
+    JobDocument jobs;
+    {
+        lock_guard lock(g_appState.configsMutex);
+        for (auto& [index, config] : g_appState.configs)
+            config.configId = FolderRewindFormat::EnsureConfigId(config.configId);
+        configs = g_appState.configs;
+        selectedIndex = g_appState.currentConfigIndex;
+        nextIndex = nextConfigId;
+        jobs = g_appState.jobs;
+    }
 	ConfigSaveResult result;
 	const filesystem::path target(filename);
-	for (auto& [index, config] : g_appState.configs) {
+	for (auto& [index, config] : configs) {
 		(void)index;
 		config.configId = FolderRewindFormat::EnsureConfigId(config.configId);
 	}
 	wstring jobsWriteError;
-	if (!JobStorage::Save(JobsPathForConfig(target), g_appState.jobs, jobsWriteError)) {
+	if (!JobStorage::Save(JobsPathForConfig(target), jobs, jobsWriteError)) {
 		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
 			"jobs.write_failed", "{}", wstring_to_utf8(jobsWriteError));
 		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
@@ -833,8 +867,8 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 	}
 	std::wostringstream buffer;
 	buffer << L"[General]\n";
-	buffer << L"CurrentConfig=" << g_appState.currentConfigIndex << L"\n";
-	buffer << L"NextConfigId=" << nextConfigId << L"\n";
+	buffer << L"CurrentConfig=" << selectedIndex << L"\n";
+	buffer << L"NextConfigId=" << nextIndex << L"\n";
 	buffer << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
 	buffer << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
 	buffer << L"ReceiveNotices=" << (g_ReceiveNotices ? 1 : 0) << L"\n";
@@ -876,7 +910,7 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 	}
 	buffer << L"\n";
 
-	for (auto& kv : g_appState.configs) {
+	for (auto& kv : configs) {
 		int idx = kv.first;
 		Config& c = kv.second;
 		buffer << L"[Config" << idx << L"]\n";
@@ -955,10 +989,10 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 // 例如：
 
 void CheckForConfigConflicts() {
-	lock_guard<mutex> lock(g_appState.configsMutex);
+	const auto configs = SnapshotConfigState().configs;
 	map<wstring, vector<pair<int, wstring>>> worldMap; // Key: World Name, Value: {ConfigIndex, BackupPath}
 
-	for (const auto& conf_pair : g_appState.configs) {
+	for (const auto& conf_pair : configs) {
 		int config_idx = conf_pair.first;
 		const Config& cfg = conf_pair.second;
 		for (const auto& world_pair : cfg.worlds) {

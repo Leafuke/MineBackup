@@ -286,8 +286,9 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 			BACKUP_WARNING("FolderRewind metadata was committed but directory durability could not be confirmed: %s",
 				wstring_to_utf8(metadataUpdate.error).c_str());
 		}
-		LimitBackupFiles(config, g_appState.currentConfigIndex, destinationFolder.wstring(), config.keepCount);
-		AddHistoryEntry(g_appState.currentConfigIndex, storagePaths.folderName, archiveFileName, L"Full", comment, othersPath.wstring());
+		const int configIndex = SelectedConfigIndex();
+		LimitBackupFiles(config, configIndex, destinationFolder.wstring(), config.keepCount);
+		AddHistoryEntry(configIndex, storagePaths.folderName, archiveFileName, L"Full", comment, othersPath.wstring());
 	}
 
 	BACKUP_INFO(L("LOG_BACKUP_OTHERS_END"));

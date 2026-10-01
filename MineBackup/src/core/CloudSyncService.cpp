@@ -276,8 +276,9 @@ namespace CloudSyncInternal {
 
 	CloudActiveHistoryManifest BuildActiveManifest(int configIndex) {
 		CloudActiveHistoryManifest manifest;
-		auto cfgIt = g_appState.configs.find(configIndex);
-		if (cfgIt == g_appState.configs.end()) return manifest;
+		const auto configs = SnapshotConfigState().configs;
+		auto cfgIt = configs.find(configIndex);
+		if (cfgIt == configs.end()) return manifest;
 
 		manifest.configId = cfgIt->second.configId;
 		manifest.configName = utf8_to_wstring(cfgIt->second.name);
@@ -697,7 +698,7 @@ namespace CloudSyncInternal {
 						nlohmann::json converted = nlohmann::json::array();
 						for (const auto& entry : entries) {
 							const Config* owner = nullptr;
-							for (const auto& [candidateIndex, candidate] : g_appState.configs)
+							for (const auto& [candidateIndex, candidate] : SnapshotConfigState().configs)
 								if (_wcsicmp(candidate.configId.c_str(), entry.configId.c_str()) == 0) { owner = &candidate; break; }
 							if (!owner) { outResult.success = false; break; }
 							converted.push_back(FolderRewindHistoryStore::SerializeHistoryItem(*owner, entry));

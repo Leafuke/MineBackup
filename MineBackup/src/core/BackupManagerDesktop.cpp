@@ -75,7 +75,7 @@ BackupResult RunDesktopBackup(
 	BackupExecutionOptions options) {
 	const int configIndex = ResolveDesktopConfigIndex(
 		folder.configIndex,
-		g_appState.currentConfigIndex);
+		SelectedConfigIndex());
 	BackupRequest request;
 	request.config = folder.config;
 	request.world = {folder.config.configId, folder.name};

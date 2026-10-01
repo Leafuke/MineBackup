@@ -258,7 +258,7 @@ void DrawSelectedContent(Config& normalConfig) {
 }
 
 bool CanSaveSettings() {
-	for (const auto& [index, config] : g_appState.configs) {
+	for (const auto& [index, config] : UiConfigs()) {
 		(void)index;
 		if (!IsWEIntegrationPathValidForSave(config)) return false;
 	}
@@ -281,13 +281,13 @@ void ResetSettingsWindowRuntimeState() {
 }
 
 void ShowSettingsWindowV2() {
-	if (g_appState.configs.empty()) {
+	if (UiConfigs().empty()) {
 		const int index = CreateNewNormalConfig();
-		g_appState.currentConfigIndex = index;
+		UiSelectedConfigIndex() = index;
 		specialSetting = false;
 	}
-	if (!specialSetting && !g_appState.configs.contains(g_appState.currentConfigIndex)) {
-		g_appState.currentConfigIndex = g_appState.configs.begin()->first;
+	if (!specialSetting && !UiConfigs().contains(UiSelectedConfigIndex())) {
+		UiSelectedConfigIndex() = UiConfigs().begin()->first;
 	}
 	specialSetting = false;
 
@@ -339,7 +339,7 @@ void ShowSettingsWindowV2() {
 
 	ImGui::BeginChild("##SettingsContent", ImVec2(0.0f, 0.0f),
 		ImGuiChildFlags_None, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-	Config* normalConfig = &g_appState.configs.at(g_appState.currentConfigIndex);
+	Config* normalConfig = &UiConfigs().at(UiSelectedConfigIndex());
 	DrawSelectedContent(*normalConfig);
 	ImGui::EndChild();
 

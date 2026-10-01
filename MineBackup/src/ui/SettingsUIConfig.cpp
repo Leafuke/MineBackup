@@ -32,8 +32,8 @@ bool IsWEIntegrationPathValidForSave(const Config& cfg) {
 void DrawConfigManagementPanel() {
 	string currentLabel = L("NO_CONFIG");
 	specialSetting = false;
-	if (const auto it = g_appState.configs.find(g_appState.currentConfigIndex);
-		it != g_appState.configs.end()) {
+	if (const auto it = UiConfigs().find(UiSelectedConfigIndex());
+		it != UiConfigs().end()) {
 		currentLabel = "[No." + to_string(it->first) + "] " + it->second.name;
 	}
 
@@ -42,11 +42,11 @@ void DrawConfigManagementPanel() {
 	ImGui::SetNextItemWidth((std::max)(metrics.Em(12.0f),
 		ImGui::GetContentRegionAvail().x - actionWidth - metrics.spacingX));
 	if (ImGui::BeginCombo("##CurrentConfig", currentLabel.c_str())) {
-		for (const auto& [index, config] : g_appState.configs) {
-			const bool selected = g_appState.currentConfigIndex == index;
+		for (const auto& [index, config] : UiConfigs()) {
+			const bool selected = UiSelectedConfigIndex() == index;
 			const string label = "[No." + to_string(index) + "] " + config.name;
 			if (ImGui::Selectable(label.c_str(), selected)) {
-				g_appState.currentConfigIndex = index;
+				UiSelectedConfigIndex() = index;
 			}
 			if (selected) ImGui::SetItemDefaultFocus();
 		}
@@ -62,11 +62,11 @@ void DrawConfigManagementPanel() {
 	}
 	if (ImGui::BeginPopup("##ConfigActions")) {
 		if (ImGui::MenuItem(L("CONFIG_NEW_NORMAL"))) pendingCreate = true;
-		const bool canCopy = g_appState.configs.contains(g_appState.currentConfigIndex);
+		const bool canCopy = UiConfigs().contains(UiSelectedConfigIndex());
 		ImGui::BeginDisabled(!canCopy);
 		if (ImGui::MenuItem(L("CONFIG_COPY_CURRENT"))) {
-			const int sourceIndex = g_appState.currentConfigIndex;
-			const Config source = g_appState.configs.at(sourceIndex);
+			const int sourceIndex = UiSelectedConfigIndex();
+			const Config source = UiConfigs().at(sourceIndex);
 			Config copied = source;
 			ConfigDraft identityDraft;
 			identityDraft.name = source.name + " - Copy";
@@ -74,23 +74,23 @@ void DrawConfigManagementPanel() {
 			// 即使默认根目录解析失败，也不能继续引用 source.backupPath。
 			copied.backupPath.clear();
 			const auto resolved = ResolveUniqueConfigDrafts(
-				{identityDraft}, GetEffectiveDefaultBackupRoot(), g_appState.configs);
+				{identityDraft}, GetEffectiveDefaultBackupRoot(), UiConfigs());
 			if (!resolved.empty()) {
 				copied.name = resolved.front().name;
 				copied.backupPath = resolved.front().backupPath.wstring();
 			}
 
-			const int newIndex = AllocateNormalConfigIndex();
-			copied.configId = FolderRewindFormat::GenerateGuidString();
-			g_appState.configs[newIndex] = std::move(copied);
-			g_appState.currentConfigIndex = newIndex;
+			const int newIndex = CreateNewNormalConfig(copied.name);
+			copied.configId = UiConfigs().at(newIndex).configId;
+			UiConfigs()[newIndex] = std::move(copied);
+			UiSelectedConfigIndex() = newIndex;
 			specialSetting = false;
 			ImGui::MarkItemEdited(ImGui::GetItemID());
 		}
 		ImGui::EndDisabled();
 		ImGui::Separator();
-		const bool canDelete = g_appState.configs.size() > 1
-			&& g_appState.configs.contains(g_appState.currentConfigIndex);
+		const bool canDelete = UiConfigs().size() > 1
+			&& UiConfigs().contains(UiSelectedConfigIndex());
 		ImGui::BeginDisabled(!canDelete);
 		if (ImGui::MenuItem(L("CONFIG_DELETE_CURRENT"))) requestDelete = true;
 		ImGui::EndDisabled();
@@ -108,7 +108,7 @@ void DrawConfigManagementPanel() {
 		ImGui::BeginDisabled(newConfigName[0] == '\0');
 		if (ImGui::Button(L("CREATE_BUTTON"), ImVec2(buttonWidth, 0.0f))) {
 			const int newIndex = CreateNewNormalConfig(newConfigName);
-			g_appState.currentConfigIndex = newIndex;
+			UiSelectedConfigIndex() = newIndex;
 			pendingCreate = false;
 			ImGui::MarkItemEdited(ImGui::GetItemID());
 			ImGui::CloseCurrentPopup();
@@ -127,13 +127,13 @@ void DrawConfigManagementPanel() {
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
 		requestDelete = false;
-		const string name = g_appState.configs.at(g_appState.currentConfigIndex).name;
-		ImGui::TextWrapped(L("CONFIRM_DELETE_MSG"), g_appState.currentConfigIndex, name.c_str());
+		const string name = UiConfigs().at(UiSelectedConfigIndex()).name;
+		ImGui::TextWrapped(L("CONFIRM_DELETE_MSG"), UiSelectedConfigIndex(), name.c_str());
 		const float buttonWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(buttonWidth, 0.0f))) {
-			g_appState.configs.erase(g_appState.currentConfigIndex);
-			if (!g_appState.configs.empty()) {
-				g_appState.currentConfigIndex = g_appState.configs.begin()->first;
+			UiConfigs().erase(UiSelectedConfigIndex());
+			if (!UiConfigs().empty()) {
+				UiSelectedConfigIndex() = UiConfigs().begin()->first;
 				specialSetting = false;
 			}
 			ImGui::MarkItemEdited(ImGui::GetItemID());

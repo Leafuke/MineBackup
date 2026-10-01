@@ -81,8 +81,8 @@ bool IsWorldOccupied(const filesystem::path& worldPath) {
 }
 
 MyFolder GetOccupiedWorld() {
-	//lock_guard<mutex> lock(g_appState.configsMutex);
-	for (const auto& config_pair : g_appState.configs) {
+	const auto configs = SnapshotConfigState().configs;
+	for (const auto& config_pair : configs) {
 		int config_idx = config_pair.first;
 		const Config& cfg = config_pair.second;
 		if (cfg.saveRoot.empty()) continue; // 跳过未配置的存档路径

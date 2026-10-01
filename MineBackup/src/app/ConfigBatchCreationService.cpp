@@ -55,7 +55,10 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 		return result;
 	}
 
+	FlushUiConfigDraft();
 	map<int, Config> configsSnapshot;
+	map<int, wstring> insertedIds;
+	NormalConfigIndexAllocatorState allocatorAfter;
 	int currentConfigSnapshot = 1;
 	NormalConfigIndexAllocatorState allocatorSnapshot;
 	wstring backupRootSnapshot;
@@ -79,6 +82,7 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 				(void)position;
 				if (!inserted) throw runtime_error("Configuration index collision");
 				result.configIndices.push_back(index);
+				insertedIds[index] = position->second.configId;
 			}
 		}
 		catch (...) {
@@ -90,6 +94,7 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 			return result;
 		}
 
+		allocatorAfter = SnapshotNormalConfigIndexAllocator();
 		g_appState.currentConfigIndex = result.configIndices.front();
 		g_defaultBackupRootPath = request.defaultBackupRoot.wstring();
 		if (request.markCoreValidationPending) {
@@ -113,9 +118,16 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 		// config.ini 从未被替换：这次提交逻辑上什么都没有发生，
 		// 恢复所有内存状态，使用户重试得到相同名称和目录。
 		lock_guard<mutex> lock(g_appState.configsMutex);
-		g_appState.configs = std::move(configsSnapshot);
-		g_appState.currentConfigIndex = currentConfigSnapshot;
-		RestoreNormalConfigIndexAllocator(allocatorSnapshot);
+		for (const auto& [index, id] : insertedIds) {
+            auto found = g_appState.configs.find(index);
+            if (found != g_appState.configs.end() && found->second.configId == id)
+                g_appState.configs.erase(found);
+        }
+        if (!g_appState.configs.contains(g_appState.currentConfigIndex))
+            g_appState.currentConfigIndex = g_appState.configs.contains(currentConfigSnapshot)
+                ? currentConfigSnapshot : (g_appState.configs.empty() ? 1 : g_appState.configs.begin()->first);
+        if (SnapshotNormalConfigIndexAllocator().nextIndex == allocatorAfter.nextIndex)
+            RestoreNormalConfigIndexAllocator(allocatorSnapshot);
 		g_defaultBackupRootPath = std::move(backupRootSnapshot);
 		g_CoreValidationPending.store(validationPendingSnapshot);
 		g_CoreValidationPassed.store(validationPassedSnapshot);
@@ -135,6 +147,12 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 			"Configuration committed but directory sync was not confirmed.");
 	}
 
+    const auto committed = SnapshotConfigState();
+    for (int index : result.configIndices) {
+        if (auto it = committed.configs.find(index); it != committed.configs.end())
+            ObserveUiConfigInserted(index, it->second);
+    }
+    SelectConfigIndex(result.configIndices.front());
 	result.success = true;
 	try {
 		dependencies_.onCommitted(result.configIndices);

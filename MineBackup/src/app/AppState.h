@@ -16,6 +16,7 @@
 #include <mutex>
 #include <chrono>
 #include <ctime>
+#include <functional>
 #include <sys/stat.h>
 
 struct CloudTaskRuntimeState {
@@ -52,4 +53,35 @@ struct AppState {
 };
 
 extern AppState g_appState;
+
+struct ConfigStateSnapshot {
+    std::map<int, Config> configs;
+    int selectedIndex = 1;
+};
+ConfigStateSnapshot SnapshotConfigState();
+bool ModifyConfigById(const std::wstring& id, const std::function<void(Config&)>& mutation);
+bool DeleteConfigById(const std::wstring& id);
+int SelectedConfigIndex();
+void SelectConfigIndex(int index);
+
+// One UI-thread scope per frame. Widgets edit values; Flush merges only changed
+// fields by stable identity and never resurrects a concurrently deleted profile.
+class UiConfigDraft {
+public:
+    UiConfigDraft();
+    ~UiConfigDraft();
+    UiConfigDraft(const UiConfigDraft&) = delete;
+    UiConfigDraft& operator=(const UiConfigDraft&) = delete;
+    void Flush();
+    void ObserveInserted(int index, const Config& config);
+    std::map<int, Config>& Configs() { return edited_.configs; }
+    int& Selection() { return edited_.selectedIndex; }
+private:
+    ConfigStateSnapshot baseline_, edited_;
+    UiConfigDraft* previous_ = nullptr;
+};
+std::map<int, Config>& UiConfigs();
+int& UiSelectedConfigIndex();
+void FlushUiConfigDraft();
+void ObserveUiConfigInserted(int index, const Config& config);
 #endif

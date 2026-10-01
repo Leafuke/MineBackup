@@ -122,8 +122,8 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		return;
 	}
 
-	const auto configIt = g_appState.configs.find(lockedConfigIndex);
-	if (configIt == g_appState.configs.end()) {
+	const auto configIt = UiConfigs().find(lockedConfigIndex);
+	if (configIt == UiConfigs().end()) {
 		ImGui::TextWrapped("%s", L("HISTORY_CONFIG_UNAVAILABLE"));
 		ImGui::End();
 		return;
