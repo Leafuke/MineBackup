@@ -1,5 +1,6 @@
 #include "BackupManager.h"
 #include "AppState.h"
+#include "GameSessionManager.h"
 #include <barrier>
 #include "HistoryViewModel.h"
 #include "ConfigSelection.h"
@@ -44,6 +45,34 @@ namespace {
 		entry.isImportant = important;
 		return entry;
 	}
+
+    void TestGameSessions(const filesystem::path& root) {
+        Config a; a.configId = L"a"; a.saveRoot = (root / "a").wstring(); a.backupPath = (root / "backups-a").wstring();
+        a.worlds = {{L"world", L""}}; a.backupOnGameStart = false;
+        auto b = a; b.configId = L"b"; b.saveRoot = (root / "b").wstring(); b.backupPath = (root / "backups-b").wstring();
+        b.backupOnGameStart = true; b.worlds.push_back({L"second", L""});
+        map<int, Config> configs{{1, a}, {2, b}};
+        GameSessionTracker tracker;
+        const auto active = EnumerateOccupiedWorlds(configs, [](const auto&) { return true; });
+        const auto first = tracker.Poll(active);
+        Expect(first.started.size() == 3 && first.started[0].config.backupOnGameStart == false
+            && first.started[1].config.backupOnGameStart && first.started[2].config.backupOnGameStart,
+            "every active world uses its owning configuration's start policy");
+        Expect(tracker.Poll(active).started.empty(), "repeat polls must not queue another start backup");
+        const auto identity = GameSessionWorldKey(active[1]);
+        swap(configs[2].worlds[0], configs[2].worlds[1]);
+        const auto reordered = EnumerateOccupiedWorlds(configs, [](const auto&) { return true; });
+        Expect(tracker.Poll(reordered).started.empty() && ResolveSessionWorld(configs, identity)->worldIndex == 1,
+            "world reorder preserves session identity and resolves the new index");
+        configs[2].worlds.pop_back();
+        Expect(!ResolveSessionWorld(configs, identity), "removed world cannot redirect a queued backup to another world");
+        configs.erase(2);
+        const auto ended = tracker.Poll(EnumerateOccupiedWorlds(configs, [](const auto&) { return true; }));
+        Expect(ended.ended.size() == 2 && !ResolveSessionWorld(configs, identity), "configuration deletion ends its sessions safely");
+        tracker.Poll({});
+        Expect(tracker.Poll(EnumerateOccupiedWorlds(configs, [](const auto&) { return true; })).started.size() == 1,
+            "a subsequent world launch produces exactly one new start transition");
+    }
 
     void TestConfigurationDrafts() {
         Config first; first.configId = L"first"; first.worlds = {{L"old", L""}};
@@ -289,6 +318,7 @@ int main() {
 	Expect(content == "keep" && !filesystem::exists(root / "saves" / "nested/world"),
 		"legacy target rejection must leave worlds untouched before workspace preparation");
 	unchanged.close();
+	TestGameSessions(root);
 	TestConfigurationDrafts();
 	TestResponsiveLayouts();
 	TestDesktopUiLifecycle();

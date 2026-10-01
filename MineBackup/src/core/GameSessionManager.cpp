@@ -9,6 +9,8 @@
 #include "text_to_text.h"
 #include "PlatformCompat.h"
 #include "TaskCoordinator.h"
+#include "PathIdentity.h"
+#include "WorldIdentity.h"
 #include <atomic>
 #include <filesystem>
 #include <mutex>
@@ -18,7 +20,7 @@ using namespace std;
 
 #define TASK_INFO(...) MB_LOG_PRINTF_INFO(minebackup::logging::LogCategory::Task, "game_session.progress", __VA_ARGS__)
 #define TASK_WARNING(...) MB_LOG_PRINTF_WARNING(minebackup::logging::LogCategory::Task, "game_session.warning", __VA_ARGS__)
-map<pair<int, int>, wstring> g_activeWorlds; // Key: {configIdx, worldIdx}, Value: worldName
+
 
 namespace {
 	optional<wstring> ResolveLatestManagedBackup(const MyFolder& world) {
@@ -80,109 +82,84 @@ bool IsWorldOccupied(const filesystem::path& worldPath) {
 	return false;
 }
 
-MyFolder GetOccupiedWorld() {
-	const auto configs = SnapshotConfigState().configs;
-	for (const auto& config_pair : configs) {
-		int config_idx = config_pair.first;
-		const Config& cfg = config_pair.second;
-		if (cfg.saveRoot.empty()) continue; // 跳过未配置的存档路径
-		for (int world_idx = 0; world_idx < (int)cfg.worlds.size(); ++world_idx) {
-			const auto& world = cfg.worlds[world_idx];
-			filesystem::path worldPath = JoinPath(cfg.saveRoot, world.first);
-			error_code ec;
-			if (!filesystem::exists(worldPath, ec) || ec) continue; // 跳过不存在的世界
-			if (IsWorldOccupied(worldPath)) {
-				return MyFolder{ worldPath.wstring(), world.first, world.second, cfg, config_idx, world_idx };
-			}
-		}
-	}
-	return MyFolder{};
+SessionWorldKey GameSessionWorldKey(const MyFolder& world) {
+    return {world.config.configId, PathIdentity::BuildPathIdentityKey(world.path)};
 }
-
+vector<MyFolder> EnumerateOccupiedWorlds(const map<int, Config>& configs,
+    const function<bool(const filesystem::path&)>& occupied) {
+    vector<MyFolder> result;
+    for (const auto& [configIndex, config] : configs) {
+        if (config.saveRoot.empty() || config.pendingLocalBinding) continue;
+        for (size_t i = 0; i < config.worlds.size(); ++i) {
+            const auto& [name, description] = config.worlds[i];
+            if (description == L"#") continue;
+            WorldIdentity::Value identity;
+            if (!WorldIdentity::TryBuild(config, name, identity)) continue;
+            if (!occupied(identity.sourcePath)) continue;
+            result.push_back({identity.sourcePath.wstring(), identity.relativeWorldPath, description,
+                config, configIndex, static_cast<int>(i)});
+        }
+    }
+    return result;
+}
+optional<MyFolder> ResolveSessionWorld(const map<int, Config>& configs, const SessionWorldKey& key) {
+    for (const auto& world : EnumerateOccupiedWorlds(configs, [](const auto&) { return true; })) {
+        if (GameSessionWorldKey(world) == key) return world;
+    }
+    return nullopt;
+}
+GameSessionChanges GameSessionTracker::Poll(const vector<MyFolder>& current) {
+    map<SessionWorldKey, MyFolder> next;
+    GameSessionChanges changes;
+    for (const auto& world : current) next.emplace(GameSessionWorldKey(world), world);
+    for (const auto& [key, world] : next) if (!active_.contains(key)) changes.started.push_back(world);
+    for (const auto& [key, world] : active_) if (!next.contains(key)) changes.ended.push_back(world);
+    active_ = std::move(next);
+    return changes;
+}
+MyFolder GetOccupiedWorld() {
+    const auto worlds = EnumerateOccupiedWorlds(SnapshotConfigState().configs, IsWorldOccupied);
+    return worlds.empty() ? MyFolder{} : worlds.front();
+}
 void GameSessionWatcherThread(stop_token stopToken) {
-	TASK_INFO(L("LOG_START_WATCHER_START"));
-
-	while (!stopToken.stop_requested()) {
-		map<pair<int, int>, wstring> currently_locked_worlds;
-
-		MyFolder occupied_world = GetOccupiedWorld();
-
-		if (!occupied_world.path.empty()) {
-			currently_locked_worlds[{occupied_world.configIndex, occupied_world.worldIndex}] = occupied_world.name;
-		}
-
-		vector<pair<int, int>> worlds_to_backup;
-
-		// 检查新启动的世界
-		for (const auto& locked_pair : currently_locked_worlds) {
-			if (g_activeWorlds.find(locked_pair.first) == g_activeWorlds.end()) {
-				TASK_INFO(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(locked_pair.second).c_str());
-				string payload = "event=game_session_start;config=" + to_string(locked_pair.first.first) + ";world=" + wstring_to_utf8(locked_pair.second);
-				BroadcastEvent(payload);
-				worlds_to_backup.push_back(locked_pair.first);
-			}
-		}
-
-		for (const auto& active_pair : g_activeWorlds) {
-			if (currently_locked_worlds.find(active_pair.first) == currently_locked_worlds.end()) {
-				TASK_INFO(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(active_pair.second).c_str());
-				string payload = "event=game_session_end;config=" + to_string(active_pair.first.first) + ";world=" + wstring_to_utf8(active_pair.second);
-				BroadcastEvent(payload);
-
-				if (g_StopAutoBackupOnExit) {
-					unique_lock<mutex> taskLock(g_appState.task_mutex);
-					auto taskIt = g_appState.g_active_auto_backups.find(active_pair.first);
-					if (taskIt != g_appState.g_active_auto_backups.end()) {
-						const wstring taskName = taskIt->second.taskName;
-						g_appState.g_active_auto_backups.erase(active_pair.first);
-						taskLock.unlock();
-						TaskCoordinator::Instance().RequestStop(taskName);
-						TASK_INFO(L("LOG_AUTOBACKUP_STOPPED_ON_EXIT"), wstring_to_utf8(active_pair.second).c_str());
-					}
-				}
-			}
-		}
-
-		// 更新当前活动的世界列表
-		g_activeWorlds = currently_locked_worlds;
-
-		bool backupOnStart = false;
-		{
-			lock_guard<mutex> config_lock(g_appState.configsMutex);
-			auto cfgIt = g_appState.configs.find(g_appState.currentConfigIndex);
-			if (cfgIt != g_appState.configs.end()) {
-				backupOnStart = cfgIt->second.backupOnGameStart;
-			}
-		}
-
-		if (!worlds_to_backup.empty() && backupOnStart) {
-			lock_guard<mutex> config_lock(g_appState.configsMutex);
-			for (const auto& backup_target : worlds_to_backup) {
-				int config_idx = backup_target.first;
-				int world_idx = backup_target.second;
-				auto cfgIt = g_appState.configs.find(config_idx);
-				if (cfgIt != g_appState.configs.end() && world_idx < cfgIt->second.worlds.size()) {
-					Config backupConfig = cfgIt->second;
-					MyFolder backupFolder = {
-						JoinPath(cfgIt->second.saveRoot, cfgIt->second.worlds[world_idx].first).wstring(),
-						cfgIt->second.worlds[world_idx].first,
-						cfgIt->second.worlds[world_idx].second,
-						backupConfig,
-						config_idx,
-						world_idx
-					};
-					TaskCoordinator::Instance().Submit(L"game-start-backup",
-						{TaskCoordinator::WorldResourceKey(backupFolder.config.configId, backupFolder.path)},
-						[backupFolder](stop_token) { DoBackup(backupFolder, L"OnStart"); });
-				}
-			}
-		}
-
-		for (int waitStep = 0; waitStep < 100 && !stopToken.stop_requested(); ++waitStep) {
-			this_thread::sleep_for(chrono::milliseconds(100));
-		}
-	}
-	TASK_INFO(L("LOG_EXIT_WATCHER_STOP"));
+    TASK_INFO(L("LOG_START_WATCHER_START"));
+    GameSessionTracker tracker;
+    while (!stopToken.stop_requested()) {
+        const auto snapshot = SnapshotConfigState();
+        const auto changes = tracker.Poll(EnumerateOccupiedWorlds(snapshot.configs, IsWorldOccupied));
+        for (const auto& world : changes.started) {
+            TASK_INFO(L("LOG_GAME_SESSION_STARTED"), wstring_to_utf8(world.name).c_str());
+            BroadcastEvent("event=game_session_start;config=" + to_string(world.configIndex)
+                + ";world=" + wstring_to_utf8(world.name));
+            if (!world.config.backupOnGameStart) continue;
+            const auto key = GameSessionWorldKey(world);
+            TaskCoordinator::Instance().Submit(L"game-start-backup",
+                {TaskCoordinator::WorldResourceKey(key.first, world.path)}, [key](stop_token token) {
+                    const auto target = ResolveSessionWorld(SnapshotConfigState().configs, key);
+                    if (!token.stop_requested() && target && target->config.backupOnGameStart)
+                        DoBackup(*target, L"OnStart");
+                });
+        }
+        for (const auto& world : changes.ended) {
+            TASK_INFO(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(world.name).c_str());
+            BroadcastEvent("event=game_session_end;config=" + to_string(world.configIndex)
+                + ";world=" + wstring_to_utf8(world.name));
+            if (!g_StopAutoBackupOnExit) continue;
+            vector<wstring> stopNames;
+            {
+                lock_guard lock(g_appState.task_mutex);
+                for (auto it = g_appState.g_active_auto_backups.begin(); it != g_appState.g_active_auto_backups.end();) {
+                    if (it->second.configId == world.config.configId && PathIdentity::PathsEqual(it->second.sourcePath, world.path)) {
+                        stopNames.push_back(it->second.taskName); it = g_appState.g_active_auto_backups.erase(it);
+                    } else ++it;
+                }
+            }
+            for (const auto& name : stopNames) TaskCoordinator::Instance().RequestStop(name);
+        }
+        for (int waitStep = 0; waitStep < 100 && !stopToken.stop_requested(); ++waitStep)
+            this_thread::sleep_for(chrono::milliseconds(100));
+    }
+    TASK_INFO(L("LOG_EXIT_WATCHER_STOP"));
 }
 
 

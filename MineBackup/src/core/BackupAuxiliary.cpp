@@ -1,4 +1,5 @@
 #include "BackupManager.h"
+#include "GameSessionManager.h"
 #include "BackupManagerInternal.h"
 
 #include "AppPaths.h"
@@ -295,19 +296,22 @@ void DoOthersBackup(const Config& config, filesystem::path backupWhat, const wst
 }
 
 // 避免仅以 worldIdx 作为 key 导致的冲突，使用{ configIdx, worldIdx }
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, stop_token stopToken) {
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, stop_token stopToken, const MyFolder* initialTarget) {
 	minebackup::logging::ScopedLogContext taskContext{{
 		"config_index", std::to_string(configIdx)},
 		{"world_index", std::to_string(worldIdx)},
 		{"task", "automatic_backup"}};
-	{
-		lock_guard<mutex> lock(g_appState.configsMutex);
-		auto it = g_appState.configs.find(configIdx);
-		if (it == g_appState.configs.end() || it->second.pendingLocalBinding) {
-			BACKUP_WARNING("Automatic backup is disabled until local paths are bound.");
-			return;
-		}
-	}
+    MyFolder initial;
+    if (initialTarget) initial = *initialTarget;
+    else {
+        const auto configs = SnapshotConfigState().configs;
+        const auto found = configs.find(configIdx);
+        if (found == configs.end() || worldIdx < 0 || static_cast<size_t>(worldIdx) >= found->second.worlds.size()) return;
+        const auto& [worldName, description] = found->second.worlds[worldIdx];
+        initial = {JoinPath(found->second.saveRoot, worldName).wstring(), worldName, description, found->second, configIdx, worldIdx};
+    }
+    const auto identity = GameSessionWorldKey(initial);
+    if (!ResolveSessionWorld(SnapshotConfigState().configs, identity)) return;
 	BACKUP_INFO(L("LOG_AUTOBACKUP_START"), worldIdx, intervalMinutes);
 
 	while (!stopToken.stop_requested()) {
@@ -323,27 +327,13 @@ void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, 
 		}
 
 		BACKUP_INFO(L("LOG_AUTOBACKUP_ROUTINE"), worldIdx);
-		MyFolder folder;
-		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			if (g_appState.configs.count(configIdx) && worldIdx >= 0 && worldIdx < g_appState.configs[configIdx].worlds.size()) {
-				folder = {
-					JoinPath(g_appState.configs[configIdx].saveRoot, g_appState.configs[configIdx].worlds[worldIdx].first).wstring(),
-					g_appState.configs[configIdx].worlds[worldIdx].first,
-					g_appState.configs[configIdx].worlds[worldIdx].second,
-					g_appState.configs[configIdx],
-					configIdx,
-					worldIdx
-				};
-			}
-			else {
-				BACKUP_ERROR(L("ERROR_INVALID_WORLD_IN_TASK"), configIdx, worldIdx);
-				return;
-			}
-		}
-		TaskCoordinator::Instance().Submit(L"automatic backup run",
-			{ TaskCoordinator::WorldResourceKey(folder.config.configId, folder.path) },
-			[folder](stop_token) { DoBackup(folder); });
+        const auto folder = ResolveSessionWorld(SnapshotConfigState().configs, identity);
+        if (!folder) return;
+        TaskCoordinator::Instance().Submit(L"automatic backup run",
+            {TaskCoordinator::WorldResourceKey(identity.first, folder->path)}, [identity](stop_token token) {
+                const auto current = ResolveSessionWorld(SnapshotConfigState().configs, identity);
+                if (!token.stop_requested() && current) DoBackup(*current);
+            });
 	}
 }
 

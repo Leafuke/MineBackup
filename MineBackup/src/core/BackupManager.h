@@ -43,7 +43,7 @@ void DoExportForSharing(
 	std::wstring worldPath,
 	std::wstring outputPath,
 	std::wstring description);
-void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, std::stop_token stopToken);
+void AutoBackupThreadFunction(int configIdx, int worldIdx, int intervalMinutes, std::stop_token stopToken, const MyFolder* initialTarget = nullptr);
 
 enum class BackupDeleteMode {
 	HistoryOnly = 0,

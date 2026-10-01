@@ -3,8 +3,24 @@
 #include <filesystem>
 #include <stop_token>
 #include <string>
+#include <functional>
+#include <map>
+#include <optional>
+#include <vector>
+#include "DataModels.h"
 
-struct MyFolder;
+using SessionWorldKey = std::pair<std::wstring, std::wstring>;
+SessionWorldKey GameSessionWorldKey(const MyFolder& world);
+std::vector<MyFolder> EnumerateOccupiedWorlds(const std::map<int, Config>& configs,
+    const std::function<bool(const std::filesystem::path&)>& occupied);
+std::optional<MyFolder> ResolveSessionWorld(const std::map<int, Config>& configs, const SessionWorldKey& key);
+struct GameSessionChanges { std::vector<MyFolder> started, ended; };
+class GameSessionTracker {
+public:
+    GameSessionChanges Poll(const std::vector<MyFolder>& current);
+private:
+    std::map<SessionWorldKey, MyFolder> active_;
+};
 
 MyFolder GetOccupiedWorld();
 bool IsWorldOccupied(const std::filesystem::path& worldPath);

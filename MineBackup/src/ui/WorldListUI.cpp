@@ -892,9 +892,15 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 						if (taskKey.first >= 0) {
 							AutoBackupTask& task = g_appState.g_active_auto_backups[taskKey];
 							task.taskName = TaskCoordinator::AutoBackupTaskName(taskKey.first, taskKey.second);
+                            const auto& displayed = localDisplayWorlds[selectedWorldIndex];
+                            const MyFolder initial{JoinPath(displayed.effectiveConfig.saveRoot, displayed.name).wstring(),
+                                displayed.name, displayed.desc, displayed.effectiveConfig, taskKey.first, taskKey.second};
+                            task.configId = initial.config.configId;
+                            task.sourcePath = initial.path;
+                            FlushUiConfigDraft();
 							const bool started = TaskCoordinator::Instance().Submit(task.taskName, {},
-								[taskName = task.taskName, configIndex = taskKey.first, worldIndex = taskKey.second, interval = last_interval](stop_token token) {
-									AutoBackupThreadFunction(configIndex, worldIndex, interval, token);
+								[taskName = task.taskName, initial, interval = last_interval](stop_token token) {
+									AutoBackupThreadFunction(initial.configIndex, initial.worldIndex, interval, token, &initial);
 									TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
 								});
 							if (!started) g_appState.g_active_auto_backups.erase(taskKey);

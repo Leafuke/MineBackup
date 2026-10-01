@@ -164,6 +164,8 @@ struct CloudActiveHistoryManifest {
 
 struct AutoBackupTask {
 	std::wstring taskName;
+    std::wstring configId;
+    std::wstring sourcePath;
 };
 
 struct MyFolder {
