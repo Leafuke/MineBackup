@@ -4,12 +4,31 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "Logging.h"
+#include "PathIdentity.h"
 #include "WorldIdentity.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <set>
 
 using namespace std;
+
+namespace {
+bool IsManagedArchive(const Config& config, const filesystem::path& directory,
+ const filesystem::path& archive, const vector<HistoryEntry>& history) {
+ auto extension = archive.extension().wstring();
+ transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+ if (extension != L".7z" && extension != L".zip") return false;
+ const auto name = archive.filename().wstring();
+ if (FolderRewindFormat::IsFullLikeBackupType(name) || FolderRewindFormat::IsSmartBackupType(name)) return true;
+ return any_of(history.begin(), history.end(), [&](const HistoryEntry& entry) {
+  FolderRewindFormat::StoragePaths storage;
+  return entry.configId == config.configId && entry.backupFile == name
+   && FolderRewindFormat::TryResolveStoragePaths(config.backupPath, entry.worldName, entry.worldPath, storage)
+   && PathIdentity::PathsEqual(storage.backupSubDir, directory);
+ });
+}
+}
 
 RuntimeRetentionService::RuntimeRetentionService(
 	HistoryRepository& history,
@@ -76,6 +95,7 @@ void RuntimeRetentionService::Enforce(
     bool uncertain=false,referenced=false;
     for (const auto& item : filesystem::directory_iterator(storage.backupSubDir)) {
      if(!item.is_regular_file()) continue;
+     if(!IsManagedArchive(config, storage.backupSubDir, item.path(), currentHistory)) continue;
      FolderRewindFormat::ChangeRecord record;
      if(!FolderRewindMetadataStore::LoadRecord(storage.metadataDir,item.path().filename().wstring(),record)) {uncertain=true;break;}
      if(record.archiveFileName!=fileName && (record.previousBackupFileName==fileName || record.basedOnFullBackup==fileName)) referenced=true;

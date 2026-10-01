@@ -1034,6 +1034,53 @@ void RunBackupServiceTests(
 		"Runtime retention should atomically remove the oldest ordinary archive and history entry");
 	RunDirectRemoveTransactionTests(test, temporaryRoot / "direct-remove-transactions");
 
+    for (const string scenario : {"plain", "unrelated", "important", "referenced", "missing-record", "history-named"}) {
+        const auto root = temporaryRoot / ("overwrite-retention-" + scenario);
+        Config cfg = retentionConfig; cfg.backupPath = (root / "backups").wstring(); cfg.backupMode = 3;
+        FolderRewindFormat::StoragePaths paths;
+        FolderRewindFormat::TryResolveStoragePaths(cfg.backupPath, L"world", world.wstring(), paths);
+        auto old = oldEntry; old.backupFile = L"[Overwrite]-old.7z"; old.backupType = L"Overwrite";
+        old.isImportant = scenario == "important";
+        auto latest = old; latest.backupFile = L"[Overwrite]-latest.7z"; latest.isImportant = false;
+        WriteFixture(paths.backupSubDir / old.backupFile, "old payload");
+        WriteFixture(paths.backupSubDir / latest.backupFile, "latest payload");
+        filesystem::last_write_time(paths.backupSubDir / old.backupFile, filesystem::file_time_type::clock::now() - chrono::hours(1));
+        vector<HistoryEntry> entries{old, latest};
+        for (const auto& entry : entries) {
+            FolderRewindFormat::ChangeRecord record; record.archiveFileName = entry.backupFile; record.backupType = L"Overwrite";
+            test.Expect(FolderRewindMetadataStore::SaveRecord(paths.metadataDir, record), "Overwrite retention records persist");
+        }
+        if (scenario == "unrelated") {
+            WriteFixture(paths.backupSubDir / "README.md", "explanation");
+            WriteFixture(paths.backupSubDir / "random.zip", "unmanaged archive");
+        }
+        if (scenario == "referenced" || scenario == "missing-record" || scenario == "history-named") {
+            auto smart = old; smart.backupFile = scenario == "history-named" ? L"legacy.zip" : L"[Smart]-dependent.7z";
+            smart.backupType = L"Smart"; smart.isImportant = false; entries.push_back(smart);
+            WriteFixture(paths.backupSubDir / smart.backupFile, "dependent");
+            if (scenario == "referenced") {
+                FolderRewindFormat::ChangeRecord record; record.archiveFileName = smart.backupFile;
+                record.backupType = L"Smart"; record.previousBackupFileName = old.backupFile;
+                test.Expect(FolderRewindMetadataStore::SaveRecord(paths.metadataDir, record), "Reference record persists");
+            }
+        }
+        HistoryRepository repository; map<int,Config> configs{{1,cfg}};
+        test.Expect(repository.ReplaceAll({{cfg.configId,entries}}, root / "history.json", configs, true), "Overwrite history persists");
+        BackupRequest req; req.config = cfg;
+        AppPaths appPaths; appPaths.runtimeRoot = root / "runtime";
+        RuntimeRetentionService service(repository, root / "history.json", configs, appPaths);
+        service.Enforce(req, latest);
+        const bool preserved = scenario != "plain" && scenario != "unrelated";
+        test.Expect(filesystem::exists(paths.backupSubDir / old.backupFile) == preserved
+            && ReadFixture(paths.backupSubDir / latest.backupFile) == "latest payload"
+            && repository.EntriesForConfig(cfg.configId)->size() == entries.size() - (preserved ? 0 : 1),
+            "Overwrite retention ignores unrelated files but preserves important/referenced/uncertain managed archives");
+        if (preserved) test.Expect(ReadFixture(paths.backupSubDir / old.backupFile) == "old payload", "Preserved archive bytes are unchanged");
+        if (scenario == "unrelated") test.Expect(ReadFixture(paths.backupSubDir / "README.md") == "explanation"
+            && ReadFixture(paths.backupSubDir / "random.zip") == "unmanaged archive", "Unrelated files remain untouched");
+    }
+
+
 	auto runSmartRetention = [&](const filesystem::path& chainRoot,
 		bool importantTail, bool failMerge, bool cancelMerge, const string& message) {
 		Config chainConfig = retentionConfig;
