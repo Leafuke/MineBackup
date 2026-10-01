@@ -1,3 +1,4 @@
+#include "RuntimeRetentionService.h"
 #include "BackupManager.h"
 #include "BackupManagerInternal.h"
 
@@ -344,7 +345,8 @@ bool RunSharedManagedRestore(
 	const wstring& backupFile,
 	RestoreMode mode,
 	const vector<wstring>* restoreWhitelistOverride,
-	const string& requestId) {
+	const string& requestId,
+	const RestoreSafetyBackup* safetyBackup) {
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
 	minebackup::logging::ScopedLogContext operationContext{{
@@ -428,7 +430,8 @@ bool RunSharedManagedRestore(
 	RESTORE_INFO(L("LOG_RESTORE_USING_FILE"), wstring_to_utf8(backupFile).c_str());
 	RestoreService service(std::move(dependencies));
 	const auto restored = service.Run(
-		request, false, TaskCoordinator::CurrentStopToken());
+		request, false, TaskCoordinator::CurrentStopToken(),
+		RestoreExecutionOptions{safetyBackup ? optional<RestoreSafetyBackup>(*safetyBackup) : nullopt});
 	for (const auto& diagnostic : restored.diagnostics) {
 		if (diagnostic.severity == DiagnosticSeverity::Error) {
 			RESTORE_ERROR("%s: %s", diagnostic.eventId.c_str(), diagnostic.detail.c_str());
@@ -451,6 +454,23 @@ bool RunSharedManagedRestore(
 }
 
 } // namespace
+
+namespace {
+bool PrepareRestoreSafety(const Config& config,const wstring& worldName,optional<RestoreSafetyBackup>& safety) {
+ if(safety) return IsSuccessful(safety->result.code);
+ if(!config.backupBefore) return true;
+ MyFolder world{JoinPath(config.saveRoot,worldName).wstring(),worldName,L"",config,ResolveConfigIndexForCloud(config),-1};
+ RestoreSafetyBackup prepared; prepared.request.config=config; prepared.request.world={config.configId,worldName}; prepared.request.sourcePath=world.path;
+ prepared.result=RunDesktopBackup(world,L"BeforeRestore",TaskCoordinator::CurrentStopToken(),BackupExecutionOptions{.deferRetention=true});
+ if(!IsSuccessful(prepared.result.code)) return false; safety=std::move(prepared); return true;
+}
+void FinishRestoreSafety(const optional<RestoreSafetyBackup>& safety) {
+ if(!safety || !safety->result.historyEntry || TaskCoordinator::CurrentStopToken().stop_requested()) return;
+ map<int,Config> configs; {lock_guard<mutex> lock(g_appState.configsMutex);configs=g_appState.configs;}
+ RuntimeRetentionService retention(GetHistoryRepository(),GetAppPaths().HistoryFile(),configs,GetAppPaths());
+ retention.Enforce(safety->request,*safety->result.historyEntry,TaskCoordinator::CurrentStopToken());
+}
+}
 
 bool DoRestore2(const Config& config, const wstring& worldName, const filesystem::path& fullBackupPath, int restoreMethod) {
 	minebackup::logging::ScopedLogContext operationContext{{
@@ -513,6 +533,12 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		return failRestore("archive_integrity_check_failed");
 	}
 
+	optional<RestoreSafetyBackup> safety;
+	opGuard.Reset();
+	if(!PrepareRestoreSafety(config,worldName,safety)) return failRestore("safety_backup_failed");
+	if(IsWorldOccupied(destinationFolder)) return failRestore("world_occupied");
+	opGuard=WorldOperationGuard(destinationFolder,FolderState::RESTORE);
+	if(!opGuard.Acquired()) return failRestore("world_busy");
 	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
 	const auto workspaceMode = restoreMethod == 0
@@ -556,6 +582,7 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 		return failRestore("command_failed");
 	}
 
+	FinishRestoreSafety(safety);
 	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
 	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId) + ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(fullBackupPath.filename().wstring()));
 	return true;
@@ -568,11 +595,12 @@ bool DoRestore(
 	int restoreMethod,
 	const string& customRestoreList,
 	const vector<wstring>* restoreWhitelistOverride,
-	const string& requestId) {
+	const string& requestId,
+	const RestoreSafetyBackup* safetyBackup) {
 	if (restoreMethod == 0 || restoreMethod == 1) {
 		return RunSharedManagedRestore(config, worldName, backupFile,
 			restoreMethod == 0 ? RestoreMode::Clean : RestoreMode::Overwrite,
-			restoreWhitelistOverride, requestId);
+			restoreWhitelistOverride, requestId, safetyBackup);
 	}
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
@@ -725,6 +753,13 @@ bool DoRestore(
 		}
 	}
 
+	optional<RestoreSafetyBackup> safety;
+	if(safetyBackup) safety=*safetyBackup;
+	opGuard.Reset();
+	if(!PrepareRestoreSafety(config,worldName,safety)) return failRestore("safety_backup_failed");
+	if(IsWorldOccupied(destinationFolder)) return failRestore("world_occupied");
+	opGuard=WorldOperationGuard(destinationFolder,FolderState::RESTORE);
+	if(!opGuard.Acquired()) return failRestore("world_busy");
 	RestoreWorkspace::State restoreWorkspace;
 	string workspaceError;
 	const auto workspaceMode = restoreMethod == 0
@@ -777,6 +812,7 @@ bool DoRestore(
 		return failRestore("command_failed");
 	}
 
+	FinishRestoreSafety(safety);
 	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
 	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId)
 		+ ";world=" + wstring_to_utf8(worldName) + ";backup=" + wstring_to_utf8(backupFile)
@@ -791,7 +827,8 @@ bool DoHotRestore(
 	int restoreMethod,
 	const vector<wstring>* restoreWhitelistOverride,
 	const string& customRestoreList,
-	const string& requestId) {
+	const string& requestId,
+	const RestoreSafetyBackup* safetyBackup) {
 	(void)deleteBackup;
 	auto& mod = g_appState.knotLinkMod;
 	const string operationId = requestId.empty()
@@ -855,7 +892,7 @@ bool DoHotRestore(
 		}
 		result.code = DoRestore(
 			world.config, world.name, selected, restoreMethod,
-			customRestoreList, restoreWhitelistOverride, requestId)
+			customRestoreList, restoreWhitelistOverride, requestId, safetyBackup)
 			? OperationCode::Success : OperationCode::RestoreFailed;
 		return result;
 	};

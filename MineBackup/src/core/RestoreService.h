@@ -24,6 +24,14 @@ struct RestoreRequest {
 	RestoreMode mode = RestoreMode::Clean;
 };
 
+struct RestoreSafetyBackup {
+ BackupRequest request;
+ BackupResult result;
+};
+struct RestoreExecutionOptions {
+ std::optional<RestoreSafetyBackup> preparedSafetyBackup;
+};
+
 struct RestorePlan {
 	OperationCode code = OperationCode::RestoreFailed;
 	std::filesystem::path targetWorld;
@@ -72,7 +80,8 @@ public:
 	RestoreResult Run(
 		const RestoreRequest& request,
 		bool dryRun,
-		std::stop_token stopToken = {}) const;
+		std::stop_token stopToken = {},
+		const RestoreExecutionOptions& options = {}) const;
 
 private:
 	RestorePlan BuildAndVerify(

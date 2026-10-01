@@ -7,6 +7,7 @@
 #include "DataModels.h"
 #include "OperationResult.h"
 #include "BackupService.h"
+#include "RestoreService.h"
 
 int ResolveDesktopConfigIndex(int requestedConfigIndex, int currentConfigIndex);
 
@@ -24,7 +25,8 @@ bool DoRestore(
 	int restoreMethod,
 	const std::string& customRestoreList = "",
 	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr,
-	const std::string& requestId = "");
+	const std::string& requestId = "",
+	const RestoreSafetyBackup* safetyBackup = nullptr);
 bool DoHotRestore(
 	const MyFolder& world,
 	bool deleteBackup,
@@ -32,7 +34,8 @@ bool DoHotRestore(
 	int restoreMethod = 0,
 	const std::vector<std::wstring>* restoreWhitelistOverride = nullptr,
 	const std::string& customRestoreList = "",
-	const std::string& requestId = "");
+	const std::string& requestId = "",
+	const RestoreSafetyBackup* safetyBackup = nullptr);
 void DoOthersBackup(const Config& config, std::filesystem::path backupWhat, const std::wstring& comment);
 void DoExportForSharing(
 	Config config,

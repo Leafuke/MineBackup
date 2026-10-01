@@ -320,4 +320,14 @@ void RunRestoreServiceTests(
  test.Expect(!ArchiveRunner::ValidateMemberListing("invalid",pathError),"unrecognized archive listings fail closed");
  test.Expect(ArchiveRunner::ValidateMemberListing("----------\nPath = region/r.0.0.mca\n",pathError),"relative archive layouts remain supported");
 
+ {
+  auto preparedRequest=FixtureRequest(root); preparedRequest.config.backupBefore=true;
+  RestoreExecutionOptions options; RestoreSafetyBackup safety; safety.request.config=preparedRequest.config; safety.request.world=preparedRequest.world; safety.request.sourcePath=world;
+  safety.result.code=OperationCode::NoChanges; safety.result.outcome=BackupOutcome::NoChanges; options.preparedSafetyBackup=safety;
+  RestoreServiceDependencies deps=dependencies; int backupCalls=0; deps.backupBeforeRestore=[&](const BackupRequest&,stop_token,BackupExecutionOptions){++backupCalls;return BackupResult{};};
+  test.Expect(RestoreService(deps).Run(preparedRequest,false,{},options).code==OperationCode::Success && backupCalls==0,"prepared successful safety backup is reused without another backup");
+  options.preparedSafetyBackup->result.code=OperationCode::BackupFailed; Write(world/"level.dat","protect");
+  test.Expect(RestoreService(deps).Run(preparedRequest,false,{},options).code==OperationCode::RestoreFailed && Read(world/"level.dat")=="protect","failed prepared safety backup blocks restore before mutation");
+ }
+
 }

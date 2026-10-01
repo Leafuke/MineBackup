@@ -54,6 +54,7 @@ public:
 	WorldOperationGuard(WorldOperationGuard&& other) noexcept;
 	WorldOperationGuard& operator=(WorldOperationGuard&& other) noexcept;
 	~WorldOperationGuard();
+	void Reset() { Release(); }
 
 	bool Acquired() const;
 	FolderState Requested() const;

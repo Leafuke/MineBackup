@@ -6,6 +6,7 @@
 #include "JobDocument.h"
 #include "RestoreWorkspace.h"
 #include "WorldIdentity.h"
+#include "PathIdentity.h"
 #include "text_to_text.h"
 
 #include <algorithm>
@@ -336,7 +337,8 @@ RestorePlan RestoreService::Verify(
 RestoreResult RestoreService::Run(
 	const RestoreRequest& request,
 	bool dryRun,
-	stop_token stopToken) const {
+	stop_token stopToken,
+	const RestoreExecutionOptions& options) const {
 	RestoreResult result;
 	optional<BackupRequest> safetyBackupRequest;
 	result.dryRun = dryRun;
@@ -344,7 +346,15 @@ RestoreResult RestoreService::Run(
 	result.code = result.plan.code;
 	result.diagnostics = result.plan.diagnostics;
 	if (!IsSuccessful(result.plan.code) || dryRun) return result;
-	if (request.config.backupBefore) {
+ if (options.preparedSafetyBackup) {
+  const auto& safety=*options.preparedSafetyBackup;
+  if (!IsSuccessful(safety.result.code) || safety.request.world.configId!=request.world.configId
+   || safety.request.world.relativePath!=request.world.relativePath
+   || !PathIdentity::PathsEqual(safety.request.sourcePath,result.plan.targetWorld)) {
+   result.code=OperationCode::RestoreFailed; result.diagnostics.push_back(Failure("restore.safety_backup.invalid")); return result;
+  }
+  safetyBackupRequest=safety.request; result.safetyBackup=safety.result;
+ } else if (request.config.backupBefore) {
 		if (!dependencies_.backupBeforeRestore) {
 			result.code = OperationCode::RestoreFailed;
 			result.diagnostics.push_back(Failure("restore.safety_backup.runtime_missing"));

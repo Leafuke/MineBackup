@@ -1,4 +1,5 @@
 #include "Broadcast.h"
+#include "AppPaths.h"
 #include "BackupManager.h"
 #include "GameSessionManager.h"
 #include "FolderRewindFormat.h"
@@ -234,27 +235,22 @@ bool SubmitUserRestore(
 				pinnedBackup = *latest;
 			}
 
-			const bool initiallyOccupied = IsWorldOccupied(world.path);
-			bool successfulHotPreBackup = false;
-			if (!initiallyOccupied) {
-				BackupOutcome preBackupOutcome = BackupOutcome::Created;
-				if (backupBeforeRestore) {
-					preBackupOutcome = DoBackup(world, L"BeforeRestore");
-				}
-				if (!IsWorldOccupied(world.path)) {
-					DoRestore(world.config, world.name, pinnedBackup,
-						restoreMethod, customRestoreList);
-					return;
-				}
-				// The world became active while the request was queued or while
-				// the pre-restore backup ran. Continue only through hot restore.
-				if (backupBeforeRestore
-					&& preBackupOutcome != BackupOutcome::Created
-					&& preBackupOutcome != BackupOutcome::NoChanges) {
-					TASK_WARNING(L("KNOTLINK_PRE_RESTORE_BACKUP_FAILED"));
-					return;
-				}
-			}
+
+   Config restoreConfig=world.config; restoreConfig.backupBefore=backupBeforeRestore;
+   RestoreRequest verification; verification.config=restoreConfig; verification.world={restoreConfig.configId,world.name}; verification.archive=pinnedBackup;
+   RestoreServiceDependencies verifyDeps; verifyDeps.paths=GetAppPaths();
+   if(!IsSuccessful(RestoreService(verifyDeps).Verify(verification).code)) {TASK_WARNING("Restore archive verification failed before safety backup.");return;}
+   optional<RestoreSafetyBackup> safety;
+   bool successfulHotPreBackup=false;
+   if(backupBeforeRestore) {
+    RestoreSafetyBackup prepared; prepared.request.config=restoreConfig; prepared.request.world=verification.world; prepared.request.sourcePath=world.path;
+    prepared.result=RunDesktopBackup(world,L"BeforeRestore",TaskCoordinator::CurrentStopToken(),BackupExecutionOptions{.deferRetention=true});
+    if(!IsSuccessful(prepared.result.code)) {TASK_WARNING(L("KNOTLINK_PRE_RESTORE_BACKUP_FAILED"));return;}
+    safety=std::move(prepared); successfulHotPreBackup=true;
+   }
+   if(!IsWorldOccupied(world.path)) {
+    DoRestore(restoreConfig,world.name,pinnedBackup,restoreMethod,customRestoreList,nullptr,"",safety?&*safety:nullptr);return;
+   }
 
 			HotRestoreState expectedIdle = HotRestoreState::IDLE;
 			if (!g_appState.hotkeyRestoreState.compare_exchange_strong(
@@ -264,15 +260,6 @@ bool SubmitUserRestore(
 			}
 			g_appState.isRespond = false;
 
-			if (initiallyOccupied && backupBeforeRestore) {
-				const BackupOutcome outcome = DoBackup(world, L"BeforeRestore");
-				if (outcome != BackupOutcome::Created && outcome != BackupOutcome::NoChanges) {
-					TASK_WARNING(L("KNOTLINK_PRE_RESTORE_BACKUP_FAILED"));
-					ResetHotRestoreState();
-					return;
-				}
-				successfulHotPreBackup = true;
-			}
 
 			const string requestId = wstring_to_utf8(FolderRewindFormat::GenerateGuidString());
 			if (successfulHotPreBackup) {
@@ -307,7 +294,8 @@ bool SubmitUserRestore(
 
 			TASK_INFO(L("KNOTLINK_RESTORE_MOD_OK"),
 				g_appState.knotLinkMod.modVersion.c_str());
-			DoHotRestore(world, false, pinnedBackup, restoreMethod, nullptr,
-				customRestoreList, requestId);
+			MyFolder restoreWorld=world; restoreWorld.config=restoreConfig;
+			DoHotRestore(restoreWorld, false, pinnedBackup, restoreMethod, nullptr,
+				customRestoreList, requestId, safety?&*safety:nullptr);
 		});
 }
