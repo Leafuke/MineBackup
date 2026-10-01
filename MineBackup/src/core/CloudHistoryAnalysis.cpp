@@ -3,6 +3,7 @@
 #include "FolderRewindFormat.h"
 #include "FolderRewindHistoryStore.h"
 #include "PlatformCompat.h"
+#include "text_to_text.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -115,4 +116,35 @@ CloudHistoryAnalysisResult AnalyzeRemoteHistory(
 
 	analysis.success = true;
 	return analysis;
+}
+
+CloudSyncResult AggregateCloudDownloads(const vector<HistoryEntry>& entries, CloudSyncMode mode,
+    const function<bool(const HistoryEntry&)>& alreadyAvailable,
+    const function<CloudCommandResult(const HistoryEntry&)>& download) {
+    CloudSyncResult aggregate;
+    aggregate.success = true; aggregate.exitCode = 0;
+    if (mode == CloudSyncMode::HistoryOnly) return aggregate;
+    for (const auto& entry : entries) {
+        CloudCommandResult result;
+        try {
+            if (alreadyAvailable && alreadyAvailable(entry)) continue;
+            if (download) result = download(entry);
+            else result.message = L"Download callback is unavailable.";
+        } catch (const exception& error) {
+            result.message = utf8_to_wstring(error.what());
+        } catch (...) {
+            result.message = L"Unknown download failure.";
+        }
+        if (result.success) { ++aggregate.recoveredBackupCount; continue; }
+        aggregate.success = false;
+        ++aggregate.failedDownloadCount;
+        const int code = result.exitCode != 0 ? result.exitCode : -1;
+        if (aggregate.exitCode == 0) aggregate.exitCode = code;
+        wstring reason = result.message;
+        if (!result.detail.empty() && result.detail != reason) reason += L" "+result.detail;
+        if (reason.empty()) reason = result.timedOut ? L"Download timed out." : L"Download failed.";
+        aggregate.downloadFailures.push_back({entry.configId, entry.worldPath, entry.worldName,
+            entry.backupFile, code, result.timedOut, std::move(reason)});
+    }
+    return aggregate;
 }

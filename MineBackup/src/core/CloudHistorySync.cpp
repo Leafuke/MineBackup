@@ -130,32 +130,36 @@ CloudSyncResult SyncConfigFromCloud(const Config& config, int configIndex, Cloud
 		}
 	}
 
-	int recoveredCount = 0;
-	if (mode == CloudSyncMode::HistoryAndBackups) {
-		for (const auto& entry : syncResult.analysis.mappedItems) {
-			if (HasLocalBackupOrMetadata(config, entry)) {
-				continue;
-			}
-			CloudCommandResult itemResult = DownloadHistoryEntryNoLock(config, configIndex, entry);
-			if (itemResult.success) {
-				recoveredCount++;
-			}
-		}
-	}
-
-	syncResult.success = true;
+    const auto downloads = AggregateCloudDownloads(syncResult.analysis.mappedItems, mode,
+        [&](const auto& entry) { return HasLocalBackupOrMetadata(config, entry); },
+        [&](const auto& entry) { return DownloadHistoryEntryNoLock(config, configIndex, entry); });
+    syncResult.success = downloads.success;
+    syncResult.exitCode = downloads.exitCode;
+    syncResult.failedDownloadCount = downloads.failedDownloadCount;
+    syncResult.downloadFailures = downloads.downloadFailures;
 	syncResult.importedHistoryCount = imported;
 	syncResult.duplicateHistoryCount = duplicates;
-	syncResult.recoveredBackupCount = recoveredCount;
+	syncResult.recoveredBackupCount = downloads.recoveredBackupCount;
 	syncResult.message = (mode == CloudSyncMode::HistoryAndBackups)
-		? MineFormatMessage("CLOUD_SYNC_DOWNLOADED_SUMMARY", imported, duplicates, recoveredCount)
+		? MineFormatMessage(downloads.success ? "CLOUD_SYNC_DOWNLOADED_SUMMARY" : "CLOUD_SYNC_PARTIAL_SUMMARY",
+            imported, duplicates, downloads.recoveredBackupCount, downloads.failedDownloadCount)
 		: MineFormatMessage("CLOUD_SYNC_HISTORY_SUMMARY", imported, duplicates);
 
-	CloudCommandResult result;
-	result.success = true;
-	result.exitCode = 0;
-	result.message = syncResult.message;
-	operation.Finish(result);
+    for (const auto& failure : syncResult.downloadFailures)
+        syncResult.message += L"\n" + failure.worldName + L"/" + failure.backupFile + L": " + failure.error;
+    CloudCommandResult result;
+    result.success = syncResult.success;
+    result.exitCode = syncResult.exitCode;
+    result.timedOut = any_of(syncResult.downloadFailures.begin(), syncResult.downloadFailures.end(),
+        [](const auto& failure) { return failure.timedOut; });
+    result.message = syncResult.message;
+    operation.Finish(result);
+    TaskEvent event{L"cloud-sync-finished", syncResult.message};
+    event.values[L"success"] = syncResult.success ? L"1" : L"0";
+    event.values[L"exit-code"] = to_wstring(syncResult.exitCode);
+    event.values[L"recovered"] = to_wstring(syncResult.recoveredBackupCount);
+    event.values[L"failed"] = to_wstring(syncResult.failedDownloadCount);
+    TaskCoordinator::Instance().PostEvent(std::move(event));
 	return syncResult;
 }
 

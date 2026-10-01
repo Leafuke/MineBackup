@@ -1,5 +1,7 @@
 #include "BackupManager.h"
 #include "AppState.h"
+#include "CloudHistoryAnalysis.h"
+#include "CloudSyncInternal.h"
 #include "GameSessionManager.h"
 #include <barrier>
 #include "HistoryViewModel.h"
@@ -45,6 +47,25 @@ namespace {
 		entry.isImportant = important;
 		return entry;
 	}
+
+    void TestCloudFailureCompletion() {
+        Config config; config.configId = L"cloud-result";
+        { lock_guard lock(g_appState.configsMutex); g_appState.configs = {{1, config}}; }
+        HistoryEntry entry; entry.configId = config.configId; entry.backupFile = L"failed.7z";
+        const auto failed = AggregateCloudDownloads({entry}, CloudSyncMode::HistoryAndBackups, {}, [](const auto&) {
+            CloudCommandResult result; result.exitCode = 23; result.message = L"download failed"; return result;
+        });
+        CloudCommandResult completion; completion.success = failed.success; completion.exitCode = failed.exitCode;
+        completion.message = failed.downloadFailures[0].error;
+        CloudSyncInternal::CloudOperationScope operation(1, L"syncing");
+        operation.Finish(completion);
+        const auto snapshot = SnapshotConfigState();
+        Expect(snapshot.configs.at(1).cloudLastExitCode == 23 && snapshot.configs.at(1).cloudLastErrorMessage == L"download failed",
+            "cloud failure completion persists a nonzero code and failure message for the UI");
+        { lock_guard lock(g_appState.cloudTask.mutex);
+          Expect(!g_appState.cloudTask.busy && g_appState.cloudTask.lastMessage == L"download failed",
+            "cloud operation completion clears busy without replacing failure by success"); }
+    }
 
     void TestGameSessions(const filesystem::path& root) {
         Config a; a.configId = L"a"; a.saveRoot = (root / "a").wstring(); a.backupPath = (root / "backups-a").wstring();
@@ -318,6 +339,7 @@ int main() {
 	Expect(content == "keep" && !filesystem::exists(root / "saves" / "nested/world"),
 		"legacy target rejection must leave worlds untouched before workspace preparation");
 	unchanged.close();
+	TestCloudFailureCompletion();
 	TestGameSessions(root);
 	TestConfigurationDrafts();
 	TestResponsiveLayouts();

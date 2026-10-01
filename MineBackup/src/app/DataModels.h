@@ -136,12 +136,21 @@ struct CloudHistoryAnalysisResult {
 	std::vector<HistoryEntry> mappedItems;
 };
 
+struct CloudDownloadFailure {
+    std::wstring configId, worldPath, worldName, backupFile;
+    int exitCode = -1;
+    bool timedOut = false;
+    std::wstring error;
+};
 struct CloudSyncResult {
 	bool success = false;
 	std::wstring message;
 	int importedHistoryCount = 0;
 	int duplicateHistoryCount = 0;
 	int recoveredBackupCount = 0;
+    int failedDownloadCount = 0;
+    int exitCode = -1;
+    std::vector<CloudDownloadFailure> downloadFailures;
 	CloudHistoryAnalysisResult analysis;
 };
 
