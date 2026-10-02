@@ -35,25 +35,7 @@ Diagnostic Failure(string eventId, string detail = {}) {
 	return {std::move(eventId), DiagnosticSeverity::Error, std::move(detail)};
 }
 
-bool IsWithin(const filesystem::path& root, const filesystem::path& candidate) {
-	const auto normalizedRoot = filesystem::absolute(root).lexically_normal();
-	const auto normalizedCandidate = filesystem::absolute(candidate).lexically_normal();
-	auto rootPart = normalizedRoot.begin();
-	auto candidatePart = normalizedCandidate.begin();
-	for (; rootPart != normalizedRoot.end() && candidatePart != normalizedCandidate.end();
-		++rootPart, ++candidatePart) {
-#ifdef _WIN32
-		wstring left = rootPart->wstring();
-		wstring right = candidatePart->wstring();
-		transform(left.begin(), left.end(), left.begin(), ::towlower);
-		transform(right.begin(), right.end(), right.begin(), ::towlower);
-		if (left != right) return false;
-#else
-		if (*rootPart != *candidatePart) return false;
-#endif
-	}
-	return rootPart == normalizedRoot.end();
-}
+
 
 void CleanupMarkers(const filesystem::path& target) {
 	for (const wchar_t* marker : {
@@ -314,7 +296,7 @@ RestorePlan RestoreService::BuildAndVerify(
 	plan.selectedArchive = request.archive.is_absolute()
 		? request.archive.lexically_normal()
 		: (backupRoot / request.archive).lexically_normal();
-	if (!IsWithin(backupRoot, plan.selectedArchive) || !PathIdentity::PathsEqual(plan.selectedArchive.parent_path(), backupRoot)) {
+	if (!PathIdentity::IsEqualOrDescendant(plan.selectedArchive, backupRoot) || !PathIdentity::PathsEqual(plan.selectedArchive.parent_path(), backupRoot)) {
         plan.diagnostics.push_back(Failure("restore.backup.outside_storage")); return plan;
     }
     if (!filesystem::is_regular_file(plan.selectedArchive)) {

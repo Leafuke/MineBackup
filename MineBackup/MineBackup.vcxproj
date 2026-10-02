@@ -246,6 +246,7 @@
     <ClInclude Include="src\core\ArchiveRunner.h" />
     <ClInclude Include="src\core\BatchReadinessService.h" />
     <ClInclude Include="src\core\ChainSafeRetention.h" />
+    <ClInclude Include="src\core\CompressionPolicy.h" />
     <ClInclude Include="src\core\BackupChangeDetector.h" />
     <ClInclude Include="src\core\BackupManager.h" />
     <ClInclude Include="src\core\BackupManagerInternal.h" />

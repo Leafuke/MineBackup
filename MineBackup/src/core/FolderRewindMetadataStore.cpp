@@ -519,31 +519,16 @@ private:
 } // namespace
 
 filesystem::path GetStatePath(const filesystem::path& metadataDir) {
-    try {
-        return metadataDir / FolderRewindFormat::kMetadataStateFileName;
-    }
-    catch (...) {
-        return {};
-    }
+    return metadataDir / FolderRewindFormat::kMetadataStateFileName;
 }
 
 filesystem::path GetRecordsDir(const filesystem::path& metadataDir) {
-    try {
-        return metadataDir / FolderRewindFormat::kMetadataRecordsDirName;
-    }
-    catch (...) {
-        return {};
-    }
+    return metadataDir / FolderRewindFormat::kMetadataRecordsDirName;
 }
 
 optional<filesystem::path> TryGetRecordPath(const filesystem::path& metadataDir, const wstring& archiveFileName) {
-    try {
-        if (!FolderRewindFormat::IsSafeSinglePathSegment(archiveFileName)) return nullopt;
-        return GetRecordsDir(metadataDir) / (archiveFileName + L".json");
-    }
-    catch (...) {
-        return nullopt;
-    }
+    if (metadataDir.empty() || !FolderRewindFormat::IsSafeSinglePathSegment(archiveFileName)) return nullopt;
+    return GetRecordsDir(metadataDir) / (archiveFileName + L".json");
 }
 
 bool ListRecordArchiveFileNames(

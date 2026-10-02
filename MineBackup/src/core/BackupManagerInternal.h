@@ -44,7 +44,6 @@ enum class FolderState {
 
 const char* FolderStateToI18nKey(FolderState state);
 bool IsAsciiOnlyPath(const std::wstring& value);
-int NormalizeCompressionLevel(const std::wstring& method, int level);
 
 class WorldOperationGuard {
 public:

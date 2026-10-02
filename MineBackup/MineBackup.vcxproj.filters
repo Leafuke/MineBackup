@@ -491,6 +491,7 @@
     <ClInclude Include="src\core\ChainSafeRetention.h">
       <Filter>src\core</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\CompressionPolicy.h"><Filter>src\core</Filter></ClInclude>
     <ClInclude Include="src\core\BackupChangeDetector.h">
       <Filter>src\core</Filter>
     </ClInclude>

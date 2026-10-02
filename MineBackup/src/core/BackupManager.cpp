@@ -1,3 +1,5 @@
+#include "PathIdentity.h"
+#include "CompressionPolicy.h"
 #include "ArchiveRunner.h"
 #include "BackupChangeDetector.h"
 #include "BackupService.h"
@@ -110,9 +112,7 @@ const char* FolderStateToI18nKey(FolderState state) {
 	}
 }
 
-static void ToLowerInPlace(wstring& s) {
-	for (wchar_t& ch : s) ch = (wchar_t)towlower(ch);
-}
+
 
 static bool EqualsIgnoreCase(const wstring& left, const wstring& right) {
 	if (left.size() != right.size()) return false;
@@ -131,48 +131,15 @@ bool IsAsciiOnlyPath(const wstring& value) {
 	return true;
 }
 
-int NormalizeCompressionLevel(const wstring& method, int level) {
-	int minLevel = 1;
-	int maxLevel = 9;
-	if (_wcsicmp(method.c_str(), L"zstd") == 0) {
-		maxLevel = 22;
-	}
-	if (level < minLevel) return minLevel;
-	if (level > maxLevel) return maxLevel;
-	return level;
-}
 
-static inline wstring MakeWorldOperationKey(const filesystem::path& worldPath) {
-	error_code ec;
-	filesystem::path p = worldPath;
 
-	// Normalize to an absolute, lexically-normal path so the same folder maps to one key.
-	auto abs = filesystem::absolute(p, ec);
-	if (!ec) p = abs;
-	p = p.lexically_normal();
 
-	wstring key = p.wstring();
-
-#ifdef _WIN32
-	// Windows paths are case-insensitive; unify casing and separators.
-	for (wchar_t& ch : key) {
-		if (ch == L'/') ch = L'\\';
-	}
-	ToLowerInPlace(key);
-#else
-	for (wchar_t& ch : key) {
-		if (ch == L'\\') ch = L'/';
-	}
-#endif
-
-	return key;
-}
 
 static mutex g_worldOpMutex;
 static unordered_map<wstring, FolderState> g_worldOpInProgress;
 
 WorldOperationGuard::WorldOperationGuard(const filesystem::path& worldPath, FolderState requested)
-	: key_(MakeWorldOperationKey(worldPath)), requested_(requested) {
+	: key_(PathIdentity::BuildPathIdentityKey(worldPath)), requested_(requested) {
 	lock_guard<mutex> lock(g_worldOpMutex);
 	const auto existing = g_worldOpInProgress.find(key_);
 	if (existing == g_worldOpInProgress.end()) {
@@ -336,7 +303,7 @@ void WorldOperationGuard::Release() {
 			marker << wstring_to_utf8(FolderRewindFormat::MakeUtcTimestampString());
 			marker.close();
 
-			const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
+			const int normalizedZipLevel = CompressionPolicy::NormalizeLevel(config.zipMethod, config.zipLevel);
 			auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
 			arguments.push_back(L"*");
 			success = RunInternalProcess(MakeInternalProcess(config.zipPath, std::move(arguments), tempDir, config.useLowPriority));
@@ -776,7 +743,7 @@ BackupResult BackupService::RunCore(
 		}
 	}
 
-	const int normalizedZipLevel = NormalizeCompressionLevel(config.zipMethod, config.zipLevel);
+	const int normalizedZipLevel = CompressionPolicy::NormalizeLevel(config.zipMethod, config.zipLevel);
 
     wstring backupTypeStr;
     wstring basedOnBackupFile;

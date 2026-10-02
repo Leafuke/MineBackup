@@ -1,7 +1,7 @@
+#include "CompressionPolicy.h"
 #include "ChainSafeRetention.h"
 #include "PlatformCompat.h"
 
-#include "BackupManagerInternal.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include "WorldIdentity.h"
@@ -17,7 +17,6 @@
 #include <system_error>
 
 using namespace std;
-using namespace BackupManagerInternal;
 
 namespace ChainSafeRetention {
 
@@ -536,7 +535,7 @@ Result Remove(Request request) {
 		}
 		auto createArguments = ArchiveRunner::BuildCreateArguments(
 			request.config,
-			NormalizeCompressionLevel(request.config.zipMethod, request.config.zipLevel),
+			CompressionPolicy::NormalizeLevel(request.config.zipMethod, request.config.zipLevel),
 			rebuilt);
 		createArguments.push_back(L"*");
 		if (request.archiveRunner->Execute(std::move(createArguments), workspace,

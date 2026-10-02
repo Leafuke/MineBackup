@@ -50,8 +50,8 @@ void RuntimeRetentionService::Enforce(
 	const HistoryEntry& createdEntry,
 	stop_token stopToken) {
 	const Config& config = request.config;
-	const bool overwrite=!request.auxiliarySource && config.backupMode==3;
-	const int limit=overwrite ? 1 : config.keepCount;
+	const bool overwrite = !request.auxiliarySource && config.backupMode == 3;
+	const int limit = overwrite ? 1 : config.keepCount;
 	if (limit <= 0 || stopToken.stop_requested()) return;
 	FolderRewindFormat::StoragePaths storage;
 	if (!FolderRewindFormat::TryResolveStoragePaths(
@@ -70,11 +70,15 @@ void RuntimeRetentionService::Enforce(
 		error_code error;
 		for (filesystem::directory_iterator iterator(storage.backupSubDir, error), end;
 			!error && iterator != end; iterator.increment(error)) {
-			if (request.auxiliarySource && none_of(currentHistory.begin(), currentHistory.end(), [&](const auto& entry) {
-                return entry.backupFile == iterator->path().filename().wstring()
-                    && ChainSafeRetention::SameAuxiliarySource(config, createdEntry, entry);
-            })) continue;
-            if (iterator->is_regular_file() && (!overwrite || iterator->path().filename().wstring().starts_with(L"[Overwrite]"))) archives.push_back(*iterator);
+            if (!iterator->is_regular_file(error)) continue;
+            const auto name = iterator->path().filename().wstring();
+            if (overwrite && !name.starts_with(L"[Overwrite]")) continue;
+            const bool managed = any_of(currentHistory.begin(), currentHistory.end(), [&](const auto& entry) {
+                return request.auxiliarySource
+                    ? entry.backupFile == name && ChainSafeRetention::SameAuxiliarySource(config, createdEntry, entry)
+                    : WorldIdentity::Matches(config, storage.folderName, entry, name);
+            });
+            if (managed) archives.push_back(*iterator);
 		}
 		if (error || static_cast<int>(archives.size()) <= limit) return;
 		sort(archives.begin(), archives.end(), [](const auto& left, const auto& right) {
@@ -92,29 +96,35 @@ void RuntimeRetentionService::Enforce(
                         : WorldIdentity::Matches(config, storage.folderName, entry, fileName);
 				});
 			if (found == currentHistory.end() || found->isImportant
-                || (request.auxiliarySource && fileName == createdEntry.backupFile)) {
+                || fileName == createdEntry.backupFile) {
 				blocked.insert(fileName);
 				continue;
 			}
 
-   if (overwrite) {
-    if (fileName==createdEntry.backupFile) { blocked.insert(fileName); continue; }
-    bool uncertain=false,referenced=false;
-    for (const auto& item : filesystem::directory_iterator(storage.backupSubDir)) {
-     if(!item.is_regular_file()) continue;
-     if(!IsManagedArchive(config, storage.backupSubDir, item.path(), currentHistory)) continue;
-     FolderRewindFormat::ChangeRecord record;
-     if(!FolderRewindMetadataStore::LoadRecord(storage.metadataDir,item.path().filename().wstring(),record)) {uncertain=true;break;}
-     if(record.archiveFileName!=fileName && (record.previousBackupFileName==fileName || record.basedOnFullBackup==fileName)) referenced=true;
-    }
-    if(uncertain || referenced) {
-     MB_LOG_WARNING(minebackup::logging::LogCategory::Backup,
-      "backup.retention.overwrite_preserved",
-      "Retained Overwrite archive {}: {}", archive.path().string(),
-      uncertain ? "archive metadata is unavailable" : "archive is referenced by a backup chain");
-     blocked.insert(fileName); continue;
-    }
-   }
+            if (overwrite) {
+                bool uncertain = false;
+                bool referenced = false;
+                for (const auto& item : filesystem::directory_iterator(storage.backupSubDir)) {
+                    if (!item.is_regular_file()) continue;
+                    if (!IsManagedArchive(config, storage.backupSubDir, item.path(), currentHistory)) continue;
+                    FolderRewindFormat::ChangeRecord record;
+                    if (!FolderRewindMetadataStore::LoadRecord(storage.metadataDir, item.path().filename().wstring(), record)) {
+                        uncertain = true;
+                        break;
+                    }
+                    if (record.archiveFileName != fileName
+                        && (record.previousBackupFileName == fileName || record.basedOnFullBackup == fileName)) {
+                        referenced = true;
+                    }
+                }
+                if (uncertain || referenced) {
+                    MB_LOG_WARNING(minebackup::logging::LogCategory::Backup,
+                        "backup.retention.overwrite_preserved", "Retained Overwrite archive {}: {}",
+                        archive.path().string(), uncertain ? "archive metadata is unavailable" : "archive is referenced by a backup chain");
+                    blocked.insert(fileName);
+                    continue;
+                }
+            }
 			ChainSafeRetention::Request retentionRequest;
 			retentionRequest.config = config;
             retentionRequest.auxiliarySource = request.auxiliarySource;
@@ -137,11 +147,12 @@ void RuntimeRetentionService::Enforce(
 			const auto retention = ChainSafeRetention::Remove(std::move(retentionRequest));
 			if (retention.warning) {
 				MB_LOG_WARNING(minebackup::logging::LogCategory::Backup,
-					"backup.retention.warning", "%s", retention.detail.c_str());
+					"backup.retention.warning", "{}", retention.detail);
 				// 链合并失败时停止本轮保留，不能继续删除更新的备份来掩盖不变量破坏。
 				return;
 			}
 			if (retention.changed) {
+                currentHistory = *history_.EntriesForConfig(config.configId);
 				progress = true;
 				break;
 			}

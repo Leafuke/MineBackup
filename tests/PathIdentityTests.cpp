@@ -1,6 +1,7 @@
 #include "PathIdentityTests.h"
 
 #include "PathIdentity.h"
+#include "TaskCoordinator.h"
 
 #include <system_error>
 
@@ -73,6 +74,9 @@ void TestUnicodeCaseIdentity(
 	test.Expect(!std::filesystem::exists(upper) && !std::filesystem::exists(lower),
 		"unicode case fixtures must remain prospective");
 #ifdef _WIN32
+    test.Expect(TaskCoordinator::WorldResourceKey(L"config", upper)
+        == TaskCoordinator::WorldResourceKey(L"config", lower),
+        "Unicode aliases must share the world resource lock");
 	// É/é 等 Latin-1 扩展字符在 C locale（如中文 Windows）下无法被
 	// std::towlower 正确折叠；必须依赖操作系统 Unicode 大小写表。
 	test.Expect(PathIdentity::PathsEqual(upper, lower),

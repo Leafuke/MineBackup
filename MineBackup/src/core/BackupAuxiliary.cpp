@@ -1,3 +1,4 @@
+#include "CompressionPolicy.h"
 #include "BackupManager.h"
 #include "GameSessionManager.h"
 #include "HistoryManager.h"
@@ -396,7 +397,7 @@ void DoExportForSharing(Config tempConfig, wstring worldName, wstring worldPath,
 		ofs.close();
 
 		// 构建并执行 7z 命令
-		const int normalizedZipLevel = NormalizeCompressionLevel(tempConfig.zipMethod, tempConfig.zipLevel);
+		const int normalizedZipLevel = CompressionPolicy::NormalizeLevel(tempConfig.zipMethod, tempConfig.zipLevel);
 		auto arguments = SevenZipCreateArguments(tempConfig, normalizedZipLevel, outputPath);
 		arguments.push_back(L"@" + filelist_path);
 

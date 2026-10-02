@@ -1028,7 +1028,10 @@ void RunBackupServiceTests(
 	BackupRequest retentionRequest = request;
 	retentionRequest.config = retentionConfig;
 	retentionRequest.world.configId = retentionConfig.configId;
+    WriteFixture(retentionStorage.backupSubDir / "README.md", "not a backup");
+    WriteFixture(retentionStorage.backupSubDir / "orphan.7z", "not managed");
 	retention.Enforce(retentionRequest, newEntry);
+    retention.Enforce(retentionRequest, newEntry);
 	test.Expect(!filesystem::exists(oldArchive) && filesystem::exists(newArchive)
 			&& retentionHistory.EntriesForConfig(retentionConfig.configId)->size() == 1,
 		"Runtime retention should atomically remove the oldest ordinary archive and history entry");

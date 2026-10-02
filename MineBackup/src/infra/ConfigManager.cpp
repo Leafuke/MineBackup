@@ -1,3 +1,4 @@
+#include "CompressionPolicy.h"
 #include "ConfigManager.h"
 #include "AppState.h"
 #include "UIHelpers.h"
@@ -160,16 +161,7 @@ static wstring GetDefaultFontPath() {
 #endif
 }
 
-static int NormalizeCompressionLevel(const wstring& method, int level) {
-	int minLevel = 1;
-	int maxLevel = 9;
-	if (_wcsicmp(method.c_str(), L"zstd") == 0) {
-		maxLevel = 22;
-	}
-	if (level < minLevel) return minLevel;
-	if (level > maxLevel) return maxLevel;
-	return level;
-}
+
 
 static int nextConfigId = 2; // 从 2 开始，因为 1 被向导占用
 
@@ -695,7 +687,7 @@ void LoadConfigs(const filesystem::path& filename) {
 	}
 	for (auto& kv : loadedConfigs) {
 		Config& cfg = kv.second;
-		cfg.zipLevel = NormalizeCompressionLevel(cfg.zipMethod, cfg.zipLevel);
+		cfg.zipLevel = CompressionPolicy::NormalizeLevel(cfg.zipMethod, cfg.zipLevel);
 		if (cfg.cloudSyncMode < static_cast<int>(CloudSyncMode::HistoryOnly)
 			|| cfg.cloudSyncMode > static_cast<int>(CloudSyncMode::HistoryAndBackups)) {
 			cfg.cloudSyncMode = static_cast<int>(CloudSyncMode::HistoryOnly);

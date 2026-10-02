@@ -1,3 +1,4 @@
+#include "PathIdentity.h"
 #include "TaskCoordinator.h"
 
 #include <algorithm>
@@ -166,17 +167,7 @@ stop_token TaskCoordinator::CurrentStopToken() {
 }
 
 wstring TaskCoordinator::WorldResourceKey(const wstring& configId, const filesystem::path& worldPath) {
-    error_code error;
-    auto absolute = filesystem::absolute(worldPath, error);
-    if (error) absolute = worldPath;
-    error.clear();
-    auto path = filesystem::weakly_canonical(absolute, error);
-    if (error) path = absolute.lexically_normal();
-    wstring identity = configId + L"|" + path.wstring();
-#ifdef _WIN32
-    transform(identity.begin(), identity.end(), identity.begin(), ::towlower);
-#endif
-    return L"world:" + identity;
+    return L"world:" + configId + L"|" + PathIdentity::BuildPathIdentityKey(worldPath);
 }
 
 wstring TaskCoordinator::CloudResourceKey(const wstring& profileIdentity) {
