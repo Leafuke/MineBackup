@@ -130,6 +130,7 @@ bool RunSharedManagedRestore(
 			+ (requestId.empty() ? "" : ";request_id=" + requestId));
 		return false;
 	};
+	if (g_appState.profileRecoveryRequired.load()) return fail("profile_recovery_required");
 	if (config.pendingLocalBinding) {
 		RESTORE_WARNING("Restore is disabled until local paths are bound.");
 		return fail("binding_required");

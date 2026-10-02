@@ -31,6 +31,7 @@ struct CloudTaskRuntimeState {
 struct AppState {
 
 	bool done = false;
+    std::atomic<bool> profileRecoveryRequired{false};
 
 	// UI State
 	bool showMainApp = false;

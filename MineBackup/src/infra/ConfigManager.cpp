@@ -1,3 +1,6 @@
+#include "ConfigIniCodec.h"
+#include "ProfileConfigRepository.h"
+#include "ProfileTransaction.h"
 #include "CompressionPolicy.h"
 #include "ConfigManager.h"
 #include "AppState.h"
@@ -42,22 +45,6 @@ filesystem::path RecommendedBackupRoot() {
 
 filesystem::path JobsPathForConfig(const filesystem::path& configFile) {
 	return configFile.parent_path() / L"jobs.json";
-}
-
-string ReadIgnoredSpecialSections(const filesystem::path& configFile) {
-	ifstream input(configFile, ios::binary);
-	if (!input.is_open()) return {};
-	string output;
-	bool capture = false;
-	for (string line; getline(input, line);) {
-		string normalized = line;
-		if (!normalized.empty() && normalized.back() == '\r') normalized.pop_back();
-		if (normalized.size() >= 2 && normalized.front() == '[' && normalized.back() == ']') {
-			capture = normalized.rfind("[SpCfg", 0) == 0;
-		}
-		if (capture) output += line + "\n";
-	}
-	return output;
 }
 
 void RecordConfigDiagnostic(
@@ -273,6 +260,15 @@ void LoadConfigs() {
 }
 
 void LoadConfigs(const filesystem::path& filename) {
+    AppPaths transactionPaths = GetAppPaths();
+    transactionPaths.configRoot = filesystem::absolute(filename).parent_path();
+    vector<Diagnostic> recoveryDiagnostics;
+    if (!ProfileTransaction::Recover(transactionPaths, recoveryDiagnostics)) {
+        g_configLoadDiagnostics.clear();
+        RecordConfigDiagnostic(LegacyIniConfigCodec::DiagnosticSeverity::Fatal, 0, L"General", L"transaction", "Configuration transaction recovery failed");
+        return;
+    }
+
 	map<int, Config> loadedConfigs;
     JobDocument loadedJobs;
     int loadedSelected = SelectedConfigIndex();
@@ -283,6 +279,7 @@ void LoadConfigs(const filesystem::path& filename) {
         g_appState.jobs = std::move(loadedJobs);
         g_appState.currentConfigIndex = loadedSelected;
         nextConfigId = loadedNext;
+        g_appState.profileRecoveryRequired.store(false);
     };
 	g_configLoadDiagnostics.clear();
 	loadedNext = 2;
@@ -313,6 +310,14 @@ void LoadConfigs(const filesystem::path& filename) {
         publish();
 		return;
 	}
+    const string contents((istreambuf_iterator<char>(in)), {});
+    const auto decoded = ConfigIniCodec::Parse(contents);
+    loadedConfigs = decoded.configs;
+    for (const auto& diagnostic : decoded.diagnostics) {
+        RecordConfigDiagnostic(LegacyIniConfigCodec::DiagnosticSeverity::Fatal, 0, L"Config", L"", diagnostic.detail);
+    }
+    in.clear();
+    in.seekg(0);
 	optional<int> configuredGlobalTheme;
 	optional<int> configuredThemeFallback;
 	optional<int> configuredSystemThemeLight;
@@ -351,7 +356,7 @@ void LoadConfigs(const filesystem::path& filename) {
 					section.clear();
 					continue;
 				}
-				loadedConfigs[idx] = Config();
+
 				cur = &loadedConfigs[idx];
 			}
 		}
@@ -423,89 +428,16 @@ void LoadConfigs(const filesystem::path& filename) {
 				return true;
 			};
 
-			if (cur) { // Inside a [ConfigN] section
-				if (key == L"ConfigName") cur->name = wstring_to_utf8(val);
-				else if (key == L"ConfigId") cur->configId = FolderRewindFormat::EnsureConfigId(val);
-				else if (key == L"PendingLocalBinding") cur->pendingLocalBinding = (val != L"0");
-				else if (key == L"SavePath") {
-					cur->saveRoot = val;
-				}
-				else if (key == L"WorldData") {
-					while (getline(in, line1)) {
-						++lineNumber;
-						while (!line1.empty() && (line1.back() == '\r' || line1.back() == ' ' || line1.back() == '\t')) {
-							line1.pop_back();
-						}
-						if (line1 == "*") break;
-						line = utf8_to_wstring(line1);
-						wstring name = line;
-						if (!getline(in, line1)) {
-							RecordConfigDiagnostic(
-								LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
-								lineNumber, section, key, "truncated WorldData entry");
-							break;
-						}
-						++lineNumber;
-						while (!line1.empty() && (line1.back() == '\r' || line1.back() == ' ' || line1.back() == '\t')) {
-							line1.pop_back();
-						}
-						if (line1 == "*") {
-							RecordConfigDiagnostic(
-								LegacyIniConfigCodec::DiagnosticSeverity::Fatal,
-								lineNumber, section, key, "world description is missing");
-							break;
-						}
-						line = utf8_to_wstring(line1);
-						wstring desc = line;
-						cur->worlds.push_back({ name, desc });
-					}
-					if (filesystem::exists(cur->saveRoot)) {
-						error_code scanError;
-						for (filesystem::directory_iterator it(cur->saveRoot, scanError), end;
-							!scanError && it != end; it.increment(scanError)) {
-							const auto& entry = *it;
-							if (entry.is_directory() && IsWorldNameAvailable(entry.path().filename().wstring(), cur->worlds))
-								cur->worlds.push_back({ entry.path().filename().wstring(), L"" });
-						}
-						if (scanError) {
-							RecordConfigDiagnostic(
-								LegacyIniConfigCodec::DiagnosticSeverity::Warning,
-								lineNumber, section, key, "world directory scan failed");
-						}
-					}
-				}
-				else if (key == L"BackupPath") cur->backupPath = val;
-				else if (key == L"ZipProgram") cur->zipPath = val;
-				else if (key == L"ZipFormat") cur->zipFormat = val;
-				else if (key == L"ZipLevel") readInt(cur->zipLevel, 0, 22, true);
-				else if (key == L"ZipMethod") cur->zipMethod = val;
-				else if (key == L"KeepCount") readInt(cur->keepCount, 0, 100000, true);
-				else if (key == L"SmartBackup") readInt(cur->backupMode, BackupPolicy::MinimumMode, BackupPolicy::MaximumMode, true);
-				else if (key == L"RestoreBeforeBackup") cur->backupBefore = (val != L"0");
-				else if (key == L"SilenceMode") { /* ignored legacy setting */ }
-				else if (key == L"CpuThreads") readInt(cur->cpuThreads, 0, 1024, true);
-				else if (key == L"UseLowPriority") cur->useLowPriority = (val != L"0");
-				else if (key == L"SkipIfUnchanged") cur->skipIfUnchanged = (val != L"0");
-				else if (key == L"MaxSmartBackups") readInt(cur->maxSmartBackupsPerFull, BackupPolicy::MinimumSmartCount, BackupPolicy::MaximumSmartCount, true);
-				else if (key == L"BackupOnStart") cur->backupOnGameStart = (val != L"0");
-				else if (key == L"BlacklistItem") cur->blacklist.push_back(val);
-				else if (key == L"CloudSyncEnabled") cur->cloudSyncEnabled = (val != L"0");
-				else if (key == L"RclonePath") cur->rclonePath = val;
-				else if (key == L"RcloneRemotePath") cur->rcloneRemotePath = val;
-				else if (key == L"CloudSyncMode") readInt(cur->cloudSyncMode, 0, 1, true);
-				else if (key == L"CloudWorkingDirectory") cur->cloudWorkingDirectory = val;
-				else if (key == L"CloudTimeoutSeconds") readInt(cur->cloudTimeoutSeconds, 1, 86400, true);
-				else if (key == L"CloudRetryCount") readInt(cur->cloudRetryCount, 0, 100, true);
-				else if (key == L"CloudSyncHistoryAfterUpload") cur->cloudSyncHistoryAfterUpload = (val != L"0");
-				else if (key == L"CloudAutoDownloadBeforeRestore") cur->cloudAutoDownloadBeforeRestore = (val != L"0");
-				else if (key == L"CloudLastRunUtc") cur->cloudLastRunUtc = val;
-				else if (key == L"CloudLastExitCode") readInt(cur->cloudLastExitCode, (numeric_limits<int>::min)(), (numeric_limits<int>::max)(), false);
-				else if (key == L"CloudLastErrorMessage") cur->cloudLastErrorMessage = val;
-				else if (key == L"SnapshotPath") cur->snapshotPath = val;
-				else if (key == L"OtherPath") cur->othersPath = val;
-				else if (key == L"EnableWEIntegration") cur->enableWEIntegration = (val != L"0");
-				else if (key == L"WESnapshotPath") cur->weSnapshotPath = val;
-				else if (key == L"Theme") {
+            if (cur) {
+                if (key == L"WorldData") {
+                    while (getline(in, line1)) {
+                        ++lineNumber;
+                        const auto first = line1.find_first_not_of(" \t\r");
+                        const auto last = line1.find_last_not_of(" \t\r");
+                        if (first != string::npos && line1.substr(first, last - first + 1) == "*") break;
+                    }
+                }
+				if (key == L"Theme") {
 					optional<int> themeVal;
 					if (readTheme(themeVal) && themeVal) cur->theme = *themeVal;
 				}
@@ -687,13 +619,15 @@ void LoadConfigs(const filesystem::path& filename) {
 	}
 	for (auto& kv : loadedConfigs) {
 		Config& cfg = kv.second;
-		cfg.zipLevel = CompressionPolicy::NormalizeLevel(cfg.zipMethod, cfg.zipLevel);
-		if (cfg.cloudSyncMode < static_cast<int>(CloudSyncMode::HistoryOnly)
-			|| cfg.cloudSyncMode > static_cast<int>(CloudSyncMode::HistoryAndBackups)) {
-			cfg.cloudSyncMode = static_cast<int>(CloudSyncMode::HistoryOnly);
-		}
-		if (cfg.cloudTimeoutSeconds <= 0) cfg.cloudTimeoutSeconds = 600;
-		if (cfg.cloudRetryCount < 0) cfg.cloudRetryCount = 0;
+        error_code scanError;
+        if (!cfg.saveRoot.empty() && filesystem::is_directory(cfg.saveRoot, scanError)) {
+            for (filesystem::directory_iterator it(cfg.saveRoot, scanError), end;
+                !scanError && it != end; it.increment(scanError)) {
+                if (it->is_directory(scanError) && IsWorldNameAvailable(it->path().filename().wstring(), cfg.worlds))
+                    cfg.worlds.push_back({it->path().filename().wstring(), L""});
+            }
+        }
+
 		if (cfg.configId.empty()) {
 			cfg.configId = MigrationCoordinator::GenerateLegacyConfigId(cfg, kv.first);
 			cfg.legacyConfigIdGenerated = true;
@@ -825,6 +759,7 @@ ConfigSaveResult SaveConfigsDetailed() {
 }
 
 ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
+    if (g_appState.profileRecoveryRequired.load()) return {ConfigSaveState::RecoveryRequired, L"Reload the profile before saving again."};
 	// 内部全程使用 error_code 明确状态的实现，不在 replacement 之后抛出
 	// 无法分类的异常；文件系统错误都转换为对应的 ConfigSaveState。
 	FlushUiConfigDraft();
@@ -836,8 +771,6 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
     JobDocument jobs;
     {
         lock_guard lock(g_appState.configsMutex);
-        for (auto& [index, config] : g_appState.configs)
-            config.configId = FolderRewindFormat::EnsureConfigId(config.configId);
         configs = g_appState.configs;
         selectedIndex = g_appState.currentConfigIndex;
         nextIndex = nextConfigId;
@@ -845,10 +778,6 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
     }
 	ConfigSaveResult result;
 	const filesystem::path target(filename);
-	for (auto& [index, config] : configs) {
-		(void)index;
-		config.configId = FolderRewindFormat::EnsureConfigId(config.configId);
-	}
     for (const auto& [index, config] : configs) {
         if (!BackupPolicy::IsValid(config.backupMode, config.maxSmartBackupsPerFull)) {
             result.detail = utf8_to_wstring(L("BACKUP_POLICY_INVALID"));
@@ -858,14 +787,6 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
         }
     }
 
-	wstring jobsWriteError;
-	if (!JobStorage::Save(JobsPathForConfig(target), jobs, jobsWriteError)) {
-		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
-			"jobs.write_failed", "{}", wstring_to_utf8(jobsWriteError));
-		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		result.detail = jobsWriteError;
-		return result; // NotCommitted
-	}
 	std::wostringstream buffer;
 	buffer << L"[General]\n";
 	buffer << L"CurrentConfig=" << selectedIndex << L"\n";
@@ -911,79 +832,29 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 	}
 	buffer << L"\n";
 
-	for (auto& kv : configs) {
-		int idx = kv.first;
-		Config& c = kv.second;
-		buffer << L"[Config" << idx << L"]\n";
-		buffer << L"ConfigName=" << utf8_to_wstring(c.name) << L"\n";
-		c.configId = FolderRewindFormat::EnsureConfigId(c.configId);
-		buffer << L"ConfigId=" << c.configId << L"\n";
-		buffer << L"PendingLocalBinding=" << (c.pendingLocalBinding ? 1 : 0) << L"\n";
-		buffer << L"SavePath=" << c.saveRoot << L"\n";
-		buffer << L"# One line for name, one line for description, terminated by '*'\n";
-		buffer << L"WorldData=\n";
-		for (auto& p : c.worlds)
-			buffer << p.first << L"\n" << p.second << L"\n";
-		buffer << L"*\n";
-		buffer << L"BackupPath=" << c.backupPath << L"\n";
-		buffer << L"ZipProgram=" << c.zipPath << L"\n";
-		buffer << L"ZipFormat=" << c.zipFormat << L"\n";
-		buffer << L"ZipLevel=" << c.zipLevel << L"\n";
-		buffer << L"ZipMethod=" << c.zipMethod << L"\n";
-		buffer << L"CpuThreads=" << c.cpuThreads << L"\n";
-		buffer << L"UseLowPriority=" << (c.useLowPriority ? 1 : 0) << L"\n";
-		buffer << L"KeepCount=" << c.keepCount << L"\n";
-		buffer << L"SmartBackup=" << c.backupMode << L"\n";
-		buffer << L"RestoreBeforeBackup=" << (c.backupBefore ? 1 : 0) << L"\n";
-		buffer << L"SkipIfUnchanged=" << (c.skipIfUnchanged ? 1 : 0) << L"\n";
-		buffer << L"MaxSmartBackups=" << c.maxSmartBackupsPerFull << L"\n";
-		buffer << L"BackupOnStart=" << (c.backupOnGameStart ? 1 : 0) << L"\n";
-		buffer << L"CloudSyncEnabled=" << (c.cloudSyncEnabled ? 1 : 0) << L"\n";
-		buffer << L"RclonePath=" << c.rclonePath << L"\n";
-		buffer << L"RcloneRemotePath=" << c.rcloneRemotePath << L"\n";
-		buffer << L"CloudSyncMode=" << c.cloudSyncMode << L"\n";
-		buffer << L"CloudWorkingDirectory=" << c.cloudWorkingDirectory << L"\n";
-		buffer << L"CloudTimeoutSeconds=" << c.cloudTimeoutSeconds << L"\n";
-		buffer << L"CloudRetryCount=" << c.cloudRetryCount << L"\n";
-		buffer << L"CloudSyncHistoryAfterUpload=" << (c.cloudSyncHistoryAfterUpload ? 1 : 0) << L"\n";
-		buffer << L"CloudAutoDownloadBeforeRestore=" << (c.cloudAutoDownloadBeforeRestore ? 1 : 0) << L"\n";
-		buffer << L"CloudLastRunUtc=" << c.cloudLastRunUtc << L"\n";
-		buffer << L"CloudLastExitCode=" << c.cloudLastExitCode << L"\n";
-		buffer << L"CloudLastErrorMessage=" << c.cloudLastErrorMessage << L"\n";
-		buffer << L"SnapshotPath=" << c.snapshotPath << L"\n";
-		buffer << L"OtherPath=" << c.othersPath << L"\n";
-		buffer << L"EnableWEIntegration=" << (c.enableWEIntegration ? 1 : 0) << L"\n";
-		buffer << L"WESnapshotPath=" << c.weSnapshotPath << L"\n";
-		for (const auto& item : c.blacklist) {
-			buffer << L"BlacklistItem=" << item << L"\n";
-		}
-		buffer << L"\n";
-	}
-
-	string utf8 = wstring_to_utf8(buffer.str());
-	const string ignoredSpecial = ReadIgnoredSpecialSections(target);
-	if (!ignoredSpecial.empty()) utf8 += "\n" + ignoredSpecial;
-	const auto write = AtomicFileWriter::WriteText(target, utf8);
-	if (write.commitState == AtomicFileWriter::WriteCommitState::NotReplaced) {
-		// config.ini 从未被替换：这次保存逻辑上什么都没有发生。
-		MB_LOG_ERROR(minebackup::logging::LogCategory::Application,
-			"config.write_not_committed", "{}", wstring_to_utf8(write.error));
-		MessageBoxWin(L("ERROR_CONFIG_WRITE_FAIL"), L("ERROR_TITLE"), 2);
-		result.detail = write.error;
-		return result; // NotCommitted
-	}
-	if (!write.IsDurable()) {
-		// config.ini 已替换（commit point 已越过），仅目录同步未确认。
-		// 不显示误导性的“写入失败”，不尝试用 .bak 反向覆盖，
-		// 更不允许业务层按“未提交”回滚内存状态。
-		result.state = ConfigSaveState::CommittedNotDurable;
-		result.detail = write.error;
-		MB_LOG_WARNING(minebackup::logging::LogCategory::Application,
-			"config.write_committed_not_durable", "{}", wstring_to_utf8(write.error));
-		return result;
-	}
-	result.state = ConfigSaveState::CommittedDurably;
-	return result;
+    try {
+        vector<Diagnostic> diagnostics;
+        if (!JobStorage::ValidateReferences(jobs, configs, diagnostics)) {
+            result.detail = L"Job references are invalid.";
+            return result;
+        }
+        const auto document = ProfileConfigRepository(target).Prepare(
+            configs, restoreWhitelist, true, wstring_to_utf8(buffer.str()));
+        if (!document.success) {
+            result.detail = L"Configuration identity or policy is invalid.";
+            return result;
+        }
+        AppPaths paths = GetAppPaths();
+        paths.configRoot = filesystem::absolute(target).parent_path();
+        result = ProfileTransaction::Commit(paths, {document.content, JobStorage::Serialize(jobs), nullopt}, {}, filesystem::absolute(target));
+    } catch (const exception& error) {
+        result.state = ConfigSaveState::NotCommitted;
+        result.detail = utf8_to_wstring(error.what());
+    }
+    if (result.state == ConfigSaveState::RecoveryRequired) g_appState.profileRecoveryRequired.store(true);
+    if (!result.Durable()) MB_LOG_WARNING(minebackup::logging::LogCategory::Application,
+        "config.save.incomplete", "{}", wstring_to_utf8(result.detail));
+    return result;
 }
 
 // 在 LoadConfigs/SaveConfigs/CheckForConfigConflicts 等函数关键处调用日志接口

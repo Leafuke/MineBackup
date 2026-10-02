@@ -1,3 +1,4 @@
+#include "ProfileTransaction.h"
 #include "RestoreService.h"
 
 #include "BackupManagerInternal.h"
@@ -424,6 +425,11 @@ RestoreResult RestoreService::Run(
 	stop_token stopToken,
 	const RestoreExecutionOptions& options) const {
 	RestoreResult result;
+    if (!ProfileTransaction::Inspect(dependencies_.paths.ConfigFile(), result.diagnostics)) {
+        result.code = OperationCode::InvalidProfile;
+        return result;
+    }
+
 	optional<BackupRequest> safetyBackupRequest;
 	result.dryRun = dryRun;
 	result.plan = VerifyAndRepair(request, true, stopToken, RestoreVerificationMode::Managed);

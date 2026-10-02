@@ -117,6 +117,8 @@
     <ClCompile Include="src\core\BackupAuxiliary.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\ConfigIniCodec.cpp"><Filter>src\core</Filter></ClCompile>
+    <ClCompile Include="src\core\ProfileTransaction.cpp"><Filter>src\core</Filter></ClCompile>
     <ClCompile Include="src\core\BackupManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -498,6 +500,8 @@
     <ClInclude Include="src\core\BackupManagerInternal.h">
       <Filter>src\core</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\ConfigIniCodec.h"><Filter>src\core</Filter></ClInclude>
+    <ClInclude Include="src\core\ProfileTransaction.h"><Filter>src\core</Filter></ClInclude>
     <ClInclude Include="src\core\BackupManager.h">
       <Filter>src\core</Filter>
     </ClInclude>

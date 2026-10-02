@@ -59,6 +59,9 @@ set(MINEBACKUP_DATA_CORE_SOURCES
 )
 
 set(MINEBACKUP_RUNTIME_SOURCES
+    ${MINEBACKUP_CORE_DIR}/ConfigIniCodec.cpp
+    ${MINEBACKUP_CORE_DIR}/ProfileTransaction.cpp
+
 	${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
 	${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
 	${MINEBACKUP_CORE_DIR}/HotRestoreCoordinator.cpp
@@ -181,6 +184,9 @@ set(MINEBACKUP_SPDLOG_SOURCES
 )
 
 set(MINEBACKUP_PUBLIC_HEADERS
+    ${MINEBACKUP_CORE_DIR}/ConfigIniCodec.h
+    ${MINEBACKUP_CORE_DIR}/ProfileTransaction.h
+
     ${MINEBACKUP_CORE_DIR}/CompressionPolicy.h
     ${MINEBACKUP_APP_DIR}/Application.h ${MINEBACKUP_APP_DIR}/ApplicationActions.h ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.h ${MINEBACKUP_APP_DIR}/AppearanceRuntime.h ${MINEBACKUP_APP_DIR}/ConfigBatchCreationService.h ${MINEBACKUP_APP_DIR}/DesktopUiLifecycle.h ${MINEBACKUP_APP_DIR}/DesktopUiSession.h ${MINEBACKUP_APP_DIR}/AppState.h ${MINEBACKUP_APP_DIR}/ConfigSelection.h ${MINEBACKUP_APP_DIR}/DataModels.h ${MINEBACKUP_APP_DIR}/Globals.h ${MINEBACKUP_APP_DIR}/ImGuiRuntime.h ${MINEBACKUP_APP_DIR}/LaunchOptions.h ${MINEBACKUP_APP_DIR}/MainUI.h ${MINEBACKUP_APP_DIR}/legacy/LegacyServiceCleanup.h
     ${MINEBACKUP_CORE_DIR}/ArchiveRunner.h ${MINEBACKUP_CORE_DIR}/BatchReadinessService.h ${MINEBACKUP_CORE_DIR}/ChainSafeRetention.h ${MINEBACKUP_CORE_DIR}/ConfigFactory.h ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.h ${MINEBACKUP_CORE_DIR}/BackupManager.h ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h ${MINEBACKUP_CORE_DIR}/BackupService.h ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.h ${MINEBACKUP_CORE_DIR}/CloudSyncInternal.h ${MINEBACKUP_CORE_DIR}/CloudSyncService.h

@@ -1,3 +1,4 @@
+#include "ProfileTransaction.h"
 #include "CliApplication.h"
 
 #include "AppPaths.h"
@@ -790,6 +791,9 @@ CliResult ExecuteProfileCommand(
 		return ProfilePlanCommand(paths, options, false);
 	}
 	if (options.command == CliCommand::ProfileApply) {
+        vector<Diagnostic> recovery;
+        if (!options.dryRun && !ProfileTransaction::Recover(paths, recovery))
+            return {CliCommandName(options.command), OperationCode::InvalidProfile, nlohmann::json::object(), std::move(recovery)};
 		auto result = ProfilePlanCommand(paths, options, true);
 		if (sharedRuntime && IsSuccessful(result.code) && !options.dryRun) {
 			const auto reloaded = sharedRuntime->Reload();

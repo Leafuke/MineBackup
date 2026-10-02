@@ -1,3 +1,4 @@
+#include "ProfileTransaction.h"
 #include "PathIdentity.h"
 #include "CompressionPolicy.h"
 #include "ArchiveRunner.h"
@@ -412,6 +413,12 @@ BackupResult BackupService::RunCore(
 		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
 		{"config_id", wstring_to_utf8(request.config.configId)},
 		{"world", wstring_to_utf8(request.world.relativePath)}};
+    BackupResult unavailable;
+    if (!ProfileTransaction::Inspect(dependencies_.paths.ConfigFile(), unavailable.diagnostics)) {
+        unavailable.code = OperationCode::InvalidProfile;
+        unavailable.outcome = BackupOutcome::Rejected;
+        return unavailable;
+    }
 	Config config = request.config;
 	if (request.auxiliarySource) { config.backupMode = 1; config.skipIfUnchanged = false; }
 	const wstring worldName = request.world.relativePath;

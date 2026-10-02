@@ -224,7 +224,7 @@ bool SaveHistoryFile(const filesystem::path& path, const map<int, Config>& confi
     return SaveHistoryFileByConfigId(path, configs, byConfigId);
 }
 
-bool SaveHistoryFileByConfigId(const filesystem::path& path, const map<int, Config>& configs, const HistoryByConfigId& history) {
+string SerializeHistoryFileByConfigId(const map<int, Config>& configs, const HistoryByConfigId& history) {
     nlohmann::json root = nlohmann::json::array();
 
     for (const auto& historyPair : history) {
@@ -244,7 +244,11 @@ bool SaveHistoryFileByConfigId(const filesystem::path& path, const map<int, Conf
         }
     }
 
-	return AtomicFileWriter::WriteText(path, root.dump(2)).success;
+	return root.dump(2);
+}
+
+bool SaveHistoryFileByConfigId(const filesystem::path& path, const map<int, Config>& configs, const HistoryByConfigId& history) {
+    return AtomicFileWriter::WriteText(path, SerializeHistoryFileByConfigId(configs, history)).success;
 }
 
 nlohmann::json SerializeActiveHistoryManifest(const Config& config, const vector<HistoryEntry>& entries) {

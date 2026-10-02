@@ -73,6 +73,13 @@ BackupResult RunDesktopBackup(
 	const wstring& comment,
 	stop_token stopToken,
 	BackupExecutionOptions options) {
+    if (g_appState.profileRecoveryRequired.load()) {
+        BackupResult result;
+        result.code = OperationCode::InvalidProfile;
+        result.outcome = BackupOutcome::Rejected;
+        result.diagnostics.push_back({"profile.transaction.recovery_required", DiagnosticSeverity::Error, {}});
+        return result;
+    }
 	const int configIndex = ResolveDesktopConfigIndex(
 		folder.configIndex,
 		SelectedConfigIndex());

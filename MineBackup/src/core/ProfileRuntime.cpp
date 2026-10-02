@@ -1,3 +1,4 @@
+#include "ProfileTransaction.h"
 #include "ProfileRuntime.h"
 
 #include "ExternalToolManager.h"
@@ -77,6 +78,7 @@ ProfileRuntime::~ProfileRuntime() {
 ProfileRuntimeInitialization ProfileRuntime::Reload() {
 	scoped_lock runtimeLock(operationMutex_, stateMutex_);
 	ProfileRuntimeInitialization result;
+    if (!ProfileTransaction::Recover(paths_, result.diagnostics)) { result.code = OperationCode::InvalidProfile; return result; }
 	auto next = make_unique<Implementation>();
 	auto catalog = ProfileConfigCatalogLoader::Load(paths_.ConfigFile());
 	result.code = CatalogCode(catalog.status);
@@ -420,7 +422,11 @@ JobRunResult ProfileRuntime::RunJob(
 	bool noNetwork) const {
 	scoped_lock lock(operationMutex_, stateMutex_);
 	JobRunResult missing;
-	missing.jobId = jobId;
+    missing.jobId = jobId;
+    if (!ProfileTransaction::Inspect(paths_.ConfigFile(), missing.diagnostics)) {
+        missing.code = OperationCode::InvalidProfile;
+        return missing;
+    }
 	const Job* job = implementation_ ? JobStorage::Find(implementation_->jobs, jobId) : nullptr;
 	if (!job) {
 		missing.code = OperationCode::TargetNotFound;

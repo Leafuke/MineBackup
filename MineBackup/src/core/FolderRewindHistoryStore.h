@@ -22,6 +22,7 @@ int ResolveConfigIndexByConfigId(const std::map<int, Config>& configs, const std
 bool LoadHistoryFile(const std::filesystem::path& path, const std::map<int, Config>& configs, std::map<int, std::vector<HistoryEntry>>& outHistory);
 bool SaveHistoryFile(const std::filesystem::path& path, const std::map<int, Config>& configs, const std::map<int, std::vector<HistoryEntry>>& history);
 bool LoadHistoryFileByConfigId(const std::filesystem::path& path, const std::map<int, Config>& configs, HistoryByConfigId& outHistory);
+std::string SerializeHistoryFileByConfigId(const std::map<int, Config>& configs, const HistoryByConfigId& history);
 bool SaveHistoryFileByConfigId(const std::filesystem::path& path, const std::map<int, Config>& configs, const HistoryByConfigId& history);
 nlohmann::json SerializeActiveHistoryManifest(const Config& config, const std::vector<HistoryEntry>& entries);
 bool TryParseActiveHistoryManifest(const nlohmann::json& root, CloudActiveHistoryManifest& outManifest);

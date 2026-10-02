@@ -114,6 +114,8 @@
     <ClCompile Include="src\core\ChainSafeRetention.cpp" />
     <ClCompile Include="src\core\BackupChangeDetector.cpp" />
     <ClCompile Include="src\core\BackupAuxiliary.cpp" />
+    <ClCompile Include="src\core\ConfigIniCodec.cpp" />
+    <ClCompile Include="src\core\ProfileTransaction.cpp" />
     <ClCompile Include="src\core\BackupManager.cpp" />
     <ClCompile Include="src\core\BackupManagerDesktop.cpp" />
     <ClCompile Include="src\core\BackupRestore.cpp" />
@@ -248,6 +250,8 @@
     <ClInclude Include="src\core\ChainSafeRetention.h" />
     <ClInclude Include="src\core\CompressionPolicy.h" />
     <ClInclude Include="src\core\BackupChangeDetector.h" />
+    <ClInclude Include="src\core\ConfigIniCodec.h" />
+    <ClInclude Include="src\core\ProfileTransaction.h" />
     <ClInclude Include="src\core\BackupManager.h" />
     <ClInclude Include="src\core\BackupManagerInternal.h" />
     <ClInclude Include="src\core\BackupService.h" />

@@ -1,3 +1,4 @@
+#include "ProfileTransaction.h"
 #include "ProfileManifest.h"
 
 #include "AtomicFileWriter.h"
@@ -20,10 +21,6 @@ namespace ProfileManifest {
 namespace {
 
 using nlohmann::json;
-
-constexpr wchar_t TransactionName[] = L".profile-apply-transaction.json";
-constexpr wchar_t ConfigRollbackName[] = L".profile-apply-config.rollback";
-constexpr wchar_t JobsRollbackName[] = L".profile-apply-jobs.rollback";
 
 Diagnostic Error(string eventId, string detail) {
 	return {std::move(eventId), DiagnosticSeverity::Error, std::move(detail)};
@@ -354,73 +351,6 @@ bool JobsEqual(const Job& left, const Job& right) {
 	return JobStorage::Serialize(leftDocument) == JobStorage::Serialize(rightDocument);
 }
 
-string ReadFile(const filesystem::path& path) {
-	ifstream input(path, ios::binary);
-	return input.is_open()
-		? string((istreambuf_iterator<char>(input)), istreambuf_iterator<char>())
-		: string{};
-}
-
-void RemoveTransactionFiles(const AppPaths& paths) {
-	error_code ignored;
-	filesystem::remove(paths.configRoot / TransactionName, ignored);
-	filesystem::remove(paths.configRoot / ConfigRollbackName, ignored);
-	filesystem::remove(paths.configRoot / JobsRollbackName, ignored);
-}
-
-bool RestoreSnapshot(
-	const filesystem::path& target,
-	const filesystem::path& snapshot,
-	bool originallyExisted,
-	vector<Diagnostic>& diagnostics) {
-	if (!originallyExisted) {
-		error_code error;
-		filesystem::remove(target, error);
-		if (error) {
-			diagnostics.push_back(Error("profile.transaction.rollback_failed",
-				wstring_to_utf8(target.wstring())));
-			return false;
-		}
-		return true;
-	}
-	const auto write = AtomicFileWriter::WriteText(target, ReadFile(snapshot),
-		{false, true});
-	if (!write.success) {
-		diagnostics.push_back(Error("profile.transaction.rollback_failed",
-			wstring_to_utf8(write.error)));
-	}
-	return write.success;
-}
-
-bool RecoverTransaction(const AppPaths& paths, vector<Diagnostic>& diagnostics) {
-	const filesystem::path journalPath = paths.configRoot / TransactionName;
-	error_code existsError;
-	if (!filesystem::exists(journalPath, existsError) || existsError) return !existsError;
-	const json journal = json::parse(ReadFile(journalPath), nullptr, false);
-	if (journal.is_discarded() || !journal.is_object()) {
-		diagnostics.push_back(Error("profile.transaction.invalid_journal",
-			wstring_to_utf8(journalPath.wstring())));
-		return false;
-	}
-	if (journal.value("phase", string{}) == "committed") {
-		RemoveTransactionFiles(paths);
-		diagnostics.push_back(Warning("profile.transaction.cleanup_recovered", {}));
-		return true;
-	}
-	const bool configExisted = journal.value("configExisted", false);
-	const bool jobsExisted = journal.value("jobsExisted", false);
-	const bool configRestored = RestoreSnapshot(paths.ConfigFile(),
-		paths.configRoot / ConfigRollbackName, configExisted, diagnostics);
-	const bool jobsRestored = RestoreSnapshot(paths.JobsFile(),
-		paths.configRoot / JobsRollbackName, jobsExisted, diagnostics);
-	if (configRestored && jobsRestored) {
-		RemoveTransactionFiles(paths);
-		diagnostics.push_back(Warning("profile.transaction.rollback_recovered", {}));
-		return true;
-	}
-	return false;
-}
-
 size_t HistoryCount(
 	HistoryRepository& history,
 	const wstring& configId) {
@@ -612,7 +542,7 @@ ProfileApplyPlan Plan(
 	const ServerProfileManifest& manifest,
 	bool prune) {
 	ProfileApplyPlan plan;
-	if (!RecoverTransaction(paths, plan.diagnostics)) return plan;
+	if (!ProfileTransaction::Inspect(paths.ConfigFile(), plan.diagnostics)) return plan;
 	ProfileConfigRepository repository(paths.ConfigFile());
 	const auto current = repository.Load();
 	if (!current.IsUsable()) {
@@ -722,100 +652,35 @@ ProfileApplyPlan Plan(
 }
 
 ProfileApplyResult Apply(const AppPaths& paths, const ProfileApplyPlan& plan) {
-	ProfileApplyResult result;
-	result.diff = plan.diff;
-	result.diagnostics = plan.diagnostics;
-	if (!IsSuccessful(plan.code)) {
-		result.code = plan.code;
-		return result;
-	}
-	vector<Diagnostic> recoveryDiagnostics;
-	if (!RecoverTransaction(paths, recoveryDiagnostics)) {
-		result.code = OperationCode::InvalidProfile;
-		result.diagnostics.insert(result.diagnostics.end(),
-			recoveryDiagnostics.begin(), recoveryDiagnostics.end());
-		return result;
-	}
-	const bool configExisted = filesystem::exists(paths.ConfigFile());
-	const bool jobsExisted = filesystem::exists(paths.JobsFile());
-	if (configExisted) {
-		const auto snapshot = AtomicFileWriter::WriteText(
-			paths.configRoot / ConfigRollbackName, ReadFile(paths.ConfigFile()), {false, true});
-		if (!snapshot.success) {
-			result.code = OperationCode::InvalidProfile;
-			result.diagnostics.push_back(Error("profile.transaction.snapshot_failed",
-				wstring_to_utf8(snapshot.error)));
-			return result;
-		}
-	}
-	if (jobsExisted) {
-		const auto snapshot = AtomicFileWriter::WriteText(
-			paths.configRoot / JobsRollbackName, ReadFile(paths.JobsFile()), {false, true});
-		if (!snapshot.success) {
-			result.code = OperationCode::InvalidProfile;
-			result.diagnostics.push_back(Error("profile.transaction.snapshot_failed",
-				wstring_to_utf8(snapshot.error)));
-			RemoveTransactionFiles(paths);
-			return result;
-		}
-	}
-	json journal{{"schemaVersion", 1}, {"phase", "prepared"},
-		{"configExisted", configExisted}, {"jobsExisted", jobsExisted}};
-	const auto prepared = AtomicFileWriter::WriteText(
-		paths.configRoot / TransactionName, journal.dump(), {false, true});
-	if (!prepared.success) {
-		result.code = OperationCode::InvalidProfile;
-		result.diagnostics.push_back(Error("profile.transaction.prepare_failed",
-			wstring_to_utf8(prepared.error)));
-		RemoveTransactionFiles(paths);
-		return result;
-	}
-
-	ProfileConfigRepository repository(paths.ConfigFile());
-	if (plan.historyPresent
-		&& !FolderRewindHistoryStore::SaveHistoryFileByConfigId(
-			paths.HistoryFile(), plan.configs, plan.history)) {
-		result.code = OperationCode::InvalidProfile;
-		result.diagnostics.push_back(Error("profile.history.write_failed",
-			wstring_to_utf8(paths.HistoryFile().wstring())));
-		RemoveTransactionFiles(paths);
-		return result;
-	}
-	const auto configWrite = repository.Save(plan.configs, plan.restorePreserve, true);
-	wstring jobsError;
-	const bool jobsWrite = configWrite.success
-		&& JobStorage::Save(paths.JobsFile(), plan.jobs, jobsError);
-	if (!configWrite.success || !jobsWrite) {
-		result.diagnostics.insert(result.diagnostics.end(),
-			configWrite.diagnostics.begin(), configWrite.diagnostics.end());
-		if (!jobsWrite && !jobsError.empty()) {
-			result.diagnostics.push_back(Error("job.document.write_failed",
-				wstring_to_utf8(jobsError)));
-		}
-		vector<Diagnostic> rollbackDiagnostics;
-		RecoverTransaction(paths, rollbackDiagnostics);
-		result.diagnostics.insert(result.diagnostics.end(),
-			rollbackDiagnostics.begin(), rollbackDiagnostics.end());
-		result.code = OperationCode::InvalidProfile;
-		return result;
-	}
-	journal["phase"] = "committed";
-	const auto committed = AtomicFileWriter::WriteText(
-		paths.configRoot / TransactionName, journal.dump(), {false, true});
-	if (!committed.success) {
-		result.code = OperationCode::InvalidProfile;
-		result.diagnostics.push_back(Error("profile.transaction.commit_marker_failed",
-			wstring_to_utf8(committed.error)));
-		return result;
-	}
-	RemoveTransactionFiles(paths);
-	result.code = OperationCode::Success;
-	return result;
+    ProfileApplyResult result;
+    result.diff = plan.diff;
+    result.diagnostics = plan.diagnostics;
+    result.code = plan.code;
+    if (!IsSuccessful(plan.code)) return result;
+    try {
+        const auto config = ProfileConfigRepository(paths.ConfigFile()).Prepare(plan.configs, plan.restorePreserve, true);
+        if (!config.success) {
+            result.code = OperationCode::InvalidProfile;
+            result.diagnostics.insert(result.diagnostics.end(), config.diagnostics.begin(), config.diagnostics.end());
+            return result;
+        }
+        ProfileTransaction::Documents documents{config.content, JobStorage::Serialize(plan.jobs), nullopt};
+        if (plan.historyPresent) documents.history = FolderRewindHistoryStore::SerializeHistoryFileByConfigId(plan.configs, plan.history);
+        const auto committed = ProfileTransaction::Commit(paths, documents);
+        result.code = committed.Committed() ? OperationCode::Success : OperationCode::InvalidProfile;
+        if (!committed.Durable()) result.diagnostics.push_back({
+            committed.state == ConfigSaveState::RecoveryRequired ? "profile.transaction.recovery_required" : "profile.transaction.incomplete",
+            committed.Committed() ? DiagnosticSeverity::Warning : DiagnosticSeverity::Error, wstring_to_utf8(committed.detail)});
+    } catch (const exception& error) {
+        result.code = OperationCode::InvalidProfile;
+        result.diagnostics.push_back({"profile.transaction.failed", DiagnosticSeverity::Error, error.what()});
+    }
+    return result;
 }
 
 ProfileManifestLoadResult Export(const AppPaths& paths) {
 	ProfileManifestLoadResult result;
-	if (!RecoverTransaction(paths, result.diagnostics)) {
+	if (!ProfileTransaction::Inspect(paths.ConfigFile(), result.diagnostics)) {
 		result.status = ProfileManifestStatus::Invalid;
 		return result;
 	}

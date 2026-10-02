@@ -1,4 +1,6 @@
 #include "ProfileConfigRepository.h"
+#include "ConfigIniCodec.h"
+#include <stdexcept>
 
 #include "AtomicFileWriter.h"
 #include "LegacyIniConfigCodec.h"
@@ -21,6 +23,7 @@ struct IniSection {
 
 vector<wstring> ReadLines(const filesystem::path& path) {
 	ifstream input(path, ios::binary);
+    if (!input.is_open()) throw runtime_error("Cannot read existing configuration document");
 	vector<wstring> lines;
 	for (string line; getline(input, line);) {
 		if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -56,23 +59,6 @@ wstring FieldValue(const IniSection& section, const wstring& key) {
 	return {};
 }
 
-const set<wstring>& ManagedConfigKeys() {
-	static const set<wstring> keys{
-		L"ConfigName", L"ConfigId", L"PendingLocalBinding", L"SavePath",
-		L"WorldData", L"BackupPath", L"ZipProgram", L"ZipFormat",
-		L"ZipLevel", L"ZipMethod", L"CpuThreads", L"UseLowPriority",
-		L"KeepCount", L"SmartBackup", L"RestoreBeforeBackup",
-		L"SkipIfUnchanged", L"MaxSmartBackups", L"BackupOnStart",
-		L"CloudSyncEnabled", L"RclonePath", L"RcloneRemotePath",
-		L"CloudSyncMode", L"CloudWorkingDirectory", L"CloudTimeoutSeconds",
-		L"CloudRetryCount", L"CloudSyncHistoryAfterUpload",
-		L"CloudAutoDownloadBeforeRestore", L"CloudLastRunUtc",
-		L"CloudLastExitCode", L"CloudLastErrorMessage", L"SnapshotPath",
-		L"OtherPath", L"EnableWEIntegration", L"WESnapshotPath",
-		L"BlacklistItem"};
-	return keys;
-}
-
 vector<wstring> UnknownConfigLines(const IniSection& section) {
 	vector<wstring> result;
 	bool inWorldData = false;
@@ -89,65 +75,11 @@ vector<wstring> UnknownConfigLines(const IniSection& section) {
 		}
 		const wstring key = line.substr(0, separator);
 		if (key == L"WorldData") inWorldData = true;
-		if (!ManagedConfigKeys().contains(key)) result.push_back(line);
+		if (!ConfigIniCodec::ManagedConfigKeys().contains(key)) result.push_back(line);
 	}
 	return result;
 }
 
-vector<wstring> SerializeConfig(
-	int index,
-	const Config& config,
-	const vector<wstring>& unknownLines) {
-	vector<wstring> lines;
-	auto add = [&](const wstring& key, const wstring& value) {
-		lines.push_back(key + L"=" + value);
-	};
-	lines.push_back(L"[Config" + to_wstring(index) + L"]");
-	add(L"ConfigName", utf8_to_wstring(config.name));
-	add(L"ConfigId", config.configId);
-	add(L"PendingLocalBinding", config.pendingLocalBinding ? L"1" : L"0");
-	add(L"SavePath", config.saveRoot);
-	lines.push_back(L"# One line for name, one line for description, terminated by '*'");
-	lines.push_back(L"WorldData=");
-	for (const auto& [path, description] : config.worlds) {
-		lines.push_back(path);
-		lines.push_back(description);
-	}
-	lines.push_back(L"*");
-	add(L"BackupPath", config.backupPath);
-	add(L"ZipProgram", config.zipPath);
-	add(L"ZipFormat", config.zipFormat);
-	add(L"ZipLevel", to_wstring(config.zipLevel));
-	add(L"ZipMethod", config.zipMethod);
-	add(L"CpuThreads", to_wstring(config.cpuThreads));
-	add(L"UseLowPriority", config.useLowPriority ? L"1" : L"0");
-	add(L"KeepCount", to_wstring(config.keepCount));
-	add(L"SmartBackup", to_wstring(config.backupMode));
-	add(L"RestoreBeforeBackup", config.backupBefore ? L"1" : L"0");
-	add(L"SkipIfUnchanged", config.skipIfUnchanged ? L"1" : L"0");
-	add(L"MaxSmartBackups", to_wstring(config.maxSmartBackupsPerFull));
-	add(L"BackupOnStart", config.backupOnGameStart ? L"1" : L"0");
-	add(L"CloudSyncEnabled", config.cloudSyncEnabled ? L"1" : L"0");
-	add(L"RclonePath", config.rclonePath);
-	add(L"RcloneRemotePath", config.rcloneRemotePath);
-	add(L"CloudSyncMode", to_wstring(config.cloudSyncMode));
-	add(L"CloudWorkingDirectory", config.cloudWorkingDirectory);
-	add(L"CloudTimeoutSeconds", to_wstring(config.cloudTimeoutSeconds));
-	add(L"CloudRetryCount", to_wstring(config.cloudRetryCount));
-	add(L"CloudSyncHistoryAfterUpload", config.cloudSyncHistoryAfterUpload ? L"1" : L"0");
-	add(L"CloudAutoDownloadBeforeRestore", config.cloudAutoDownloadBeforeRestore ? L"1" : L"0");
-	add(L"CloudLastRunUtc", config.cloudLastRunUtc);
-	add(L"CloudLastExitCode", to_wstring(config.cloudLastExitCode));
-	add(L"CloudLastErrorMessage", config.cloudLastErrorMessage);
-	add(L"SnapshotPath", config.snapshotPath);
-	add(L"OtherPath", config.othersPath);
-	add(L"EnableWEIntegration", config.enableWEIntegration ? L"1" : L"0");
-	add(L"WESnapshotPath", config.weSnapshotPath);
-	for (const auto& item : config.blacklist) add(L"BlacklistItem", item);
-	lines.insert(lines.end(), unknownLines.begin(), unknownLines.end());
-	lines.emplace_back();
-	return lines;
-}
 
 void ReplaceRestorePreserve(
 	IniSection& general,
@@ -201,11 +133,11 @@ ProfileConfigSnapshot ProfileConfigRepository::Load() const {
 	return snapshot;
 }
 
-ProfileConfigWriteResult ProfileConfigRepository::Save(
+ProfileConfigDocumentResult ProfileConfigRepository::Prepare(
 	const map<int, Config>& configs,
 	const vector<wstring>& restorePreserve,
-	bool pruneMissingConfigs) const {
-	ProfileConfigWriteResult result;
+	bool pruneMissingConfigs, const string& desktopGeneral) const {
+	ProfileConfigDocumentResult result;
     for (const auto& [index, config] : configs) {
         if (!BackupPolicy::IsValid(config.backupMode, config.maxSmartBackupsPerFull)) {
             result.diagnostics.push_back({"config.backup_policy.invalid", DiagnosticSeverity::Error, config.name});
@@ -219,6 +151,7 @@ ProfileConfigWriteResult ProfileConfigRepository::Save(
 		sections = SplitSections(ReadLines(configFile_));
 	}
 	else {
+        if (existsError) throw filesystem::filesystem_error("Cannot inspect configuration", configFile_, existsError);
 		sections.push_back({});
 	}
 
@@ -229,7 +162,24 @@ ProfileConfigWriteResult ProfileConfigRepository::Save(
 		general = sections.insert(sections.begin() + min<size_t>(1, sections.size()),
 			IniSection{L"General", {L"[General]"}});
 	}
-	ReplaceRestorePreserve(*general, restorePreserve);
+    if (!desktopGeneral.empty()) {
+        istringstream input(desktopGeneral);
+        vector<wstring> replacement;
+        set<wstring> keys;
+        for (string line; getline(input, line);) {
+            auto wide = utf8_to_wstring(line);
+            const auto separator = wide.find(L'=');
+            if (separator != wstring::npos) keys.insert(wide.substr(0, separator));
+            replacement.push_back(std::move(wide));
+        }
+        for (size_t i = 1; i < general->lines.size(); ++i) {
+            const auto& line = general->lines[i];
+            const auto separator = line.find(L'=');
+            if (separator != wstring::npos && !keys.contains(line.substr(0, separator))) replacement.push_back(line);
+        }
+        general->lines = std::move(replacement);
+    }
+    ReplaceRestorePreserve(*general, restorePreserve);
 
 	map<wstring, pair<int, vector<wstring>>> existing;
 	int maximumIndex = 0;
@@ -271,22 +221,38 @@ ProfileConfigWriteResult ProfileConfigRepository::Save(
 			continue;
 		}
 		output.push_back({L"Config" + to_wstring(index),
-			SerializeConfig(index, replacement->second, UnknownConfigLines(section))});
+			ConfigIniCodec::SerializeConfig(index, replacement->second, UnknownConfigLines(section))});
 		emitted.insert(id);
 	}
 	for (const auto& [id, config] : desired) {
 		if (emitted.contains(id)) continue;
-		const int index = ++maximumIndex;
+		const auto requested = find_if(configs.begin(), configs.end(), [&](const auto& pair) { return pair.second.configId == id; });
+        const bool occupied = any_of(existing.begin(), existing.end(), [&](const auto& pair) { return pair.second.first == requested->first; });
+        const int index = !occupied && requested->first > 0 ? requested->first : ++maximumIndex;
+        maximumIndex = max(maximumIndex, index);
 		output.push_back({L"Config" + to_wstring(index),
-			SerializeConfig(index, config, {})});
+			ConfigIniCodec::SerializeConfig(index, config, {})});
 	}
 
-	const auto write = AtomicFileWriter::WriteText(configFile_, JoinUtf8(output));
-	result.success = write.success;
-	result.backupPath = write.backupPath;
-	if (!write.success) {
-		result.diagnostics.push_back({"config.write.failed", DiagnosticSeverity::Error,
-			wstring_to_utf8(write.error)});
-	}
-	return result;
+    result.content = JoinUtf8(output);
+    result.success = true;
+    return result;
+}
+
+ProfileConfigWriteResult ProfileConfigRepository::Save(const map<int, Config>& configs,
+    const vector<wstring>& restorePreserve, bool pruneMissingConfigs) const {
+    ProfileConfigWriteResult result;
+    try {
+        const auto prepared = Prepare(configs, restorePreserve, pruneMissingConfigs);
+        result.diagnostics = prepared.diagnostics;
+        if (!prepared.success) return result;
+        const auto write = AtomicFileWriter::WriteText(configFile_, prepared.content);
+        result.success = write.WasReplaced();
+        result.backupPath = write.backupPath;
+        if (!write.IsDurable()) result.diagnostics.push_back({"config.write.failed",
+            write.WasReplaced() ? DiagnosticSeverity::Warning : DiagnosticSeverity::Error, wstring_to_utf8(write.error)});
+    } catch (const exception& error) {
+        result.diagnostics.push_back({"config.write.failed", DiagnosticSeverity::Error, error.what()});
+    }
+    return result;
 }

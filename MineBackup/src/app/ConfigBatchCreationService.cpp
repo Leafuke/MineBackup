@@ -105,15 +105,19 @@ ConfigBatchCreationResult ConfigBatchCreationService::Commit(
 
 	MB_LOG_INFO(minebackup::logging::LogCategory::Application,
 		"minecraft.config_batch.commit_started", "selected={}", request.drafts.size());
-	// 无法确定磁盘 commit point 时（依赖抛出异常），按 NotCommitted 处理，
-	// 保持与真正的“未写入”一致的保守回滚。
+	// An unexpected persistence exception cannot prove that disk was unchanged.
 	ConfigSaveState saveState = ConfigSaveState::NotCommitted;
 	try {
 		saveState = dependencies_.saveConfigs().state;
 	}
 	catch (...) {
-		saveState = ConfigSaveState::NotCommitted;
+		saveState = ConfigSaveState::RecoveryRequired;
 	}
+    if (saveState == ConfigSaveState::RecoveryRequired) {
+        g_appState.profileRecoveryRequired.store(true);
+        result.errorCode = "profile.transaction.recovery_required";
+        return result;
+    }
 	if (saveState == ConfigSaveState::NotCommitted) {
 		// config.ini 从未被替换：这次提交逻辑上什么都没有发生，
 		// 恢复所有内存状态，使用户重试得到相同名称和目录。

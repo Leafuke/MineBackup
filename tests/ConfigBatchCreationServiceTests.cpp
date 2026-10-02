@@ -175,7 +175,7 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 			&& !g_CoreValidationPending.load() && g_CoreValidationPassed.load(),
 		"save failure should restore configs, selection, allocator, settings, and validation flags");
 
-	// 注入抛出异常的 saveConfigs：无法确定 commit point，按 NotCommitted 回滚。
+	// An unknown commit point must not be reported as a successful rollback.
 	saveCalls = 0;
 	refreshCalls = 0;
 	ConfigBatchCreationDependencies throwingSave;
@@ -186,12 +186,15 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 	};
 	throwingSave.onCommitted = [&refreshCalls](const std::vector<int>&) { ++refreshCalls; };
 	const auto thrownSave = ConfigBatchCreationService(throwingSave).Commit(request);
-	test.Expect(!thrownSave.success && thrownSave.errorCode == "minecraft.config_batch.commit_failed"
+	test.Expect(!thrownSave.success && thrownSave.errorCode == "profile.transaction.recovery_required"
 			&& saveCalls == 1 && refreshCalls == 0,
-		"an exceptional save dependency should be treated as not committed");
-	test.Expect(g_appState.configs.size() == 1 && g_appState.currentConfigIndex == 7
-			&& SnapshotNormalConfigIndexAllocator().nextIndex == 10,
-		"an exceptional save dependency should restore the memory state");
+		"an exceptional save dependency requires recovery");
+    test.Expect(g_appState.configs.size() == 4,
+        "an uncertain save must retain memory until recovery determines the disk state");
+    g_appState.profileRecoveryRequired.store(false);
+    g_appState.configs = {{7, original}};
+    g_appState.currentConfigIndex = 7;
+    RestoreNormalConfigIndexAllocator({10});
 
 	saveCalls = 0;
 	refreshCalls = 0;

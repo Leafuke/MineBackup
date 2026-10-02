@@ -21,6 +21,12 @@ struct ProfileConfigSnapshot {
 	}
 };
 
+struct ProfileConfigDocumentResult {
+    bool success = false;
+    std::string content;
+    std::vector<Diagnostic> diagnostics;
+};
+
 struct ProfileConfigWriteResult {
 	bool success = false;
 	std::filesystem::path backupPath;
@@ -35,7 +41,10 @@ class ProfileConfigRepository {
 public:
 	explicit ProfileConfigRepository(std::filesystem::path configFile);
 
-	ProfileConfigSnapshot Load() const;
+    ProfileConfigSnapshot Load() const;
+    ProfileConfigDocumentResult Prepare(const std::map<int, Config>& configs,
+        const std::vector<std::wstring>& restorePreserve, bool pruneMissingConfigs,
+        const std::string& desktopGeneral = {}) const;
 	ProfileConfigWriteResult Save(
 		const std::map<int, Config>& configs,
 		const std::vector<std::wstring>& restorePreserve,

@@ -11,25 +11,7 @@ struct NormalConfigIndexAllocatorState {
 	int nextIndex = 2;
 };
 
-// 配置持久化的三态提交结果：
-// - NotCommitted        config.ini 从未被替换，调用方可安全回滚内存状态；
-// - CommittedNotDurable config.ini 已被替换，但目录同步未确认（持久化告警），
-//                       逻辑上配置已提交，禁止内存回滚；
-// - CommittedDurably    配置已提交且持久化步骤全部完成。
-enum class ConfigSaveState {
-	NotCommitted,
-	CommittedNotDurable,
-	CommittedDurably
-};
-
-struct ConfigSaveResult {
-	ConfigSaveState state = ConfigSaveState::NotCommitted;
-	std::wstring detail;
-
-	// 逻辑 commit 是否已发生（CommittedNotDurable 也算已提交）。
-	bool Committed() const noexcept { return state != ConfigSaveState::NotCommitted; }
-	bool Durable() const noexcept { return state == ConfigSaveState::CommittedDurably; }
-};
+#include "ProfileTransaction.h"
 
 void LoadConfigs();
 void LoadConfigs(const std::filesystem::path& filename);

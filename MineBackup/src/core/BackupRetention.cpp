@@ -1,3 +1,4 @@
+#include "ProfileTransaction.h"
 #include "BackupManager.h"
 #include "BackupManagerInternal.h"
 
@@ -68,6 +69,12 @@ void DeleteBackupWithMode(
 		"operation_id", wstring_to_utf8(FolderRewindFormat::GenerateGuidString())},
 		{"config_id", wstring_to_utf8(config.configId)},
 		{"world", wstring_to_utf8(entry.worldName)}};
+    if (g_appState.profileRecoveryRequired.load()) return;
+    vector<Diagnostic> diagnostics;
+    if (!ProfileTransaction::Inspect(GetAppPaths().ConfigFile(), diagnostics)) {
+        BACKUP_ERROR("Configuration transaction requires recovery before deletion.");
+        return;
+    }
 	if (config.pendingLocalBinding) {
 		BACKUP_WARNING("This imported configuration is waiting for local path binding.");
 		return;

@@ -1,3 +1,5 @@
+#include "ProfileTransaction.h"
+#include "ConfigIniCodec.h"
 #include "ProfileManifestTests.h"
 
 #include "AppPaths.h"
@@ -38,6 +40,39 @@ AppPaths TestPaths(const filesystem::path& root) {
 void RunProfileManifestTests(
 	TestContext& test,
 	const filesystem::path& temporaryRoot) {
+    for (const string scenario : {"second-write", "rollback-failure", "durability"}) {
+        auto transactionPaths = TestPaths(temporaryRoot / ("transaction-" + scenario));
+        Write(transactionPaths.ConfigFile(), "old-config");
+        Write(transactionPaths.JobsFile(), "old-jobs");
+        Write(transactionPaths.HistoryFile(), "old-history");
+        auto writer = [&](const filesystem::path& target, const string& content) {
+            if (scenario != "durability" && target == transactionPaths.JobsFile() && content == "new-jobs")
+                return AtomicFileWriter::WriteResult{};
+            if (scenario == "rollback-failure" && target == transactionPaths.ConfigFile() && content == "old-config")
+                return AtomicFileWriter::WriteResult{};
+            auto written = AtomicFileWriter::WriteText(target, content, {false, true});
+            if (scenario == "durability" && target == transactionPaths.JobsFile() && written.WasReplaced()) {
+                written.commitState = AtomicFileWriter::WriteCommitState::ReplacedNotDurable;
+                written.success = false;
+            }
+            return written;
+        };
+        const auto saved = ProfileTransaction::Commit(transactionPaths,
+            {"new-config", "new-jobs", string("new-history")}, writer);
+        test.Expect(scenario == "durability" ? saved.state == ConfigSaveState::CommittedNotDurable
+            : scenario == "rollback-failure" ? saved.state == ConfigSaveState::RecoveryRequired
+            : saved.CanRollbackMemory(), "Transaction reports the complete profile commit state");
+        vector<Diagnostic> diagnostics;
+        if (scenario == "rollback-failure") test.Expect(!ProfileTransaction::Inspect(transactionPaths.ConfigFile(), diagnostics),
+            "Read-only inspection rejects an unresolved profile transaction");
+        test.Expect(ProfileTransaction::Recover(transactionPaths, diagnostics), "Prepared and committed transactions recover");
+        test.Expect(Read(transactionPaths.ConfigFile()) == (scenario == "durability" ? "new-config" : "old-config")
+            && Read(transactionPaths.JobsFile()) == (scenario == "durability" ? "new-jobs" : "old-jobs")
+            && Read(transactionPaths.HistoryFile()) == (scenario == "durability" ? "new-history" : "old-history"),
+            "Recovery never leaves mixed config, jobs and history");
+    }
+    test.Expect(!ConfigIniCodec::Parse("[Config1]\nCloudSyncEnabled=yes\n").valid,
+        "All frontends reject non-binary operational booleans");
 	const filesystem::path root = temporaryRoot / "profile-manifest";
 	const filesystem::path manifestPath = root / "declarative" / "manifest.json";
 	const auto templateManifest = ProfileManifest::CreateTemplate();

@@ -320,6 +320,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	V15MigrationAdapter::Install();
 #endif
 	LoadConfigs();
+    if (LastConfigLoadHasFatalDiagnostics()) return 1;
 	if (launchOptions.autostart && g_SilentStartupToTray) {
 		launchSilentStartup = true;
 	}
