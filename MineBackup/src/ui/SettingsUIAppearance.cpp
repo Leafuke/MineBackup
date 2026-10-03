@@ -108,17 +108,17 @@ void DrawAppearanceSettings(Config& cfg) {
 		SetLanguage(lang_codes[lang_idx]);
 
 		if (oldLang == "en_US" && g_CurrentLang == "zh_CN") {
-			if (!IsFontSupportChinese(Fontss)) {
+			if (!IsFontSupportChinese(AppearanceState().fontPath)) {
 				wstring chineseFont = GetChineseFontPath();
 				if (!chineseFont.empty()) {
-					Fontss = chineseFont;
+					AppearanceState().fontPath = chineseFont;
 				}
 			}
 		}
 
 		if (oldLang != g_CurrentLang) {
-			g_restartRequired = true;
-			g_restartBannerDismissed = false;
+			UiState().restartRequired = true;
+			UiState().restartBannerDismissed = false;
 		}
 	}
 
@@ -140,10 +140,10 @@ void DrawAppearanceSettings(Config& cfg) {
 		L("THEME_CUSTOM")
 	};
 	SetStandardControlWidth();
-	if (ImGui::Combo("##Theme", &g_theme, theme_names, IM_ARRAYSIZE(theme_names))) {
+	if (ImGui::Combo("##Theme", &AppearanceState().theme, theme_names, IM_ARRAYSIZE(theme_names))) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
-		if (g_theme == static_cast<int>(ThemeId::Custom) && !filesystem::exists(customThemePath)) {
-			ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
+		if (AppearanceState().theme == static_cast<int>(ThemeId::Custom) && !filesystem::exists(customThemePath)) {
+			ImGuiTheme::WriteDefaultCustomTheme(customThemePath, AppearanceState().userScale);
 			ApplyTheme();
 			(void)GetDesktopServices()->OpenFolder(customThemePath);
 		}
@@ -151,7 +151,7 @@ void DrawAppearanceSettings(Config& cfg) {
 			ApplyTheme();
 		}
 	}
-	if (g_theme == static_cast<int>(ThemeId::SystemAuto)) {
+	if (AppearanceState().theme == static_cast<int>(ThemeId::SystemAuto)) {
 		struct ConcreteThemeOption {
 			ThemeId id;
 			const char* labelKey;
@@ -181,14 +181,14 @@ void DrawAppearanceSettings(Config& cfg) {
 		ImGui::Text("%s", L("THEME_SYSTEM_LIGHT_CHOICE"));
 		int lightIndex = 3;
 		for (int i = 0; i < concreteCount; ++i) {
-			if (static_cast<int>(concreteThemes[i].id) == g_systemThemeLight) {
+			if (static_cast<int>(concreteThemes[i].id) == AppearanceState().systemThemeLight) {
 				lightIndex = i;
 				break;
 			}
 		}
 		SetStandardControlWidth();
 		if (ImGui::Combo("##SystemThemeLight", &lightIndex, concreteThemeNames, concreteCount)) {
-			g_systemThemeLight = static_cast<int>(concreteThemes[lightIndex].id);
+			AppearanceState().systemThemeLight = static_cast<int>(concreteThemes[lightIndex].id);
 			ApplyTheme();
 		}
 
@@ -196,24 +196,24 @@ void DrawAppearanceSettings(Config& cfg) {
 		ImGui::Text("%s", L("THEME_SYSTEM_DARK_CHOICE"));
 		int darkIndex = 4;
 		for (int i = 0; i < concreteCount; ++i) {
-			if (static_cast<int>(concreteThemes[i].id) == g_systemThemeDark) {
+			if (static_cast<int>(concreteThemes[i].id) == AppearanceState().systemThemeDark) {
 				darkIndex = i;
 				break;
 			}
 		}
 		SetStandardControlWidth();
 		if (ImGui::Combo("##SystemThemeDark", &darkIndex, concreteThemeNames, concreteCount)) {
-			g_systemThemeDark = static_cast<int>(concreteThemes[darkIndex].id);
+			AppearanceState().systemThemeDark = static_cast<int>(concreteThemes[darkIndex].id);
 			ApplyTheme();
 		}
 
 		ImGui::Unindent();
 	}
-	if (g_theme == static_cast<int>(ThemeId::Custom)) {
+	if (AppearanceState().theme == static_cast<int>(ThemeId::Custom)) {
 		const auto customThemePath = GetAppPaths().configRoot / L"custom_theme.json";
 		if (ImGui::Button(L("CUSTOM_THEME_OPEN"))) {
 			if (!filesystem::exists(customThemePath)) {
-				ImGuiTheme::WriteDefaultCustomTheme(customThemePath, g_uiScale);
+				ImGuiTheme::WriteDefaultCustomTheme(customThemePath, AppearanceState().userScale);
 			}
 			(void)GetDesktopServices()->OpenFolder(customThemePath);
 		}
@@ -221,9 +221,9 @@ void DrawAppearanceSettings(Config& cfg) {
 		if (ImGui::Button(L("CUSTOM_THEME_RELOAD"))) ApplyTheme();
 		ImGui::SameLine();
 		if (ImGui::Button(L("CUSTOM_THEME_VALIDATE"))) ApplyTheme();
-		if (!g_customThemeError.empty()) {
+		if (!AppearanceState().customThemeError.empty()) {
 			ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Error), "%s",
-				g_customThemeError.c_str());
+				AppearanceState().customThemeError.c_str());
 		}
 		else {
 			ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success), "%s",
@@ -234,7 +234,7 @@ void DrawAppearanceSettings(Config& cfg) {
 	ImGui::Spacing();
 
 	SetStandardControlWidth();
-	if (ImGui::SliderFloat(L("UI_SCALE"), &g_uiScale, 0.75f, 2.5f, "%.2f")) {
+	if (ImGui::SliderFloat(L("UI_SCALE"), &AppearanceState().userScale, 0.75f, 2.5f, "%.2f")) {
 		ApplyTheme();
 	}
 
@@ -242,21 +242,21 @@ void DrawAppearanceSettings(Config& cfg) {
 
 	ImGui::Text("%s", L("FONT_SETTINGS"));
 	char Fonts[256];
-	strncpy_s(Fonts, wstring_to_utf8(Fontss).c_str(), sizeof(Fonts));
+	strncpy_s(Fonts, wstring_to_utf8(AppearanceState().fontPath).c_str(), sizeof(Fonts));
 	const bool fontBrowseInline = ImGui::GetContentRegionAvail().x >= GetUiMetrics().Em(27.0f);
 	SetStandardControlWidth();
 	if (ImGui::InputText("##fontPathValue", Fonts, 256)) {
-		Fontss = utf8_to_wstring(Fonts);
-		g_restartRequired = true;
-		g_restartBannerDismissed = false;
+		AppearanceState().fontPath = utf8_to_wstring(Fonts);
+		UiState().restartRequired = true;
+		UiState().restartBannerDismissed = false;
 	}
 	if (fontBrowseInline) ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_SELECT_FONT"))) {
 		wstring sel = GetDesktopServices()->SelectFile().path.wstring();
 		if (!sel.empty()) {
-			Fontss = sel;
-			g_restartRequired = true;
-			g_restartBannerDismissed = false;
+			AppearanceState().fontPath = sel;
+			UiState().restartRequired = true;
+			UiState().restartBannerDismissed = false;
 		}
 	}
 
@@ -270,16 +270,16 @@ void DrawAppearanceSettings(Config& cfg) {
 #else
 	const char* close_behavior_options[] = { L("CLOSE_BEHAVIOR_ASK"), L("CLOSE_BEHAVIOR_MINIMIZE"), L("CLOSE_BEHAVIOR_EXIT") };
 #endif
-	int close_behavior_idx = g_rememberCloseAction ? g_closeAction : 0;
+	int close_behavior_idx = UiState().rememberCloseAction ? UiState().closeAction : 0;
 	SetStandardControlWidth();
 	if (ImGui::Combo("##CloseBehavior", &close_behavior_idx, close_behavior_options, IM_ARRAYSIZE(close_behavior_options))) {
 		if (close_behavior_idx == 0) {
-			g_rememberCloseAction = false;
-			g_closeAction = 0;
+			UiState().rememberCloseAction = false;
+			UiState().closeAction = 0;
 		}
 		else {
-			g_rememberCloseAction = true;
-			g_closeAction = close_behavior_idx;
+			UiState().rememberCloseAction = true;
+			UiState().closeAction = close_behavior_idx;
 		}
 	}
 }
@@ -309,21 +309,21 @@ void DrawCloudSyncSettings(Config& cfg) {
 		}
 	}
 
-	ImGui::BeginDisabled(g_RcloneInstallRunning);
-	const char* rcloneInstallLabel = g_RcloneInstallRunning
+	ImGui::BeginDisabled(ExternalToolState().rcloneInstallRunning);
+	const char* rcloneInstallLabel = ExternalToolState().rcloneInstallRunning
 		? L("RCLONE_INSTALLING") : L("RCLONE_INSTALL_BUTTON");
 	if (ImGui::Button(rcloneInstallLabel, ImVec2(GetStandardActionWidth(), 0))) {
 		const auto sevenZip = ExternalToolManager::ResolveSevenZip(cfg.zipPath, GetAppPaths());
 		if (!sevenZip.available) {
-			g_RcloneInstallSucceeded = false;
-			g_RcloneInstallMessage = sevenZip.diagnostic;
+			ExternalToolState().rcloneInstallSucceeded = false;
+			ExternalToolState().rcloneInstallMessage = sevenZip.diagnostic;
 		}
 		else if (ConfirmMessageBox(
 			L("RCLONE_INSTALL_CONFIRM_TITLE"),
 			L("RCLONE_INSTALL_CONFIRM_MESSAGE"))) {
-			g_RcloneInstallRunning = true;
-			g_RcloneInstallSucceeded = false;
-			g_RcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_PROGRESS"));
+			ExternalToolState().rcloneInstallRunning = true;
+			ExternalToolState().rcloneInstallSucceeded = false;
+			ExternalToolState().rcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_PROGRESS"));
 			const auto backend = CreatePlatformNetworkBackend();
 			const auto paths = GetAppPaths();
 			const auto sevenZipPath = sevenZip.executable;
@@ -336,18 +336,18 @@ void DrawCloudSyncSettings(Config& cfg) {
 					event.values[L"path"] = install.executable.wstring();
 					TaskCoordinator::Instance().PostEvent(std::move(event));
 				})) {
-				g_RcloneInstallRunning = false;
-				g_RcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_BUSY"));
+				ExternalToolState().rcloneInstallRunning = false;
+				ExternalToolState().rcloneInstallMessage = utf8_to_wstring(L("RCLONE_INSTALL_BUSY"));
 			}
 		}
 	}
 	ImGui::EndDisabled();
-	if (!g_RcloneInstallMessage.empty()) {
-		const ImVec4 color = g_RcloneInstallSucceeded
+	if (!ExternalToolState().rcloneInstallMessage.empty()) {
+		const ImVec4 color = ExternalToolState().rcloneInstallSucceeded
 			? ImVec4(0.30f, 0.75f, 0.35f, 1.0f)
 			: ImVec4(0.85f, 0.65f, 0.25f, 1.0f);
 		ImGui::PushStyleColor(ImGuiCol_Text, color);
-		ImGui::TextWrapped("%s", wstring_to_utf8(g_RcloneInstallMessage).c_str());
+		ImGui::TextWrapped("%s", wstring_to_utf8(ExternalToolState().rcloneInstallMessage).c_str());
 		ImGui::PopStyleColor();
 	}
 
@@ -484,7 +484,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		map<int, Config> configsCopy;
 		{
 
-			configsCopy = UiConfigs();
+			configsCopy = UiConfigView();
 		}
 		TaskCoordinator::Instance().Submit(L"Export cloud configuration",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
@@ -505,7 +505,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 		map<int, Config> configsCopy;
 		{
 
-			configsCopy = UiConfigs();
+			configsCopy = UiConfigView();
 		}
 		TaskCoordinator::Instance().Submit(L"Import cloud configuration",
 			{ TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity) }, [configCopy, configsCopy, configIndex](stop_token) {
@@ -553,7 +553,7 @@ void DrawCloudSyncSettings(Config& cfg) {
 			map<int, Config> configsCopy;
 			{
 
-				configsCopy = UiConfigs();
+				configsCopy = UiConfigView();
 			}
 			TaskCoordinator::Instance().Submit(L"Prepare legacy remote configuration import",
 				{TaskCoordinator::CloudResourceKey(GetAppPaths().profileIdentity)},

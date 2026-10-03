@@ -41,7 +41,7 @@ struct TrayNotificationRequest {
 LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 void EnableDarkModeWin(bool enable) {
-	HWND hwnd = glfwGetWin32Window(wc);
+	HWND hwnd = glfwGetWin32Window(WindowState().handle);
 	BOOL useDark = enable ? TRUE : FALSE;
 	DwmSetWindowAttribute(hwnd, 20 , &useDark, sizeof(useDark));
 	return;
@@ -262,11 +262,11 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			|| LOWORD(lParam) == NIN_KEYSELECT
 			|| LOWORD(lParam) == NIN_BALLOONUSERCLICK) {
 			g_appState.showMainApp = true;
-			if (wc) {
-				glfwShowWindow(wc);
-				glfwRestoreWindow(wc);
-				glfwFocusWindow(wc);
-				SetForegroundWindow(glfwGetWin32Window(wc));
+			if (WindowState().handle) {
+				glfwShowWindow(WindowState().handle);
+				glfwRestoreWindow(WindowState().handle);
+				glfwFocusWindow(WindowState().handle);
+				SetForegroundWindow(glfwGetWin32Window(WindowState().handle));
 			}
 		}
 		else if (LOWORD(lParam) == WM_RBUTTONUP || LOWORD(lParam) == WM_CONTEXTMENU) {
@@ -311,17 +311,17 @@ LRESULT WINAPI HiddenWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		switch (LOWORD(wParam)) {
 		case 1001:  // 点击“打开界面”
 			g_appState.showMainApp = true;
-			if (wc) {
-				glfwShowWindow(wc);
-				glfwRestoreWindow(wc);
-				glfwFocusWindow(wc);
-				SetForegroundWindow(glfwGetWin32Window(wc));
+			if (WindowState().handle) {
+				glfwShowWindow(WindowState().handle);
+				glfwRestoreWindow(WindowState().handle);
+				glfwFocusWindow(WindowState().handle);
+				SetForegroundWindow(glfwGetWin32Window(WindowState().handle));
 			}
 			break;
 		case 1002:  // 点击“关闭”
 			// 先移除托盘图标，再退出程序
-			if (wc) {
-				glfwHideWindow(wc);
+			if (WindowState().handle) {
+				glfwHideWindow(WindowState().handle);
 			}
 			g_appState.done = true;
 			RemoveTrayIcon();

@@ -26,11 +26,11 @@ static EventHandlerRef g_hotkeyHandlerRef = nullptr;
 - (void)openMain:(id)sender {
 	(void)sender;
 	g_appState.showMainApp = true;
-	if (wc) {
+	if (WindowState().handle) {
 		[NSApp activateIgnoringOtherApps:YES];
-		glfwShowWindow(wc);
-		glfwRestoreWindow(wc);
-		glfwFocusWindow(wc);
+		glfwShowWindow(WindowState().handle);
+		glfwRestoreWindow(WindowState().handle);
+		glfwFocusWindow(WindowState().handle);
 		glfwPostEmptyEvent();
 	}
 }

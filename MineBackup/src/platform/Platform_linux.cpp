@@ -55,9 +55,9 @@ static GtkWidget* g_trayMenu = nullptr;
 
 static void TrayMenuOpen(GtkMenuItem*, gpointer) {
     g_appState.showMainApp = true;
-    if (wc) {
-        glfwShowWindow(wc);
-        glfwFocusWindow(wc);
+    if (WindowState().handle) {
+        glfwShowWindow(WindowState().handle);
+        glfwFocusWindow(WindowState().handle);
         glfwPostEmptyEvent();
     }
 }

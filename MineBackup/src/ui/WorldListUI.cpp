@@ -86,7 +86,7 @@ namespace {
 std::vector<DisplayWorld> BuildDisplayWorldsForSelection()
 {
 
-	return BuildDisplayWorlds(UiConfigs(), UiSelectedConfigIndex());
+	return BuildDisplayWorlds(UiConfigView(), UiSelectedConfigIndex());
 }
 
 void DrawWorldListUiFrame(const MainUiFrameContext& context)
@@ -133,8 +133,8 @@ char (&descBuf)[2048] = worldUi.description;
 char (&blacklistAddItemBuf)[1024] = worldUi.blacklistItem;
 	ImGuiViewport* viewport = ImGui::GetMainViewport();
 // 获取当前配置
-if (!UiConfigs().count(UiSelectedConfigIndex())) { // 找不到，说明应该对应的是特殊配置
-	specialSetting = true;
+if (!UiConfigView().count(UiSelectedConfigIndex())) { // 找不到，说明应该对应的是特殊配置
+	UiState().specialSetting = true;
 }
 
 float totalW = ImGui::GetContentRegionAvail().x;
@@ -144,20 +144,20 @@ float rightW = totalW * 0.42f;
 // 缓存 DisplayWorlds，避免每帧重建（深拷贝 Config + mutex lock）
 auto now_dw = chrono::steady_clock::now();
 bool needsRebuild = (cachedConfigIndex != UiSelectedConfigIndex())
-	|| (cachedSpecialSetting != specialSetting)
+	|| (cachedSpecialSetting != UiState().specialSetting)
 	|| (chrono::duration_cast<chrono::milliseconds>(now_dw - lastDisplayWorldsRefresh).count() > 2000);
 {
 	// 配置变了或者两秒没更新了，并且当前配置是普通配置
 
-	if (!specialSetting && UiConfigs().count(UiSelectedConfigIndex())) {
-		if (UiConfigs()[UiSelectedConfigIndex()].worlds.size() != cachedWorldCount)
+	if (!UiState().specialSetting && UiConfigView().count(UiSelectedConfigIndex())) {
+		if (UiConfigView().at(UiSelectedConfigIndex()).worlds.size() != cachedWorldCount)
 			needsRebuild = true;
 	}
 }
 if (needsRebuild) {
 	displayWorlds = BuildDisplayWorldsForSelection();
 	cachedConfigIndex = UiSelectedConfigIndex();
-	cachedSpecialSetting = specialSetting;
+	cachedSpecialSetting = UiState().specialSetting;
 	cachedWorldCount = displayWorlds.size();
 	lastDisplayWorldsRefresh = now_dw;
 }
@@ -198,19 +198,19 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 	ImGui::SeparatorText(L("QUICK_CONFIG_SWITCHER"));
 	ImGui::SetNextItemWidth(-1);
 	string current_config_label = "None";
-	if (UiConfigs().count(UiSelectedConfigIndex())) {
-		current_config_label = "[No." + to_string(UiSelectedConfigIndex()) + "] " + UiConfigs()[UiSelectedConfigIndex()].name;
+	if (UiConfigView().count(UiSelectedConfigIndex())) {
+		current_config_label = "[No." + to_string(UiSelectedConfigIndex()) + "] " + UiConfigView().at(UiSelectedConfigIndex()).name;
 	}
 
 	if (ImGui::BeginCombo("##ConfigSwitcher", current_config_label.c_str())) {
 		// 普通配置
-		for (auto const& [idx, val] : UiConfigs()) {
+		for (auto const& [idx, val] : UiConfigView()) {
 			const bool is_selected = (UiSelectedConfigIndex() == idx);
 			string label = "[No." + to_string(idx) + "] " + val.name;
 
 			if (ImGui::Selectable(label.c_str(), is_selected)) {
 				UiSelectedConfigIndex() = idx;
-				specialSetting = false;
+				UiState().specialSetting = false;
 			}
 			if (is_selected) {
 				ImGui::SetItemDefaultFocus();
@@ -222,7 +222,7 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 		}
 
 		if (ImGui::Selectable(L("BUTTON_DELETE_CONFIG"))) {
-			if (UiConfigs().size() > 1) { // 至少保留一个
+			if (UiConfigView().size() > 1) { // 至少保留一个
 				showDeleteConfigPopup = true;
 			}
 		}
@@ -237,13 +237,13 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 	ImGui::SetNextWindowViewport(viewport->ID);
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 		showDeleteConfigPopup = false;
-		ImGui::Text(L("CONFIRM_DELETE_MSG"), UiSelectedConfigIndex(), UiConfigs()[UiSelectedConfigIndex()].name.c_str());
+		ImGui::Text(L("CONFIRM_DELETE_MSG"), UiSelectedConfigIndex(), UiConfigView().at(UiSelectedConfigIndex()).name.c_str());
 		ImGui::Separator();
 		float delConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(delConfirmBtnWidth, 0))) {
-			UiConfigs().erase(UiSelectedConfigIndex());
-			UiSelectedConfigIndex() = UiConfigs().begin()->first;
+			DeleteUiConfig(UiSelectedConfigIndex());
+			UiSelectedConfigIndex() = UiConfigView().begin()->first;
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
@@ -273,20 +273,20 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 			if (strlen(new_config_name) > 0) {
 				int new_index = CreateNewNormalConfig(new_config_name);
 				// 继承当前配置（如果有），但保留路径为空
-				if (UiConfigs().count(UiSelectedConfigIndex())) {
-					const auto newIdentity = UiConfigs().at(new_index).configId;
-					UiConfigs()[new_index] = UiConfigs()[UiSelectedConfigIndex()];
-					UiConfigs()[new_index].configId = newIdentity;
-					UiConfigs()[new_index].name = new_config_name;
-					UiConfigs()[new_index].saveRoot.clear();
-					UiConfigs()[new_index].backupPath.clear();
-					UiConfigs()[new_index].worlds.clear();
-					EnsureDefaultBackupBlacklist(UiConfigs()[new_index].blacklist);
+				if (UiConfigView().count(UiSelectedConfigIndex())) {
+					const auto newIdentity = EditUiConfig(new_index).configId;
+					EditUiConfig(new_index) = UiConfigView().at(UiSelectedConfigIndex());
+					EditUiConfig(new_index).configId = newIdentity;
+					EditUiConfig(new_index).name = new_config_name;
+					EditUiConfig(new_index).saveRoot.clear();
+					EditUiConfig(new_index).backupPath.clear();
+					EditUiConfig(new_index).worlds.clear();
+					EnsureDefaultBackupBlacklist(EditUiConfig(new_index).blacklist);
 					EnsureDefaultRestoreWhitelist();
 				}
 				UiSelectedConfigIndex() = new_index;
-				specialSetting = false;
-				showSettings = true; // Open detailed settings for the new config
+				UiState().specialSetting = false;
+				UiState().showSettings = true; // Open detailed settings for the new config
 				ImGui::CloseCurrentPopup();
 			}
 		}
@@ -413,7 +413,7 @@ if (ImGui::Begin(L("WORLD_LIST"))) {
 		string name_utf8 = wstring_to_utf8(dw.name);
 		string desc_utf8 = wstring_to_utf8(dw.desc);
 		const float worldTextWidth =
-			(max)(ImGui::GetContentRegionAvail().x - 48.0f * g_uiScale, 1.0f);
+			(max)(ImGui::GetContentRegionAvail().x - 48.0f * AppearanceState().userScale, 1.0f);
 		TextEllipsisWithTooltip(name_utf8.c_str(), worldTextWidth);
 
 
@@ -515,8 +515,8 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 				ImGui::InputTextWithHint("##backup_desc", L("HINT_BACKUP_DESC"), buffer, IM_ARRAYSIZE(buffer), ImGuiInputTextFlags_EnterReturnsTrue);
 
 				// 在写入前，再次进行完整的检查
-				if (UiConfigs().count(dw.baseConfigIndex)) {
-					Config& cfg = UiConfigs().at(dw.baseConfigIndex);
+				if (UiConfigView().count(dw.baseConfigIndex)) {
+					Config& cfg = EditUiConfig(dw.baseConfigIndex);
 					if (dw.baseWorldIndex >= 0 && dw.baseWorldIndex < cfg.worlds.size()) {
 						if (desc.find(L"\"") != wstring::npos || desc.find(L":") != wstring::npos || desc.find(L"\\") != wstring::npos || desc.find(L"/") != wstring::npos || desc.find(L">") != wstring::npos || desc.find(L"<") != wstring::npos || desc.find(L"|") != wstring::npos || desc.find(L"?") != wstring::npos || desc.find(L"*") != wstring::npos) {
 							memset(buffer, '\0', sizeof(buffer));
@@ -554,13 +554,13 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 			}
 
 			if (ImGui::Button(L("HISTORY_BUTTON"), ImVec2(-1, 0))) {
-				g_worldToFocusInHistory = displayWorlds[selectedWorldIndex].name; // 设置要聚焦的世界
-				showHistoryWindow = true; // 打开历史窗口
+				UiState().worldToFocusInHistory = displayWorlds[selectedWorldIndex].name; // 设置要聚焦的世界
+				UiState().showHistoryWindow = true; // 打开历史窗口
 			}
 			if (ImGui::Button(L("BUTTON_HIDE_WORLD"), ImVec2(-1, 0))) {
 				// 先做最小范围的本地检查并拷贝要操作的 DisplayWorld（displayWorlds 是本地变量）
 				if (selectedWorldIndex >= 0 && selectedWorldIndex < displayWorlds.size()) {
-					DisplayWorld dw_copy = displayWorlds[selectedWorldIndex]; // 做一个值拷贝，之后在锁内用索引去改 UiConfigs()
+					DisplayWorld dw_copy = displayWorlds[selectedWorldIndex]; // 做一个值拷贝，之后在锁内用索引去改 UiConfigView()
 
 					bool did_change = false;
 
@@ -568,9 +568,9 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 					{
 
 
-						auto it = UiConfigs().find(dw_copy.baseConfigIndex);
-						if (it != UiConfigs().end()) {
-							Config& cfg = it->second;
+						auto it = UiConfigView().find(dw_copy.baseConfigIndex);
+						if (it != UiConfigView().end()) {
+							Config& cfg = EditUiConfig(dw_copy.baseConfigIndex);
 							if (dw_copy.baseWorldIndex >= 0 && dw_copy.baseWorldIndex < (int)cfg.worlds.size()) {
 								cfg.worlds[dw_copy.baseWorldIndex].second = L"#";
 								did_change = true;
@@ -588,8 +588,8 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 					int worldIdx = dw.baseWorldIndex;
 
 					// 确保我们操作的是普通配置中的世界列表
-					if (!specialSetting && UiConfigs().count(configIdx)) {
-						Config& cfg = UiConfigs()[configIdx];
+					if (!UiState().specialSetting && UiConfigView().count(configIdx)) {
+						Config& cfg = EditUiConfig(configIdx);
 						if (worldIdx < cfg.worlds.size()) {
 							// 存储要移动的世界
 							pair<wstring, wstring> worldToMove = cfg.worlds[worldIdx];
@@ -636,13 +636,13 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 
 				float modsConfirmBtnWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 				if (ImGui::Button(L("BUTTON_OK"), ImVec2(modsConfirmBtnWidth, 0))) {
-					if (UiConfigs().count(UiSelectedConfigIndex())) {
+					if (UiConfigView().count(UiSelectedConfigIndex())) {
 						filesystem::path tempPath = displayWorlds[selectedWorldIndex].effectiveConfig.saveRoot;
 						filesystem::path modsPath = tempPath.parent_path() / "mods";
 						if (!filesystem::exists(modsPath) && filesystem::exists(tempPath / "mods")) { // 服务器的模组可能放在world同级文件夹下
 							modsPath = tempPath / "mods";
 						}
-						const Config configCopy = UiConfigs()[UiSelectedConfigIndex()];
+						const Config configCopy = UiConfigView().at(UiSelectedConfigIndex());
 						TaskCoordinator::Instance().Submit(L"mods-backup",
 							{TaskCoordinator::WorldResourceKey(configCopy.configId, modsPath)},
 							[configCopy, modsPath, comment = utf8_to_wstring(mods_comment)](stop_token) {
@@ -673,11 +673,11 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 			}
 			ImGui::SameLine();
 			ImGui::SetNextItemWidth((availWidth - btnWidth) * 0.97f);
-			// 可以输入需要备份的其他内容的路径，比如 D:\Games\UiConfigs()
+			// 可以输入需要备份的其他内容的路径，比如 D:\Games\UiConfigView()
 			strcpy_s(buf, wstring_to_utf8(displayWorlds[selectedWorldIndex].effectiveConfig.othersPath).c_str());
 			if (ImGui::InputTextWithHint("##OTHERS", L("HINT_BACKUP_WHAT"), buf, IM_ARRAYSIZE(buf))) {
 				displayWorlds[selectedWorldIndex].effectiveConfig.othersPath = utf8_to_wstring(buf);
-				UiConfigs()[displayWorlds[selectedWorldIndex].baseConfigIndex].othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
+				EditUiConfig(displayWorlds[selectedWorldIndex].baseConfigIndex).othersPath = displayWorlds[selectedWorldIndex].effectiveConfig.othersPath;
 			}
 
 			ImGui::SetNextWindowViewport(viewport->ID);
@@ -710,7 +710,7 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 
 			if (ImGui::Button(L("CLOUD_SYNC_BUTTOM"), ImVec2(-1, 0))) {
 				const int baseConfigIndex = displayWorlds[selectedWorldIndex].baseConfigIndex;
-				const Config configCopy = UiConfigs()[baseConfigIndex];
+				const Config configCopy = UiConfigView().at(baseConfigIndex);
 				const wstring worldName = displayWorlds[selectedWorldIndex].name;
 				if (CanUseCloudActions(configCopy)) {
 					TaskCoordinator::Instance().Submit(L"manual-cloud-upload",
@@ -883,8 +883,8 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
 				else {
 					ImGui::Text(L("AUTOBACKUP_SETUP_FOR"), wstring_to_utf8(localDisplayWorlds[selectedWorldIndex].name).c_str());
 					ImGui::Separator();
-					ImGui::InputInt(L("INTERVAL_MINUTES"), &last_interval);
-					if (last_interval < 1) last_interval = 1;
+					ImGui::InputInt(L("INTERVAL_MINUTES"), &SettingsState().lastIntervalMinutes);
+					if (SettingsState().lastIntervalMinutes < 1) SettingsState().lastIntervalMinutes = 1;
 					float autoBkpBtnWidth = CalcPairButtonWidth(L("BUTTON_START"), L("BUTTON_CANCEL"));
 					if (ImGui::Button(L("BUTTON_START"), ImVec2(autoBkpBtnWidth, 0))) {
                         const auto& displayed = localDisplayWorlds[selectedWorldIndex];
@@ -899,7 +899,7 @@ if (ImGui::Begin(L("WORLD_DETAILS_PANE_TITLE"))) {
                             task.sourcePath = initial.path;
                             g_appState.g_active_auto_backups.emplace(taskKey, task);
                             const bool started = TaskCoordinator::Instance().Submit(task.taskName, {},
-                                [taskName = task.taskName, initial, interval = last_interval](stop_token token) {
+                                [taskName = task.taskName, initial, interval = SettingsState().lastIntervalMinutes](stop_token token) {
                                     AutoBackupThreadFunction(initial.configIndex, initial.worldIndex, interval, token, &initial);
                                     TaskCoordinator::Instance().PostEvent({L"auto-backup-finished", taskName});
                                 });

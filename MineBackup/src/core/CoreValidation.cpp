@@ -352,18 +352,18 @@ namespace {
 	}
 
 	static bool TryResolveValidationTemplate(Config& outConfig, string& error) {
-		lock_guard<mutex> lock(g_appState.configsMutex);
+		auto configAccess = g_appState.configuration.Write();
 		auto isUsable = [&](const Config& cfg) {
 			return !cfg.zipPath.empty() && filesystem::exists(cfg.zipPath);
 		};
 
-		auto currentIt = g_appState.configs.find(g_appState.currentConfigIndex);
-		if (currentIt != g_appState.configs.end() && isUsable(currentIt->second)) {
+		auto currentIt = configAccess.ReadConfigs().find(configAccess.Selection());
+		if (currentIt != configAccess.ReadConfigs().end() && isUsable(currentIt->second)) {
 			outConfig = currentIt->second;
 			return true;
 		}
 
-		for (const auto& pair : g_appState.configs) {
+		for (const auto& pair : configAccess.ReadConfigs()) {
 			if (isUsable(pair.second)) {
 				outConfig = pair.second;
 				return true;
@@ -498,11 +498,11 @@ namespace {
 
 		bool Finalize() noexcept {
 			bool success = true;
-			isSafeDelete = previousSafeDelete;
+			SettingsState().safeDelete = previousSafeDelete;
 			try {
-				lock_guard<mutex> lock(g_appState.configsMutex);
+				auto configAccess = g_appState.configuration.Write();
 				if (hadConfigSnapshot) {
-					g_appState.configs[kValidationConfigIndex] = configSnapshot;
+					configAccess.Configs()[kValidationConfigIndex] = configSnapshot;
 				}
 			}
 			catch (const exception& ex) {
@@ -516,8 +516,8 @@ namespace {
 
 			bool syntheticConfigExists = false;
 			try {
-				lock_guard<mutex> lock(g_appState.configsMutex);
-				syntheticConfigExists = g_appState.configs.contains(kValidationConfigIndex);
+				auto configAccess = g_appState.configuration.Write();
+				syntheticConfigExists = configAccess.Configs().contains(kValidationConfigIndex);
 			}
 			catch (const exception& ex) {
 				VALIDATION_ERROR("Validation cleanup could not inspect the synthetic config: %s", ex.what());
@@ -548,8 +548,8 @@ namespace {
 			}
 			if (!hadConfigSnapshot) {
 				try {
-					lock_guard<mutex> lock(g_appState.configsMutex);
-					g_appState.configs.erase(kValidationConfigIndex);
+					auto configAccess = g_appState.configuration.Write();
+					configAccess.Configs().erase(kValidationConfigIndex);
 				}
 				catch (const exception& ex) {
 					VALIDATION_ERROR("Validation cleanup could not remove the synthetic config: %s", ex.what());
@@ -595,8 +595,8 @@ namespace {
 		LegacyValidationCleanupResult result;
 		vector<int> configIndices;
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			for (const auto& [configIndex, config] : g_appState.configs) {
+			auto configAccess = g_appState.configuration.Write();
+			for (const auto& [configIndex, config] : configAccess.ReadConfigs()) {
 				if (!config.configId.empty()) configIndices.push_back(configIndex);
 			}
 		}
@@ -622,12 +622,12 @@ namespace {
 		bool previousValue = true;
 
 		explicit TemporarySafeDeleteMode(bool enabled) {
-			previousValue = isSafeDelete;
-			isSafeDelete = enabled;
+			previousValue = SettingsState().safeDelete;
+			SettingsState().safeDelete = enabled;
 		}
 
 		~TemporarySafeDeleteMode() {
-			isSafeDelete = previousValue;
+			SettingsState().safeDelete = previousValue;
 		}
 	};
 
@@ -784,8 +784,8 @@ namespace {
 
 		Config cfg = BuildValidationConfig(templateConfig, saveRoot, backupRoot, 2, 0, true);
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			g_appState.configs[kValidationConfigIndex] = cfg;
+			auto configAccess = g_appState.configuration.Write();
+			configAccess.Configs()[kValidationConfigIndex] = cfg;
 		}
 		MyFolder world{ worldPath.wstring(), kSmartWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 0 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
@@ -949,8 +949,8 @@ namespace {
 
 		Config cfg = BuildValidationConfig(templateConfig, saveRoot, backupRoot, 2, 2, false);
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			g_appState.configs[kValidationConfigIndex] = cfg;
+			auto configAccess = g_appState.configuration.Write();
+			configAccess.Configs()[kValidationConfigIndex] = cfg;
 		}
 		MyFolder world{ worldPath.wstring(), kLimitWorldName, L"CoreValidation", cfg, kValidationConfigIndex, 1 };
 		ClearValidationArtifactsForWorld(cfg, world.name);
@@ -1012,7 +1012,7 @@ namespace {
 		Config secondDevice = cfg;
 		if (!ctx.Require(cfg.configId == MigrationCoordinator::GenerateLegacyConfigId(secondDevice, 999),
 			"[Validation] Legacy ConfigId is deterministic across devices.", "[Validation] Legacy ConfigId is not deterministic.")) return false;
-		{ lock_guard lock(g_appState.configsMutex); g_appState.configs[kValidationConfigIndex] = cfg; }
+		{ auto configAccess = g_appState.configuration.Write(); configAccess.Configs()[kValidationConfigIndex] = cfg; }
 
 		const filesystem::path archiveDir = filesystem::path(cfg.backupPath) / worldName;
 		const filesystem::path metadataDir = filesystem::path(cfg.backupPath) / L"_metadata" / worldName;
@@ -1121,13 +1121,13 @@ namespace {
 			to_wstring(chrono::steady_clock::now().time_since_epoch().count());
 		ValidationCleanupGuard cleanup;
 		cleanup.sandboxRoot = sandboxRoot;
-		cleanup.previousSafeDelete = isSafeDelete;
+		cleanup.previousSafeDelete = SettingsState().safeDelete;
 		cleanup.historySnapshot = GetHistoryEntriesForConfig(kValidationConfigIndex);
 		cleanup.hadHistorySnapshot = !cleanup.historySnapshot.empty();
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			auto configIt = g_appState.configs.find(kValidationConfigIndex);
-			if (configIt != g_appState.configs.end()) {
+			auto configAccess = g_appState.configuration.Write();
+			auto configIt = configAccess.Configs().find(kValidationConfigIndex);
+			if (configIt != configAccess.Configs().end()) {
 				cleanup.hadConfigSnapshot = true;
 				cleanup.configSnapshot = configIt->second;
 			}
@@ -1201,7 +1201,7 @@ bool AreCoreValidationHistorySnapshotsEqual(
 
 bool StartCoreValidationAsync(bool automatic) {
 	bool expected = false;
-	if (!g_CoreValidationRunning.compare_exchange_strong(expected, true)) {
+	if (!CoreValidationState().running.compare_exchange_strong(expected, true)) {
 		VALIDATION_INFO("%s", L("VAL_INFO_ALREADY_RUNNING"));
 		return true;
 	}
@@ -1224,22 +1224,22 @@ bool StartCoreValidationAsync(bool automatic) {
 
 		if (wasCancelled || token.stop_requested()) {
 			VALIDATION_INFO("Core validation cancelled due to application shutdown.");
-			g_CoreValidationRunning.store(false);
+			CoreValidationState().running.store(false);
 			return;
 		}
 
-		g_CoreValidationPassed.store(passed);
-		g_CoreValidationPending.store(false);
-		SaveConfigs();
+		SettingsState().coreValidationPassed.store(passed);
+		SettingsState().coreValidationPending.store(false);
+		TaskCoordinator::Instance().PostEvent({L"save-configs", L"core-validation"});
 		if (passed) {
 			VALIDATION_INFO("%s", L("VAL_INFO_PASSED"));
 		}
 		else {
 			VALIDATION_ERROR("%s", L("VAL_INFO_FAILED_RETRY"));
 		}
-		g_CoreValidationRunning.store(false);
+		CoreValidationState().running.store(false);
 	})) {
-		g_CoreValidationRunning.store(false);
+		CoreValidationState().running.store(false);
 		VALIDATION_ERROR("Task coordinator is shutting down.");
 		return false;
 	}

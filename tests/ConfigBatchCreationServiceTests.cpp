@@ -26,22 +26,22 @@ struct TestContext {
 };
 
 struct GlobalSnapshot {
-	std::map<int, Config> configs = g_appState.configs;
-	int currentConfigIndex = g_appState.currentConfigIndex;
+	std::map<int, Config> configs = g_appState.configuration.Write().Configs();
+	int currentConfigIndex = g_appState.configuration.Write().Selection();
 	NormalConfigIndexAllocatorState allocator = SnapshotNormalConfigIndexAllocator();
-	std::wstring backupRoot = g_defaultBackupRootPath;
-	bool validationPending = g_CoreValidationPending.load();
-	bool validationPassed = g_CoreValidationPassed.load();
-	std::vector<std::wstring> restoreWhitelistSnapshot = restoreWhitelist;
+	std::wstring backupRoot = SettingsState().defaultBackupRootPath;
+	bool validationPending = SettingsState().coreValidationPending.load();
+	bool validationPassed = SettingsState().coreValidationPassed.load();
+	std::vector<std::wstring> restoreWhitelistSnapshot = SettingsState().restoreWhitelist;
 
 	~GlobalSnapshot() {
-		g_appState.configs = std::move(configs);
-		g_appState.currentConfigIndex = currentConfigIndex;
+		g_appState.configuration.Write().Configs() = std::move(configs);
+		g_appState.configuration.Write().Selection() = currentConfigIndex;
 		RestoreNormalConfigIndexAllocator(allocator);
-		g_defaultBackupRootPath = std::move(backupRoot);
-		g_CoreValidationPending.store(validationPending);
-		g_CoreValidationPassed.store(validationPassed);
-		restoreWhitelist = std::move(restoreWhitelistSnapshot);
+		SettingsState().defaultBackupRootPath = std::move(backupRoot);
+		SettingsState().coreValidationPending.store(validationPending);
+		SettingsState().coreValidationPassed.store(validationPassed);
+		SettingsState().restoreWhitelist = std::move(restoreWhitelistSnapshot);
 	}
 };
 
@@ -56,21 +56,21 @@ ConfigDraft Draft(std::string name, const std::filesystem::path& root) {
 
 void TestCompatibilityCreationEntry(TestContext& test) {
 	GlobalSnapshot restore;
-	g_appState.configs.clear();
+	g_appState.configuration.Write().Configs().clear();
 	RestoreNormalConfigIndexAllocator({2});
-	restoreWhitelist = {L"custom-only"};
+	SettingsState().restoreWhitelist = {L"custom-only"};
 	const int index = CreateNewNormalConfig("Manual");
-	const Config& config = g_appState.configs.at(index);
+	const Config& config = g_appState.configuration.Write().Configs().at(index);
 	test.Expect(index == 2 && config.name == "Manual" && config.keepCount == 20
 			&& !config.configId.empty(),
 		"the legacy create entry should reuse factory defaults and assign identity at commit");
-	test.Expect(restoreWhitelist == std::vector<std::wstring>({L"custom-only"}),
+	test.Expect(SettingsState().restoreWhitelist == std::vector<std::wstring>({L"custom-only"}),
 		"the compatibility create entry should not rewrite global restore settings");
 }
 
 void TestFactoryDefaults(TestContext& test, const std::filesystem::path& root) {
 	GlobalSnapshot restore;
-	restoreWhitelist = {L"custom-only"};
+	SettingsState().restoreWhitelist = {L"custom-only"};
 	ConfigDraft draft = Draft("Java", root);
 	draft.backupPath = root / "backups" / "Java";
 	ConfigFactoryContext context{root / "tools" / "7za.exe"};
@@ -87,7 +87,7 @@ void TestFactoryDefaults(TestContext& test, const std::filesystem::path& root) {
 		"factory should apply only per-config safety defaults");
 	test.Expect(Config{}.keepCount == 0,
 		"the structural Config default must remain compatible with old files");
-	test.Expect(restoreWhitelist == std::vector<std::wstring>({L"custom-only"}),
+	test.Expect(SettingsState().restoreWhitelist == std::vector<std::wstring>({L"custom-only"}),
 		"the pure config factory must not mutate the global restore whitelist");
 }
 
@@ -133,12 +133,12 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 	Config original;
 	original.name = "Existing";
 	original.configId = L"11111111-1111-4111-8111-111111111111";
-	g_appState.configs = {{7, original}};
-	g_appState.currentConfigIndex = 7;
+	g_appState.configuration.Write().Configs() = {{7, original}};
+	g_appState.configuration.Write().Selection() = 7;
 	RestoreNormalConfigIndexAllocator({10});
-	g_defaultBackupRootPath = (root / "old-root").wstring();
-	g_CoreValidationPending.store(false);
-	g_CoreValidationPassed.store(true);
+	SettingsState().defaultBackupRootPath = (root / "old-root").wstring();
+	SettingsState().coreValidationPending.store(false);
+	SettingsState().coreValidationPassed.store(true);
 
 	int buildCalls = 0;
 	int saveCalls = 0;
@@ -157,9 +157,9 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 	request.defaultBackupRoot = root / "new-root";
 	request.drafts = ResolveUniqueConfigDrafts(
 		{Draft("One", root), Draft("Two", root), Draft("Three", root)},
-		request.defaultBackupRoot, g_appState.configs);
+		request.defaultBackupRoot, g_appState.configuration.Write().Configs());
 	const auto failedBuild = ConfigBatchCreationService(buildFailure).Commit(request);
-	test.Expect(!failedBuild.success && saveCalls == 0 && g_appState.configs.size() == 1
+	test.Expect(!failedBuild.success && saveCalls == 0 && g_appState.configuration.Write().Configs().size() == 1
 			&& SnapshotNormalConfigIndexAllocator().nextIndex == 10,
 		"a later factory failure should not mutate global state or save");
 
@@ -169,10 +169,10 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 		Dependencies(saveCalls, ConfigSaveState::NotCommitted, refreshCalls)).Commit(request);
 	test.Expect(!failedSave.success && saveCalls == 1 && refreshCalls == 0,
 		"a persistence failure should save once and skip refresh");
-	test.Expect(g_appState.configs.size() == 1 && g_appState.currentConfigIndex == 7
+	test.Expect(g_appState.configuration.Write().Configs().size() == 1 && g_appState.configuration.Write().Selection() == 7
 			&& SnapshotNormalConfigIndexAllocator().nextIndex == 10
-			&& g_defaultBackupRootPath == (root / "old-root").wstring()
-			&& !g_CoreValidationPending.load() && g_CoreValidationPassed.load(),
+			&& SettingsState().defaultBackupRootPath == (root / "old-root").wstring()
+			&& !SettingsState().coreValidationPending.load() && SettingsState().coreValidationPassed.load(),
 		"save failure should restore configs, selection, allocator, settings, and validation flags");
 
 	// An unknown commit point must not be reported as a successful rollback.
@@ -189,11 +189,11 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 	test.Expect(!thrownSave.success && thrownSave.errorCode == "profile.transaction.recovery_required"
 			&& saveCalls == 1 && refreshCalls == 0,
 		"an exceptional save dependency requires recovery");
-    test.Expect(g_appState.configs.size() == 4,
+    test.Expect(g_appState.configuration.Write().Configs().size() == 4,
         "an uncertain save must retain memory until recovery determines the disk state");
     g_appState.profileRecoveryRequired.store(false);
-    g_appState.configs = {{7, original}};
-    g_appState.currentConfigIndex = 7;
+    g_appState.configuration.Write().Configs() = {{7, original}};
+    g_appState.configuration.Write().Selection() = 7;
     RestoreNormalConfigIndexAllocator({10});
 
 	saveCalls = 0;
@@ -203,12 +203,12 @@ void TestBuildAndSaveRollback(TestContext& test, const std::filesystem::path& ro
 	test.Expect(succeeded.success && succeeded.configIndices == std::vector<int>({10, 11, 12})
 			&& saveCalls == 1 && refreshCalls == 1,
 		"a valid three-config batch should save and refresh exactly once");
-	test.Expect(g_appState.currentConfigIndex == 10 && g_appState.configs.size() == 4
-			&& g_appState.configs.at(10).name == request.drafts[0].name
-			&& g_appState.configs.at(10).backupPath == request.drafts[0].backupPath.wstring(),
+	test.Expect(g_appState.configuration.Write().Selection() == 10 && g_appState.configuration.Write().Configs().size() == 4
+			&& g_appState.configuration.Write().Configs().at(10).name == request.drafts[0].name
+			&& g_appState.configuration.Write().Configs().at(10).backupPath == request.drafts[0].backupPath.wstring(),
 		"successful commit should select the first deterministic config and preserve its path");
-	test.Expect(g_defaultBackupRootPath == request.defaultBackupRoot.wstring()
-			&& g_CoreValidationPending.load() && !g_CoreValidationPassed.load(),
+	test.Expect(SettingsState().defaultBackupRootPath == request.defaultBackupRoot.wstring()
+			&& SettingsState().coreValidationPending.load() && !SettingsState().coreValidationPassed.load(),
 		"successful onboarding commit should persist the default root and pending validation state");
 }
 
@@ -221,19 +221,19 @@ void TestCommittedNotDurableKeepsMemoryState(
 	Config original;
 	original.name = "Existing";
 	original.configId = L"11111111-1111-4111-8111-111111111111";
-	g_appState.configs = {{7, original}};
-	g_appState.currentConfigIndex = 7;
+	g_appState.configuration.Write().Configs() = {{7, original}};
+	g_appState.configuration.Write().Selection() = 7;
 	RestoreNormalConfigIndexAllocator({10});
-	g_defaultBackupRootPath = (root / "old-root").wstring();
-	g_CoreValidationPending.store(false);
-	g_CoreValidationPassed.store(true);
+	SettingsState().defaultBackupRootPath = (root / "old-root").wstring();
+	SettingsState().coreValidationPending.store(false);
+	SettingsState().coreValidationPassed.store(true);
 
 	int saveCalls = 0;
 	int refreshCalls = 0;
 	ConfigBatchCreationRequest request;
 	request.defaultBackupRoot = root / "durable-root";
 	request.drafts = ResolveUniqueConfigDrafts(
-		{Draft("Durable", root)}, request.defaultBackupRoot, g_appState.configs);
+		{Draft("Durable", root)}, request.defaultBackupRoot, g_appState.configuration.Write().Configs());
 	const auto result = ConfigBatchCreationService(
 		Dependencies(saveCalls, ConfigSaveState::CommittedNotDurable, refreshCalls))
 		.Commit(request);
@@ -243,12 +243,12 @@ void TestCommittedNotDurableKeepsMemoryState(
 		"a committed-but-not-durable save must succeed with a non-blocking warning");
 	test.Expect(saveCalls == 1 && refreshCalls == 1,
 		"a committed-but-not-durable save should still run onCommitted exactly once");
-	test.Expect(g_appState.configs.size() == 2 && g_appState.currentConfigIndex == 10
+	test.Expect(g_appState.configuration.Write().Configs().size() == 2 && g_appState.configuration.Write().Selection() == 10
 			&& SnapshotNormalConfigIndexAllocator().nextIndex == 11
-			&& g_appState.configs.at(10).name == "Durable",
+			&& g_appState.configuration.Write().Configs().at(10).name == "Durable",
 		"a committed-but-not-durable save must keep new configs, selection, and allocator");
-	test.Expect(g_defaultBackupRootPath == request.defaultBackupRoot.wstring()
-			&& g_CoreValidationPending.load() && !g_CoreValidationPassed.load(),
+	test.Expect(SettingsState().defaultBackupRootPath == request.defaultBackupRoot.wstring()
+			&& SettingsState().coreValidationPending.load() && !SettingsState().coreValidationPassed.load(),
 		"a committed-but-not-durable save must keep backup root and validation flags");
 }
 
@@ -256,11 +256,11 @@ void TestSettingsCommitPreservesValidationState(
 	TestContext& test,
 	const std::filesystem::path& root) {
 	GlobalSnapshot restore;
-	g_appState.configs.clear();
-	g_appState.currentConfigIndex = 1;
+	g_appState.configuration.Write().Configs().clear();
+	g_appState.configuration.Write().Selection() = 1;
 	RestoreNormalConfigIndexAllocator({1});
-	g_CoreValidationPending.store(false);
-	g_CoreValidationPassed.store(true);
+	SettingsState().coreValidationPending.store(false);
+	SettingsState().coreValidationPassed.store(true);
 
 	ConfigBatchCreationRequest request;
 	request.defaultBackupRoot = root / "settings-root";
@@ -272,7 +272,7 @@ void TestSettingsCommitPreservesValidationState(
 	const auto result = ConfigBatchCreationService(
 		Dependencies(saveCalls, ConfigSaveState::CommittedDurably, refreshCalls)).Commit(request);
 		test.Expect(result.success && saveCalls == 1 && refreshCalls == 1
-			&& !g_CoreValidationPending.load() && g_CoreValidationPassed.load(),
+			&& !SettingsState().coreValidationPending.load() && SettingsState().coreValidationPassed.load(),
 			"Settings batch creation should save once without scheduling onboarding validation");
 }
 

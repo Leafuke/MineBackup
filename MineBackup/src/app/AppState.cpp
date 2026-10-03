@@ -43,67 +43,112 @@ void MergeFields(Config& current, const Config& baseline, const Config& edited) 
     if (edited.enableWEIntegration != baseline.enableWEIntegration) current.enableWEIntegration = edited.enableWEIntegration;
     if (edited.weSnapshotPath != baseline.weSnapshotPath) current.weSnapshotPath = edited.weSnapshotPath;
 }
-void NormalizeSelection() {
-    if (!g_appState.configs.contains(g_appState.currentConfigIndex))
-        g_appState.currentConfigIndex = g_appState.configs.empty() ? 1 : g_appState.configs.begin()->first;
 }
+
+void DesktopConfigState::Changed() {
+    ++revision_;
+    cached_.reset();
+    byId_.clear();
+    for (const auto& [index, config] : configs_) byId_.emplace(config.configId, index);
+    if (!configs_.contains(selected_)) selected_ = configs_.empty() ? 1 : configs_.begin()->first;
 }
-ConfigStateSnapshot SnapshotConfigState() {
-    std::lock_guard lock(g_appState.configsMutex);
-    return {g_appState.configs, g_appState.currentConfigIndex};
+DesktopConfigState::WriteAccess::~WriteAccess() { if (changed_) owner_.Changed(); }
+std::shared_ptr<const std::map<int, Config>> DesktopConfigState::Read() const {
+    std::lock_guard lock(mutex_);
+    if (!cached_) cached_ = std::make_shared<const std::map<int, Config>>(configs_);
+    return cached_;
 }
+ConfigStateSnapshot DesktopConfigState::Snapshot() const {
+    std::lock_guard lock(mutex_);
+    return {configs_, selected_};
+}
+JobDocument DesktopConfigState::SnapshotJobs() const {
+    std::lock_guard lock(mutex_);
+    return jobs_;
+}
+int DesktopConfigState::Selection() const { std::lock_guard lock(mutex_); return selected_; }
+bool DesktopConfigState::Contains(int index) const { std::lock_guard lock(mutex_); return configs_.contains(index); }
+void DesktopConfigState::Select(int index) {
+    std::lock_guard lock(mutex_);
+    if (configs_.contains(index)) selected_ = index;
+}
+bool DesktopConfigState::Modify(const std::wstring& id, const std::function<void(Config&)>& mutation) {
+    std::lock_guard lock(mutex_);
+    const auto found = byId_.find(id);
+    if (found == byId_.end()) return false;
+    mutation(configs_.at(found->second));
+    Changed();
+    return true;
+}
+bool DesktopConfigState::Delete(const std::wstring& id) {
+    std::lock_guard lock(mutex_);
+    const auto found = byId_.find(id);
+    if (found == byId_.end()) return false;
+    configs_.erase(found->second);
+    Changed();
+    return true;
+}
+ConfigStateSnapshot SnapshotConfigState() { return g_appState.configuration.Snapshot(); }
 bool ModifyConfigById(const std::wstring& id, const std::function<void(Config&)>& mutation) {
-    std::lock_guard lock(g_appState.configsMutex);
-    for (auto& [index, config] : g_appState.configs) {
-        if (config.configId == id) { mutation(config); return true; }
-    }
-    return false;
+    return g_appState.configuration.Modify(id, mutation);
 }
-bool DeleteConfigById(const std::wstring& id) {
-    std::lock_guard lock(g_appState.configsMutex);
-    for (auto it = g_appState.configs.begin(); it != g_appState.configs.end(); ++it) {
-        if (it->second.configId == id) { g_appState.configs.erase(it); NormalizeSelection(); return true; }
-    }
-    return false;
-}
-int SelectedConfigIndex() { return SnapshotConfigState().selectedIndex; }
+bool DeleteConfigById(const std::wstring& id) { return g_appState.configuration.Delete(id); }
+int SelectedConfigIndex() { return g_appState.configuration.Selection(); }
 void SelectConfigIndex(int index) {
-    std::lock_guard lock(g_appState.configsMutex);
-    if (g_appState.configs.contains(index)) {
-        g_appState.currentConfigIndex = index;
-        if (activeDraft) activeDraft->Selection() = index;
-    }
+    g_appState.configuration.Select(index);
+    if (activeDraft) activeDraft->Selection() = SelectedConfigIndex();
 }
-UiConfigDraft::UiConfigDraft() : baseline_(SnapshotConfigState()), edited_(baseline_), previous_(activeDraft) {
-    activeDraft = this;
-}
+UiConfigDraft::UiConfigDraft() : view_(g_appState.configuration.Read()),
+    selected_(SelectedConfigIndex()), baselineSelection_(selected_), previous_(activeDraft) { activeDraft = this; }
 UiConfigDraft::~UiConfigDraft() { Flush(); activeDraft = previous_; }
-void UiConfigDraft::ObserveInserted(int index, const Config& config) {
-    baseline_.configs[index] = config;
-    edited_.configs[index] = config;
+void UiConfigDraft::Refresh() {
+    retainedViews_.push_back(view_);
+    view_ = g_appState.configuration.Read();
+}
+Config& UiConfigDraft::Edit(int index) {
+    auto found = drafts_.find(index);
+    if (found == drafts_.end()) {
+        const auto& config = view_->at(index);
+        found = drafts_.emplace(index, Draft{config, config}).first;
+    }
+    return found->second.edited;
+}
+void UiConfigDraft::ObserveInserted(int, const Config&) { Refresh(); }
+void UiConfigDraft::Delete(int index) {
+    const auto found = view_->find(index);
+    if (found == view_->end()) return;
+    DeleteConfigById(found->second.configId);
+    Refresh();
+    selected_ = SelectedConfigIndex();
+    baselineSelection_ = selected_;
 }
 void UiConfigDraft::Flush() {
-    std::lock_guard lock(g_appState.configsMutex);
-    for (const auto& [index, original] : baseline_.configs) {
-        const auto draft = edited_.configs.find(index);
-        auto current = std::find_if(g_appState.configs.begin(), g_appState.configs.end(),
-            [&](const auto& item) { return item.second.configId == original.configId; });
-        if (current == g_appState.configs.end()) continue;
-        if (draft == edited_.configs.end()) g_appState.configs.erase(current);
-        else if (draft->second.configId == original.configId) MergeFields(current->second, original, draft->second);
+    bool changed = false;
+    for (auto& [index, draft] : drafts_) {
+        if (draft.baseline == draft.edited) continue;
+        if (draft.baseline.configId == draft.edited.configId) {
+            changed |= ModifyConfigById(draft.baseline.configId, [&](Config& current) {
+                MergeFields(current, draft.baseline, draft.edited);
+            });
+        }
+        draft.baseline = draft.edited;
     }
-    for (const auto& [index, config] : edited_.configs) {
-        if (!baseline_.configs.contains(index)) g_appState.configs.emplace(index, config);
-    }
-    if (edited_.selectedIndex != baseline_.selectedIndex) g_appState.currentConfigIndex = edited_.selectedIndex;
-    NormalizeSelection();
-    if (!g_appState.configs.contains(edited_.selectedIndex)) edited_.selectedIndex = g_appState.currentConfigIndex;
-    // Keep widget references valid until the frame ends; only advance the baseline.
-    baseline_ = edited_;
+    if (selected_ != baselineSelection_) g_appState.configuration.Select(selected_);
+    selected_ = SelectedConfigIndex();
+    baselineSelection_ = selected_;
+    if (changed) Refresh();
 }
-std::map<int, Config>& UiConfigs() {
+const std::map<int, Config>& UiConfigView() {
     if (!activeDraft) throw std::logic_error("UI configuration access requires a frame draft");
-    return activeDraft->Configs();
+    return activeDraft->View();
+}
+Config& EditUiConfig(int index) {
+    if (!activeDraft) throw std::logic_error("UI configuration editing requires a frame draft");
+    return activeDraft->Edit(index);
+}
+void DeleteUiConfig(int index) {
+    if (!activeDraft) throw std::logic_error("UI configuration deletion requires a frame draft");
+    activeDraft->Delete(index);
 }
 int& UiSelectedConfigIndex() {
     if (!activeDraft) throw std::logic_error("UI selection access requires a frame draft");

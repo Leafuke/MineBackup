@@ -179,9 +179,9 @@ void ApplyTheme()
 	style = ImGuiStyle();
 	style.FontScaleDpi = dpiScale;
 
-	int effectiveTheme = g_theme;
+	int effectiveTheme = AppearanceState().theme;
 	if (effectiveTheme == static_cast<int>(ThemeId::SystemAuto)) {
-		const int target = IsSystemDarkMode() ? g_systemThemeDark : g_systemThemeLight;
+		const int target = IsSystemDarkMode() ? AppearanceState().systemThemeDark : AppearanceState().systemThemeLight;
 		effectiveTheme = (IsValidThemeId(target) && target != static_cast<int>(ThemeId::SystemAuto))
 			? target
 			: (IsSystemDarkMode()
@@ -207,37 +207,37 @@ void ApplyTheme()
 	};
 
 	bool applied = true;
-	g_customThemeError.clear();
+	AppearanceState().customThemeError.clear();
 	if (effectiveTheme == static_cast<int>(ThemeId::Custom)) {
 		applied = ImGuiTheme::ApplyCustom(
-			GetAppPaths().configRoot / L"custom_theme.json", &g_customThemeError);
+			GetAppPaths().configRoot / L"custom_theme.json", &AppearanceState().customThemeError);
 		if (applied) {
-			applied = ImGuiTheme::ValidateTextContrast(style, &g_customThemeError);
+			applied = ImGuiTheme::ValidateTextContrast(style, &AppearanceState().customThemeError);
 		}
 	}
 	else if (IsValidThemeId(effectiveTheme)) {
 		applyBuiltInTheme(effectiveTheme);
-		g_lastValidTheme = effectiveTheme;
+		AppearanceState().lastValidTheme = effectiveTheme;
 	}
 	else {
 		effectiveTheme = static_cast<int>(ThemeId::ImGuiLight);
-		g_lastValidTheme = effectiveTheme;
+		AppearanceState().lastValidTheme = effectiveTheme;
 		applyBuiltInTheme(effectiveTheme);
 	}
 
 	if (!applied) {
 		style = ImGuiStyle();
 		style.FontScaleDpi = dpiScale;
-		applyBuiltInTheme(g_lastValidTheme);
+		applyBuiltInTheme(AppearanceState().lastValidTheme);
 	}
 
-	if (g_theme == static_cast<int>(ThemeId::Custom) && applied) {
+	if (AppearanceState().theme == static_cast<int>(ThemeId::Custom) && applied) {
 		EnableDarkModeWin(
 			ImGuiTheme::RelativeLuminance(style.Colors[ImGuiCol_WindowBg]) < 0.45f);
 	}
 
-	style.FontScaleMain = g_uiScale;
-	style.ScaleAllSizes(g_uiScale);
+	style.FontScaleMain = AppearanceState().userScale;
+	style.ScaleAllSizes(AppearanceState().userScale);
 
 	if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
 		style.WindowRounding = 0.0f;

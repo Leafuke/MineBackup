@@ -145,7 +145,7 @@ void LoadFonts(const DesktopUiSessionOptions& options, ImGuiRuntime& runtime) {
 	ImGuiIO& io = ImGui::GetIO();
 	static const ImWchar iconRanges[] = {ICON_MIN_FA, ICON_MAX_16_FA, 0};
 
-	if (!Fontss.empty() && filesystem::exists(Fontss)) {
+	if (!AppearanceState().fontPath.empty() && filesystem::exists(AppearanceState().fontPath)) {
 		ImFontConfig config;
 		config.PixelSnapH = true;
 		if (options.iconFontAvailable) config.GlyphExcludeRanges = iconRanges;
@@ -153,7 +153,7 @@ void LoadFonts(const DesktopUiSessionOptions& options, ImGuiRuntime& runtime) {
 		ImFont* mainFont = nullptr;
 		minebackup::infra::ReadOnlyMappedFile mappedFont;
 		error_code mappingError;
-		const bool mapped = mappedFont.Open(Fontss, mappingError);
+		const bool mapped = mappedFont.Open(AppearanceState().fontPath, mappingError);
 		if (mapped && mappedFont.Size() > 100
 			&& mappedFont.Size() <= static_cast<size_t>((numeric_limits<int>::max)())) {
 			config.FontDataOwnedByAtlas = false;
@@ -181,7 +181,7 @@ void LoadFonts(const DesktopUiSessionOptions& options, ImGuiRuntime& runtime) {
 		if (mainFont == nullptr) {
 			config.FontDataOwnedByAtlas = true;
 			mainFont = io.Fonts->AddFontFromFileTTF(
-				wstring_to_utf8(Fontss).c_str(), 20.0f, &config);
+				wstring_to_utf8(AppearanceState().fontPath).c_str(), 20.0f, &config);
 		}
 		if (mainFont == nullptr) io.Fonts->AddFontDefaultVector();
 	}
@@ -233,7 +233,7 @@ bool DesktopUiSession::Create(
 	runtime_.AdoptWindow(window);
 	// Appearance hooks on Windows resolve the native HWND through the process
 	// main-window handle, so publish it as soon as this session owns the window.
-	wc = window;
+	WindowState().handle = window;
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
 #ifdef _WIN32
@@ -289,7 +289,7 @@ bool DesktopUiSession::Create(
 	ApplyTheme();
 	if (options.firstRun) {
 		GetUserDefaultUILanguageWin();
-		Fontss = GetDefaultUIFontPath();
+		AppearanceState().fontPath = GetDefaultUIFontPath();
 	}
 	LoadFonts(options, runtime_);
 	ResetSettingsWindowRuntimeState();
@@ -338,7 +338,7 @@ void DesktopUiSession::Shutdown() noexcept {
 	if (window != nullptr) glfwMakeContextCurrent(window);
 	DestroySecondaryPlatformWindows();
 	runtime_.Shutdown();
-	if (wc == window) wc = nullptr;
+	if (WindowState().handle == window) WindowState().handle = nullptr;
 	active_ = false;
 	iniPath_.clear();
 	logPath_.clear();

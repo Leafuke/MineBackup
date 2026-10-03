@@ -105,8 +105,8 @@ namespace {
 
 		map<int, Config> currentConfigs;
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			currentConfigs = g_appState.configs;
+			auto configAccess = g_appState.configuration.Write();
+			currentConfigs = configAccess.ReadConfigs();
 		}
 		const string currentPortable =
 			PortableConfigDocument::FromLocalConfigs(currentConfigs).Serialize();
@@ -142,9 +142,9 @@ namespace {
 		if (*action == L"upload") {
 			Config cloudConfig;
 			{
-				lock_guard<mutex> lock(g_appState.configsMutex);
-				const auto config = g_appState.configs.find(configIndex);
-				if (config == g_appState.configs.end()) return;
+				auto configAccess = g_appState.configuration.Write();
+				const auto config = configAccess.ReadConfigs().find(configIndex);
+				if (config == configAccess.ReadConfigs().end()) return;
 				cloudConfig = config->second;
 			}
 			const string serialized = wstring_to_utf8(*payload);
@@ -178,9 +178,9 @@ namespace {
 
 		bool applied = false;
 		{
-			lock_guard<mutex> lock(g_appState.configsMutex);
+			auto configAccess = g_appState.configuration.Write();
 			applied = PortableConfigDocument::ApplyImport(
-				g_appState.configs,
+				configAccess.Configs(),
 				remote,
 				appliedPreview,
 				parseError);
@@ -210,6 +210,7 @@ void ApplicationEventRouter::Dispatch(const vector<TaskEvent>& events) const {
 }
 
 void ApplicationEventRouter::DispatchOne(const TaskEvent& event) const {
+	if (event.type == L"save-configs") { SaveConfigs(); return; }
 	if (event.type == EventType::TaskFailed) {
 		MB_LOG_ERROR(
 			minebackup::logging::LogCategory::Task,
@@ -237,10 +238,10 @@ void ApplicationEventRouter::DispatchOne(const TaskEvent& event) const {
 		const wstring* notes = RequiredValue(event, EventField::Notes);
 		const wstring* success = RequiredValue(event, EventField::Success);
 		if (!available || !tag || !notes || !success) return;
-		g_NewVersionAvailable = *available == L"1";
-		g_LatestVersionStr = wstring_to_utf8(*tag);
-		g_ReleaseNotes = wstring_to_utf8(*notes);
-		g_UpdateCheckDone = true;
+		UpdateState().newVersionAvailable = *available == L"1";
+		UpdateState().latestVersion = wstring_to_utf8(*tag);
+		UpdateState().releaseNotes = wstring_to_utf8(*notes);
+		UpdateState().updateCheckDone = true;
 		if (*success != L"1" && !event.message.empty()) {
 			MB_LOG_ERROR(
 				minebackup::logging::LogCategory::Network,
@@ -256,10 +257,10 @@ void ApplicationEventRouter::DispatchOne(const TaskEvent& event) const {
 		const wstring* contentId = RequiredValue(event, EventField::ContentId);
 		const wstring* success = RequiredValue(event, EventField::Success);
 		if (!available || !content || !contentId || !success) return;
-		g_NewNoticeAvailable = *available == L"1";
-		g_NoticeContent = wstring_to_utf8(*content);
-		g_NoticeUpdatedAt = wstring_to_utf8(*contentId);
-		g_NoticeCheckDone = true;
+		UpdateState().newNoticeAvailable = *available == L"1";
+		UpdateState().noticeContent = wstring_to_utf8(*content);
+		UpdateState().noticeUpdatedAt = wstring_to_utf8(*contentId);
+		UpdateState().noticeCheckDone = true;
 		if (*success != L"1" && !event.message.empty()) {
 			MB_LOG_ERROR(
 				minebackup::logging::LogCategory::Network,
@@ -272,51 +273,51 @@ void ApplicationEventRouter::DispatchOne(const TaskEvent& event) const {
 	if (event.type == EventType::RcloneInstallComplete) {
 		const wstring* success = RequiredValue(event, EventField::Success);
 		if (!success) return;
-		g_RcloneInstallRunning = false;
-		g_RcloneInstallSucceeded = *success == L"1";
-		if (g_RcloneInstallSucceeded) {
+		ExternalToolState().rcloneInstallRunning = false;
+		ExternalToolState().rcloneInstallSucceeded = *success == L"1";
+		if (ExternalToolState().rcloneInstallSucceeded) {
 			const wstring* path = RequiredValue(event, EventField::Path);
 			if (!path) return;
-			g_RcloneInstallMessage = MineFormatMessage(
+			ExternalToolState().rcloneInstallMessage = MineFormatMessage(
 				"RCLONE_INSTALL_SUCCESS_FORMAT",
 				wstring_to_utf8(*path).c_str());
 		}
 		else {
-			g_RcloneInstallMessage = event.message.empty()
+			ExternalToolState().rcloneInstallMessage = event.message.empty()
 				? utf8_to_wstring(L("RCLONE_INSTALL_FAILED"))
 				: event.message;
 			MB_LOG_ERROR(
 				minebackup::logging::LogCategory::Process,
 				"process.rclone.install_failed",
 				"rclone installation failed: {}",
-				wstring_to_utf8(g_RcloneInstallMessage));
+				wstring_to_utf8(ExternalToolState().rcloneInstallMessage));
 		}
 		return;
 	}
 	if (event.type == EventType::KnotLinkInstallerComplete) {
 		const wstring* success = RequiredValue(event, EventField::Success);
 		if (!success) return;
-		g_KnotLinkInstallRunning = false;
-		g_KnotLinkInstallSucceeded = *success == L"1";
-		g_KnotLinkInstallMessage = g_KnotLinkInstallSucceeded
+		ExternalToolState().knotLinkInstallRunning = false;
+		ExternalToolState().knotLinkInstallSucceeded = *success == L"1";
+		ExternalToolState().knotLinkInstallMessage = ExternalToolState().knotLinkInstallSucceeded
 			? utf8_to_wstring(L("KNOTLINK_INSTALL_OPENED"))
 			: (event.message.empty()
 				? utf8_to_wstring(L("KNOTLINK_INSTALL_FAILED"))
 				: event.message);
-		if (!g_KnotLinkInstallSucceeded) {
+		if (!ExternalToolState().knotLinkInstallSucceeded) {
 			MB_LOG_ERROR(
 				minebackup::logging::LogCategory::Network,
 				"network.knotlink_installer.failed",
 				"KnotLinkService installer download/open failed: {}",
-				wstring_to_utf8(g_KnotLinkInstallMessage));
+				wstring_to_utf8(ExternalToolState().knotLinkInstallMessage));
 		}
 		return;
 	}
 	if (event.type == EventType::KnotLinkEnableComplete) {
 		const wstring* success = RequiredValue(event, EventField::Success);
 		if (!success) return;
-		g_enableKnotLink = *success == L"1";
-		if (g_enableKnotLink) {
+		SettingsState().enableKnotLink = *success == L"1";
+		if (SettingsState().enableKnotLink) {
 			SaveConfigs();
 		}
 		else {
@@ -331,9 +332,9 @@ void ApplicationEventRouter::DispatchOne(const TaskEvent& event) const {
 		const wstring* needsUpdate = RequiredValue(event, EventField::NeedsUpdate);
 		const wstring* version = RequiredValue(event, EventField::Version);
 		if (!needsUpdate || !version) return;
-		g_KnotLinkStartupNeedsUpdate = *needsUpdate == L"1";
-		g_KnotLinkStartupVersion = wstring_to_utf8(*version);
-		g_KnotLinkStartupStatusReady = true;
+		KnotLinkState().startupNeedsUpdate = *needsUpdate == L"1";
+		KnotLinkState().startupVersion = wstring_to_utf8(*version);
+		KnotLinkState().startupStatusReady = true;
 		return;
 	}
 	if (event.type == EventType::PortableConfigPreview) {

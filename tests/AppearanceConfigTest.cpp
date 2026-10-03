@@ -68,23 +68,23 @@ int main() {
 	}
 
 	LoadConfigs(legacy);
-	Check(g_theme == static_cast<int>(ThemeId::NordLight),
+	Check(AppearanceState().theme == static_cast<int>(ThemeId::NordLight),
 		"active legacy theme migrates to application appearance");
-	Check(std::filesystem::path(Fontss) == font,
+	Check(std::filesystem::path(AppearanceState().fontPath) == font,
 		"active valid legacy font migrates to application appearance");
-	Check(g_uiScaleMigrationPending,
+	Check(AppearanceState().pendingScaleMigration,
 		"legacy scale is pending semantic migration");
-	Check(g_AutoScanForWorlds && g_appState.configs.size() == 1,
+	Check(SettingsState().autoScanForWorlds && g_appState.configuration.Write().Configs().size() == 1,
 		"legacy AutoScanForWorlds=1 remains readable without creating configurations");
-	Check(g_appState.configs.at(2).keepCount == 0
-			&& std::filesystem::path(g_appState.configs.at(2).backupPath)
+	Check(g_appState.configuration.Write().Configs().at(2).keepCount == 0
+			&& std::filesystem::path(g_appState.configuration.Write().Configs().at(2).backupPath)
 				== legacyBackupRoot,
 		"legacy keepCount and backupPath remain unchanged during onboarding upgrade");
-	Check(std::filesystem::path(g_defaultBackupRootPath)
+	Check(std::filesystem::path(SettingsState().defaultBackupRootPath)
 			== KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(appPaths),
 		"legacy INI without a default backup root receives the in-memory recommendation");
 	FinalizeUiScaleMigration(1.5f);
-	Check(g_uiScale == 1.0f && !g_uiScaleMigrationPending && g_uiScaleV2,
+	Check(AppearanceState().userScale == 1.0f && !AppearanceState().pendingScaleMigration && AppearanceState().userScaleV2,
 		"DPI-derived legacy scale migrates once");
 	Job job;
 	job.jobId = L"11111111-1111-4111-8111-111111111111";
@@ -100,9 +100,9 @@ int main() {
 	step.process.arguments = {L"--value", L"with spaces"};
 	stage.steps.push_back(step);
 	job.stages.push_back(stage);
-	g_appState.jobs.jobs = {job};
+	g_appState.configuration.Write().Jobs().jobs = {job};
 	const std::filesystem::path customBackupRoot = root / "custom-backups";
-	g_defaultBackupRootPath = customBackupRoot.wstring();
+	SettingsState().defaultBackupRootPath = customBackupRoot.wstring();
 
 	const std::filesystem::path roundTrip = root / "roundtrip.ini";
 	Check(SaveConfigs(roundTrip), "global appearance saves atomically");
@@ -130,26 +130,26 @@ int main() {
 	Check(std::filesystem::exists(root / "jobs.json"),
 		"GUI save writes the shared jobs.json document");
 
-	g_theme = static_cast<int>(ThemeId::ImGuiDark);
-	Fontss.clear();
-	g_uiScale = 2.0f;
-	g_defaultBackupRootPath.clear();
+	AppearanceState().theme = static_cast<int>(ThemeId::ImGuiDark);
+	AppearanceState().fontPath.clear();
+	AppearanceState().userScale = 2.0f;
+	SettingsState().defaultBackupRootPath.clear();
 	LoadConfigs(roundTrip);
-	Check(g_theme == static_cast<int>(ThemeId::NordLight)
-		&& std::filesystem::path(Fontss) == font && g_uiScale == 1.0f
-		&& !g_uiScaleMigrationPending,
+	Check(AppearanceState().theme == static_cast<int>(ThemeId::NordLight)
+		&& std::filesystem::path(AppearanceState().fontPath) == font && AppearanceState().userScale == 1.0f
+		&& !AppearanceState().pendingScaleMigration,
 		"global appearance round-trips without a second migration");
-	Check(std::filesystem::path(g_defaultBackupRootPath) == customBackupRoot,
+	Check(std::filesystem::path(SettingsState().defaultBackupRootPath) == customBackupRoot,
 		"default backup root round-trips without changing existing configs");
-	Check(g_AutoScanForWorlds && g_appState.configs.size() == 1,
+	Check(SettingsState().autoScanForWorlds && g_appState.configuration.Write().Configs().size() == 1,
 		"legacy AutoScanForWorlds=1 round-trips without activating discovery");
-	Check(g_appState.configs.at(2).keepCount == 0
-			&& std::filesystem::path(g_appState.configs.at(2).backupPath)
+	Check(g_appState.configuration.Write().Configs().at(2).keepCount == 0
+			&& std::filesystem::path(g_appState.configuration.Write().Configs().at(2).backupPath)
 				== legacyBackupRoot,
 		"default backup root changes do not rewrite an existing configuration");
-	Check(g_appState.jobs.jobs.size() == 1
-			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments.size() == 2
-			&& g_appState.jobs.jobs[0].stages[0].steps[0].process.arguments[1] == L"with spaces",
+	Check(g_appState.configuration.Write().Jobs().jobs.size() == 1
+			&& g_appState.configuration.Write().Jobs().jobs[0].stages[0].steps[0].process.arguments.size() == 2
+			&& g_appState.configuration.Write().Jobs().jobs[0].stages[0].steps[0].process.arguments[1] == L"with spaces",
 		"GUI and CLI share the versioned Job document without shell argument loss");
 
 	const std::filesystem::path malformed = root / "malformed.ini";
@@ -229,37 +229,37 @@ int main() {
 	Check(!IsValidThemeId(12), "12 is invalid theme");
 
 	const std::filesystem::path newThemesIni = root / "new-themes.ini";
-	g_theme = static_cast<int>(ThemeId::VSCodeDark);
+	AppearanceState().theme = static_cast<int>(ThemeId::VSCodeDark);
 	Check(SaveConfigs(newThemesIni), "VSCodeDark theme saves");
-	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	AppearanceState().theme = static_cast<int>(ThemeId::ImGuiDark);
 	LoadConfigs(newThemesIni);
-	Check(g_theme == static_cast<int>(ThemeId::VSCodeDark), "VSCodeDark theme round-trips");
+	Check(AppearanceState().theme == static_cast<int>(ThemeId::VSCodeDark), "VSCodeDark theme round-trips");
 
-	g_theme = static_cast<int>(ThemeId::SolarizedLight);
+	AppearanceState().theme = static_cast<int>(ThemeId::SolarizedLight);
 	Check(SaveConfigs(newThemesIni), "SolarizedLight theme saves");
-	g_theme = static_cast<int>(ThemeId::ImGuiDark);
+	AppearanceState().theme = static_cast<int>(ThemeId::ImGuiDark);
 	LoadConfigs(newThemesIni);
-	Check(g_theme == static_cast<int>(ThemeId::SolarizedLight), "SolarizedLight theme round-trips");
+	Check(AppearanceState().theme == static_cast<int>(ThemeId::SolarizedLight), "SolarizedLight theme round-trips");
 
-	g_theme = static_cast<int>(ThemeId::SystemAuto);
-	g_systemThemeLight = static_cast<int>(ThemeId::NordLight);
-	g_systemThemeDark = static_cast<int>(ThemeId::VSCodeDark);
+	AppearanceState().theme = static_cast<int>(ThemeId::SystemAuto);
+	AppearanceState().systemThemeLight = static_cast<int>(ThemeId::NordLight);
+	AppearanceState().systemThemeDark = static_cast<int>(ThemeId::VSCodeDark);
 	Check(SaveConfigs(newThemesIni), "SystemAuto theme and subthemes save");
-	g_theme = static_cast<int>(ThemeId::ImGuiDark);
-	g_systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
-	g_systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
+	AppearanceState().theme = static_cast<int>(ThemeId::ImGuiDark);
+	AppearanceState().systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
+	AppearanceState().systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
 	LoadConfigs(newThemesIni);
-	Check(g_theme == static_cast<int>(ThemeId::SystemAuto), "SystemAuto theme round-trips");
-	Check(g_systemThemeLight == static_cast<int>(ThemeId::NordLight), "SystemThemeLight round-trips");
-	Check(g_systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark round-trips");
+	Check(AppearanceState().theme == static_cast<int>(ThemeId::SystemAuto), "SystemAuto theme round-trips");
+	Check(AppearanceState().systemThemeLight == static_cast<int>(ThemeId::NordLight), "SystemThemeLight round-trips");
+	Check(AppearanceState().systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark round-trips");
 
 	{
 		std::ofstream out(newThemesIni, std::ios::trunc);
 		out << "[General]\nTheme=10\nSystemThemeLight=10\nSystemThemeDark=999\n";
 	}
 	LoadConfigs(newThemesIni);
-	Check(g_systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight falls back when set to SystemAuto");
-	Check(g_systemThemeDark == static_cast<int>(ThemeId::WindowsDark), "SystemThemeDark falls back when set to out of range");
+	Check(AppearanceState().systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight falls back when set to SystemAuto");
+	Check(AppearanceState().systemThemeDark == static_cast<int>(ThemeId::WindowsDark), "SystemThemeDark falls back when set to out of range");
 
 	const ImVec4 successDark = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, true);
 	const ImVec4 successLight = ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success, false);
@@ -269,7 +269,7 @@ int main() {
 	Check(infoLogDark.x > 0.8f && infoLogLight.x < 0.3f, "Log Info level contrasts correctly between dark and light");
 
 	ImGui::CreateContext();
-	g_theme = static_cast<int>(ThemeId::ImGuiLight);
+	AppearanceState().theme = static_cast<int>(ThemeId::ImGuiLight);
 	ApplyTheme();
 	const ImVec4 chkBg = ImGui::GetStyle().Colors[ImGuiCol_CheckboxSelectedBg];
 	const ImVec4 chkMark = ImGui::GetStyle().Colors[ImGuiCol_CheckMark];
@@ -278,38 +278,38 @@ int main() {
 	Check(ImGuiTheme::ContrastRatio(chkMark, chkBg) >= 3.0f, "CheckMark contrasts with CheckboxSelectedBg in ImGuiLight");
 	ImGui::DestroyContext();
 
-	g_windowWidth = 1440;
-	g_windowHeight = 900;
+	WindowState().width = 1440;
+	WindowState().height = 900;
 	Check(SaveConfigs(newThemesIni), "Custom window size saves to ini");
-	g_windowWidth = 800;
-	g_windowHeight = 600;
+	WindowState().width = 800;
+	WindowState().height = 600;
 	LoadConfigs(newThemesIni);
-	Check(g_windowWidth == 1440 && g_windowHeight == 900, "Window dimensions round-trip through LoadConfigs/SaveConfigs");
+	Check(WindowState().width == 1440 && WindowState().height == 900, "Window dimensions round-trip through LoadConfigs/SaveConfigs");
 
 	{
 		std::ofstream out(newThemesIni, std::ios::binary | std::ios::trunc);
 		out << "[General]\r\nTheme = 10 \r\nSystemThemeLight = 3\r\nSystemThemeDark = 4\r\n";
 	}
-	g_theme = 0;
+	AppearanceState().theme = 0;
 	LoadConfigs(newThemesIni);
-	Check(g_theme == static_cast<int>(ThemeId::SystemAuto), "Theme parses with CRLF and whitespace padding");
+	Check(AppearanceState().theme == static_cast<int>(ThemeId::SystemAuto), "Theme parses with CRLF and whitespace padding");
 	Check(GetLastConfigLoadDiagnostics().empty(), "No diagnostics for CRLF formatted config with whitespace");
 
 	{
 		std::ofstream out(newThemesIni, std::ios::binary | std::ios::trunc);
 		out << "[General]\r\nTheme = NordLight\r\nSystemThemeLight = WindowsLight\r\nSystemThemeDark = VSCodeDark\r\n";
 	}
-	g_theme = 0;
+	AppearanceState().theme = 0;
 	LoadConfigs(newThemesIni);
-	Check(g_theme == static_cast<int>(ThemeId::NordLight), "Theme parses symbolic name NordLight");
-	Check(g_systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight parses symbolic name WindowsLight");
-	Check(g_systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark parses symbolic name VSCodeDark");
+	Check(AppearanceState().theme == static_cast<int>(ThemeId::NordLight), "Theme parses symbolic name NordLight");
+	Check(AppearanceState().systemThemeLight == static_cast<int>(ThemeId::WindowsLight), "SystemThemeLight parses symbolic name WindowsLight");
+	Check(AppearanceState().systemThemeDark == static_cast<int>(ThemeId::VSCodeDark), "SystemThemeDark parses symbolic name VSCodeDark");
 
     for (int mode = BackupPolicy::MinimumMode; mode <= BackupPolicy::MaximumMode; ++mode) {
         for (int count : {0, 1, 100000}) {
             Config config; config.configId = L"11111111-1111-4111-8111-111111111111";
             config.name = "Policy"; config.backupMode = mode; config.maxSmartBackupsPerFull = count;
-            { std::lock_guard lock(g_appState.configsMutex); g_appState.configs = {{1, config}}; }
+            { auto configAccess = g_appState.configuration.Write(); g_appState.configuration.Write().Configs() = {{1, config}}; }
             const auto policyFile = root / "policy.ini";
             Check(SaveConfigs(policyFile), "legal policy saves");
             LoadConfigs(policyFile);

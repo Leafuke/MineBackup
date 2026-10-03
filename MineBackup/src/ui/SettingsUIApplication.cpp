@@ -60,12 +60,12 @@ MinecraftSettingsRuntime& MinecraftRuntime() {
 
 map<int, Config> ConfigSnapshot() {
 
-	return UiConfigs();
+	return UiConfigView();
 }
 
 filesystem::path CurrentDefaultBackupRoot() {
-	if (!g_defaultBackupRootPath.empty()) {
-		return filesystem::path(g_defaultBackupRootPath);
+	if (!SettingsState().defaultBackupRootPath.empty()) {
+		return filesystem::path(SettingsState().defaultBackupRootPath);
 	}
 	return KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(GetAppPaths());
 }
@@ -308,23 +308,23 @@ void DrawApplicationSettings() {
 
 	const filesystem::path recommended =
 		KnownUserFolders::Resolver{}.ResolveRecommendedBackupRoot(GetAppPaths());
-	if (g_defaultBackupRootPath.empty() && !recommended.empty()) {
-		g_defaultBackupRootPath = recommended.wstring();
+	if (SettingsState().defaultBackupRootPath.empty() && !recommended.empty()) {
+		SettingsState().defaultBackupRootPath = recommended.wstring();
 	}
 
-	const string currentPath = wstring_to_utf8(g_defaultBackupRootPath);
+	const string currentPath = wstring_to_utf8(SettingsState().defaultBackupRootPath);
 	ImGui::TextWrapped("%s", currentPath.c_str());
 	ImGui::Spacing();
 	if (ImGui::Button(L("BUTTON_SELECT_FOLDER"))) {
 		const auto selected = GetDesktopServices()->SelectFolder().path;
 		if (!selected.empty() && selected.is_absolute()) {
-			g_defaultBackupRootPath = selected.lexically_normal().wstring();
+			SettingsState().defaultBackupRootPath = selected.lexically_normal().wstring();
 		}
 	}
 	ImGui::SameLine();
 	ImGui::BeginDisabled(recommended.empty());
 	if (ImGui::Button(L("BUTTON_RESTORE_RECOMMENDED"))) {
-		g_defaultBackupRootPath = recommended.wstring();
+		SettingsState().defaultBackupRootPath = recommended.wstring();
 	}
 	ImGui::EndDisabled();
 

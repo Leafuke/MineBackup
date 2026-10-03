@@ -138,79 +138,15 @@ struct AppGlobalState {
     ExternalToolRuntimeState externalTools;
 };
 
-extern AppGlobalState g_globals;
-
-inline GLFWwindow*& wc = g_globals.window.handle;
-inline std::string& CURRENT_VERSION = g_globals.currentVersion;
-
-inline std::atomic<bool>& g_UpdateCheckDone = g_globals.update.updateCheckDone;
-inline std::atomic<bool>& g_NewVersionAvailable = g_globals.update.newVersionAvailable;
-inline std::atomic<bool>& g_NoticeCheckDone = g_globals.update.noticeCheckDone;
-inline std::atomic<bool>& g_NewNoticeAvailable = g_globals.update.newNoticeAvailable;
-inline std::string& g_LatestVersionStr = g_globals.update.latestVersion;
-inline std::string& g_ReleaseNotes = g_globals.update.releaseNotes;
-inline std::string& g_NoticeContent = g_globals.update.noticeContent;
-inline std::string& g_NoticeUpdatedAt = g_globals.update.noticeUpdatedAt;
-inline std::string& g_NoticeLastSeenVersion = g_globals.update.noticeLastSeenVersion;
-
-inline std::atomic<bool>& g_KnotLinkStartupStatusReady = g_globals.knotlink.startupStatusReady;
-inline std::atomic<bool>& g_KnotLinkStartupNeedsUpdate = g_globals.knotlink.startupNeedsUpdate;
-inline std::string& g_KnotLinkStartupVersion = g_globals.knotlink.startupVersion;
-
-inline int& g_windowWidth = g_globals.window.width;
-inline int& g_windowHeight = g_globals.window.height;
-inline float& g_uiScale = g_globals.appearance.userScale;
-inline int& g_theme = g_globals.appearance.theme;
-inline int& g_lastValidTheme = g_globals.appearance.lastValidTheme;
-inline int& g_systemThemeLight = g_globals.appearance.systemThemeLight;
-inline int& g_systemThemeDark = g_globals.appearance.systemThemeDark;
-inline std::string& g_customThemeError = g_globals.appearance.customThemeError;
-inline int& g_appearanceSchema = g_globals.appearance.schema;
-inline bool& g_uiScaleV2 = g_globals.appearance.userScaleV2;
-inline bool& g_uiScaleMigrationPending = g_globals.appearance.pendingScaleMigration;
-inline ImVec4& clear_color = g_globals.window.clearColor;
-
-inline int& last_interval = g_globals.settings.lastIntervalMinutes;
-inline std::wstring& Fontss = g_globals.appearance.fontPath;
-inline bool& showSettings = g_globals.ui.showSettings;
-inline bool& g_restartRequired = g_globals.ui.restartRequired;
-inline bool& g_restartBannerDismissed = g_globals.ui.restartBannerDismissed;
-inline bool& showHistoryWindow = g_globals.ui.showHistoryWindow;
-inline bool& specialSetting = g_globals.ui.specialSetting;
-inline int& g_closeAction = g_globals.ui.closeAction;
-inline bool& g_rememberCloseAction = g_globals.ui.rememberCloseAction;
-inline bool& g_showCloseConfirmDialog = g_globals.ui.showCloseConfirmDialog;
-inline bool& g_OnboardingActive = g_globals.ui.onboardingActive;
-inline std::wstring& g_worldToFocusInHistory = g_globals.ui.worldToFocusInHistory;
-
-inline bool& isSafeDelete = g_globals.settings.safeDelete;
-inline bool& g_CheckForUpdates = g_globals.settings.checkForUpdates;
-inline bool& g_ReceiveNotices = g_globals.settings.receiveNotices;
-inline bool& g_StopAutoBackupOnExit = g_globals.settings.stopAutoBackupOnExit;
-inline bool& g_RunOnStartup = g_globals.settings.runOnStartup;
-inline bool& g_SilentStartupToTray = g_globals.settings.silentStartupToTray;
-inline bool& g_AutoScanForWorlds = g_globals.settings.autoScanForWorlds;
-inline std::wstring& g_defaultBackupRootPath = g_globals.settings.defaultBackupRootPath;
-inline minebackup::logging::LogFileLevel& g_logFileLevel = g_globals.settings.logFileLevel;
-inline minebackup::logging::LogLevel& g_logViewLevel = g_globals.settings.logViewLevel;
-inline bool& g_logViewAutoTail = g_globals.settings.logViewAutoTail;
-inline bool& g_logViewShowTime = g_globals.settings.logViewShowTime;
-inline bool& g_logViewShowCategory = g_globals.settings.logViewShowCategory;
-inline bool& g_enableKnotLink = g_globals.settings.enableKnotLink;
-inline bool& g_autoStartKnotLinkServer = g_globals.settings.autoStartKnotLinkServer;
-inline std::atomic<bool>& g_CoreValidationPending = g_globals.settings.coreValidationPending;
-inline std::atomic<bool>& g_CoreValidationPassed = g_globals.settings.coreValidationPassed;
-inline int& g_hotKeyBackupId = g_globals.settings.hotKeyBackupId;
-inline int& g_hotKeyRestoreId = g_globals.settings.hotKeyRestoreId;
-inline std::vector<std::wstring>& restoreWhitelist = g_globals.settings.restoreWhitelist;
-
-inline std::atomic<bool>& g_CoreValidationRunning = g_globals.coreValidation.running;
-inline bool& g_RcloneInstallRunning = g_globals.externalTools.rcloneInstallRunning;
-inline bool& g_RcloneInstallSucceeded = g_globals.externalTools.rcloneInstallSucceeded;
-inline std::wstring& g_RcloneInstallMessage = g_globals.externalTools.rcloneInstallMessage;
-inline bool& g_KnotLinkInstallRunning = g_globals.externalTools.knotLinkInstallRunning;
-inline bool& g_KnotLinkInstallSucceeded = g_globals.externalTools.knotLinkInstallSucceeded;
-inline std::wstring& g_KnotLinkInstallMessage = g_globals.externalTools.knotLinkInstallMessage;
+AppWindowState& WindowState();
+AppAppearanceState& AppearanceState();
+AppUpdateState& UpdateState();
+KnotLinkRuntimeState& KnotLinkState();
+AppUiState& UiState();
+AppSettingsState& SettingsState();
+CoreValidationRuntimeState& CoreValidationState();
+ExternalToolRuntimeState& ExternalToolState();
+const std::string& ApplicationVersion();
 
 // i18n
 extern const char* lang_codes[2];

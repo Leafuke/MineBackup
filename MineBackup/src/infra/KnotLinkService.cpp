@@ -111,22 +111,22 @@ std::optional<std::pair<int, Config>> ResolveConfig(std::string_view identifier)
         return std::nullopt;
     }
 
-    std::lock_guard<std::mutex> lock(g_appState.configsMutex);
+    auto configAccess = g_appState.configuration.Write();
     const std::wstring wideIdentifier = utf8_to_wstring(std::string(identifier));
-    for (const auto& [index, config] : g_appState.configs) {
+    for (const auto& [index, config] : configAccess.ReadConfigs()) {
         if (!config.configId.empty() && config.configId == wideIdentifier) {
             return std::pair{index, config};
         }
     }
-    for (const auto& [index, config] : g_appState.configs) {
+    for (const auto& [index, config] : configAccess.ReadConfigs()) {
         if (config.name == identifier) {
             return std::pair{index, config};
         }
     }
     int numericIndex = -1;
     if (TryParseInteger(identifier, numericIndex)) {
-        const auto found = g_appState.configs.find(numericIndex);
-        if (found != g_appState.configs.end()) {
+        const auto found = configAccess.ReadConfigs().find(numericIndex);
+        if (found != configAccess.ReadConfigs().end()) {
             return std::pair{found->first, found->second};
         }
     }
@@ -472,7 +472,7 @@ std::string KnotLinkService::HandleRequest(
     };
 
     if (request.command == "PING") {
-        return ok({{"message", "pong"}, {"version", CURRENT_VERSION}});
+        return ok({{"message", "pong"}, {"version", ApplicationVersion()}});
     }
     if (request.command == "GET_CAPABILITIES") {
         return ok({
@@ -482,7 +482,7 @@ std::string KnotLinkService::HandleRequest(
             {"func_list", std::string(KnotLinkCapabilities::ManifestJson())}});
     }
     if (request.command == "GET_STATUS") {
-        const std::string enabled = g_enableKnotLink ? "True" : "False";
+        const std::string enabled = SettingsState().enableKnotLink ? "True" : "False";
         const std::string initialized = IsRunning() ? "True" : "False";
         const std::string activeTaskCount =
             std::to_string(TaskCoordinator::Instance().ActiveTaskCount());
@@ -500,8 +500,8 @@ std::string KnotLinkService::HandleRequest(
     if (request.command == "LIST_CONFIGS") {
         std::vector<std::string> records;
         {
-            std::lock_guard<std::mutex> lock(g_appState.configsMutex);
-            for (const auto& [index, config] : g_appState.configs) {
+            auto configAccess = g_appState.configuration.Write();
+            for (const auto& [index, config] : configAccess.ReadConfigs()) {
                 (void)index;
                 records.push_back(
                     wstring_to_utf8(config.configId) + "," + config.name);
@@ -770,11 +770,11 @@ std::string KnotLinkService::HandleRequest(
                 }
             }
         }
-        std::vector<std::wstring> restoreWhitelist;
+        std::vector<std::wstring> requestedRestoreWhitelist;
         if (request.Has("restore_whitelist")) {
             for (const auto& item : KnotLinkKeyValueCodec::DecodeList(
                      request.GetEncoded("restore_whitelist"))) {
-                restoreWhitelist.push_back(utf8_to_wstring(item));
+                requestedRestoreWhitelist.push_back(utf8_to_wstring(item));
             }
         }
         const auto currentSave =
@@ -787,7 +787,7 @@ std::string KnotLinkService::HandleRequest(
                 {TaskCoordinator::WorldResourceKey(
                     target.config.configId, target.path)},
                 [target, backupFile, mode,
-                 restoreWhitelist = std::move(restoreWhitelist), requestId] {
+                 requestedRestoreWhitelist = std::move(requestedRestoreWhitelist), requestId] {
                     HotRestoreState expected = HotRestoreState::IDLE;
                     if (!g_appState.hotkeyRestoreState.compare_exchange_strong(
                             expected, HotRestoreState::WAITING_FOR_MOD)) {
@@ -810,7 +810,7 @@ std::string KnotLinkService::HandleRequest(
                     }
                     const bool restored = DoHotRestore(
                         target, false, backupFile,
-                        mode == "clean" ? 0 : 1, &restoreWhitelist, "", requestId);
+                        mode == "clean" ? 0 : 1, &requestedRestoreWhitelist, "", requestId);
                     return std::pair{
                         restored,
                         restored
@@ -824,10 +824,10 @@ std::string KnotLinkService::HandleRequest(
             L"KnotLink v2 restore",
             {TaskCoordinator::WorldResourceKey(config.configId, folder->folderPath)},
             [config, worldName, backupFile, mode,
-             restoreWhitelist = std::move(restoreWhitelist)] {
+             requestedRestoreWhitelist = std::move(requestedRestoreWhitelist)] {
                 const bool restored = DoRestore(
                     config, worldName, backupFile,
-                    mode == "clean" ? 0 : 1, "", &restoreWhitelist);
+                    mode == "clean" ? 0 : 1, "", &requestedRestoreWhitelist);
                 return std::pair{
                     restored,
                     restored ? std::string("Restore completed.")

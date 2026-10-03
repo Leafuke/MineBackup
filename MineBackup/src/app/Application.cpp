@@ -89,19 +89,19 @@ static void glfw_error_callback(int error, const char* description)
 static void main_window_size_callback(GLFWwindow* window, int width, int height)
 {
 	if (window != nullptr && glfwGetWindowAttrib(window, GLFW_ICONIFIED) == 0 && width > 0 && height > 0) {
-		g_windowWidth = width;
-		g_windowHeight = height;
+		WindowState().width = width;
+		WindowState().height = height;
 	}
 }
 
 static void main_window_close_callback(GLFWwindow* window)
 {
-	if (g_OnboardingActive) {
+	if (UiState().onboardingActive) {
 		// 首次引导关闭时直接退出；提交前不得因通用关闭逻辑生成 config.ini。
 		g_appState.done = true;
 		return;
 	}
-	if (g_closeAction == 1) {
+	if (UiState().closeAction == 1) {
 		glfwSetWindowShouldClose(window, GLFW_FALSE);
 		auto services = GetDesktopServices();
 		if (CanHideToTray(services->Capabilities())) {
@@ -113,13 +113,13 @@ static void main_window_close_callback(GLFWwindow* window)
 			glfwIconifyWindow(window);
 		}
 	}
-	else if (g_closeAction == 2) {
+	else if (UiState().closeAction == 2) {
 		if (window != nullptr && glfwGetWindowAttrib(window, GLFW_ICONIFIED) == 0) {
 			int w = 0, h = 0;
 			glfwGetWindowSize(window, &w, &h);
 			if (w > 0 && h > 0) {
-				g_windowWidth = w;
-				g_windowHeight = h;
+				WindowState().width = w;
+				WindowState().height = h;
 			}
 		}
 		if (window != nullptr) {
@@ -129,7 +129,7 @@ static void main_window_close_callback(GLFWwindow* window)
 	}
 	else {
 		glfwSetWindowShouldClose(window, GLFW_FALSE);
-		g_showCloseConfirmDialog = true;
+		UiState().showCloseConfirmDialog = true;
 	}
 }
 
@@ -321,14 +321,14 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 #endif
 	LoadConfigs();
     if (LastConfigLoadHasFatalDiagnostics()) return 1;
-	if (launchOptions.autostart && g_SilentStartupToTray) {
+	if (launchOptions.autostart && SettingsState().silentStartupToTray) {
 		launchSilentStartup = true;
 	}
 	minebackup::logging::Initialize({
 		paths.logsRoot,
-		g_logFileLevel,
+		SettingsState().logFileLevel,
 		false,
-		CURRENT_VERSION
+		ApplicationVersion()
 	});
 	struct LoggingShutdownGuard {
 		~LoggingShutdownGuard() { minebackup::logging::Shutdown(); }
@@ -361,7 +361,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		// 每次 GUI 启动都校正一次登录启动项：既能修复程序路径变化，
 		// 也能清理旧版按特殊任务创建的启动项。特殊配置的 runOnStartup
 		// 字段不再参与这里的决策，避免与 GUI 自启动概念混淆。
-		const auto autostartStatus = desktopServices->SetAutostart(g_RunOnStartup);
+		const auto autostartStatus = desktopServices->SetAutostart(SettingsState().runOnStartup);
 		if (!autostartStatus.IsAvailable() && !autostartStatus.diagnostic.empty()) {
 			PLATFORM_PRINTF_WARNING("platform.autostart.reconcile_failed",
 				"Autostart reconciliation failed: %s",
@@ -401,10 +401,10 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	}
 
 	const auto networkBackend = CreatePlatformNetworkBackend();
-	if (g_CheckForUpdates) {
-		g_UpdateCheckDone = false;
-		g_NewVersionAvailable = false;
-		const string currentVersion = CURRENT_VERSION;
+	if (SettingsState().checkForUpdates) {
+		UpdateState().updateCheckDone = false;
+		UpdateState().newVersionAvailable = false;
+		const string currentVersion = ApplicationVersion();
 		const string language = g_CurrentLang;
 		TaskCoordinator::Instance().Submit(L"update-check", {L"network:update"},
 			[networkBackend, currentVersion, language](stop_token token) {
@@ -418,11 +418,11 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 				TaskCoordinator::Instance().PostEvent(std::move(event));
 			});
 	}
-	if (g_ReceiveNotices) {
-		g_NoticeCheckDone = false;
-		g_NewNoticeAvailable = false;
+	if (SettingsState().receiveNotices) {
+		UpdateState().noticeCheckDone = false;
+		UpdateState().newNoticeAvailable = false;
 		const string language = g_CurrentLang;
-		const string lastSeen = g_NoticeLastSeenVersion;
+		const string lastSeen = UpdateState().noticeLastSeenVersion;
 		TaskCoordinator::Instance().Submit(L"notice-check", {L"network:notice"},
 			[networkBackend, language, lastSeen](stop_token token) {
 				NetworkService network(networkBackend);
@@ -452,11 +452,11 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 					: L"0";
 			event.values[L"version"] = utf8_to_wstring(status.version);
 			TaskCoordinator::Instance().PostEvent(std::move(event));
-			if (g_enableKnotLink &&
+			if (SettingsState().enableKnotLink &&
 				status.state !=
 					minebackup::knotlink::KnotLinkServerState::Incompatible) {
 				if (InitKnotLink()) {
-					BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+					BroadcastEvent("app_startup", {{"version", ApplicationVersion()}});
 				}
 			}
 		});
@@ -479,7 +479,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	FinalizeUiScaleMigration(main_scale);
 	bool isFirstRun = !filesystem::exists(paths.ConfigFile());
 	static bool showConfigWizard = isFirstRun;
-	g_OnboardingActive = isFirstRun;
+	UiState().onboardingActive = isFirstRun;
 	bool showKnotLinkUpdateReminder = false;
 	bool knotLinkUpdateReminderOpened = false;
 	bool knotLinkStartupStatusHandled = false;
@@ -503,16 +503,16 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	}
 	g_appState.showMainApp = !isFirstRun && !shouldStartHiddenToTray;
 	if (isFirstRun) {
-		g_windowWidth *= main_scale, g_windowHeight *= main_scale;
+		WindowState().width *= main_scale, WindowState().height *= main_scale;
 		// The monitor DPI is already applied by ImGui's per-viewport font
 		// scaling. Keep the persisted value as a user preference only.
-		g_uiScale = 1.0f;
+		AppearanceState().userScale = 1.0f;
 	}
 	DesktopUiSession uiSession;
 	DesktopUiSessionOptions uiOptions;
 	uiOptions.paths = &paths;
-	uiOptions.width = g_windowWidth;
-	uiOptions.height = g_windowHeight;
+	uiOptions.width = WindowState().width;
+	uiOptions.height = WindowState().height;
 	uiOptions.iconFontAvailable = fontExtracted;
 	uiOptions.bundledIconFontData = bundledIconFontData;
 	uiOptions.bundledIconFontSize = bundledIconFontSize;
@@ -527,9 +527,9 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	}
 	auto currentGlobalHotkeys = []() {
 		return vector<GlobalHotkeyBinding>{
-			{MINEBACKUP_HOTKEY_ID, g_hotKeyBackupId,
+			{MINEBACKUP_HOTKEY_ID, SettingsState().hotKeyBackupId,
 				utf8_to_wstring(L("HOTKEY_BACKUP_DESCRIPTION"))},
-			{MINERESTORE_HOTKEY_ID, g_hotKeyRestoreId,
+			{MINERESTORE_HOTKEY_ID, SettingsState().hotKeyRestoreId,
 				utf8_to_wstring(L("HOTKEY_RESTORE_DESCRIPTION"))}
 		};
 	};
@@ -542,8 +542,8 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	bool uiSessionCreatedOnce = false;
 	auto createUiSession = [&](bool initiallyVisible) {
-		uiOptions.width = g_windowWidth;
-		uiOptions.height = g_windowHeight;
+		uiOptions.width = WindowState().width;
+		uiOptions.height = WindowState().height;
 		uiOptions.initiallyVisible = initiallyVisible;
 		uiOptions.firstRun = isFirstRun && !uiSessionCreatedOnce;
 		wstring uiCreateError;
@@ -554,10 +554,10 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			return false;
 		}
 		uiSessionCreatedOnce = true;
-		wc = uiSession.Window();
-		desktopServices->SetNativeWindow(wc);
-		glfwSetWindowCloseCallback(wc, main_window_close_callback);
-		glfwSetWindowSizeCallback(wc, main_window_size_callback);
+		WindowState().handle = uiSession.Window();
+		desktopServices->SetNativeWindow(WindowState().handle);
+		glfwSetWindowCloseCallback(WindowState().handle, main_window_close_callback);
+		glfwSetWindowSizeCallback(WindowState().handle, main_window_size_callback);
 		return true;
 	};
 
@@ -600,10 +600,10 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 
 	ApplicationEventRouter eventRouter;
 	auto activateUiWindow = [&]() {
-		if (wc == nullptr) return;
-		glfwShowWindow(wc);
-		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0) glfwRestoreWindow(wc);
-		glfwFocusWindow(wc);
+		if (WindowState().handle == nullptr) return;
+		glfwShowWindow(WindowState().handle);
+		if (glfwGetWindowAttrib(WindowState().handle, GLFW_ICONIFIED) != 0) glfwRestoreWindow(WindowState().handle);
+		glfwFocusWindow(WindowState().handle);
 		const auto activation = desktopServices->ActivateWindow();
 		if (!activation.IsAvailable() && !activation.diagnostic.empty()) {
 			PLATFORM_PRINTF_WARNING("platform.window.activation_failed",
@@ -613,7 +613,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	};
 	auto unloadUiSession = [&]() {
 		if (!uiSession.IsActive()) return;
-		uiSession.SaveWindowState(g_windowWidth, g_windowHeight);
+		uiSession.SaveWindowState(WindowState().width, WindowState().height);
 		const ImGuiPlatformIO& platformIo = ImGui::GetPlatformIO();
 		const ImTextureData* atlasTexture = ImGui::GetIO().Fonts->TexData;
 		APP_PRINTF_INFO("ui.session.unloading",
@@ -627,7 +627,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		desktopServices->SetNativeWindow(nullptr);
 		uiSession.Shutdown();
 		ReleaseHistoryWindowCaches();
-		wc = nullptr;
+		WindowState().handle = nullptr;
 	};
 
 	while (!g_appState.done)
@@ -656,10 +656,10 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 		}
 		eventRouter.Dispatch(TaskCoordinator::Instance().PollEvents());
 		UiConfigDraft configFrame;
-		if (!knotLinkStartupStatusHandled && g_KnotLinkStartupStatusReady) {
+		if (!knotLinkStartupStatusHandled && KnotLinkState().startupStatusReady) {
 			knotLinkStartupStatusHandled = true;
 			showKnotLinkUpdateReminder =
-				!isFirstRun && g_KnotLinkStartupNeedsUpdate;
+				!isFirstRun && KnotLinkState().startupNeedsUpdate;
 		}
 
 #ifdef _WIN32
@@ -709,11 +709,11 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			glfwWaitEventsTimeout(0.25);
 			continue;
 		}
-		if (glfwWindowShouldClose(wc)) {
+		if (glfwWindowShouldClose(WindowState().handle)) {
 			g_appState.done = true;
 			break;
 		}
-		if (glfwGetWindowAttrib(wc, GLFW_ICONIFIED) != 0
+		if (glfwGetWindowAttrib(WindowState().handle, GLFW_ICONIFIED) != 0
 			|| (!g_appState.showMainApp && !showConfigWizard)) {
 			glfwWaitEventsTimeout(1.0);
 			continue;
@@ -787,22 +787,22 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			ImGui::Text(
 				"%s: %s",
 				L("KNOTLINK_SERVER_VERSION"),
-				g_KnotLinkStartupVersion.empty()
+				KnotLinkState().startupVersion.empty()
 					? L("KNOTLINK_VERSION_UNKNOWN")
-					: g_KnotLinkStartupVersion.c_str());
+					: KnotLinkState().startupVersion.c_str());
 			ImGui::PopTextWrapPos();
 			ImGui::Separator();
-			ImGui::BeginDisabled(g_KnotLinkInstallRunning);
+			ImGui::BeginDisabled(ExternalToolState().knotLinkInstallRunning);
 			if (ImGui::Button(
 				L("KNOTLINK_DOWNLOAD_INSTALLER"),
 				ImVec2(-1, 0))) {
 				(void)StartKnotLinkInstallerDownload();
 			}
 			ImGui::EndDisabled();
-			if (!g_KnotLinkInstallMessage.empty()) {
+			if (!ExternalToolState().knotLinkInstallMessage.empty()) {
 				ImGui::TextWrapped(
 					"%s",
-					wstring_to_utf8(g_KnotLinkInstallMessage).c_str());
+					wstring_to_utf8(ExternalToolState().knotLinkInstallMessage).c_str());
 			}
 			if (ImGui::Button(
 				L("BUTTON_OK"),
@@ -813,7 +813,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			ImGui::EndPopup();
 		}
 
-		if (!showConfigWizard && g_appState.showMainApp && g_CoreValidationPending.load() && !g_CoreValidationRunning.load()) {
+		if (!showConfigWizard && g_appState.showMainApp && SettingsState().coreValidationPending.load() && !CoreValidationState().running.load()) {
 			StartCoreValidationAsync(true);
 		}
 
@@ -821,13 +821,13 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			ShowConfigWizard(showConfigWizard);
 		}
 		else if (g_appState.showMainApp) {
-			DrawMainUiFrame({desktopServices.get(), wc, &paths, currentGlobalHotkeys});
+			DrawMainUiFrame({desktopServices.get(), WindowState().handle, &paths, currentGlobalHotkeys});
 		}
 		ImGui::Render();
 		int display_w, display_h;
-		glfwGetFramebufferSize(wc, &display_w, &display_h);
+		glfwGetFramebufferSize(WindowState().handle, &display_w, &display_h);
 		glViewport(0, 0, display_w, display_h);
-		glClearColor(clear_color.x* clear_color.w, clear_color.y* clear_color.w, clear_color.z* clear_color.w, clear_color.w);
+		glClearColor(WindowState().clearColor.x* WindowState().clearColor.w, WindowState().clearColor.y* WindowState().clearColor.w, WindowState().clearColor.z* WindowState().clearColor.w, WindowState().clearColor.w);
 		glClear(GL_COLOR_BUFFER_BIT);
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -839,11 +839,11 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 			glfwMakeContextCurrent(backup_current_context);
 		}
 
-		glfwSwapBuffers(wc);
+		glfwSwapBuffers(WindowState().handle);
 	}
 
-	if (wc != nullptr) {
-		glfwHideWindow(wc);
+	if (WindowState().handle != nullptr) {
+		glfwHideWindow(WindowState().handle);
 	}
 
 	// 清理
@@ -859,7 +859,7 @@ int RunApplication(const ApplicationEntryContext& entryContext)
 	APP_PRINTF_INFO("application.shutdown.tasks_stopped", "Tasks stopped in %lld ms",
 		static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(tasksStopped - shutdownStart).count()));
 
-	uiSession.SaveWindowState(g_windowWidth, g_windowHeight);
+	uiSession.SaveWindowState(WindowState().width, WindowState().height);
 	if (filesystem::exists(paths.ConfigFile()))
 		SaveConfigs();
 	const auto configSaved = std::chrono::steady_clock::now();

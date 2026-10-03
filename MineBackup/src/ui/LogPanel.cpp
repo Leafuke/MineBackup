@@ -77,7 +77,7 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
     minebackup::diagnostics::DiagnosticExportOptions options;
     const auto& paths = GetAppPaths();
     options.logsDirectory = paths.logsRoot;
-    options.applicationVersion = CURRENT_VERSION;
+    options.applicationVersion = ApplicationVersion();
     options.platform = PlatformName();
     options.profileMode = ProfileModeName(paths.mode);
 
@@ -86,7 +86,7 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
     AddPathRedaction(options, paths.configRoot, "<profile-root>");
     AddPathRedaction(
         options, GetExecutablePath().parent_path(), "<application-root>");
-    AddRedaction(options, Fontss, "<local-font>");
+    AddRedaction(options, AppearanceState().fontPath, "<local-font>");
 #ifdef _WIN32
     if (const char* home = std::getenv("USERPROFILE")) {
 #else
@@ -107,7 +107,7 @@ minebackup::diagnostics::DiagnosticExportOptions BuildExportOptions() {
         AddRedaction(options, config.weSnapshotPath, "<worldedit-root>");
         AddRedaction(options, config.rcloneRemotePath, "<rclone-remote>");
     }
-	for (const auto& job : g_appState.jobs.jobs) {
+	for (const auto& job : g_appState.configuration.SnapshotJobs().jobs) {
 		for (const auto& stage : job.stages) {
 			for (const auto& step : stage.steps) {
 				if (step.type != JobStepType::Process) continue;
@@ -218,7 +218,7 @@ private:
 
         const char* currentLevelLabel = L("LOG_VIEW_LEVEL_INFO");
         for (const auto& option : levelOptions) {
-            if (option.level == g_logViewLevel) {
+            if (option.level == SettingsState().logViewLevel) {
                 currentLevelLabel = L(option.labelKey);
                 break;
             }
@@ -228,9 +228,9 @@ private:
         ImGui::SetNextItemWidth(levelWidth);
         if (ImGui::BeginCombo("##log-view-level", currentLevelLabel)) {
             for (const auto& option : levelOptions) {
-                const bool selected = option.level == g_logViewLevel;
+                const bool selected = option.level == SettingsState().logViewLevel;
                 if (ImGui::Selectable(L(option.labelKey), selected)) {
-                    g_logViewLevel = option.level;
+                    SettingsState().logViewLevel = option.level;
                     filterDirty_ = true;
                     SaveViewPreferences();
                 }
@@ -250,7 +250,7 @@ private:
             if (!paused_) appendedOnResume = Refresh();
         }
         ImGui::SameLine();
-        if (ImGui::Checkbox(L("LOG_AUTO_TAIL"), &g_logViewAutoTail)) {
+        if (ImGui::Checkbox(L("LOG_AUTO_TAIL"), &SettingsState().logViewAutoTail)) {
             SaveViewPreferences();
         }
         const float moreWidth = ImGui::CalcTextSize(L("LOG_MORE")).x
@@ -278,10 +278,10 @@ private:
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu(L("LOG_DISPLAY_OPTIONS"))) {
-                if (ImGui::Checkbox(L("LOG_SHOW_TIME"), &g_logViewShowTime)) {
+                if (ImGui::Checkbox(L("LOG_SHOW_TIME"), &SettingsState().logViewShowTime)) {
                     SaveViewPreferences();
                 }
-                if (ImGui::Checkbox(L("LOG_SHOW_CATEGORY"), &g_logViewShowCategory)) {
+                if (ImGui::Checkbox(L("LOG_SHOW_CATEGORY"), &SettingsState().logViewShowCategory)) {
                     SaveViewPreferences();
                 }
                 ImGui::EndMenu();
@@ -395,7 +395,7 @@ private:
 
     bool PassesFilter(const LogRecord& record) const {
         const auto categoryIndex = static_cast<std::size_t>(record.category);
-        if (record.level < g_logViewLevel) return false;
+        if (record.level < SettingsState().logViewLevel) return false;
         if (categoryIndex >= categoryEnabled_.size() || !categoryEnabled_[categoryIndex]) return false;
         const std::string_view query(search_);
         if (query.empty()) return true;
@@ -483,7 +483,7 @@ private:
                         textX += ImGui::CalcTextSize(
                             text.data(), text.data() + text.size()).x;
                     };
-                    if (g_logViewShowTime) {
+                    if (SettingsState().logViewShowTime) {
                         const std::string time =
                             FormatTime(record.timestamp, false) + "  ";
                         drawSegment(time, ImGui::GetColorU32(ImGuiCol_TextDisabled));
@@ -493,7 +493,7 @@ private:
                         drawSegment(label,
                             ImGui::ColorConvertFloat4ToU32(LevelColor(record.level)));
                     }
-                    if (g_logViewShowCategory) {
+                    if (SettingsState().logViewShowCategory) {
                         const std::string category = "["
                             + std::string(minebackup::logging::ToString(record.category))
                             + "]  ";
@@ -521,7 +521,7 @@ private:
                             minebackup::logging::ToString(record.category),
                             FormatTime(record.timestamp, true).c_str());
                         ImGui::PushTextWrapPos(
-                            ImGui::GetCursorPosX() + 420.0f * g_uiScale);
+                            ImGui::GetCursorPosX() + 420.0f * AppearanceState().userScale);
                         ImGui::TextUnformatted(record.message.c_str());
                         ImGui::PopTextWrapPos();
                         ImGui::EndTooltip();
@@ -529,7 +529,7 @@ private:
                     ImGui::PopID();
                 }
             }
-            if (appended && g_logViewAutoTail) ImGui::SetScrollHereY(1.0f);
+            if (appended && SettingsState().logViewAutoTail) ImGui::SetScrollHereY(1.0f);
         }
         ImGui::EndChild();
         if (openDetails) ImGui::OpenPopup("##log-details");
@@ -537,8 +537,8 @@ private:
 
     void DrawDetailsPopup() {
         ImGui::SetNextWindowSizeConstraints(
-            ImVec2(390.0f * g_uiScale, 0.0f),
-            ImVec2(680.0f * g_uiScale, 620.0f * g_uiScale));
+            ImVec2(390.0f * AppearanceState().userScale, 0.0f),
+            ImVec2(680.0f * AppearanceState().userScale, 620.0f * AppearanceState().userScale));
         if (!ImGui::BeginPopup("##log-details",
                 ImGuiWindowFlags_AlwaysAutoResize)) {
             return;
@@ -555,7 +555,7 @@ private:
         if (ImGui::SmallButton(L("LOG_COPY_ROW"))) CopyRecord(*record);
         ImGui::Separator();
         ImGui::TextDisabled("%s", L("LOG_DETAIL_MESSAGE"));
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f * g_uiScale);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f * AppearanceState().userScale);
         ImGui::TextUnformatted(record->message.c_str());
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
@@ -570,7 +570,7 @@ private:
         if (ImGui::BeginTable("##log-details-fields", 2,
                 ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
-                96.0f * g_uiScale);
+                96.0f * AppearanceState().userScale);
             ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
             detailRow(L("LOG_COLUMN_TIME"), FormatTime(record->timestamp, true));
             detailRow(L("LOG_COLUMN_LEVEL"),
@@ -596,7 +596,7 @@ private:
                     ImGuiTableFlags_SizingStretchProp
                         | ImGuiTableFlags_BordersInnerV)) {
                 ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed,
-                    120.0f * g_uiScale);
+                    120.0f * AppearanceState().userScale);
                 ImGui::TableSetupColumn("##context-value",
                     ImGuiTableColumnFlags_WidthStretch);
                 for (const auto& field : record->context) {

@@ -54,7 +54,7 @@ namespace {
 
 void DrawHistoryDialogs(
 	const UiMetrics& metrics,
-	Config& config,
+	const Config& config,
 	int lockedConfigIndex,
 	HistoryWindowController& controller,
 	const vector<HistoryEntryView>& frameViews,

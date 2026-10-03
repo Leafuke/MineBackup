@@ -7,7 +7,7 @@
 
 void DrawHistoryDialogs(
 	const UiMetrics& metrics,
-	Config& config,
+	const Config& config,
 	int configIndex,
 	HistoryWindowController& controller,
 	const std::vector<HistoryEntryView>& frameViews,

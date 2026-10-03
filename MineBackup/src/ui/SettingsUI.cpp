@@ -107,7 +107,7 @@ bool IsNormalCategory(SettingsCategory category) {
 }
 
 void NormalizeSelectedCategory() {
-	specialSetting = false;
+	UiState().specialSetting = false;
 }
 
 void DrawCategoryItem(const CategoryItem& item) {
@@ -179,7 +179,7 @@ void DrawSaveStatus() {
 }
 
 void DrawRestartBanner() {
-	if (!g_restartRequired || g_restartBannerDismissed) return;
+	if (!UiState().restartRequired || UiState().restartBannerDismissed) return;
 	BeginUiCard("##RestartRequired");
 	ImGui::TextWrapped("%s", L("SETTINGS_RESTART_REQUIRED"));
 	if (ImGui::Button(L("SETTINGS_RESTART_NOW"))) {
@@ -188,7 +188,7 @@ void DrawRestartBanner() {
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("SETTINGS_RESTART_LATER"))) {
-		g_restartBannerDismissed = true;
+		UiState().restartBannerDismissed = true;
 	}
 	EndUiCard();
 	ImGui::Spacing();
@@ -258,7 +258,7 @@ void DrawSelectedContent(Config& normalConfig) {
 }
 
 bool CanSaveSettings() {
-	for (const auto& [index, config] : UiConfigs()) {
+	for (const auto& [index, config] : UiConfigView()) {
 		(void)index;
 		if (!IsWEIntegrationPathValidForSave(config)) return false;
 	}
@@ -281,15 +281,15 @@ void ResetSettingsWindowRuntimeState() {
 }
 
 void ShowSettingsWindowV2() {
-	if (UiConfigs().empty()) {
+	if (UiConfigView().empty()) {
 		const int index = CreateNewNormalConfig();
 		UiSelectedConfigIndex() = index;
-		specialSetting = false;
+		UiState().specialSetting = false;
 	}
-	if (!specialSetting && !UiConfigs().contains(UiSelectedConfigIndex())) {
-		UiSelectedConfigIndex() = UiConfigs().begin()->first;
+	if (!UiState().specialSetting && !UiConfigView().contains(UiSelectedConfigIndex())) {
+		UiSelectedConfigIndex() = UiConfigView().begin()->first;
 	}
-	specialSetting = false;
+	UiState().specialSetting = false;
 
 	const UiMetrics metrics = GetUiMetrics();
 	SetNextWindowSizeFromMetrics(metrics, 56.0f, 38.0f);
@@ -298,10 +298,10 @@ void ShowSettingsWindowV2() {
 		ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 		g_settingsNeedsInitialViewport = false;
 	}
-	const bool visible = ImGui::Begin(L("SETTINGS"), &showSettings, ImGuiWindowFlags_NoDocking);
+	const bool visible = ImGui::Begin(L("SETTINGS"), &UiState().showSettings, ImGuiWindowFlags_NoDocking);
 	if (!visible) {
 		ImGui::End();
-		if (!showSettings) {
+		if (!UiState().showSettings) {
 			g_settingsNeedsInitialViewport = true;
 			g_settingsAutoSave.Flush([] { return SaveConfigs(); });
 		}
@@ -339,7 +339,7 @@ void ShowSettingsWindowV2() {
 
 	ImGui::BeginChild("##SettingsContent", ImVec2(0.0f, 0.0f),
 		ImGuiChildFlags_None, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-	Config* normalConfig = &UiConfigs().at(UiSelectedConfigIndex());
+	Config* normalConfig = &EditUiConfig(UiSelectedConfigIndex());
 	DrawSelectedContent(*normalConfig);
 	ImGui::EndChild();
 
@@ -356,7 +356,7 @@ void ShowSettingsWindowV2() {
 	});
 
 	ImGui::End();
-	if (!showSettings) {
+	if (!UiState().showSettings) {
 		g_settingsNeedsInitialViewport = true;
 		g_settingsAutoSave.Flush([] {
 			return CanSaveSettings() && SaveConfigs();

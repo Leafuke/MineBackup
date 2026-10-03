@@ -278,8 +278,8 @@ void Initialize(WizardRuntime& runtime) {
 	for (int index = 0; index < 2; ++index) {
 		if (g_CurrentLang == lang_codes[index]) runtime.languageIndex = index;
 	}
-	const filesystem::path defaultRoot = !g_defaultBackupRootPath.empty()
-		? filesystem::path(g_defaultBackupRootPath)
+	const filesystem::path defaultRoot = !SettingsState().defaultBackupRootPath.empty()
+		? filesystem::path(SettingsState().defaultBackupRootPath)
 		: RecommendedBackupRoot();
 	SetWizardDefaultBackupRoot(runtime.session, defaultRoot);
 	SetPathBuffer(runtime.backupRootBuffer, defaultRoot);
@@ -521,9 +521,9 @@ void DrawReadyStage(WizardRuntime& runtime) {
 
 void FinishWizard(bool& showConfigWizard, bool openSettings) {
 	showConfigWizard = false;
-	g_OnboardingActive = false;
+	UiState().onboardingActive = false;
 	g_appState.showMainApp = true;
-	if (openSettings) showSettings = true;
+	if (openSettings) UiState().showSettings = true;
 }
 
 void DrawCoreValidationStage(WizardRuntime& runtime, bool& showConfigWizard) {
@@ -540,11 +540,11 @@ void DrawCoreValidationStage(WizardRuntime& runtime, bool& showConfigWizard) {
 		}
 		return;
 	}
-	if (g_CoreValidationRunning.load() || g_CoreValidationPending.load()) {
+	if (CoreValidationState().running.load() || SettingsState().coreValidationPending.load()) {
 		ImGui::TextWrapped("%s", L("WIZARD_CORE_VALIDATION_RUNNING"));
 		return;
 	}
-	if (g_CoreValidationPassed.load()) {
+	if (SettingsState().coreValidationPassed.load()) {
 		ImGui::TextColored(ThemePalette::GetStatusColor(ThemePalette::StatusColor::Success),
 			"%s", L("WIZARD_CORE_VALIDATION_PASSED"));
 		if (ImGui::Button(L("WIZARD_ENTER_MAIN"), ImVec2(-1, 0))) {

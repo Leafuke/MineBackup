@@ -31,9 +31,9 @@ bool IsWEIntegrationPathValidForSave(const Config& cfg) {
 
 void DrawConfigManagementPanel() {
 	string currentLabel = L("NO_CONFIG");
-	specialSetting = false;
-	if (const auto it = UiConfigs().find(UiSelectedConfigIndex());
-		it != UiConfigs().end()) {
+	UiState().specialSetting = false;
+	if (const auto it = UiConfigView().find(UiSelectedConfigIndex());
+		it != UiConfigView().end()) {
 		currentLabel = "[No." + to_string(it->first) + "] " + it->second.name;
 	}
 
@@ -42,7 +42,7 @@ void DrawConfigManagementPanel() {
 	ImGui::SetNextItemWidth((std::max)(metrics.Em(12.0f),
 		ImGui::GetContentRegionAvail().x - actionWidth - metrics.spacingX));
 	if (ImGui::BeginCombo("##CurrentConfig", currentLabel.c_str())) {
-		for (const auto& [index, config] : UiConfigs()) {
+		for (const auto& [index, config] : UiConfigView()) {
 			const bool selected = UiSelectedConfigIndex() == index;
 			const string label = "[No." + to_string(index) + "] " + config.name;
 			if (ImGui::Selectable(label.c_str(), selected)) {
@@ -62,11 +62,11 @@ void DrawConfigManagementPanel() {
 	}
 	if (ImGui::BeginPopup("##ConfigActions")) {
 		if (ImGui::MenuItem(L("CONFIG_NEW_NORMAL"))) pendingCreate = true;
-		const bool canCopy = UiConfigs().contains(UiSelectedConfigIndex());
+		const bool canCopy = UiConfigView().contains(UiSelectedConfigIndex());
 		ImGui::BeginDisabled(!canCopy);
 		if (ImGui::MenuItem(L("CONFIG_COPY_CURRENT"))) {
 			const int sourceIndex = UiSelectedConfigIndex();
-			const Config source = UiConfigs().at(sourceIndex);
+			const Config source = UiConfigView().at(sourceIndex);
 			Config copied = source;
 			ConfigDraft identityDraft;
 			identityDraft.name = source.name + " - Copy";
@@ -74,23 +74,23 @@ void DrawConfigManagementPanel() {
 			// 即使默认根目录解析失败，也不能继续引用 source.backupPath。
 			copied.backupPath.clear();
 			const auto resolved = ResolveUniqueConfigDrafts(
-				{identityDraft}, GetEffectiveDefaultBackupRoot(), UiConfigs());
+				{identityDraft}, GetEffectiveDefaultBackupRoot(), UiConfigView());
 			if (!resolved.empty()) {
 				copied.name = resolved.front().name;
 				copied.backupPath = resolved.front().backupPath.wstring();
 			}
 
 			const int newIndex = CreateNewNormalConfig(copied.name);
-			copied.configId = UiConfigs().at(newIndex).configId;
-			UiConfigs()[newIndex] = std::move(copied);
+			copied.configId = UiConfigView().at(newIndex).configId;
+			EditUiConfig(newIndex) = std::move(copied);
 			UiSelectedConfigIndex() = newIndex;
-			specialSetting = false;
+			UiState().specialSetting = false;
 			ImGui::MarkItemEdited(ImGui::GetItemID());
 		}
 		ImGui::EndDisabled();
 		ImGui::Separator();
-		const bool canDelete = UiConfigs().size() > 1
-			&& UiConfigs().contains(UiSelectedConfigIndex());
+		const bool canDelete = UiConfigView().size() > 1
+			&& UiConfigView().contains(UiSelectedConfigIndex());
 		ImGui::BeginDisabled(!canDelete);
 		if (ImGui::MenuItem(L("CONFIG_DELETE_CURRENT"))) requestDelete = true;
 		ImGui::EndDisabled();
@@ -127,14 +127,14 @@ void DrawConfigManagementPanel() {
 	if (ImGui::BeginPopupModal(L("CONFIRM_DELETE_TITLE"), nullptr,
 		ImGuiWindowFlags_AlwaysAutoResize)) {
 		requestDelete = false;
-		const string name = UiConfigs().at(UiSelectedConfigIndex()).name;
+		const string name = UiConfigView().at(UiSelectedConfigIndex()).name;
 		ImGui::TextWrapped(L("CONFIRM_DELETE_MSG"), UiSelectedConfigIndex(), name.c_str());
 		const float buttonWidth = CalcPairButtonWidth(L("BUTTON_OK"), L("BUTTON_CANCEL"));
 		if (ImGui::Button(L("BUTTON_OK"), ImVec2(buttonWidth, 0.0f))) {
-			UiConfigs().erase(UiSelectedConfigIndex());
-			if (!UiConfigs().empty()) {
-				UiSelectedConfigIndex() = UiConfigs().begin()->first;
-				specialSetting = false;
+			DeleteUiConfig(UiSelectedConfigIndex());
+			if (!UiConfigView().empty()) {
+				UiSelectedConfigIndex() = UiConfigView().begin()->first;
+				UiState().specialSetting = false;
 			}
 			ImGui::MarkItemEdited(ImGui::GetItemID());
 			ImGui::CloseCurrentPopup();
@@ -283,8 +283,8 @@ void DrawSystemIntegrationSettings() {
 	ImGui::TextWrapped("%s", L("TIP_MINEBACKUP_MOD_INTEGRATION_SUMMARY"));
 	ImGui::Spacing();
 
-	if (ImGui::Checkbox(L("ENABLE_KNOTLINK"), &g_enableKnotLink)) {
-		if (!g_enableKnotLink) {
+	if (ImGui::Checkbox(L("ENABLE_KNOTLINK"), &SettingsState().enableKnotLink)) {
+		if (!SettingsState().enableKnotLink) {
 			CleanupKnotLink();
 			minebackup::knotlink::GetKnotLinkServerManager().Refresh(false);
 			SaveConfigs();
@@ -294,18 +294,18 @@ void DrawSystemIntegrationSettings() {
 				L"knotlink-settings-enable", {L"service:knotlink"}, [](stop_token) {
 					const bool success = InitKnotLink();
 					if (success) {
-						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+						BroadcastEvent("app_startup", {{"version", ApplicationVersion()}});
 					}
 					TaskEvent event{L"knotlink-settings-enable-complete", {}};
 					event.values[L"success"] = success ? L"1" : L"0";
 					TaskCoordinator::Instance().PostEvent(std::move(event));
 				});
-			if (!submitted) g_enableKnotLink = false;
+			if (!submitted) SettingsState().enableKnotLink = false;
 		}
 	}
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_ENABLE_KNOTLINK"));
 
-	ImGui::Checkbox(L("KNOTLINK_AUTO_START_SERVER"), &g_autoStartKnotLinkServer);
+	ImGui::Checkbox(L("KNOTLINK_AUTO_START_SERVER"), &SettingsState().autoStartKnotLinkServer);
 	auto serverStatus = minebackup::knotlink::GetKnotLinkServerManager().GetStatus();
 	ImGui::Text("%s: %s", L("KNOTLINK_CLIENT_STATUS"),
 		minebackup::knotlink::GetKnotLinkService().IsRunning()
@@ -329,7 +329,7 @@ void DrawSystemIntegrationSettings() {
 					minebackup::knotlink::GetKnotLinkServerManager().StartCompatibleServer();
 				if (status.state == minebackup::knotlink::KnotLinkServerState::Ready) {
 					if (InitKnotLink()) {
-						BroadcastEvent("app_startup", {{"version", CURRENT_VERSION}});
+						BroadcastEvent("app_startup", {{"version", ApplicationVersion()}});
 					}
 				}
 			});
@@ -338,14 +338,14 @@ void DrawSystemIntegrationSettings() {
 		serverStatus =
 			minebackup::knotlink::GetKnotLinkServerManager().Refresh(true);
 	}
-	ImGui::BeginDisabled(g_KnotLinkInstallRunning);
+	ImGui::BeginDisabled(ExternalToolState().knotLinkInstallRunning);
 	if (ImGui::Button(L("KNOTLINK_DOWNLOAD_INSTALLER"), ImVec2(-1, 0))) {
 		(void)StartKnotLinkInstallerDownload();
 	}
 	ImGui::EndDisabled();
-	if (!g_KnotLinkInstallMessage.empty()) {
+	if (!ExternalToolState().knotLinkInstallMessage.empty()) {
 		ImGui::TextWrapped(
-			"%s", wstring_to_utf8(g_KnotLinkInstallMessage).c_str());
+			"%s", wstring_to_utf8(ExternalToolState().knotLinkInstallMessage).c_str());
 	}
 
 	if (ImGui::Button(L("MOD_LINK_MINEBACKUP_MODRINTH"), ImVec2(-1, 0))) {
@@ -514,7 +514,7 @@ void DrawBackupBehavior(Config& cfg) {
 	SetStandardControlWidth();
 	ImGui::InputInt(L("BACKUPS_TO_KEEP"), &cfg.keepCount);
 	if (keepAndSafeDeleteInline) ImGui::SameLine();
-	ImGui::Checkbox(L("IS_SAFE_DELETE"), &isSafeDelete);
+	ImGui::Checkbox(L("IS_SAFE_DELETE"), &SettingsState().safeDelete);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("IS_SAFE_DELETE_TIP"));
 
 	SetStandardControlWidth();
@@ -526,7 +526,7 @@ void DrawBackupBehavior(Config& cfg) {
     }
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_MAX_SMART_BACKUPS"));
 
-	if (!isSafeDelete && cfg.keepCount > 0 && cfg.maxSmartBackupsPerFull > 0
+	if (!SettingsState().safeDelete && cfg.keepCount > 0 && cfg.maxSmartBackupsPerFull > 0
         && cfg.keepCount <= cfg.maxSmartBackupsPerFull) {
 		cfg.keepCount = cfg.maxSmartBackupsPerFull + 1;
 	}
@@ -630,16 +630,16 @@ void DrawRestoreBehavior(Config& cfg) {
 	ImGui::InputTextWithHint("##whitelist_add", L("RULE_TEXT_HINT"), whitelist_add_buf, IM_ARRAYSIZE(whitelist_add_buf));
 	ImGui::SameLine();
 	if (ImGui::Button(L("BUTTON_ADD_RULE"), ImVec2(addWhitelistRuleWidth, 0)) && strlen(whitelist_add_buf) > 0) {
-		restoreWhitelist.push_back(utf8_to_wstring(whitelist_add_buf));
+		SettingsState().restoreWhitelist.push_back(utf8_to_wstring(whitelist_add_buf));
 		strcpy_s(whitelist_add_buf, "");
 	}
 
 	static int sel_wl_item = -1;
 	ImGui::SameLine();
-	if (ImGui::Button(L("BUTTON_REMOVE_WHITELIST")) && sel_wl_item >= 0 && sel_wl_item < static_cast<int>(restoreWhitelist.size())) {
-		restoreWhitelist.erase(restoreWhitelist.begin() + sel_wl_item);
+	if (ImGui::Button(L("BUTTON_REMOVE_WHITELIST")) && sel_wl_item >= 0 && sel_wl_item < static_cast<int>(SettingsState().restoreWhitelist.size())) {
+		SettingsState().restoreWhitelist.erase(SettingsState().restoreWhitelist.begin() + sel_wl_item);
 		sel_wl_item = -1;
 	}
 
-	DrawRuleListBox("##whitelist", restoreWhitelist, sel_wl_item, "WHITELIST_EMPTY");
+	DrawRuleListBox("##whitelist", SettingsState().restoreWhitelist, sel_wl_item, "WHITELIST_EMPTY");
 }

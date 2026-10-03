@@ -18,6 +18,8 @@
 #include <ctime>
 #include <functional>
 #include <sys/stat.h>
+#include <cstdint>
+#include <memory>
 
 struct CloudTaskRuntimeState {
 	std::atomic<bool> busy{ false };
@@ -26,6 +28,47 @@ struct CloudTaskRuntimeState {
 	std::wstring statusText;
 	std::wstring lastMessage;
 	std::mutex mutex;
+};
+
+struct ConfigStateSnapshot {
+    std::map<int, Config> configs;
+    int selectedIndex = 1;
+};
+
+class DesktopConfigState {
+public:
+    class WriteAccess {
+    public:
+        explicit WriteAccess(DesktopConfigState& owner) : owner_(owner), lock_(owner.mutex_) {}
+        ~WriteAccess();
+        WriteAccess(const WriteAccess&) = delete;
+        std::map<int, Config>& Configs() { changed_ = true; return owner_.configs_; }
+        const std::map<int, Config>& ReadConfigs() const { return owner_.configs_; }
+        JobDocument& Jobs() { return owner_.jobs_; }
+        int& Selection() { return owner_.selected_; }
+    private:
+        DesktopConfigState& owner_;
+        std::unique_lock<std::recursive_mutex> lock_;
+        bool changed_ = false;
+    };
+    WriteAccess Write() { return WriteAccess(*this); }
+    std::shared_ptr<const std::map<int, Config>> Read() const;
+    ConfigStateSnapshot Snapshot() const;
+    JobDocument SnapshotJobs() const;
+    int Selection() const;
+    bool Contains(int index) const;
+    void Select(int index);
+    bool Modify(const std::wstring& id, const std::function<void(Config&)>& mutation);
+    bool Delete(const std::wstring& id);
+private:
+    void Changed();
+    mutable std::recursive_mutex mutex_;
+    std::map<int, Config> configs_;
+    std::map<std::wstring, int> byId_;
+    JobDocument jobs_;
+    int selected_ = 1;
+    std::uint64_t revision_ = 0;
+    mutable std::shared_ptr<const std::map<int, Config>> cached_;
 };
 
 struct AppState {
@@ -38,13 +81,10 @@ struct AppState {
 
 
 	// Data
-	int currentConfigIndex = 1;
-	std::map<int, Config> configs;
-	JobDocument jobs;
+    DesktopConfigState configuration;
 
 	std::map<std::pair<std::wstring, std::wstring>, AutoBackupTask> g_active_auto_backups; // Config ID + canonical source path
 
-	std::mutex configsMutex;			// 用于保护全局配置的互斥锁
 	std::mutex task_mutex;		// 专门用于保护 g_active_auto_backups
 	bool isRespond = false;
 	std::atomic<HotRestoreState> hotkeyRestoreState = HotRestoreState::IDLE;
@@ -55,18 +95,13 @@ struct AppState {
 
 extern AppState g_appState;
 
-struct ConfigStateSnapshot {
-    std::map<int, Config> configs;
-    int selectedIndex = 1;
-};
 ConfigStateSnapshot SnapshotConfigState();
 bool ModifyConfigById(const std::wstring& id, const std::function<void(Config&)>& mutation);
 bool DeleteConfigById(const std::wstring& id);
 int SelectedConfigIndex();
 void SelectConfigIndex(int index);
 
-// One UI-thread scope per frame. Widgets edit values; Flush merges only changed
-// fields by stable identity and never resurrects a concurrently deleted profile.
+// A frame retains immutable views and only copies configurations explicitly edited.
 class UiConfigDraft {
 public:
     UiConfigDraft();
@@ -75,13 +110,24 @@ public:
     UiConfigDraft& operator=(const UiConfigDraft&) = delete;
     void Flush();
     void ObserveInserted(int index, const Config& config);
-    std::map<int, Config>& Configs() { return edited_.configs; }
-    int& Selection() { return edited_.selectedIndex; }
+    const std::map<int, Config>& View() const { return *view_; }
+    Config& Edit(int index);
+    void Delete(int index);
+    int& Selection() { return selected_; }
+    std::size_t EditedCount() const { return drafts_.size(); }
 private:
-    ConfigStateSnapshot baseline_, edited_;
+    void Refresh();
+    struct Draft { Config baseline; Config edited; };
+    std::shared_ptr<const std::map<int, Config>> view_;
+    std::vector<std::shared_ptr<const std::map<int, Config>>> retainedViews_;
+    std::map<int, Draft> drafts_;
+    int selected_ = 1;
+    int baselineSelection_ = 1;
     UiConfigDraft* previous_ = nullptr;
 };
-std::map<int, Config>& UiConfigs();
+const std::map<int, Config>& UiConfigView();
+Config& EditUiConfig(int index);
+void DeleteUiConfig(int index);
 int& UiSelectedConfigIndex();
 void FlushUiConfigDraft();
 void ObserveUiConfigInserted(int index, const Config& config);

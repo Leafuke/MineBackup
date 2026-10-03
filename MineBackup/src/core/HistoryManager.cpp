@@ -31,15 +31,14 @@ bool IsSameHistoryEntry(
 }
 
 map<int, Config> SnapshotConfigs() {
-    lock_guard<mutex> lock(g_appState.configsMutex);
-    return g_appState.configs;
+    auto configAccess = g_appState.configuration.Write();
+    return configAccess.ReadConfigs();
 }
 
 wstring ResolveConfigId(int configIndex) {
-    lock_guard<mutex> lock(g_appState.configsMutex);
-    const auto it = g_appState.configs.find(configIndex);
-    if (it == g_appState.configs.end()) return {};
-    it->second.configId = FolderRewindFormat::EnsureConfigId(it->second.configId);
+    auto configAccess = g_appState.configuration.Write();
+    const auto it = configAccess.ReadConfigs().find(configIndex);
+    if (it == configAccess.ReadConfigs().end()) return {};
     return it->second.configId;
 }
 

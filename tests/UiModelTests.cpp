@@ -52,7 +52,7 @@ namespace {
 
     void TestCloudFailureCompletion() {
         Config config; config.configId = L"cloud-result";
-        { lock_guard lock(g_appState.configsMutex); g_appState.configs = {{1, config}}; }
+        { auto configAccess = g_appState.configuration.Write(); g_appState.configuration.Write().Configs() = {{1, config}}; }
         HistoryEntry entry; entry.configId = config.configId; entry.backupFile = L"failed.7z";
         const auto failed = AggregateCloudDownloads({entry}, CloudSyncMode::HistoryAndBackups, {}, [](const auto&) {
             CloudCommandResult result; result.exitCode = 23; result.message = L"download failed"; return result;
@@ -121,12 +121,16 @@ namespace {
     void TestConfigurationDrafts() {
         Config first; first.configId = L"first"; first.worlds = {{L"old", L""}};
         Config second; second.configId = L"second";
-        { lock_guard lock(g_appState.configsMutex); g_appState.configs = {{1, first}, {2, second}}; g_appState.currentConfigIndex = 1; }
+        { auto configAccess = g_appState.configuration.Write(); configAccess.Configs() = {{1, first}, {2, second}}; configAccess.Selection() = 1; }
         barrier rendezvous(2);
         {
+            const auto cached = g_appState.configuration.Read();
             UiConfigDraft draft;
-            UiConfigs().at(1).name = "edited";
-            UiConfigs().at(1).worlds = {{L"new", L"description"}};
+            Expect(draft.EditedCount() == 0 && cached == g_appState.configuration.Read(),
+                "read-only frames reuse an immutable view without creating drafts");
+            EditUiConfig(1).name = "edited";
+            Expect(draft.EditedCount() == 1, "only the edited configuration gets a draft");
+            EditUiConfig(1).worlds = {{L"new", L"description"}};
             jthread writer([&] {
                 rendezvous.arrive_and_wait();
                 ModifyConfigById(L"first", [](Config& config) { config.cloudLastExitCode = 17; config.cloudLastRunUtc = L"updated"; });
@@ -135,7 +139,7 @@ namespace {
             });
             rendezvous.arrive_and_wait();
             rendezvous.arrive_and_wait();
-            UiConfigs().at(2).name = "must not reappear";
+            EditUiConfig(2).name = "must not reappear";
             draft.Flush();
             const auto snapshot = SnapshotConfigState();
             Expect(snapshot.configs.at(1).name == "edited" && snapshot.configs.at(1).cloudLastExitCode == 17
@@ -144,6 +148,14 @@ namespace {
             ModifyConfigById(L"first", [](Config& config) { config.name = "later"; });
         }
         Expect(SnapshotConfigState().configs.at(1).name == "later", "an unchanged frame flush must not overwrite a later commit");
+        {
+            UiConfigDraft stale;
+            EditUiConfig(1).name = "stale";
+            { auto edit = g_appState.configuration.Write(); Config replacement; replacement.configId = L"replacement"; edit.Configs()[1] = replacement; }
+            stale.Flush();
+            Expect(SnapshotConfigState().configs.at(1).name.empty(), "reused indices cannot receive an old identity's draft");
+        }
+        { auto edit = g_appState.configuration.Write(); first.worlds = {{L"new", L"description"}}; edit.Configs()[1] = first; }
         const auto stableSnapshot = SnapshotConfigState();
         DeleteConfigById(L"first");
         Expect(stableSnapshot.configs.at(1).worlds.front().first == L"new", "background snapshots own their world list across deletion");

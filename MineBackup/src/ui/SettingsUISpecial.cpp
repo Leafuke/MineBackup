@@ -47,8 +47,8 @@ JobStep MakeBackupStep() {
 	step.stepId = FolderRewindFormat::GenerateGuidString();
 	step.name = L("JOB_DEFAULT_BACKUP_STEP_NAME");
 	step.type = JobStepType::Backup;
-	if (!UiConfigs().empty()) {
-		const Config& config = UiConfigs().begin()->second;
+	if (!UiConfigView().empty()) {
+		const Config& config = UiConfigView().begin()->second;
 		step.backup.configId = config.configId;
 		if (!config.worlds.empty()) step.backup.worldPath = config.worlds.front().first;
 	}
@@ -86,7 +86,7 @@ void DrawBackupStep(JobStep& step) {
 	const string configLabel = LocalizedLabel("JOB_BACKUP_CONFIG", "JobBackupConfig");
 	if (ImGui::BeginCombo(configLabel.c_str(),
 		wstring_to_utf8(step.backup.configId).c_str())) {
-		for (const auto& [index, config] : UiConfigs()) {
+		for (const auto& [index, config] : UiConfigView()) {
 			(void)index;
 			const bool selected = config.configId == step.backup.configId;
 			if (ImGui::Selectable(config.name.c_str(), selected)) {
@@ -98,7 +98,7 @@ void DrawBackupStep(JobStep& step) {
 		ImGui::EndCombo();
 	}
 	const Config* selectedConfig = nullptr;
-	for (const auto& [index, config] : UiConfigs()) {
+	for (const auto& [index, config] : UiConfigView()) {
 		(void)index;
 		if (config.configId == step.backup.configId) selectedConfig = &config;
 	}
@@ -180,7 +180,8 @@ void DrawStep(JobStage& stage, size_t stepIndex) {
 } // namespace
 
 void DrawJobSettings() {
-	auto& jobs = g_appState.jobs.jobs;
+    auto configAccess = g_appState.configuration.Write();
+	auto& jobs = configAccess.Jobs().jobs;
 	static size_t selectedJob = 0;
 	static size_t selectedStage = 0;
 	if (selectedJob >= jobs.size()) selectedJob = jobs.empty() ? 0 : jobs.size() - 1;

@@ -115,7 +115,7 @@ void ReleaseMainUiGraphicsResources()
 void DrawMainUiFrame(const MainUiFrameContext& context)
 {
 	auto* desktopServices = context.desktopServices;
-	auto* wc = context.window;
+	auto* frameWindow = context.window;
 	const AppPaths& paths = *context.paths;
 	const auto& currentGlobalHotkeys = context.currentGlobalHotkeys;
 MainUiController& mainUi = GetMainUiController();
@@ -230,8 +230,8 @@ if (ImGui::BeginMenuBar()) {
 		}
 		ImGui::Separator();
 		if (ImGui::MenuItem(L("EXIT"))) {
-			if (wc != nullptr) {
-				glfwHideWindow(wc);
+			if (frameWindow != nullptr) {
+				glfwHideWindow(frameWindow);
 			}
 			g_appState.done = true;
 		}
@@ -308,10 +308,10 @@ if (ImGui::BeginMenuBar()) {
 
 		const bool autostartAvailable = desktopCapabilities.autostart.IsAvailable();
 		if (!autostartAvailable) ImGui::BeginDisabled();
-		const bool previousRunOnStartup = g_RunOnStartup;
-		if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &g_RunOnStartup)
-			&& !ApplyGuiAutostartSetting(*desktopServices, g_RunOnStartup)) {
-			g_RunOnStartup = previousRunOnStartup;
+		const bool previousRunOnStartup = SettingsState().runOnStartup;
+		if (ImGui::Checkbox(L("RUN_ON_WINDOWS_STARTUP"), &SettingsState().runOnStartup)
+			&& !ApplyGuiAutostartSetting(*desktopServices, SettingsState().runOnStartup)) {
+			SettingsState().runOnStartup = previousRunOnStartup;
 		}
 		if (!autostartAvailable) ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -321,10 +321,10 @@ if (ImGui::BeginMenuBar()) {
 			ImGui::TextDisabled("%s", L("AUTOSTART_UNAVAILABLE_NOTICE"));
 		}
 
-		const bool previousSilentStartupToTray = g_SilentStartupToTray;
-		if (ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &g_SilentStartupToTray)
+		const bool previousSilentStartupToTray = SettingsState().silentStartupToTray;
+		if (ImGui::Checkbox(L("START_TO_TRAY_ON_AUTOSTART"), &SettingsState().silentStartupToTray)
 			&& !SaveConfigs()) {
-			g_SilentStartupToTray = previousSilentStartupToTray;
+			SettingsState().silentStartupToTray = previousSilentStartupToTray;
 		}
 		if (ImGui::IsItemHovered()) {
 			ImGui::SetTooltip("%s", L("TIP_START_TO_TRAY_ON_AUTOSTART"));
@@ -339,17 +339,17 @@ if (ImGui::BeginMenuBar()) {
 				{minebackup::logging::LogFileLevel::Debug, "LOG_FILE_LEVEL_DEBUG"},
 			};
 			for (const auto& level : levels) {
-				if (ImGui::MenuItem(L(level.label), nullptr, g_logFileLevel == level.value)) {
-					g_logFileLevel = level.value;
+				if (ImGui::MenuItem(L(level.label), nullptr, SettingsState().logFileLevel == level.value)) {
+					SettingsState().logFileLevel = level.value;
 					minebackup::logging::SetFileLevel(level.value);
 				}
 			}
 			ImGui::EndMenu();
 		}
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_LOG_FILE_LEVEL"));
-		ImGui::Checkbox(L("RECEIVE_NOTICES"), &g_ReceiveNotices);
+		ImGui::Checkbox(L("RECEIVE_NOTICES"), &SettingsState().receiveNotices);
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_RECEIVE_NOTICES"));
-		ImGui::Checkbox(L("STOP_AUTOBACKUP_ON_EXIT"), &g_StopAutoBackupOnExit);
+		ImGui::Checkbox(L("STOP_AUTOBACKUP_ON_EXIT"), &SettingsState().stopAutoBackupOnExit);
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("TIP_STOP_AUTOBACKUP_ON_EXIT"));
 		ImGui::Separator();
 		// 热键设置右拉栏（鼠标放上去会向右展开两个）
@@ -375,35 +375,35 @@ if (ImGui::BeginMenuBar()) {
 					if (ImGui::IsKeyPressed((ImGuiKey)key)) {
 					waitingForHotkey = false;
 					if (whichFunc == 1) {
-						const int previousKey = g_hotKeyBackupId;
-						g_hotKeyBackupId = ImGuiKeyToPlatformHotkey((ImGuiKey)key);
+						const int previousKey = SettingsState().hotKeyBackupId;
+						SettingsState().hotKeyBackupId = ImGuiKeyToPlatformHotkey((ImGuiKey)key);
 						const auto status = desktopServices->ConfigureGlobalHotkeys(
 							currentGlobalHotkeys());
 						if (!status.IsAvailable()) {
-							g_hotKeyBackupId = previousKey;
+							SettingsState().hotKeyBackupId = previousKey;
 							PLATFORM_PRINTF_ERROR("platform.hotkey.configure_failed",
 								"%s", wstring_to_utf8(status.diagnostic).c_str());
 							MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
 						}
 						MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Platform,
 							"platform.hotkey.configured", "HOTKEY_SET_TO",
-							(char)g_hotKeyBackupId);
+							(char)SettingsState().hotKeyBackupId);
 							break;
 						}
 					else if (whichFunc == 2) {
-						const int previousKey = g_hotKeyRestoreId;
-						g_hotKeyRestoreId = ImGuiKeyToPlatformHotkey((ImGuiKey)key);
+						const int previousKey = SettingsState().hotKeyRestoreId;
+						SettingsState().hotKeyRestoreId = ImGuiKeyToPlatformHotkey((ImGuiKey)key);
 						const auto status = desktopServices->ConfigureGlobalHotkeys(
 							currentGlobalHotkeys());
 						if (!status.IsAvailable()) {
-							g_hotKeyRestoreId = previousKey;
+							SettingsState().hotKeyRestoreId = previousKey;
 							PLATFORM_PRINTF_ERROR("platform.hotkey.configure_failed",
 								"%s", wstring_to_utf8(status.diagnostic).c_str());
 							MessageBoxWin("MineBackup", L("HOTKEY_OPERATION_FAILED"), 1);
 						}
 							MB_LOG_I18N_INFO(minebackup::logging::LogCategory::Platform,
 								"platform.hotkey.configured", "HOTKEY_SET_TO",
-								(char)g_hotKeyRestoreId);
+								(char)SettingsState().hotKeyRestoreId);
 
 							break;
 						}
@@ -419,18 +419,18 @@ if (ImGui::BeginMenuBar()) {
 			ImGui::SetTooltip("%s", wstring_to_utf8(desktopCapabilities.globalHotkeys.diagnostic).c_str());
 		}
 		ImGui::Separator();
-		ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &g_CheckForUpdates);
+		ImGui::Checkbox(L("CHECK_FOR_UPDATES_ON_STARTUP"), &SettingsState().checkForUpdates);
 
 		ImGui::Separator();
 		if (ImGui::MenuItem(L("DETAILED_SETTINGS_BUTTON"))) {
-			showSettings = true;
+			UiState().showSettings = true;
 		}
 
 		ImGui::EndMenu();
 	}
 
 	if (ImGui::BeginMenu(L("MENU_TOOLS"))) {
-		const bool validationRunning = g_CoreValidationRunning.load();
+		const bool validationRunning = CoreValidationState().running.load();
 		if (validationRunning) ImGui::BeginDisabled();
 		if (ImGui::MenuItem(L("MENU_CORE_VALIDATION"))) {
 			StartCoreValidationAsync(false);
@@ -440,7 +440,7 @@ if (ImGui::BeginMenuBar()) {
 			ImGui::SetTooltip("%s", validationRunning ? L("TIP_CORE_VALIDATION_RUNNING") : L("TIP_CORE_VALIDATION"));
 		}
 		ImGui::Separator();
-		if (ImGui::MenuItem(L("HISTORY_BUTTON"))) { showHistoryWindow = true; }
+		if (ImGui::MenuItem(L("HISTORY_BUTTON"))) { UiState().showHistoryWindow = true; }
 		ImGui::EndMenu();
 	}
 	if (ImGui::BeginMenu(L("MENU_HELP"))) {
@@ -465,7 +465,7 @@ if (ImGui::BeginMenuBar()) {
 
 
 	// 在菜单栏右侧显示更新按钮
-	if (g_NewVersionAvailable) {
+	if (UpdateState().newVersionAvailable) {
 		ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(L("UPDATE_AVAILABLE_BUTTON")).x - ImGui::GetStyle().FramePadding.x * 2 - 100);
 		ImGui::PushStyleColor(ImGuiCol_Button, ThemePalette::GetSuccessButtonColor());
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ThemePalette::GetSuccessButtonHoveredColor());
@@ -497,7 +497,7 @@ if (ImGui::BeginMenuBar()) {
 		if (ImGui::BeginPopupModal(
 			L("UPDATE_POPUP_TITLE"), &open_update_popup,
 			ImGuiWindowFlags_NoResize)) {
-			ImGui::TextWrapped(L("UPDATE_POPUP_HEADER"), g_LatestVersionStr.c_str());
+			ImGui::TextWrapped(L("UPDATE_POPUP_HEADER"), UpdateState().latestVersion.c_str());
 			ImGui::Separator();
 			ImGui::TextWrapped("%s", L("UPDATE_POPUP_NOTES"));
 
@@ -508,10 +508,10 @@ if (ImGui::BeginMenuBar()) {
 					ImGui::GetContentRegionAvail().y - footerReserve));
 			ImGui::BeginChild(
 				"ReleaseNotes", ImVec2(0.0f, releaseNotesHeight), true);
-			ImGui::TextWrapped("%s", g_ReleaseNotes.c_str());
+			ImGui::TextWrapped("%s", UpdateState().releaseNotes.c_str());
 			ImGui::EndChild();
 			ImGui::Separator();
-			const MineBackupUpdateLinks updateLinks = BuildMineBackupUpdateLinks(g_LatestVersionStr);
+			const MineBackupUpdateLinks updateLinks = BuildMineBackupUpdateLinks(UpdateState().latestVersion);
 			const float splitActionWidth = (std::max)(
 				1.0f, (ImGui::GetContentRegionAvail().x - updateStyle.ItemSpacing.x) * 0.5f);
 			auto openUpdateLink = [&](const string& url) {
@@ -549,7 +549,7 @@ if (ImGui::BeginMenuBar()) {
 		}
 	}
 
-	if (g_ReceiveNotices && g_NoticeCheckDone && g_NewNoticeAvailable && !notice_popup_opened && !notice_snoozed_this_session) {
+	if (SettingsState().receiveNotices && UpdateState().noticeCheckDone && UpdateState().newNoticeAvailable && !notice_popup_opened && !notice_snoozed_this_session) {
 		ImGui::OpenPopup(L("NOTICE_POPUP_TITLE"));
 		notice_popup_opened = true;
 	}
@@ -560,14 +560,14 @@ if (ImGui::BeginMenuBar()) {
 		ImGui::Separator();
 		const UiMetrics noticeMetrics = GetUiMetrics();
 		ImGui::BeginChild("NoticeContent", ImVec2(noticeMetrics.Em(22.0f), noticeMetrics.Em(16.0f)), true);
-		ImGui::TextWrapped("%s", g_NoticeContent.c_str());
+		ImGui::TextWrapped("%s", UpdateState().noticeContent.c_str());
 		ImGui::EndChild();
 		ImGui::Separator();
 		float noticeBtnWidth = CalcPairButtonWidth(L("NOTICE_CONFIRM"), L("NOTICE_LATER"));
 		if (noticeBtnWidth < 250) noticeBtnWidth = 250;
 		if (ImGui::Button(L("NOTICE_CONFIRM"), ImVec2(noticeBtnWidth, 0))) {
-			g_NoticeLastSeenVersion = g_NoticeUpdatedAt;
-			g_NewNoticeAvailable = false;
+			UpdateState().noticeLastSeenVersion = UpdateState().noticeUpdatedAt;
+			UpdateState().newNoticeAvailable = false;
 			notice_snoozed_this_session = true;
 			SaveConfigs();
 			notice_popup_opened = false;
@@ -589,9 +589,9 @@ if (ImGui::BeginMenuBar()) {
 }
 
 // 关闭确认对话框
-if (g_showCloseConfirmDialog) {
+if (UiState().showCloseConfirmDialog) {
 	ImGui::OpenPopup(L("CLOSE_CONFIRM_TITLE"));
-	g_showCloseConfirmDialog = false;
+	UiState().showCloseConfirmDialog = false;
 }
 
 ImGui::SetNextWindowViewport(viewport->ID);
@@ -608,27 +608,27 @@ if (ImGui::BeginPopupModal(L("CLOSE_CONFIRM_TITLE"), nullptr, ImGuiWindowFlags_A
 		? L("CLOSE_MINIMIZE_TO_TRAY") : L("CLOSE_MINIMIZE_WINDOW");
 	if (ImGui::Button(minimizeLabel, ImVec2(200, 0))) {
 		if (tempRememberChoice) {
-			g_closeAction = 1;
-			g_rememberCloseAction = true;
+			UiState().closeAction = 1;
+			UiState().rememberCloseAction = true;
 		}
 		if (canHideToTray) {
 			(void)desktopServices->SetTrayVisible(true);
 			g_appState.showMainApp = false;
-			glfwHideWindow(wc);
+			glfwHideWindow(frameWindow);
 		}
 		else {
-			glfwIconifyWindow(wc);
+			glfwIconifyWindow(frameWindow);
 		}
 		ImGui::CloseCurrentPopup();
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(L("CLOSE_EXIT_APP"), ImVec2(200, 0))) {
 		if (tempRememberChoice) {
-			g_closeAction = 2;
-			g_rememberCloseAction = true;
+			UiState().closeAction = 2;
+			UiState().rememberCloseAction = true;
 		}
-		if (wc != nullptr) {
-			glfwHideWindow(wc);
+		if (frameWindow != nullptr) {
+			glfwHideWindow(frameWindow);
 		}
 		g_appState.done = true;
 		ImGui::CloseCurrentPopup();
@@ -648,9 +648,9 @@ ImGui::SetNextWindowViewport(viewport->ID);
 ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 if (ImGui::BeginPopupModal(L("MENU_ABOUT"), &showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
 {
-	ImGui::Text("MineBackup v%s", CURRENT_VERSION.c_str());
+	ImGui::Text("MineBackup v%s", ApplicationVersion().c_str());
 	ImGui::Separator();
-	ImGui::TextWrapped("%s", wstring_to_utf8(MineFormatMessage("ABOUT_DESCRIPTION", (char)g_hotKeyBackupId, (char)g_hotKeyRestoreId)).c_str());
+	ImGui::TextWrapped("%s", wstring_to_utf8(MineFormatMessage("ABOUT_DESCRIPTION", (char)SettingsState().hotKeyBackupId, (char)SettingsState().hotKeyRestoreId)).c_str());
 	ImGui::Text("%s", L("ABOUT_AUTHOR"));
 
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -739,10 +739,10 @@ if (ImGui::Begin(L("CONSOLE_TITLE"), nullptr, ImGuiWindowFlags_NoScrollbar | ImG
 ImGui::End();
 
 
-if (showSettings) {
+if (UiState().showSettings) {
 	ShowSettingsWindowV2();  // 使用新版横向标签页设置窗口
 }
-if (showHistoryWindow) {
+if (UiState().showHistoryWindow) {
 	ShowHistoryWindow(UiSelectedConfigIndex());
 }
 }

@@ -74,7 +74,7 @@ void RecordConfigDiagnostic(
 } // namespace
 
 filesystem::path GetEffectiveDefaultBackupRoot() {
-	const filesystem::path configured(g_defaultBackupRootPath);
+	const filesystem::path configured(SettingsState().defaultBackupRootPath);
 	if (!configured.empty() && configured.is_absolute()) {
 		return configured.lexically_normal();
 	}
@@ -191,8 +191,8 @@ void EnsureDefaultBackupBlacklist(vector<wstring>& blacklist) {
 }
 
 void EnsureDefaultRestoreWhitelist() {
-	if (!restoreWhitelist.empty() && ContainsRuleIgnoreCase(restoreWhitelist, L"session.lock")) return;
-	restoreWhitelist = DefaultRestoreWhitelist();
+	if (!SettingsState().restoreWhitelist.empty() && ContainsRuleIgnoreCase(SettingsState().restoreWhitelist, L"session.lock")) return;
+	SettingsState().restoreWhitelist = DefaultRestoreWhitelist();
 }
 
 vector<wstring> BuildEffectiveRestoreWhitelist(const vector<wstring>& userWhitelist) {
@@ -215,9 +215,9 @@ int CreateNewNormalConfig(const string& name_hint) {
     config.configId = FolderRewindFormat::GenerateGuidString();
     int index;
     {
-        lock_guard lock(g_appState.configsMutex);
+        auto configAccess = g_appState.configuration.Write();
         index = AllocateNormalConfigIndex();
-        g_appState.configs.emplace(index, config);
+        configAccess.Configs().emplace(index, config);
     }
     ObserveUiConfigInserted(index, config);
     return index;
@@ -233,7 +233,7 @@ void RestoreNormalConfigIndexAllocator(NormalConfigIndexAllocatorState state) {
 
 int AllocateNormalConfigIndex() {
 	if (nextConfigId == (numeric_limits<int>::max)()
-		&& g_appState.configs.contains(nextConfigId)) {
+		&& g_appState.configuration.Contains(nextConfigId)) {
 		throw overflow_error("No normal configuration index remains");
 	}
 	const int allocated = nextConfigId;
@@ -242,15 +242,15 @@ int AllocateNormalConfigIndex() {
 }
 
 void AssignFreshNormalConfigId(int configIndex) {
-    lock_guard lock(g_appState.configsMutex);
-    auto it = g_appState.configs.find(configIndex);
-    if (it == g_appState.configs.end()) return;
+    auto configAccess = g_appState.configuration.Write();
+    auto it = configAccess.Configs().find(configIndex);
+    if (it == configAccess.Configs().end()) return;
     it->second.configId = FolderRewindFormat::GenerateGuidString();
 }
 
 void EnsureConfigIds() {
-    lock_guard lock(g_appState.configsMutex);
-	for (auto& kv : g_appState.configs) {
+    auto configAccess = g_appState.configuration.Write();
+	for (auto& kv : configAccess.Configs()) {
 		kv.second.configId = FolderRewindFormat::EnsureConfigId(kv.second.configId);
 	}
 }
@@ -274,10 +274,10 @@ void LoadConfigs(const filesystem::path& filename) {
     int loadedSelected = SelectedConfigIndex();
     int loadedNext = 2;
     auto publish = [&] {
-        lock_guard lock(g_appState.configsMutex);
-        g_appState.configs = std::move(loadedConfigs);
-        g_appState.jobs = std::move(loadedJobs);
-        g_appState.currentConfigIndex = loadedSelected;
+        auto configAccess = g_appState.configuration.Write();
+        configAccess.Configs() = std::move(loadedConfigs);
+        configAccess.Jobs() = std::move(loadedJobs);
+        configAccess.Selection() = loadedSelected;
         nextConfigId = loadedNext;
         g_appState.profileRecoveryRequired.store(false);
     };
@@ -285,19 +285,19 @@ void LoadConfigs(const filesystem::path& filename) {
 	loadedNext = 2;
 	loadedConfigs.clear();
 	loadedJobs = JobDocument{};
-	g_theme = static_cast<int>(ThemeId::NordLight);
-	g_lastValidTheme = static_cast<int>(ThemeId::NordLight);
-	Fontss.clear();
-	g_appearanceSchema = 1;
-	g_uiScaleV2 = true;
-	g_uiScaleMigrationPending = false;
-	restoreWhitelist.clear();
-	g_defaultBackupRootPath = RecommendedBackupRoot().wstring();
-	g_logFileLevel = minebackup::logging::LogFileLevel::Info;
-	g_logViewLevel = minebackup::logging::LogLevel::Info;
-	g_logViewAutoTail = true;
-	g_logViewShowTime = false;
-	g_logViewShowCategory = false;
+	AppearanceState().theme = static_cast<int>(ThemeId::NordLight);
+	AppearanceState().lastValidTheme = static_cast<int>(ThemeId::NordLight);
+	AppearanceState().fontPath.clear();
+	AppearanceState().schema = 1;
+	AppearanceState().userScaleV2 = true;
+	AppearanceState().pendingScaleMigration = false;
+	SettingsState().restoreWhitelist.clear();
+	SettingsState().defaultBackupRootPath = RecommendedBackupRoot().wstring();
+	SettingsState().logFileLevel = minebackup::logging::LogFileLevel::Info;
+	SettingsState().logViewLevel = minebackup::logging::LogLevel::Info;
+	SettingsState().logViewAutoTail = true;
+	SettingsState().logViewShowTime = false;
+	SettingsState().logViewShowCategory = false;
 	optional<wstring> configuredLogFileLevel;
 	optional<wstring> configuredLogViewLevel;
 	optional<bool> legacyAutoLog;
@@ -305,8 +305,8 @@ void LoadConfigs(const filesystem::path& filename) {
 	ifstream in(filename, ios::binary);
 	if (!in.is_open()) {
 		EnsureDefaultRestoreWhitelist();
-		Fontss = GetDefaultFontPath();
-		minebackup::logging::SetFileLevel(g_logFileLevel);
+		AppearanceState().fontPath = GetDefaultFontPath();
+		minebackup::logging::SetFileLevel(SettingsState().logFileLevel);
         publish();
 		return;
 	}
@@ -468,47 +468,47 @@ void LoadConfigs(const filesystem::path& filename) {
 					}
 				}
 				else if (key == L"CheckForUpdates") {
-					g_CheckForUpdates = (val != L"0");
+					SettingsState().checkForUpdates = (val != L"0");
 				}
 				else if (key == L"ReceiveNotices") {
-					g_ReceiveNotices = (val != L"0");
+					SettingsState().receiveNotices = (val != L"0");
 				}
 				else if (key == L"NoticeLastSeen") {
-					g_NoticeLastSeenVersion = wstring_to_utf8(val);
+					UpdateState().noticeLastSeenVersion = wstring_to_utf8(val);
 				}
 				else if (key == L"EnableKnotLink") {
-					g_enableKnotLink = (val != L"0");
+					SettingsState().enableKnotLink = (val != L"0");
 				}
 				else if (key == L"AutoStartKnotLinkServer") {
-					g_autoStartKnotLinkServer = (val != L"0");
+					SettingsState().autoStartKnotLinkServer = (val != L"0");
 				}
 				else if (key == L"RunOnStartup") {
-					g_RunOnStartup = (val != L"0");
+					SettingsState().runOnStartup = (val != L"0");
 				}
 				else if (key == L"IsSafeDelete") {
-					isSafeDelete = (val != L"0");
+					SettingsState().safeDelete = (val != L"0");
 				}
 				else if (key == L"AutoBackupInterval") {
-					readInt(last_interval, 1, 525600, true);
+					readInt(SettingsState().lastIntervalMinutes, 1, 525600, true);
 				}
 				else if (key == L"StopAutoBackupOnExit") {
-					g_StopAutoBackupOnExit = (val != L"0");
+					SettingsState().stopAutoBackupOnExit = (val != L"0");
 				}
 				else if (key == L"SilentStartupToTray") {
-					g_SilentStartupToTray = (val != L"0");
+					SettingsState().silentStartupToTray = (val != L"0");
 				}
 				else if (key == L"RestoreWhitelistItem") {
 					configuredRestoreWhitelist = true;
-					restoreWhitelist.push_back(val);
+					SettingsState().restoreWhitelist.push_back(val);
 				}
 				else if (key == L"WindowWidth") {
-					readInt(g_windowWidth, 11, 32768, false);
+					readInt(WindowState().width, 11, 32768, false);
 				}
 				else if (key == L"WindowHeight") {
-					readInt(g_windowHeight, 11, 32768, false);
+					readInt(WindowState().height, 11, 32768, false);
 				}
 				else if (key == L"UIScale") {
-					configuredUiScaleFound = readFloat(g_uiScale, 0.25f, 4.0f, false);
+					configuredUiScaleFound = readFloat(AppearanceState().userScale, 0.25f, 4.0f, false);
 				}
 				else if (key == L"UIScaleMode") {
 					configuredUiScaleV2 = (val == L"UserMultiplierV2");
@@ -534,16 +534,16 @@ void LoadConfigs(const filesystem::path& filename) {
 				}
 				else if (key == L"AutoScanForWorlds") {
 					// 仅保留旧字段的兼容读写；世界发现必须由显式发现流程触发。
-					g_AutoScanForWorlds = (val != L"0");
+					SettingsState().autoScanForWorlds = (val != L"0");
 				}
 				else if (key == L"DefaultBackupRootPath") {
-					g_defaultBackupRootPath = val;
+					SettingsState().defaultBackupRootPath = val;
 				}
 				else if (key == L"HotkeyBackup") {
-					readInt(g_hotKeyBackupId, 0, 100000, false);
+					readInt(SettingsState().hotKeyBackupId, 0, 100000, false);
 				}
 				else if (key == L"HotkeyRestore") {
-					readInt(g_hotKeyRestoreId, 0, 100000, false);
+					readInt(SettingsState().hotKeyRestoreId, 0, 100000, false);
 				}
 				else if (key == L"LogFileLevel") {
 					configuredLogFileLevel = val;
@@ -552,28 +552,28 @@ void LoadConfigs(const filesystem::path& filename) {
 					configuredLogViewLevel = val;
 				}
 				else if (key == L"LogViewAutoTail") {
-					g_logViewAutoTail = (val != L"0");
+					SettingsState().logViewAutoTail = (val != L"0");
 				}
 				else if (key == L"LogViewShowTime") {
-					g_logViewShowTime = (val != L"0");
+					SettingsState().logViewShowTime = (val != L"0");
 				}
 				else if (key == L"LogViewShowCategory") {
-					g_logViewShowCategory = (val != L"0");
+					SettingsState().logViewShowCategory = (val != L"0");
 				}
 				else if (key == L"AutoLog") {
 					legacyAutoLog = (val != L"0");
 				}
 				else if (key == L"CoreValidationPending") {
-					g_CoreValidationPending.store(val != L"0");
+					SettingsState().coreValidationPending.store(val != L"0");
 				}
 				else if (key == L"CoreValidationPassed") {
-					g_CoreValidationPassed.store(val != L"0");
+					SettingsState().coreValidationPassed.store(val != L"0");
 				}
 				else if (key == L"CloseAction") {
-					readInt(g_closeAction, 0, 2, false);
+					readInt(UiState().closeAction, 0, 2, false);
 				}
 				else if (key == L"RememberCloseAction") {
-					g_rememberCloseAction = (val != L"0");
+					UiState().rememberCloseAction = (val != L"0");
 				}
 			}
 		}
@@ -584,7 +584,7 @@ void LoadConfigs(const filesystem::path& filename) {
 		configuredValue
 			? optional<string_view>(*configuredValue) : nullopt,
 		legacyAutoLog);
-	g_logFileLevel = logLevelResolution.level;
+	SettingsState().logFileLevel = logLevelResolution.level;
 	if (logLevelResolution.invalidConfiguredValue) {
 		MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
 			"logging.config.invalid_level",
@@ -594,11 +594,11 @@ void LoadConfigs(const filesystem::path& filename) {
 		MB_LOG_INFO(minebackup::logging::LogCategory::Migration,
 			"logging.config.legacy_auto_log",
 			"Migrated legacy AutoLog={} to LogFileLevel={}.",
-			*legacyAutoLog ? 1 : 0, minebackup::logging::ToString(g_logFileLevel));
+			*legacyAutoLog ? 1 : 0, minebackup::logging::ToString(SettingsState().logFileLevel));
 	}
 	if (configuredLogViewLevel) {
 		bool validLogViewLevel = false;
-		g_logViewLevel = minebackup::logging::ParseLogLevel(
+		SettingsState().logViewLevel = minebackup::logging::ParseLogLevel(
 			wstring_to_utf8(*configuredLogViewLevel), &validLogViewLevel);
 		if (!validLogViewLevel) {
 			MB_LOG_WARNING(minebackup::logging::LogCategory::Migration,
@@ -607,7 +607,7 @@ void LoadConfigs(const filesystem::path& filename) {
 				wstring_to_utf8(*configuredLogViewLevel));
 		}
 	}
-	minebackup::logging::SetFileLevel(g_logFileLevel);
+	minebackup::logging::SetFileLevel(SettingsState().logFileLevel);
 	if (!configuredRestoreWhitelist) EnsureDefaultRestoreWhitelist();
 	set<wstring> usedConfigIds;
 	if (!loadedConfigs.empty()) {
@@ -670,79 +670,79 @@ void LoadConfigs(const filesystem::path& filename) {
 	};
 
 	if (configuredGlobalTheme && IsValidThemeId(*configuredGlobalTheme)) {
-		g_theme = *configuredGlobalTheme;
+		AppearanceState().theme = *configuredGlobalTheme;
 	}
 	else {
 		auto normal = loadedConfigs.find(loadedSelected);
 		if (normal != loadedConfigs.end() && IsValidThemeId(normal->second.theme)) {
-			g_theme = normal->second.theme;
+			AppearanceState().theme = normal->second.theme;
 		}
 	}
 	if (configuredThemeFallback
 		&& *configuredThemeFallback >= static_cast<int>(ThemeId::ImGuiDark)
 		&& *configuredThemeFallback <= static_cast<int>(ThemeId::SystemAuto)) {
-		g_lastValidTheme = *configuredThemeFallback;
+		AppearanceState().lastValidTheme = *configuredThemeFallback;
 	}
-	else if (g_theme != static_cast<int>(ThemeId::Custom)) {
-		g_lastValidTheme = g_theme;
+	else if (AppearanceState().theme != static_cast<int>(ThemeId::Custom)) {
+		AppearanceState().lastValidTheme = AppearanceState().theme;
 	}
 
 	if (configuredSystemThemeLight
 		&& IsValidThemeId(*configuredSystemThemeLight)
 		&& *configuredSystemThemeLight != static_cast<int>(ThemeId::SystemAuto)) {
-		g_systemThemeLight = *configuredSystemThemeLight;
+		AppearanceState().systemThemeLight = *configuredSystemThemeLight;
 	}
 	else {
-		g_systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
+		AppearanceState().systemThemeLight = static_cast<int>(ThemeId::WindowsLight);
 	}
 	if (configuredSystemThemeDark
 		&& IsValidThemeId(*configuredSystemThemeDark)
 		&& *configuredSystemThemeDark != static_cast<int>(ThemeId::SystemAuto)) {
-		g_systemThemeDark = *configuredSystemThemeDark;
+		AppearanceState().systemThemeDark = *configuredSystemThemeDark;
 	}
 	else {
-		g_systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
+		AppearanceState().systemThemeDark = static_cast<int>(ThemeId::WindowsDark);
 	}
 
 	if (configuredGlobalFont && validFontPath(*configuredGlobalFont)) {
-		Fontss = *configuredGlobalFont;
+		AppearanceState().fontPath = *configuredGlobalFont;
 	}
 	else {
 		auto normal = loadedConfigs.find(loadedSelected);
 		if (normal != loadedConfigs.end() && validFontPath(normal->second.fontPath)) {
-			Fontss = normal->second.fontPath;
+			AppearanceState().fontPath = normal->second.fontPath;
 		}
-		if (Fontss.empty()) {
+		if (AppearanceState().fontPath.empty()) {
 			for (const auto& [index, config] : loadedConfigs) {
 				(void)index;
 				if (validFontPath(config.fontPath)) {
-					Fontss = config.fontPath;
+					AppearanceState().fontPath = config.fontPath;
 					break;
 				}
 			}
 		}
 	}
-	if (Fontss.empty()) {
+	if (AppearanceState().fontPath.empty()) {
 		if (configuredGlobalFont && !configuredGlobalFont->empty()) {
 			MessageBoxWin(L("WARNING_TITLE"), L("INVALID_FONT_PATH"), 1);
 		}
-		Fontss = GetDefaultFontPath();
+		AppearanceState().fontPath = GetDefaultFontPath();
 	}
 
-	g_appearanceSchema = configuredAppearanceSchema.value_or(1);
-	g_uiScaleV2 = configuredUiScaleV2 || !configuredUiScaleFound;
-	g_uiScaleMigrationPending = configuredUiScaleFound && !configuredUiScaleV2;
-	g_uiScale = (std::clamp)(g_uiScale, 0.75f, 2.5f);
+	AppearanceState().schema = configuredAppearanceSchema.value_or(1);
+	AppearanceState().userScaleV2 = configuredUiScaleV2 || !configuredUiScaleFound;
+	AppearanceState().pendingScaleMigration = configuredUiScaleFound && !configuredUiScaleV2;
+	AppearanceState().userScale = (std::clamp)(AppearanceState().userScale, 0.75f, 2.5f);
     publish();
 }
 
 void FinalizeUiScaleMigration(float primaryDpiScale) {
 	const UiScaleMigrationResult migration = MigrateUiScale(
-		g_uiScale, primaryDpiScale, g_uiScaleMigrationPending);
-	g_uiScale = migration.scale;
-	g_uiScaleMigrationPending = false;
-	g_uiScaleV2 = true;
-	g_appearanceSchema = 1;
+		AppearanceState().userScale, primaryDpiScale, AppearanceState().pendingScaleMigration);
+	AppearanceState().userScale = migration.scale;
+	AppearanceState().pendingScaleMigration = false;
+	AppearanceState().userScaleV2 = true;
+	AppearanceState().schema = 1;
 }
 
 bool SaveConfigs() {
@@ -770,11 +770,11 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
     int nextIndex;
     JobDocument jobs;
     {
-        lock_guard lock(g_appState.configsMutex);
-        configs = g_appState.configs;
-        selectedIndex = g_appState.currentConfigIndex;
+        auto configAccess = g_appState.configuration.Write();
+        configs = configAccess.ReadConfigs();
+        selectedIndex = configAccess.Selection();
         nextIndex = nextConfigId;
-        jobs = g_appState.jobs;
+        jobs = configAccess.Jobs();
     }
 	ConfigSaveResult result;
 	const filesystem::path target(filename);
@@ -792,42 +792,42 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
 	buffer << L"CurrentConfig=" << selectedIndex << L"\n";
 	buffer << L"NextConfigId=" << nextIndex << L"\n";
 	buffer << L"Language=" << utf8_to_wstring(g_CurrentLang) << L"\n";
-	buffer << L"CheckForUpdates=" << (g_CheckForUpdates ? 1 : 0) << L"\n";
-	buffer << L"ReceiveNotices=" << (g_ReceiveNotices ? 1 : 0) << L"\n";
-	buffer << L"NoticeLastSeen=" << utf8_to_wstring(g_NoticeLastSeenVersion) << L"\n";
-	buffer << L"EnableKnotLink=" << (g_enableKnotLink ? 1 : 0) << L"\n";
-	buffer << L"AutoStartKnotLinkServer=" << (g_autoStartKnotLinkServer ? 1 : 0) << L"\n";
-	buffer << L"RunOnStartup=" << (g_RunOnStartup ? 1 : 0) << L"\n";
-	buffer << L"IsSafeDelete=" << (isSafeDelete ? 1 : 0) << L"\n";
-	buffer << L"AutoBackupInterval=" << last_interval << L"\n";
-	buffer << L"StopAutoBackupOnExit=" << (g_StopAutoBackupOnExit ? 1 : 0) << L"\n";
-	buffer << L"SilentStartupToTray=" << (g_SilentStartupToTray ? 1 : 0) << L"\n";
-	buffer << L"AutoScanForWorlds=" << (g_AutoScanForWorlds ? 1 : 0) << L"\n";
-	buffer << L"DefaultBackupRootPath=" << g_defaultBackupRootPath << L"\n";
-	buffer << L"WindowWidth=" << g_windowWidth << L"\n";
-	buffer << L"WindowHeight=" << g_windowHeight << L"\n";
-	buffer << L"UIScale=" << g_uiScale << L"\n";
+	buffer << L"CheckForUpdates=" << (SettingsState().checkForUpdates ? 1 : 0) << L"\n";
+	buffer << L"ReceiveNotices=" << (SettingsState().receiveNotices ? 1 : 0) << L"\n";
+	buffer << L"NoticeLastSeen=" << utf8_to_wstring(UpdateState().noticeLastSeenVersion) << L"\n";
+	buffer << L"EnableKnotLink=" << (SettingsState().enableKnotLink ? 1 : 0) << L"\n";
+	buffer << L"AutoStartKnotLinkServer=" << (SettingsState().autoStartKnotLinkServer ? 1 : 0) << L"\n";
+	buffer << L"RunOnStartup=" << (SettingsState().runOnStartup ? 1 : 0) << L"\n";
+	buffer << L"IsSafeDelete=" << (SettingsState().safeDelete ? 1 : 0) << L"\n";
+	buffer << L"AutoBackupInterval=" << SettingsState().lastIntervalMinutes << L"\n";
+	buffer << L"StopAutoBackupOnExit=" << (SettingsState().stopAutoBackupOnExit ? 1 : 0) << L"\n";
+	buffer << L"SilentStartupToTray=" << (SettingsState().silentStartupToTray ? 1 : 0) << L"\n";
+	buffer << L"AutoScanForWorlds=" << (SettingsState().autoScanForWorlds ? 1 : 0) << L"\n";
+	buffer << L"DefaultBackupRootPath=" << SettingsState().defaultBackupRootPath << L"\n";
+	buffer << L"WindowWidth=" << WindowState().width << L"\n";
+	buffer << L"WindowHeight=" << WindowState().height << L"\n";
+	buffer << L"UIScale=" << AppearanceState().userScale << L"\n";
 	buffer << L"UIScaleMode=UserMultiplierV2\n";
-	buffer << L"AppearanceSchema=" << g_appearanceSchema << L"\n";
-	buffer << L"Theme=" << g_theme << L"\n";
-	buffer << L"ThemeFallback=" << g_lastValidTheme << L"\n";
-	buffer << L"SystemThemeLight=" << g_systemThemeLight << L"\n";
-	buffer << L"SystemThemeDark=" << g_systemThemeDark << L"\n";
-	buffer << L"Font=" << Fontss << L"\n";
-	buffer << L"HotkeyBackup=" << g_hotKeyBackupId << L"\n";
-	buffer << L"HotkeyRestore=" << g_hotKeyRestoreId << L"\n";
+	buffer << L"AppearanceSchema=" << AppearanceState().schema << L"\n";
+	buffer << L"Theme=" << AppearanceState().theme << L"\n";
+	buffer << L"ThemeFallback=" << AppearanceState().lastValidTheme << L"\n";
+	buffer << L"SystemThemeLight=" << AppearanceState().systemThemeLight << L"\n";
+	buffer << L"SystemThemeDark=" << AppearanceState().systemThemeDark << L"\n";
+	buffer << L"Font=" << AppearanceState().fontPath << L"\n";
+	buffer << L"HotkeyBackup=" << SettingsState().hotKeyBackupId << L"\n";
+	buffer << L"HotkeyRestore=" << SettingsState().hotKeyRestoreId << L"\n";
 	buffer << L"LogFileLevel="
-		<< utf8_to_wstring(minebackup::logging::ToString(g_logFileLevel)) << L"\n";
+		<< utf8_to_wstring(minebackup::logging::ToString(SettingsState().logFileLevel)) << L"\n";
 	buffer << L"LogViewLevel="
-		<< utf8_to_wstring(minebackup::logging::ToString(g_logViewLevel)) << L"\n";
-	buffer << L"LogViewAutoTail=" << (g_logViewAutoTail ? 1 : 0) << L"\n";
-	buffer << L"LogViewShowTime=" << (g_logViewShowTime ? 1 : 0) << L"\n";
-	buffer << L"LogViewShowCategory=" << (g_logViewShowCategory ? 1 : 0) << L"\n";
-	buffer << L"CoreValidationPending=" << (g_CoreValidationPending.load() ? 1 : 0) << L"\n";
-	buffer << L"CoreValidationPassed=" << (g_CoreValidationPassed.load() ? 1 : 0) << L"\n";
-	buffer << L"CloseAction=" << g_closeAction << L"\n";
-	buffer << L"RememberCloseAction=" << (g_rememberCloseAction ? 1 : 0) << L"\n";
-	for (const auto& item : restoreWhitelist) {
+		<< utf8_to_wstring(minebackup::logging::ToString(SettingsState().logViewLevel)) << L"\n";
+	buffer << L"LogViewAutoTail=" << (SettingsState().logViewAutoTail ? 1 : 0) << L"\n";
+	buffer << L"LogViewShowTime=" << (SettingsState().logViewShowTime ? 1 : 0) << L"\n";
+	buffer << L"LogViewShowCategory=" << (SettingsState().logViewShowCategory ? 1 : 0) << L"\n";
+	buffer << L"CoreValidationPending=" << (SettingsState().coreValidationPending.load() ? 1 : 0) << L"\n";
+	buffer << L"CoreValidationPassed=" << (SettingsState().coreValidationPassed.load() ? 1 : 0) << L"\n";
+	buffer << L"CloseAction=" << UiState().closeAction << L"\n";
+	buffer << L"RememberCloseAction=" << (UiState().rememberCloseAction ? 1 : 0) << L"\n";
+	for (const auto& item : SettingsState().restoreWhitelist) {
 		buffer << L"RestoreWhitelistItem=" << item << L"\n";
 	}
 	buffer << L"\n";
@@ -839,7 +839,7 @@ ConfigSaveResult SaveConfigsDetailed(const filesystem::path& filename) {
             return result;
         }
         const auto document = ProfileConfigRepository(target).Prepare(
-            configs, restoreWhitelist, true, wstring_to_utf8(buffer.str()));
+            configs, SettingsState().restoreWhitelist, true, wstring_to_utf8(buffer.str()));
         if (!document.success) {
             result.detail = L"Configuration identity or policy is invalid.";
             return result;

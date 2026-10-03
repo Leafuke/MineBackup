@@ -67,13 +67,13 @@ void TestFirstRunSelectionAndCommit(
 	std::filesystem::create_directories(appPaths.dataRoot);
 	SetCurrentAppPaths(appPaths);
 
-	g_appState.configs.clear();
-	g_appState.jobs = {};
-	g_appState.currentConfigIndex = 1;
+	g_appState.configuration.Write().Configs().clear();
+	g_appState.configuration.Write().Jobs() = {};
+	g_appState.configuration.Write().Selection() = 1;
 	RestoreNormalConfigIndexAllocator({1});
-	g_defaultBackupRootPath.clear();
-	g_CoreValidationPending.store(false);
-	g_CoreValidationPassed.store(false);
+	SettingsState().defaultBackupRootPath.clear();
+	SettingsState().coreValidationPending.store(false);
+	SettingsState().coreValidationPassed.store(false);
 
 	MinecraftDiscoveryResult discovery;
 	discovery.instances.push_back({
@@ -92,7 +92,7 @@ void TestFirstRunSelectionAndCommit(
 			session, BuildWizardInstanceKey(candidate.instance), true),
 			"each discovered instance should be selectable");
 	}
-	const auto& drafts = RebuildWizardDrafts(session, g_appState.configs);
+	const auto& drafts = RebuildWizardDrafts(session, g_appState.configuration.Write().Configs());
 	test.Expect(drafts.size() == 2 && drafts[0].name != drafts[1].name
 			&& drafts[0].backupPath != drafts[1].backupPath,
 		"selected instances should receive independent names and backup directories");
@@ -113,7 +113,7 @@ void TestFirstRunSelectionAndCommit(
 	// 使用真实写探针验证临时目录会被清理；仅替换外部工具解析以保持测试离线。
 	session.readiness = BatchReadinessService(
 		appPaths, std::move(readinessDependencies))
-		.CheckBatch(session.drafts, g_appState.configs);
+		.CheckBatch(session.drafts, g_appState.configuration.Write().Configs());
 	test.Expect(session.readiness.report.ready && resolutionCalls == 1,
 		"the selected batch should resolve 7-Zip once and pass readiness");
 	test.Expect(!std::filesystem::exists(appPaths.ConfigFile())
@@ -133,29 +133,29 @@ void TestFirstRunSelectionAndCommit(
 	test.Expect(committed.success && committed.configIndices.size() == 2,
 		"the ready batch should be committed atomically");
 	test.Expect(std::filesystem::exists(appPaths.ConfigFile())
-			&& g_appState.configs.size() == 2
-			&& g_appState.currentConfigIndex == committed.configIndices.front(),
+			&& g_appState.configuration.Write().Configs().size() == 2
+			&& g_appState.configuration.Write().Selection() == committed.configIndices.front(),
 		"one successful commit should persist both independent configurations");
-	test.Expect(g_CoreValidationPending.load() && !g_CoreValidationPassed.load(),
+	test.Expect(SettingsState().coreValidationPending.load() && !SettingsState().coreValidationPassed.load(),
 		"first-run commit should schedule visible core validation");
 
-	const Config& first = g_appState.configs.at(committed.configIndices[0]);
-	const Config& second = g_appState.configs.at(committed.configIndices[1]);
+	const Config& first = g_appState.configuration.Write().Configs().at(committed.configIndices[0]);
+	const Config& second = g_appState.configuration.Write().Configs().at(committed.configIndices[1]);
 	test.Expect(first.keepCount == 20 && second.keepCount == 20
 			&& first.configId != second.configId
 			&& first.backupPath != second.backupPath,
 		"created configurations should preserve recommended defaults and unique identity");
 
 	// 核心验证失败只更新状态；已提交的用户配置必须继续可用并可重新验证。
-	g_CoreValidationPending.store(false);
-	g_CoreValidationPassed.store(false);
+	SettingsState().coreValidationPending.store(false);
+	SettingsState().coreValidationPassed.store(false);
 	test.Expect(SaveConfigs(), "a core-validation failure state should remain persistable");
-	g_appState.configs.clear();
+	g_appState.configuration.Write().Configs().clear();
 	LoadConfigs();
-	test.Expect(g_appState.configs.size() == 2
-			&& !g_CoreValidationPending.load() && !g_CoreValidationPassed.load(),
+	test.Expect(g_appState.configuration.Write().Configs().size() == 2
+			&& !SettingsState().coreValidationPending.load() && !SettingsState().coreValidationPassed.load(),
 		"reloading after validation failure must retain every committed configuration");
-	for (const auto& [index, config] : g_appState.configs) {
+	for (const auto& [index, config] : g_appState.configuration.Write().Configs()) {
 		(void)index;
 		test.Expect(config.keepCount == 20 && !config.configId.empty(),
 			"round-tripped onboarding configurations should retain their defaults and identity");
@@ -173,13 +173,13 @@ void TestCustomFolderWithDiscoveredCandidate(
 	std::filesystem::create_directories(appPaths.dataRoot);
 	SetCurrentAppPaths(appPaths);
 
-	g_appState.configs.clear();
-	g_appState.jobs = {};
-	g_appState.currentConfigIndex = 1;
+	g_appState.configuration.Write().Configs().clear();
+	g_appState.configuration.Write().Jobs() = {};
+	g_appState.configuration.Write().Selection() = 1;
 	RestoreNormalConfigIndexAllocator({1});
-	g_defaultBackupRootPath.clear();
-	g_CoreValidationPending.store(false);
-	g_CoreValidationPassed.store(false);
+	SettingsState().defaultBackupRootPath.clear();
+	SettingsState().coreValidationPending.store(false);
+	SettingsState().coreValidationPassed.store(false);
 
 	MinecraftDiscoveryResult discovery;
 	discovery.instances.push_back({
@@ -204,7 +204,7 @@ void TestCustomFolderWithDiscoveredCandidate(
 	test.Expect(customDraft.has_value(),
 		"a regular folder below the drive root should yield a custom draft");
 	session.drafts = ResolveUniqueConfigDrafts(
-		{*customDraft}, session.defaultBackupRoot, g_appState.configs);
+		{*customDraft}, session.defaultBackupRoot, g_appState.configuration.Write().Configs());
 	test.Expect(session.drafts.size() == 1,
 		"the custom path should produce exactly one draft");
 
@@ -217,7 +217,7 @@ void TestCustomFolderWithDiscoveredCandidate(
 		return resolution;
 	};
 	session.readiness = BatchReadinessService(appPaths, std::move(readinessDependencies))
-		.CheckBatch(session.drafts, g_appState.configs);
+		.CheckBatch(session.drafts, g_appState.configuration.Write().Configs());
 	test.Expect(session.readiness.report.ready,
 		"the custom-folder draft should pass full readiness without level.dat");
 
@@ -231,27 +231,27 @@ void TestCustomFolderWithDiscoveredCandidate(
 	const auto committed = ConfigBatchCreationService(
 		std::move(commitDependencies)).Commit(request);
 	test.Expect(committed.success && committed.configIndices.size() == 1
-			&& g_appState.configs.size() == 1,
+			&& g_appState.configuration.Write().Configs().size() == 1,
 		"the custom path should create exactly one configuration");
-	test.Expect(g_appState.configs.size() == 1,
+	test.Expect(g_appState.configuration.Write().Configs().size() == 1,
 		"the discovered Minecraft candidate must not be configured implicitly");
 
-	const Config& custom = g_appState.configs.at(committed.configIndices.front());
+	const Config& custom = g_appState.configuration.Write().Configs().at(committed.configIndices.front());
 	test.Expect(custom.name == "ProjectX"
 			&& custom.saveRoot == customFolder.parent_path().wstring()
 			&& custom.worlds.size() == 1
 			&& custom.worlds.front().first == customFolder.filename().wstring(),
 		"the custom config should keep the folder's parent as save root with a single world");
-	test.Expect(g_defaultBackupRootPath == backupRoot.wstring(),
+	test.Expect(SettingsState().defaultBackupRootPath == backupRoot.wstring(),
 		"the custom onboarding commit should persist the chosen default backup root");
 
 	// Save -> Load round trip：重启后配置保持正确。
-	g_appState.configs.clear();
+	g_appState.configuration.Write().Configs().clear();
 	LoadConfigs();
-	test.Expect(g_appState.configs.size() == 1
-			&& g_appState.configs.begin()->second.saveRoot
+	test.Expect(g_appState.configuration.Write().Configs().size() == 1
+			&& g_appState.configuration.Write().Configs().begin()->second.saveRoot
 				== customFolder.parent_path().wstring()
-			&& !g_appState.configs.begin()->second.configId.empty(),
+			&& !g_appState.configuration.Write().Configs().begin()->second.configId.empty(),
 		"the custom config should round-trip through Save/Load with identity");
 }
 

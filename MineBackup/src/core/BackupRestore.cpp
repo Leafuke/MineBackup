@@ -150,7 +150,7 @@ bool RunSharedManagedRestore(
 	request.archive = backupFile;
 	request.mode = mode;
 	request.restorePreserve = restoreWhitelistOverride
-		? *restoreWhitelistOverride : restoreWhitelist;
+		? *restoreWhitelistOverride : SettingsState().restoreWhitelist;
 	RestoreServiceDependencies dependencies = DesktopVerificationDependencies();
     if (preparedPlan) dependencies.repairArchiveChain = {};
 	dependencies.isWorldOccupied = IsWorldOccupied;
@@ -221,7 +221,7 @@ bool PrepareRestoreSafety(const Config& config,const wstring& worldName,optional
 }
 void FinishRestoreSafety(const optional<RestoreSafetyBackup>& safety) {
  if(!safety || !safety->result.historyEntry || TaskCoordinator::CurrentStopToken().stop_requested()) return;
- map<int,Config> configs; {lock_guard<mutex> lock(g_appState.configsMutex);configs=g_appState.configs;}
+ map<int,Config> configs; {auto configAccess = g_appState.configuration.Write();configs=configAccess.ReadConfigs();}
  RuntimeRetentionService retention(GetHistoryRepository(),GetAppPaths().HistoryFile(),configs,GetAppPaths());
  retention.Enforce(safety->request,*safety->result.historyEntry,TaskCoordinator::CurrentStopToken());
 }
@@ -315,7 +315,7 @@ bool DoRestore2(const Config& config, const wstring& worldName, const filesystem
 	if (restoreSucceeded) {
 		CleanupInternalRestoreMarkers(destinationFolder);
 		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
-			? BuildEffectiveRestoreWhitelist(restoreWhitelist) : vector<wstring>{};
+			? BuildEffectiveRestoreWhitelist(SettingsState().restoreWhitelist) : vector<wstring>{};
 		const auto commit = RestoreWorkspace::Commit(
 			restoreWorkspace, effectiveRestoreWhitelist, workspaceError,
 			{.stopToken = TaskCoordinator::CurrentStopToken()});
@@ -485,7 +485,7 @@ bool DoRestore(
 		CleanupInternalRestoreMarkers(destinationFolder);
 		const vector<wstring> effectiveRestoreWhitelist = restoreMethod == 0
 			? BuildEffectiveRestoreWhitelist(
-				restoreWhitelistOverride ? *restoreWhitelistOverride : restoreWhitelist)
+				restoreWhitelistOverride ? *restoreWhitelistOverride : SettingsState().restoreWhitelist)
 			: vector<wstring>{};
 		const auto commit = RestoreWorkspace::Commit(
 			restoreWorkspace, effectiveRestoreWhitelist, workspaceError,

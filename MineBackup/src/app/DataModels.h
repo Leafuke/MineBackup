@@ -30,6 +30,7 @@ constexpr bool IsValid(int mode, int smartCount) { return IsValidMode(mode) && I
 
 // 结构体们
 struct Config {
+    bool operator==(const Config&) const = default;
 	std::wstring saveRoot;
 	std::vector<std::pair<std::wstring, std::wstring>> worlds; // {name, desc}
 	std::wstring backupPath;

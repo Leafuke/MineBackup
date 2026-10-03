@@ -15,12 +15,12 @@
 using namespace std;
 
 bool StartKnotLinkInstallerDownload() {
-	if (g_KnotLinkInstallRunning) {
+	if (ExternalToolState().knotLinkInstallRunning) {
 		return false;
 	}
-	g_KnotLinkInstallRunning = true;
-	g_KnotLinkInstallSucceeded = false;
-	g_KnotLinkInstallMessage =
+	ExternalToolState().knotLinkInstallRunning = true;
+	ExternalToolState().knotLinkInstallSucceeded = false;
+	ExternalToolState().knotLinkInstallMessage =
 		utf8_to_wstring(L("KNOTLINK_INSTALL_DOWNLOADING"));
 	const auto backend = CreatePlatformNetworkBackend();
 	const auto paths = GetAppPaths();
@@ -39,8 +39,8 @@ bool StartKnotLinkInstallerDownload() {
 			TaskCoordinator::Instance().PostEvent(std::move(event));
 		});
 	if (!submitted) {
-		g_KnotLinkInstallRunning = false;
-		g_KnotLinkInstallMessage =
+		ExternalToolState().knotLinkInstallRunning = false;
+		ExternalToolState().knotLinkInstallMessage =
 			utf8_to_wstring(L("KNOTLINK_INSTALL_BUSY"));
 	}
 	return submitted;

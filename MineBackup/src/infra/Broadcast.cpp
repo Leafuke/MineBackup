@@ -21,7 +21,7 @@ void BroadcastEvent(
 bool InitKnotLink() {
     const auto serverStatus =
         minebackup::knotlink::GetKnotLinkServerManager().EnsureReady(
-            g_enableKnotLink, g_autoStartKnotLinkServer);
+            SettingsState().enableKnotLink, SettingsState().autoStartKnotLinkServer);
     if (serverStatus.state !=
         minebackup::knotlink::KnotLinkServerState::Ready) {
         MB_LOG_ERROR(minebackup::logging::LogCategory::KnotLink,
@@ -48,7 +48,7 @@ bool PerformModHandshake(
     mod.modVersion.clear();
 
     minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields{
-        {"version", CURRENT_VERSION},
+        {"version", ApplicationVersion()},
         {"action", action},
         {"world", worldName},
         {"min_mod_version", KnotLinkModInfo::MIN_MOD_VERSION}};

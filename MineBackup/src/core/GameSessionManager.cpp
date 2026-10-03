@@ -144,7 +144,7 @@ void GameSessionWatcherThread(stop_token stopToken) {
             TASK_INFO(L("LOG_GAME_SESSION_ENDED"), wstring_to_utf8(world.name).c_str());
             BroadcastEvent("event=game_session_end;config=" + to_string(world.configIndex)
                 + ";world=" + wstring_to_utf8(world.name));
-            if (!g_StopAutoBackupOnExit) continue;
+            if (!SettingsState().stopAutoBackupOnExit) continue;
             vector<wstring> stopNames;
             {
                 lock_guard lock(g_appState.task_mutex);

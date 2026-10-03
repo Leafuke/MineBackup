@@ -80,9 +80,9 @@ namespace CloudSyncInternal {
 	}
 
 	void UpdateConfigCloudLastResult(int configIndex, const CloudCommandResult& result) {
-		lock_guard<mutex> lock(g_appState.configsMutex);
-		auto it = g_appState.configs.find(configIndex);
-		if (it == g_appState.configs.end()) return;
+		auto configAccess = g_appState.configuration.Write();
+		auto it = configAccess.Configs().find(configIndex);
+		if (it == configAccess.Configs().end()) return;
 
 		it->second.cloudLastRunUtc = FolderRewindFormat::MakeUtcTimestampString();
 		it->second.cloudLastExitCode = result.exitCode;
@@ -239,9 +239,9 @@ namespace CloudSyncInternal {
 		}
 
 		if (parsedConfigIndex >= 0) {
-			lock_guard<mutex> lock(g_appState.configsMutex);
-			auto it = g_appState.configs.find(parsedConfigIndex);
-			if (it != g_appState.configs.end()) {
+			auto configAccess = g_appState.configuration.Write();
+			auto it = configAccess.ReadConfigs().find(parsedConfigIndex);
+			if (it != configAccess.ReadConfigs().end()) {
 				outConfigId = it->second.configId;
 			}
 		}
@@ -332,9 +332,9 @@ namespace CloudSyncInternal {
 	}
 
 	bool TryResolveKnownConfigId(const HistoryEntry& entry, wstring& outConfigId) {
-		lock_guard<mutex> lock(g_appState.configsMutex);
+		auto configAccess = g_appState.configuration.Write();
 		const Config* matchedConfig = nullptr;
-		for (const auto& pair : g_appState.configs) {
+		for (const auto& pair : configAccess.ReadConfigs()) {
 			if (!BelongsToConfiguration(pair.second, entry)) {
 				continue;
 			}
@@ -872,8 +872,8 @@ bool HasLocalBackupOrMetadata(const Config& config, const HistoryEntry& entry) {
 
 int ResolveConfigIndexForCloud(const Config& config) {
 	{
-		lock_guard<mutex> lock(g_appState.configsMutex);
-		for (const auto& pair : g_appState.configs) {
+		auto configAccess = g_appState.configuration.Write();
+		for (const auto& pair : configAccess.ReadConfigs()) {
 			const Config& candidate = pair.second;
 			if (candidate.backupPath == config.backupPath
 				&& candidate.saveRoot == config.saveRoot
@@ -881,7 +881,7 @@ int ResolveConfigIndexForCloud(const Config& config) {
 				return pair.first;
 			}
 		}
-		for (const auto& pair : g_appState.configs) {
+		for (const auto& pair : configAccess.ReadConfigs()) {
 			const Config& candidate = pair.second;
 			if (candidate.backupPath == config.backupPath
 				&& candidate.saveRoot == config.saveRoot) {

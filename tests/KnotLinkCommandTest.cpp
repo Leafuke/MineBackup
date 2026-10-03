@@ -51,12 +51,12 @@ Config MakeConfig() {
 }
 
 void TestQueriesAndTargetResolution(KnotLinkService& service) {
-    g_appState.configs.clear();
-    g_appState.configs.emplace(7, MakeConfig());
+    g_appState.configuration.Write().Configs().clear();
+    g_appState.configuration.Write().Configs().emplace(7, MakeConfig());
     Config secondConfig = MakeConfig();
     secondConfig.configId = L"second-config-id";
     secondConfig.name = "Second";
-    g_appState.configs.emplace(8, std::move(secondConfig));
+    g_appState.configuration.Write().Configs().emplace(8, std::move(secondConfig));
 
     const std::string listConfigs = service.HandlePayload(
         "cmd=LIST_CONFIGS");
@@ -102,7 +102,7 @@ void TestQueriesAndTargetResolution(KnotLinkService& service) {
     std::ofstream(backupDirectory / "[Full] World One.7z").put('x');
     std::ofstream(backupDirectory / "[Smart] World One.zip").put('x');
     std::ofstream(backupDirectory / "ignore.txt").put('x');
-    g_appState.configs.at(7).backupPath = backupRoot.wstring();
+    g_appState.configuration.Write().Configs().at(7).backupPath = backupRoot.wstring();
     const auto backups = ParseResponse(service.HandlePayload(
         "cmd=LIST_BACKUPS;config_id=stable-config-id;folder=0"));
     Check(backups.values.at("data") ==
@@ -219,7 +219,7 @@ int main() {
     TestMetadataAndUnsupportedParameters(service);
     TestLegacyCommandsHaveNoDispatch(service);
     TestStrictModVersion(service);
-    g_appState.configs.clear();
+    g_appState.configuration.Write().Configs().clear();
 
     if (failures == 0) {
         std::cout << "KnotLink command tests passed\n";

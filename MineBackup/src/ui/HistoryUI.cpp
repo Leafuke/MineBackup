@@ -87,7 +87,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 	historyController.Open(
 		requestedConfigIndex,
 		initialWorld,
-		g_worldToFocusInHistory);
+		UiState().worldToFocusInHistory);
 	auto& lockedConfigIndex = historyController.lockedConfigIndex;
 	auto& selectedKey = historyController.selectedKey;
 	auto& restoreKey = historyController.restoreKey;
@@ -110,25 +110,25 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
 		historyNeedsInitialViewport = false;
 	}
-	const bool visible = ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &showHistoryWindow,
+	const bool visible = ImGui::Begin(L("HISTORY_WINDOW_TITLE"), &UiState().showHistoryWindow,
 		ImGuiWindowFlags_NoDocking);
-	historyController.wasOpen = showHistoryWindow;
+	historyController.wasOpen = UiState().showHistoryWindow;
 	if (!visible) {
 		ImGui::End();
-		if (!showHistoryWindow) {
+		if (!UiState().showHistoryWindow) {
 			historyNeedsInitialViewport = true;
 			historyController.Close();
 		}
 		return;
 	}
 
-	const auto configIt = UiConfigs().find(lockedConfigIndex);
-	if (configIt == UiConfigs().end()) {
+	const auto configIt = UiConfigView().find(lockedConfigIndex);
+	if (configIt == UiConfigView().end()) {
 		ImGui::TextWrapped("%s", L("HISTORY_CONFIG_UNAVAILABLE"));
 		ImGui::End();
 		return;
 	}
-	Config& config = configIt->second;
+	const Config& config = configIt->second;
 	const auto entriesView = GetHistoryEntriesViewForConfig(lockedConfigIndex);
 	const auto& entries = *entriesView;
 	// 文件状态最多每秒扫描一次；筛选、详情和弹窗复用轻量索引行。
@@ -597,7 +597,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
 		frameViews, entries);
 
 	ImGui::End();
-	if (!showHistoryWindow) {
+	if (!UiState().showHistoryWindow) {
 		historyNeedsInitialViewport = true;
 		historyController.Close();
 	}
