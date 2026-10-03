@@ -7,6 +7,7 @@
 
 #include <fstream>
 #include <chrono>
+#include <cerrno>
 #include <stdexcept>
 
 using namespace std;
@@ -181,19 +182,60 @@ void TestExcludedScanPaths(TestContext& test, const filesystem::path& root) {
 	}
 	filesystem::remove_all(source / "cache");
 	const string invalidName = string("invalid-") + char(0xff) + ".dat";
-	WriteFile(source / filesystem::path(invalidName), "invalid UTF-8 filename");
-	const auto invalidUtf8 = detector.Scan(source, metadata, backups);
-	test.Expect(invalidUtf8.status == BackupScanStatus::ScanFailed
-		&& !invalidUtf8.failureDetail.empty()
-		&& invalidUtf8.failureDetail.find(char(0xff)) == string::npos,
-		"scan failure details must sanitize invalid UTF-8 path bytes before JSON rendering");
-	const auto rejectedRule = detector.Scan(source, metadata, backups,
+	const auto invalidPath = source / filesystem::path(invalidName);
+	bool fixtureWritten = false;
+	int fixtureErrno = 0;
+	{
+		// APFS can reject byte sequences that Linux filesystems preserve. Check
+		// the actual write instead of assuming the invalid-byte fixture exists.
+		errno = 0;
+		ofstream output(invalidPath, ios::binary | ios::trunc);
+		if (output.is_open()) {
+			output << "invalid UTF-8 filename";
+			output.close();
+			fixtureWritten = output.good();
+		}
+		fixtureErrno = errno;
+	}
+	const bool rejectedEncoding = fixtureErrno == EILSEQ || fixtureErrno == EINVAL;
+	test.Expect(fixtureWritten || rejectedEncoding,
+		"invalid-byte fixture creation must succeed or explicitly reject the filename encoding");
+	bool enumeratedExactBytes = false;
+	error_code enumerationError;
+	filesystem::directory_iterator names(source, enumerationError), namesEnd;
+	while (!enumerationError && names != namesEnd) {
+		if (names->path().filename().native() == invalidName) enumeratedExactBytes = true;
+		names.increment(enumerationError);
+	}
+	test.Expect(!enumerationError, "invalid-byte fixture capability probe must enumerate its directory");
+	if (fixtureWritten && enumeratedExactBytes) {
+		const auto invalidUtf8 = detector.Scan(source, metadata, backups);
+		test.Expect(invalidUtf8.status == BackupScanStatus::ScanFailed
+			&& !invalidUtf8.failureDetail.empty()
+			&& invalidUtf8.failureDetail.find(char(0xff)) == string::npos,
+			"scan failure details must sanitize invalid UTF-8 path bytes before JSON rendering");
+	}
+	else if (!enumerationError && (rejectedEncoding || fixtureWritten)) {
+		cout << "[SKIP] invalid UTF-8 filename scan fixture: filesystem "
+			<< (fixtureWritten ? "does not preserve the requested raw filename bytes" : "rejects the filename encoding")
+			<< " (write errno " << fixtureErrno << ")\n";
+	}
+	// No invalid filename has to exist for this deterministic diagnostic test:
+	// the missing child guarantees a failure even on byte-preserving filesystems.
+	const auto missingInvalidPath = detector.Scan(invalidPath / "missing-child", metadata, backups);
+	test.Expect(missingInvalidPath.status == BackupScanStatus::ScanFailed
+		&& missingInvalidPath.failureDetail.find("Source directory is unavailable") != string::npos
+		&& missingInvalidPath.failureDetail.find(char(0xff)) == string::npos,
+		"missing-source diagnostics must sanitize invalid path bytes without a filesystem fixture");
+#endif
+	const auto ruleSource = root / "excluded-rule-exception";
+	WriteFile(ruleSource / "level.dat", "valid filename for deterministic callback coverage");
+	const auto rejectedRule = detector.Scan(ruleSource, metadata, backups,
 		[](const filesystem::path&) -> bool { throw runtime_error("invalid path encoding"); });
 	test.Expect(rejectedRule.status == BackupScanStatus::ScanFailed
 		&& rejectedRule.failureDetail.find("Could not evaluate backup exclusions") != string::npos
 		&& rejectedRule.failureDetail.find(char(0xff)) == string::npos,
 		"exclusion evaluation failures must return safe diagnostics rather than escape the scanner");
-#endif
 }
 
 void TestArchiveRunner(TestContext& test) {

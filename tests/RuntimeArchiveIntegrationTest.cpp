@@ -355,6 +355,31 @@ void TestExcludedLinuxPaths(ArchiveIntegrationTest& test, Fixture& fixture, bool
 }
 #endif
 
+fs::path CreateFixtureRoot(const fs::path& requestedRoot) {
+#ifdef _WIN32
+    // A checkout-relative root plus archive GUIDs exceeded MAX_PATH in Windows
+    // CI. Exercise the same workflows under a compact system-temp root; this
+    // test does not assert production support for extended-length Win32 paths.
+    const auto base = fs::canonical(fs::temp_directory_path());
+    // Leave room for scenario, staging GUID and generated archive names. Fail
+    // setup explicitly on unusually long TEMP/TMP roots rather than skipping
+    // any archive assertions or reporting misleading backup failures.
+    constexpr std::size_t maximumRootLength = 64;
+    if (base.native().size() + 1 + 16 > maximumRootLength)
+        throw std::runtime_error("Windows archive integration requires a shorter TEMP/TMP directory");
+    for (unsigned attempt = 0; attempt < 16; ++attempt) {
+        const auto id = FolderRewindFormat::GenerateGuidString();
+        const auto root = base / (L"mbi-" + id.substr(0, 8) + id.substr(9, 4));
+        std::error_code error;
+        if (fs::create_directory(root, error)) return root;
+        if (error) throw fs::filesystem_error("Could not create archive integration fixture root", root, error);
+    }
+    throw std::runtime_error("Could not allocate a unique archive integration fixture root");
+#else
+    return requestedRoot / (L"runtime-archive-" + FolderRewindFormat::GenerateGuidString());
+#endif
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -363,8 +388,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     const auto sevenZip = fs::absolute(argv[1]);
-    // Only this unique child is removed; never remove the caller-supplied root.
-    const auto root = fs::absolute(argv[2]) / (L"runtime-archive-" + FolderRewindFormat::GenerateGuidString());
+    // Only our unique fixture child is removed, never either parent directory.
+    const auto requestedRoot = fs::absolute(argv[2]);
+    fs::path root;
     ArchiveIntegrationTest test;
     struct Case { const char* name; const char* world; const char* saves; const char* backups; };
     const std::vector<Case> cases = {
@@ -376,6 +402,10 @@ int main(int argc, char** argv) {
         {"spaces", "world name", "server folder", "backup folder"}
     };
     try {
+        root = CreateFixtureRoot(requestedRoot);
+        std::cout << "[ENV] 7-Zip executable: " << sevenZip << '\n';
+        std::cout << "[ENV] temporary fixture root: " << root << '\n';
+        std::cout << "[ENV] requested work root: " << requestedRoot << '\n';
         for (const auto& item : cases) {
             std::cout << "[SCENARIO] " << item.name << '\n';
             Fixture fixture(root / item.name, sevenZip, item.world, item.saves, item.backups);
@@ -396,11 +426,11 @@ int main(int argc, char** argv) {
         test.Expect(false, std::string("integration exception: ") + exception.what());
     }
     std::cout << test.checks << " assertions; " << test.failures << " failures\n";
-    if (test.failures == 0) {
+    if (test.failures == 0 && !root.empty()) {
         std::error_code ignored;
         fs::remove_all(root, ignored);
     }
-    else {
+    else if (!root.empty()) {
         std::cerr << "Fixtures retained at " << root << '\n';
     }
     return test.failures ? 1 : 0;

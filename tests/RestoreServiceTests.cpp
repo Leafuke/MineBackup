@@ -471,8 +471,19 @@ void RunRestoreServiceTests(
         filesystem::permissions(current/"level.dat",filesystem::perms::owner_all,filesystem::perm_options::add);
         filesystem::remove(current/"link");
         Write(current/"FTBQUESTS"/"different.snbt","collision");
-        test.Expect(!RestorePreservedPaths::Apply(current,stage,{L"ftbquests/"},error), "Case-colliding directories are rejected before preservation");
-        filesystem::remove_all(current/"FTBQUESTS");
+        error_code identityError;
+        const bool sameDirectory = filesystem::equivalent(current/"FTBQUESTS", current/"ftbquests", identityError);
+        test.Expect(!identityError, "Case fixture directory identities can be inspected");
+        if (!identityError && !sameDirectory) {
+            test.Expect(!RestorePreservedPaths::Apply(current,stage,{L"ftbquests/"},error),
+                "Distinct case-colliding directories are rejected before preservation");
+            filesystem::remove_all(current/"FTBQUESTS");
+        } else if (!identityError) {
+            test.Expect(RestorePreservedPaths::Apply(current,stage,{L"ftbquests/"},error)
+                && Read(stage/"ftbquests"/"different.snbt")=="collision",
+                "Case-insensitive directory aliases remain one valid preservation subtree");
+            filesystem::remove(current/"ftbquests"/"different.snbt");
+        }
 #endif
         const auto nested=area/"nested";
         Write(nested/"custom-world"/"level.dat","world"); Write(nested/"custom-world"/"ftbquests"/"a","nested-current");
