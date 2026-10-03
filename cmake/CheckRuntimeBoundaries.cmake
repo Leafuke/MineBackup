@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.22)
 if(NOT DEFINED MINEBACKUP_REPOSITORY_ROOT)
     message(FATAL_ERROR "MINEBACKUP_REPOSITORY_ROOT is required")
 endif()
