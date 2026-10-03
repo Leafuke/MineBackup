@@ -1,217 +1,294 @@
-# MineBackup Runtime Separation 源码审计
+# MineBackup 当前源码分层审计
 
-本清单记录 ADR 0006 落地前 `MineBackup/src` 下全部 C++、Objective-C++ 源文件和头文件的目标归属。目标层含义：
+本清单更新为五层目录落地后的归属。历史分层决策见 ADR 0006；现有 target 名称继续保留。
 
-- `data_core`：纯模型、格式、算法和可复用基础设施。
-- `runtime`：配置、历史、备份、任务及无桌面集成。
-- `desktop`：Application、GUI、托盘、弹框和桌面生命周期。
-- `split`：必须在本里程碑拆出 runtime 与 desktop 两部分。
-- `legacy-desktop`：只为旧数据或旧系统集成保留，CLI 不链接。
-- `delete/legacy`：删除未使用实现，只保留明确需要的兼容能力。
+- `domain`：纯模型、操作结果与压缩/版本策略，不依赖其他项目层。
+- `infra`：文件、进程、编码、网络接口、持久化格式和底层平台能力，只依赖 domain。
+- `runtime`：配置档事务、备份/恢复/保留、调度协调和发现用例，依赖 infra/domain。
+- `desktop`：GUI 生命周期、状态、界面、平台集成和旧版桌面适配。
+- `cli`：命令、渲染与代理入口，依赖 runtime；不引入桌面依赖。
 
-## 依赖禁令
+`minebackup_data_core` 编译 domain/infra，`minebackup_runtime` 编译 runtime。
+原生网络后端按桌面 feature 编译，但源码属于无 GUI 依赖的 infra；headless 继续禁用它们。
+v1.15 reader/adapter 保持原有开关与行为，本轮不修改云端旧元数据迁移。
 
-`minebackup_runtime` 的传递闭包不得包含 `Globals.h`、`AppState.h`、`DesktopServices.h`、`imgui.h`、GLFW、OpenGL、X11、Wayland、GTK、GIO 或 AppIndicator。GUI 允许依赖 runtime；runtime 不允许反向依赖 GUI。
+边界检查覆盖源文件清单及全部头文件的传递 include，底层独立链接目标强制纳入所有
+底层对象，避免应用最终链接偶然补齐反向符号。各 target 独立声明 include 与头文件集合。
 
-CI 通过 `check_runtime_boundaries` 检查 runtime 源文件与公共头的禁止 include，并在 CLI-only 构建后审计最终二进制的动态依赖。新增 runtime 文件时必须同步加入 `MINEBACKUP_RUNTIME_SOURCES` 和本清单；新增无对应 `.cpp` 的公共头时还必须加入 `cmake/CheckRuntimeBoundaries.cmake`。
-
-## 逐文件清单
-
-| 文件 | 目标 | 动作 |
-|---|---|---|
-| `MineBackup/src/app/AppearanceRuntime.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/AppearanceRuntime.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/Application.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/Application.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/ApplicationActions.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/ApplicationActions.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/ApplicationEventRouter.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/ApplicationEventRouter.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/AppState.cpp` | desktop | 保留为 GUI 兼容镜像，移除 runtime 访问 |
-| `MineBackup/src/app/AppState.h` | desktop | 保留为 GUI 兼容镜像，移除 runtime 访问 |
-| `MineBackup/src/app/ConfigSelection.cpp` | runtime | 迁移为稳定 ID/路径解析 |
-| `MineBackup/src/app/ConfigSelection.h` | runtime | 迁移为稳定 ID/路径解析 |
-| `MineBackup/src/app/DataModels.h` | data_core | 拆分为纯领域 DTO，移除 PlatformCompat |
-| `MineBackup/src/app/DesktopUiLifecycle.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/DesktopUiLifecycle.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/DesktopUiSession.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/DesktopUiSession.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/Globals.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/Globals.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/ImGuiRuntime.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/ImGuiRuntime.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/LaunchOptions.cpp` | desktop | 保留 GUI 参数；CLI 使用独立解析器 |
-| `MineBackup/src/app/LaunchOptions.h` | desktop | 保留 GUI 参数；CLI 使用独立解析器 |
-| `MineBackup/src/app/legacy/LegacyServiceCleanup.cpp` | legacy-desktop | 仅检查和卸载已验证的旧 Windows Service |
-| `MineBackup/src/app/legacy/LegacyServiceCleanup.h` | legacy-desktop | 不向 runtime 暴露服务控制 API |
-| `MineBackup/src/app/MainUI.h` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/app/MineBackup.cpp` | desktop | 保留桌面生命周期或 UI 状态 |
-| `MineBackup/src/cli/CliMain.cpp` | runtime | CLI console 入口；不进入 GUI MSBuild 工程 |
-| `MineBackup/src/cli/CliApplication.cpp` | runtime | CLI 参数、锁、查询命令、doctor 与统一输出编排 |
-| `MineBackup/src/cli/CliApplication.h` | runtime | CLI 可测试入口；不进入 GUI MSBuild 工程 |
-| `MineBackup/src/cli/CliSignalHandler.cpp` | runtime | CLI 信号转 stop token；第二次信号立即退出 |
-| `MineBackup/src/cli/CliSignalHandler.h` | runtime | CLI-only 信号生命周期，不进入 GUI 工程 |
-| `MineBackup/src/cli/CliToolBootstrap.cpp` | runtime | 从 CLI 独立资源安装受校验的 Windows 7-Zip |
-| `MineBackup/src/cli/CliToolBootstrap.h` | runtime | CLI-only 工具预检入口，不进入 GUI 工程 |
-| `MineBackup/src/core/ArchiveRunner.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/ArchiveRunner.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/BackupAuxiliary.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/BackupChangeDetector.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/BackupChangeDetector.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/BackupManager.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/BackupManagerDesktop.cpp` | desktop | 将 GUI 全局状态、KnotLink 广播与异步云上传映射到 BackupService |
-| `MineBackup/src/core/BackupManager.h` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/BackupManagerInternal.h` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/BackupService.h` | runtime | 显式备份请求、端口依赖与可取消运行时服务 |
-| `MineBackup/src/core/BackupRestore.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/BackupRetention.cpp` | desktop | 保留 GUI 安全合并删除与旧设置映射；CLI 使用 RuntimeRetentionService |
-| `MineBackup/src/core/CloudHistoryAnalysis.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/CloudHistoryAnalysis.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/CloudHistorySync.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/CloudPortableConfig.cpp` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/CloudSyncInternal.h` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/CloudSyncService.cpp` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/CloudSyncService.h` | split | 抽运行时引擎/端口，呈现与未纳入 CLI 的功能留 desktop |
-| `MineBackup/src/core/CoreValidation.cpp` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/CoreValidation.h` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/ExternalToolManager.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/ExternalToolManager.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/FolderRewindFormat.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/FolderRewindFormat.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/FolderRewindHistoryStore.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/FolderRewindHistoryStore.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/FolderRewindMetadataStore.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/FolderRewindMetadataStore.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/GameSessionManager.cpp` | desktop | 保留桌面 watcher，调用 runtime 服务 |
-| `MineBackup/src/core/GameSessionManager.h` | desktop | 保留桌面 watcher，调用 runtime 服务 |
-| `MineBackup/src/core/HistoryManager.cpp` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/HistoryManager.h` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/HistoryRepository.cpp` | runtime | 线程安全历史存储与不可变快照 |
-| `MineBackup/src/core/HistoryRepository.h` | runtime | 线程安全历史存储与不可变快照 |
-| `MineBackup/src/core/LegacyMineBackup15Reader.cpp` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
-| `MineBackup/src/core/LegacyMineBackup15Reader.h` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
-| `MineBackup/src/core/LegacyServicePolicy.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/LegacyServicePolicy.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/MigrationCoordinator.cpp` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/MigrationCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/OperationResult.cpp` | runtime | 固定操作码、聚合规则与进程退出码映射 |
-| `MineBackup/src/core/OperationResult.h` | runtime | 纯运行时结果、诊断和任务结果契约 |
-| `MineBackup/src/core/ProfileConfigCatalog.cpp` | runtime | 只读安全解析普通服务器配置 |
-| `MineBackup/src/core/ProfileConfigCatalog.h` | runtime | 稳定 ID 配置目录与加载诊断契约 |
-| `MineBackup/src/core/ProfileRuntime.cpp` | runtime | 长期持有配置、历史、Job、备份与还原服务的 profile 生命周期 |
-| `MineBackup/src/core/ProfileRuntime.h` | runtime | 一次性 CLI 与常驻代理共用的运行时边界 |
-| `MineBackup/src/core/RuntimeIntegration.cpp` | runtime | 云后处理、热备份桥接与事件输出的无桌面适配器 |
-| `MineBackup/src/core/RuntimeIntegration.h` | runtime | 定义集成端口及 NetworkDisabled/no-op 实现 |
-| `MineBackup/src/core/RuntimeCloudPostHook.cpp` | runtime | 同步上传归档、元数据、历史与 manifest，并提交云状态 |
-| `MineBackup/src/core/RuntimeCloudPostHook.h` | runtime | 无桌面 rclone 云后处理适配器 |
-| `MineBackup/src/core/RuntimeFileLock.cpp` | runtime | 无桌面依赖的 Windows/POSIX 世界锁探测 |
-| `MineBackup/src/core/RuntimeFileLock.h` | runtime | 运行时文件锁探测契约 |
-| `MineBackup/src/core/RuntimeRetentionService.cpp` | runtime | 显式 HistoryRepository 依赖的普通备份保留策略 |
-| `MineBackup/src/core/RuntimeRetentionService.h` | runtime | CLI 运行时保留策略服务契约 |
-| `MineBackup/src/core/PathRuleSet.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/PathRuleSet.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/PortableConfigDocument.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/PortableConfigDocument.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/RcloneClient.cpp` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/RcloneClient.h` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/RemoteContentService.cpp` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/RemoteContentService.h` | data_core | 保留纯格式、策略或工具逻辑 |
-| `MineBackup/src/core/TaskCoordinator.cpp` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/TaskCoordinator.h` | runtime | 迁移为显式依赖的运行时服务 |
-| `MineBackup/src/core/V15MigrationAdapter.cpp` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
-| `MineBackup/src/core/V15MigrationAdapter.h` | legacy-desktop | 仅 GUI 链接的 v1.15 adapter |
-| `MineBackup/src/infra/AppPaths.cpp` | data_core | 解耦 LaunchOptions 后保留 |
-| `MineBackup/src/infra/AppPaths.h` | data_core | 解耦 LaunchOptions 后保留 |
-| `MineBackup/src/infra/AtomicFileWriter.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/AtomicFileWriter.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/Broadcast.cpp` | split | 抽 runtime event sink，桌面广播留 adapter |
-| `MineBackup/src/infra/Broadcast.h` | split | 抽 runtime event sink，桌面广播留 adapter |
-| `MineBackup/src/infra/ConfigManager.cpp` | split | 拆为 INI codec/catalog 与 desktop adapter |
-| `MineBackup/src/infra/ConfigManager.h` | split | 拆为 INI codec/catalog 与 desktop adapter |
-| `MineBackup/src/infra/DesktopServices.cpp` | desktop | 保留桌面集成 |
-| `MineBackup/src/infra/DiagnosticLogExporter.cpp` | desktop | 保留桌面集成 |
-| `MineBackup/src/infra/DiagnosticLogExporter.h` | desktop | 保留桌面集成 |
-| `MineBackup/src/infra/i18n.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/i18n.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/InterruptedTaskRecovery.cpp` | runtime | 迁移并改用显式 AppPaths |
-| `MineBackup/src/infra/InterruptedTaskRecovery.h` | runtime | 迁移并改用显式 AppPaths |
-| `MineBackup/src/infra/KnotLinkPackageManager.cpp` | desktop | 保留桌面集成 |
-| `MineBackup/src/infra/KnotLinkPackageManager.h` | desktop | 保留桌面集成 |
-| `MineBackup/src/infra/KnotLinkProtocol.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/KnotLinkProtocol.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/KnotLinkServerManager.cpp` | split | 监听/握手进 runtime，桌面状态适配留 desktop |
-| `MineBackup/src/infra/KnotLinkServerManager.h` | split | 监听/握手进 runtime，桌面状态适配留 desktop |
-| `MineBackup/src/infra/KnotLinkService.cpp` | split | 监听/握手进 runtime，桌面状态适配留 desktop |
-| `MineBackup/src/infra/KnotLinkService.h` | split | 监听/握手进 runtime，桌面状态适配留 desktop |
-| `MineBackup/src/infra/LegacyIniConfigCodec.cpp` | data_core | 安全解析旧 INI 标量并生成结构化诊断 |
-| `MineBackup/src/infra/LegacyIniConfigCodec.h` | data_core | 安全解析旧 INI 标量并生成结构化诊断 |
-| `MineBackup/src/infra/LegacyLocationDiscovery.cpp` | legacy-desktop | 仅 GUI 启动兼容路径使用 |
-| `MineBackup/src/infra/LegacyLocationDiscovery.h` | legacy-desktop | 仅 GUI 启动兼容路径使用 |
-| `MineBackup/src/infra/LegacyLocationMigration.cpp` | legacy-desktop | 仅 GUI 启动兼容路径使用 |
-| `MineBackup/src/infra/LegacyLocationMigration.h` | legacy-desktop | 仅 GUI 启动兼容路径使用 |
-| `MineBackup/src/infra/Logging.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/Logging.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/NetworkService.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/NetworkService.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/ProcessRunner.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/ProcessRunner.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/ReadOnlyMappedFile.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/ReadOnlyMappedFile.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/Sha256.cpp` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/Sha256.h` | data_core | 保留为纯基础设施 |
-| `MineBackup/src/infra/SingleInstanceService.cpp` | split | 抽 ProfileLock 到 runtime，IPC 留 desktop |
-| `MineBackup/src/infra/SingleInstanceService.h` | split | 抽 ProfileLock 到 runtime，IPC 留 desktop |
-| `MineBackup/src/platform/DesktopServices.h` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/LinuxDesktopPortal.cpp` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/LinuxDesktopPortal.h` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/MacDesktopBridge.h` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/MacDesktopBridge.mm` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/NativeDesktopServices.cpp` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/NativeDesktopServices.h` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/NetworkBackend_linux.cpp` | runtime | 保留为非桌面网络后端 |
-| `MineBackup/src/platform/NetworkBackend_macos.mm` | runtime | 保留为非桌面网络后端 |
-| `MineBackup/src/platform/NetworkBackend_win.cpp` | runtime | 保留为非桌面网络后端 |
-| `MineBackup/src/platform/NetworkBackendFactory.h` | runtime | 保留为非桌面网络后端 |
-| `MineBackup/src/platform/Platform_linux.cpp` | split | 拆分运行时 OS primitives 与桌面 API |
-| `MineBackup/src/platform/Platform_linux.h` | split | 拆分运行时 OS primitives 与桌面 API |
-| `MineBackup/src/platform/Platform_macos_tray.mm` | desktop | 保留桌面服务、托盘或平台 UI bridge |
-| `MineBackup/src/platform/Platform_macos.cpp` | split | 拆分运行时 OS primitives 与桌面 API |
-| `MineBackup/src/platform/Platform_macos.h` | split | 拆分运行时 OS primitives 与桌面 API |
-| `MineBackup/src/platform/Platform_win.cpp` | split | 拆分运行时 OS primitives 与桌面 API |
-| `MineBackup/src/platform/Platform_win.h` | split | 拆分运行时 OS primitives 与桌面 API |
-| `MineBackup/src/platform/PlatformCompat.h` | split | 拆分运行时 OS primitives 与桌面 API |
-| `MineBackup/src/ui/CommandConsole.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/CommandConsole.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/HistoryDialogs.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/HistoryDialogs.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/HistoryUI.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/HistoryViewModel.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/HistoryViewModel.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/IconsFontAwesome6.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/imgui-all.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/LogPanel.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/LogPanel.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/MainUI.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/MainUiController.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/MigrationReportUI.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/MigrationReportUI.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsAutoSave.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUI.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUI.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUIAppearance.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUIConfig.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUIHotkeys.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUIHotkeys.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUIPrivate.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/SettingsUISpecial.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/UIHelpers.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/WizardUI.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/WorldListController.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/WorldListController.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/WorldListModel.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/WorldListModel.h` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/ui/WorldListUI.cpp` | desktop | 保留；仅依赖 runtime 公共接口 |
-| `MineBackup/src/utils/FileName.cpp` | data_core | 保留为纯工具 |
-| `MineBackup/src/utils/FileName.h` | data_core | 保留为纯工具 |
-| `MineBackup/src/utils/text_to_text.cpp` | data_core | 保留为纯工具 |
-| `MineBackup/src/utils/text_to_text.h` | data_core | 保留为纯工具 |
+| 当前文件 | 层 |
+|---|---|
+| `MineBackup/src/cli/CliApplication.cpp` | cli |
+| `MineBackup/src/cli/CliApplication.h` | cli |
+| `MineBackup/src/cli/CliArguments.cpp` | cli |
+| `MineBackup/src/cli/CliArguments.h` | cli |
+| `MineBackup/src/cli/CliJobResult.cpp` | cli |
+| `MineBackup/src/cli/CliJobResult.h` | cli |
+| `MineBackup/src/cli/CliMain.cpp` | cli |
+| `MineBackup/src/cli/CliRenderer.cpp` | cli |
+| `MineBackup/src/cli/CliRenderer.h` | cli |
+| `MineBackup/src/cli/CliSignalHandler.cpp` | cli |
+| `MineBackup/src/cli/CliSignalHandler.h` | cli |
+| `MineBackup/src/cli/CliToolBootstrap.cpp` | cli |
+| `MineBackup/src/cli/CliToolBootstrap.h` | cli |
+| `MineBackup/src/cli/CliTypes.h` | cli |
+| `MineBackup/src/desktop/adapters/BackupAuxiliary.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/BackupManager.h` | desktop |
+| `MineBackup/src/desktop/adapters/BackupManagerDesktop.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/BackupRestore.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/BackupRetention.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/Broadcast.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/Broadcast.h` | desktop |
+| `MineBackup/src/desktop/adapters/CloudHistorySync.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/CloudPortableConfig.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/CloudSyncInternal.h` | desktop |
+| `MineBackup/src/desktop/adapters/CloudSyncService.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/CloudSyncService.h` | desktop |
+| `MineBackup/src/desktop/adapters/ConfigManager.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/ConfigManager.h` | desktop |
+| `MineBackup/src/desktop/adapters/CoreValidation.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/CoreValidation.h` | desktop |
+| `MineBackup/src/desktop/adapters/DesktopServices.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/GameSessionManager.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/GameSessionManager.h` | desktop |
+| `MineBackup/src/desktop/adapters/HistoryManager.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/HistoryManager.h` | desktop |
+| `MineBackup/src/desktop/adapters/i18n.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/i18n.h` | desktop |
+| `MineBackup/src/desktop/adapters/KnotLinkServerManager.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/KnotLinkServerManager.h` | desktop |
+| `MineBackup/src/desktop/adapters/KnotLinkService.cpp` | desktop |
+| `MineBackup/src/desktop/adapters/KnotLinkService.h` | desktop |
+| `MineBackup/src/desktop/app/AppearanceRuntime.cpp` | desktop |
+| `MineBackup/src/desktop/app/AppearanceRuntime.h` | desktop |
+| `MineBackup/src/desktop/app/Application.cpp` | desktop |
+| `MineBackup/src/desktop/app/Application.h` | desktop |
+| `MineBackup/src/desktop/app/ApplicationActions.cpp` | desktop |
+| `MineBackup/src/desktop/app/ApplicationActions.h` | desktop |
+| `MineBackup/src/desktop/app/ApplicationEventRouter.cpp` | desktop |
+| `MineBackup/src/desktop/app/ApplicationEventRouter.h` | desktop |
+| `MineBackup/src/desktop/app/AppState.cpp` | desktop |
+| `MineBackup/src/desktop/app/AppState.h` | desktop |
+| `MineBackup/src/desktop/app/ConfigBatchCreationService.cpp` | desktop |
+| `MineBackup/src/desktop/app/ConfigBatchCreationService.h` | desktop |
+| `MineBackup/src/desktop/app/DesktopRuntimeState.h` | desktop |
+| `MineBackup/src/desktop/app/DesktopUiLifecycle.cpp` | desktop |
+| `MineBackup/src/desktop/app/DesktopUiLifecycle.h` | desktop |
+| `MineBackup/src/desktop/app/DesktopUiSession.cpp` | desktop |
+| `MineBackup/src/desktop/app/DesktopUiSession.h` | desktop |
+| `MineBackup/src/desktop/app/Globals.cpp` | desktop |
+| `MineBackup/src/desktop/app/Globals.h` | desktop |
+| `MineBackup/src/desktop/app/ImGuiRuntime.cpp` | desktop |
+| `MineBackup/src/desktop/app/ImGuiRuntime.h` | desktop |
+| `MineBackup/src/desktop/app/LaunchOptions.cpp` | desktop |
+| `MineBackup/src/desktop/app/LaunchOptions.h` | desktop |
+| `MineBackup/src/desktop/app/MainUI.h` | desktop |
+| `MineBackup/src/desktop/app/MineBackup.cpp` | desktop |
+| `MineBackup/src/desktop/legacy/LegacyServiceCleanup.cpp` | desktop |
+| `MineBackup/src/desktop/legacy/LegacyServiceCleanup.h` | desktop |
+| `MineBackup/src/desktop/legacy/V15MigrationAdapter.cpp` | desktop |
+| `MineBackup/src/desktop/legacy/V15MigrationAdapter.h` | desktop |
+| `MineBackup/src/desktop/platform/DesktopPlatform.h` | desktop |
+| `MineBackup/src/desktop/platform/DesktopServices.h` | desktop |
+| `MineBackup/src/desktop/platform/LinuxDesktopPortal.cpp` | desktop |
+| `MineBackup/src/desktop/platform/LinuxDesktopPortal.h` | desktop |
+| `MineBackup/src/desktop/platform/MacDesktopBridge.h` | desktop |
+| `MineBackup/src/desktop/platform/MacDesktopBridge.mm` | desktop |
+| `MineBackup/src/desktop/platform/NativeDesktopServices.cpp` | desktop |
+| `MineBackup/src/desktop/platform/NativeDesktopServices.h` | desktop |
+| `MineBackup/src/desktop/platform/Platform_linux.cpp` | desktop |
+| `MineBackup/src/desktop/platform/Platform_linux.h` | desktop |
+| `MineBackup/src/desktop/platform/Platform_macos.cpp` | desktop |
+| `MineBackup/src/desktop/platform/Platform_macos.h` | desktop |
+| `MineBackup/src/desktop/platform/Platform_macos_tray.mm` | desktop |
+| `MineBackup/src/desktop/platform/Platform_win.cpp` | desktop |
+| `MineBackup/src/desktop/platform/Platform_win.h` | desktop |
+| `MineBackup/src/desktop/ui/CommandConsole.cpp` | desktop |
+| `MineBackup/src/desktop/ui/CommandConsole.h` | desktop |
+| `MineBackup/src/desktop/ui/HistoryDialogs.cpp` | desktop |
+| `MineBackup/src/desktop/ui/HistoryDialogs.h` | desktop |
+| `MineBackup/src/desktop/ui/HistoryUI.cpp` | desktop |
+| `MineBackup/src/desktop/ui/HistoryViewModel.cpp` | desktop |
+| `MineBackup/src/desktop/ui/HistoryViewModel.h` | desktop |
+| `MineBackup/src/desktop/ui/IconsFontAwesome6.h` | desktop |
+| `MineBackup/src/desktop/ui/imgui-all.h` | desktop |
+| `MineBackup/src/desktop/ui/LogPanel.cpp` | desktop |
+| `MineBackup/src/desktop/ui/LogPanel.h` | desktop |
+| `MineBackup/src/desktop/ui/MainUI.cpp` | desktop |
+| `MineBackup/src/desktop/ui/MainUiController.h` | desktop |
+| `MineBackup/src/desktop/ui/MigrationReportUI.cpp` | desktop |
+| `MineBackup/src/desktop/ui/MigrationReportUI.h` | desktop |
+| `MineBackup/src/desktop/ui/MinecraftSetupUI.cpp` | desktop |
+| `MineBackup/src/desktop/ui/MinecraftSetupUI.h` | desktop |
+| `MineBackup/src/desktop/ui/SettingsAutoSave.h` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUI.cpp` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUI.h` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUIAppearance.cpp` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUIApplication.cpp` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUIConfig.cpp` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUIHotkeys.cpp` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUIHotkeys.h` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUIPrivate.h` | desktop |
+| `MineBackup/src/desktop/ui/SettingsUISpecial.cpp` | desktop |
+| `MineBackup/src/desktop/ui/ThemeManager.h` | desktop |
+| `MineBackup/src/desktop/ui/ThemePalette.h` | desktop |
+| `MineBackup/src/desktop/ui/UIHelpers.h` | desktop |
+| `MineBackup/src/desktop/ui/WizardUI.cpp` | desktop |
+| `MineBackup/src/desktop/ui/WorldListController.cpp` | desktop |
+| `MineBackup/src/desktop/ui/WorldListController.h` | desktop |
+| `MineBackup/src/desktop/ui/WorldListModel.cpp` | desktop |
+| `MineBackup/src/desktop/ui/WorldListModel.h` | desktop |
+| `MineBackup/src/desktop/ui/WorldListUI.cpp` | desktop |
+| `MineBackup/src/domain/CompressionPolicy.h` | domain |
+| `MineBackup/src/domain/DataModels.h` | domain |
+| `MineBackup/src/domain/JobModels.h` | domain |
+| `MineBackup/src/domain/MinecraftTypes.h` | domain |
+| `MineBackup/src/domain/ModVersion.h` | domain |
+| `MineBackup/src/domain/OperationResult.cpp` | domain |
+| `MineBackup/src/domain/OperationResult.h` | domain |
+| `MineBackup/src/domain/ProcessModels.h` | domain |
+| `MineBackup/src/infra/AppPaths.cpp` | infra |
+| `MineBackup/src/infra/AppPaths.h` | infra |
+| `MineBackup/src/infra/ArchiveRunner.cpp` | infra |
+| `MineBackup/src/infra/ArchiveRunner.h` | infra |
+| `MineBackup/src/infra/AtomicFileWriter.cpp` | infra |
+| `MineBackup/src/infra/AtomicFileWriter.h` | infra |
+| `MineBackup/src/infra/BackupChangeDetector.cpp` | infra |
+| `MineBackup/src/infra/BackupChangeDetector.h` | infra |
+| `MineBackup/src/infra/config/ConfigIniCodec.cpp` | infra |
+| `MineBackup/src/infra/config/ConfigIniCodec.h` | infra |
+| `MineBackup/src/infra/config/JobDocument.cpp` | infra |
+| `MineBackup/src/infra/config/JobDocument.h` | infra |
+| `MineBackup/src/infra/config/LegacyIniConfigCodec.cpp` | infra |
+| `MineBackup/src/infra/config/LegacyIniConfigCodec.h` | infra |
+| `MineBackup/src/infra/config/PortableConfigDocument.cpp` | infra |
+| `MineBackup/src/infra/config/PortableConfigDocument.h` | infra |
+| `MineBackup/src/infra/DiagnosticLogExporter.cpp` | infra |
+| `MineBackup/src/infra/DiagnosticLogExporter.h` | infra |
+| `MineBackup/src/infra/ExternalToolManager.cpp` | infra |
+| `MineBackup/src/infra/ExternalToolManager.h` | infra |
+| `MineBackup/src/infra/InterruptedTaskRecovery.cpp` | infra |
+| `MineBackup/src/infra/InterruptedTaskRecovery.h` | infra |
+| `MineBackup/src/infra/KnotLinkCommandDispatcher.cpp` | infra |
+| `MineBackup/src/infra/KnotLinkCommandDispatcher.h` | infra |
+| `MineBackup/src/infra/KnotLinkPackageManager.cpp` | infra |
+| `MineBackup/src/infra/KnotLinkPackageManager.h` | infra |
+| `MineBackup/src/infra/KnotLinkProtocol.cpp` | infra |
+| `MineBackup/src/infra/KnotLinkProtocol.h` | infra |
+| `MineBackup/src/infra/KnownUserFolders.cpp` | infra |
+| `MineBackup/src/infra/KnownUserFolders.h` | infra |
+| `MineBackup/src/infra/legacy/LegacyMineBackup15Reader.cpp` | infra |
+| `MineBackup/src/infra/legacy/LegacyMineBackup15Reader.h` | infra |
+| `MineBackup/src/infra/LegacyLocationDiscovery.cpp` | infra |
+| `MineBackup/src/infra/LegacyLocationDiscovery.h` | infra |
+| `MineBackup/src/infra/LegacyLocationMigration.cpp` | infra |
+| `MineBackup/src/infra/LegacyLocationMigration.h` | infra |
+| `MineBackup/src/infra/LegacyServicePolicy.cpp` | infra |
+| `MineBackup/src/infra/LegacyServicePolicy.h` | infra |
+| `MineBackup/src/infra/Logging.cpp` | infra |
+| `MineBackup/src/infra/Logging.h` | infra |
+| `MineBackup/src/infra/NetworkService.cpp` | infra |
+| `MineBackup/src/infra/NetworkService.h` | infra |
+| `MineBackup/src/infra/PathIdentity.cpp` | infra |
+| `MineBackup/src/infra/PathIdentity.h` | infra |
+| `MineBackup/src/infra/PathRuleSet.cpp` | infra |
+| `MineBackup/src/infra/PathRuleSet.h` | infra |
+| `MineBackup/src/infra/platform/NetworkBackend_linux.cpp` | infra |
+| `MineBackup/src/infra/platform/NetworkBackend_macos.mm` | infra |
+| `MineBackup/src/infra/platform/NetworkBackend_win.cpp` | infra |
+| `MineBackup/src/infra/platform/NetworkBackendFactory.h` | infra |
+| `MineBackup/src/infra/platform/PlatformCompat.h` | infra |
+| `MineBackup/src/infra/ProcessInspectionService.cpp` | infra |
+| `MineBackup/src/infra/ProcessInspectionService.h` | infra |
+| `MineBackup/src/infra/ProcessRunner.cpp` | infra |
+| `MineBackup/src/infra/ProcessRunner.h` | infra |
+| `MineBackup/src/infra/ProcessRunnerTestAccess.h` | infra |
+| `MineBackup/src/infra/RcloneClient.cpp` | infra |
+| `MineBackup/src/infra/RcloneClient.h` | infra |
+| `MineBackup/src/infra/ReadOnlyMappedFile.cpp` | infra |
+| `MineBackup/src/infra/ReadOnlyMappedFile.h` | infra |
+| `MineBackup/src/infra/RemoteContentService.cpp` | infra |
+| `MineBackup/src/infra/RemoteContentService.h` | infra |
+| `MineBackup/src/infra/Sha256.cpp` | infra |
+| `MineBackup/src/infra/Sha256.h` | infra |
+| `MineBackup/src/infra/SingleInstanceService.cpp` | infra |
+| `MineBackup/src/infra/SingleInstanceService.h` | infra |
+| `MineBackup/src/infra/storage/CloudHistoryAnalysis.cpp` | infra |
+| `MineBackup/src/infra/storage/CloudHistoryAnalysis.h` | infra |
+| `MineBackup/src/infra/storage/FolderRewindFormat.cpp` | infra |
+| `MineBackup/src/infra/storage/FolderRewindFormat.h` | infra |
+| `MineBackup/src/infra/storage/FolderRewindHistoryStore.cpp` | infra |
+| `MineBackup/src/infra/storage/FolderRewindHistoryStore.h` | infra |
+| `MineBackup/src/infra/storage/FolderRewindMetadataStore.cpp` | infra |
+| `MineBackup/src/infra/storage/FolderRewindMetadataStore.h` | infra |
+| `MineBackup/src/infra/text/FileName.cpp` | infra |
+| `MineBackup/src/infra/text/FileName.h` | infra |
+| `MineBackup/src/infra/text/text_to_text.cpp` | infra |
+| `MineBackup/src/infra/text/text_to_text.h` | infra |
+| `MineBackup/src/infra/WorldIdentity.cpp` | infra |
+| `MineBackup/src/infra/WorldIdentity.h` | infra |
+| `MineBackup/src/runtime/BackupManager.cpp` | runtime |
+| `MineBackup/src/runtime/BackupManagerInternal.h` | runtime |
+| `MineBackup/src/runtime/BackupService.h` | runtime |
+| `MineBackup/src/runtime/BatchReadinessService.cpp` | runtime |
+| `MineBackup/src/runtime/BatchReadinessService.h` | runtime |
+| `MineBackup/src/runtime/ChainSafeRetention.cpp` | runtime |
+| `MineBackup/src/runtime/ChainSafeRetention.h` | runtime |
+| `MineBackup/src/runtime/ConfigFactory.cpp` | runtime |
+| `MineBackup/src/runtime/ConfigFactory.h` | runtime |
+| `MineBackup/src/runtime/ConfigSelection.cpp` | runtime |
+| `MineBackup/src/runtime/ConfigSelection.h` | runtime |
+| `MineBackup/src/runtime/HistoryRepository.cpp` | runtime |
+| `MineBackup/src/runtime/HistoryRepository.h` | runtime |
+| `MineBackup/src/runtime/HmclDiscoveryProvider.cpp` | runtime |
+| `MineBackup/src/runtime/HmclDiscoveryProvider.h` | runtime |
+| `MineBackup/src/runtime/HotRestoreCoordinator.cpp` | runtime |
+| `MineBackup/src/runtime/HotRestoreCoordinator.h` | runtime |
+| `MineBackup/src/runtime/JobRunner.cpp` | runtime |
+| `MineBackup/src/runtime/JobRunner.h` | runtime |
+| `MineBackup/src/runtime/KnownMinecraftLocationProvider.cpp` | runtime |
+| `MineBackup/src/runtime/KnownMinecraftLocationProvider.h` | runtime |
+| `MineBackup/src/runtime/LauncherDiscoveryUtils.cpp` | runtime |
+| `MineBackup/src/runtime/LauncherDiscoveryUtils.h` | runtime |
+| `MineBackup/src/runtime/MigrationCoordinator.cpp` | runtime |
+| `MineBackup/src/runtime/MigrationCoordinator.h` | runtime |
+| `MineBackup/src/runtime/MinecraftDiscovery.h` | runtime |
+| `MineBackup/src/runtime/MinecraftInstanceDiscoveryService.cpp` | runtime |
+| `MineBackup/src/runtime/MinecraftInstanceDiscoveryService.h` | runtime |
+| `MineBackup/src/runtime/MinecraftInstanceInspector.cpp` | runtime |
+| `MineBackup/src/runtime/MinecraftInstanceInspector.h` | runtime |
+| `MineBackup/src/runtime/ModrinthDiscoveryProvider.cpp` | runtime |
+| `MineBackup/src/runtime/ModrinthDiscoveryProvider.h` | runtime |
+| `MineBackup/src/runtime/NeteaseMinecraftDiscoveryProvider.cpp` | runtime |
+| `MineBackup/src/runtime/NeteaseMinecraftDiscoveryProvider.h` | runtime |
+| `MineBackup/src/runtime/Pcl2ProcessDiscoveryProvider.cpp` | runtime |
+| `MineBackup/src/runtime/Pcl2ProcessDiscoveryProvider.h` | runtime |
+| `MineBackup/src/runtime/PrismLauncherDiscoveryProvider.cpp` | runtime |
+| `MineBackup/src/runtime/PrismLauncherDiscoveryProvider.h` | runtime |
+| `MineBackup/src/runtime/ProfileConfigCatalog.cpp` | runtime |
+| `MineBackup/src/runtime/ProfileConfigCatalog.h` | runtime |
+| `MineBackup/src/runtime/ProfileConfigRepository.cpp` | runtime |
+| `MineBackup/src/runtime/ProfileConfigRepository.h` | runtime |
+| `MineBackup/src/runtime/ProfileKnotLinkCommands.cpp` | runtime |
+| `MineBackup/src/runtime/ProfileKnotLinkCommands.h` | runtime |
+| `MineBackup/src/runtime/ProfileManifest.cpp` | runtime |
+| `MineBackup/src/runtime/ProfileManifest.h` | runtime |
+| `MineBackup/src/runtime/ProfileRuntime.cpp` | runtime |
+| `MineBackup/src/runtime/ProfileRuntime.h` | runtime |
+| `MineBackup/src/runtime/ProfileTransaction.cpp` | runtime |
+| `MineBackup/src/runtime/ProfileTransaction.h` | runtime |
+| `MineBackup/src/runtime/RestoreService.cpp` | runtime |
+| `MineBackup/src/runtime/RestoreService.h` | runtime |
+| `MineBackup/src/runtime/RestoreWorkspace.cpp` | runtime |
+| `MineBackup/src/runtime/RestoreWorkspace.h` | runtime |
+| `MineBackup/src/runtime/RuntimeCloudPostHook.cpp` | runtime |
+| `MineBackup/src/runtime/RuntimeCloudPostHook.h` | runtime |
+| `MineBackup/src/runtime/RuntimeFileLock.cpp` | runtime |
+| `MineBackup/src/runtime/RuntimeFileLock.h` | runtime |
+| `MineBackup/src/runtime/RuntimeIntegration.cpp` | runtime |
+| `MineBackup/src/runtime/RuntimeIntegration.h` | runtime |
+| `MineBackup/src/runtime/RuntimeRetentionService.cpp` | runtime |
+| `MineBackup/src/runtime/RuntimeRetentionService.h` | runtime |
+| `MineBackup/src/runtime/TaskCoordinator.cpp` | runtime |
+| `MineBackup/src/runtime/TaskCoordinator.h` | runtime |
+| `MineBackup/src/runtime/WizardSession.cpp` | runtime |
+| `MineBackup/src/runtime/WizardSession.h` | runtime |

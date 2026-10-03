@@ -38,12 +38,6 @@ endif()
 
 set(MINEBACKUP_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/MineBackup)
 set(MINEBACKUP_SRC_DIR ${MINEBACKUP_SOURCE_DIR}/src)
-set(MINEBACKUP_APP_DIR ${MINEBACKUP_SRC_DIR}/app)
-set(MINEBACKUP_CORE_DIR ${MINEBACKUP_SRC_DIR}/core)
-set(MINEBACKUP_INFRA_DIR ${MINEBACKUP_SRC_DIR}/infra)
-set(MINEBACKUP_PLATFORM_DIR ${MINEBACKUP_SRC_DIR}/platform)
-set(MINEBACKUP_UI_DIR ${MINEBACKUP_SRC_DIR}/ui)
-set(MINEBACKUP_UTILS_DIR ${MINEBACKUP_SRC_DIR}/utils)
 set(MINEBACKUP_THIRD_PARTY_DIR ${MINEBACKUP_SOURCE_DIR}/third_party)
 set(MINEBACKUP_IMGUI_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/imgui)
 set(MINEBACKUP_KNOTLINK_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/knotlink-sdk-cpp-2.0)
@@ -131,26 +125,28 @@ if(MINEBACKUP_BUILD_GUI)
     endif()
 endif()
 
-add_library(minebackup_data_core STATIC ${MINEBACKUP_DATA_CORE_SOURCES} ${MINEBACKUP_PUBLIC_HEADERS})
-add_library(minebackup_runtime STATIC ${MINEBACKUP_RUNTIME_SOURCES} ${MINEBACKUP_PUBLIC_HEADERS})
+add_library(minebackup_data_core STATIC ${MINEBACKUP_DATA_CORE_SOURCES} ${MINEBACKUP_DATA_CORE_HEADERS})
+add_library(minebackup_runtime STATIC ${MINEBACKUP_RUNTIME_SOURCES} ${MINEBACKUP_RUNTIME_HEADERS})
 if(MINEBACKUP_BUILD_GUI)
-    add_library(minebackup_desktop STATIC ${MINEBACKUP_DESKTOP_SOURCES} ${MINEBACKUP_PUBLIC_HEADERS})
-    add_executable(MineBackup ${MINEBACKUP_MAIN_SOURCES} ${MINEBACKUP_PUBLIC_HEADERS})
+    add_library(minebackup_desktop STATIC ${MINEBACKUP_DESKTOP_SOURCES} ${MINEBACKUP_DESKTOP_HEADERS})
+    add_executable(MineBackup ${MINEBACKUP_MAIN_SOURCES})
 endif()
 if(MINEBACKUP_BUILD_CLI)
     add_executable(minebackup-cli ${MINEBACKUP_CLI_SOURCES})
 endif()
 
-set(MINEBACKUP_COMMON_INCLUDE_DIRS
-    ${MINEBACKUP_GENERATED_DIR} ${MINEBACKUP_SOURCE_DIR} ${MINEBACKUP_APP_DIR} ${MINEBACKUP_CORE_DIR}
-    ${MINEBACKUP_INFRA_DIR} ${MINEBACKUP_PLATFORM_DIR} ${MINEBACKUP_UI_DIR} ${MINEBACKUP_UTILS_DIR}
-    ${MINEBACKUP_THIRD_PARTY_DIR} ${MINEBACKUP_IMGUI_DIR} ${MINEBACKUP_KNOTLINK_DIR}
-    ${MINEBACKUP_JSON_DIR} ${MINEBACKUP_STB_DIR} ${MINEBACKUP_SPDLOG_DIR}/include
+set(MINEBACKUP_TEST_INCLUDE_DIRS
+    ${MINEBACKUP_DATA_CORE_INCLUDE_DIRS} ${MINEBACKUP_RUNTIME_INCLUDE_DIRS}
+    ${MINEBACKUP_DESKTOP_INCLUDE_DIRS} ${MINEBACKUP_SRC_DIR}/cli
+    ${MINEBACKUP_IMGUI_DIR} ${MINEBACKUP_STB_DIR}
 )
+
 target_compile_definitions(minebackup_data_core PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)
 target_compile_definitions(minebackup_runtime PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)
-target_include_directories(minebackup_data_core PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
-target_include_directories(minebackup_runtime PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+target_include_directories(minebackup_data_core PUBLIC
+    ${MINEBACKUP_DATA_CORE_INCLUDE_DIRS} ${MINEBACKUP_JSON_DIR} ${MINEBACKUP_KNOTLINK_DIR}
+    ${MINEBACKUP_GENERATED_DIR})
+target_include_directories(minebackup_runtime PUBLIC ${MINEBACKUP_RUNTIME_INCLUDE_DIRS})
 target_link_libraries(minebackup_data_core PUBLIC Threads::Threads minebackup_third_party_spdlog)
 target_link_libraries(minebackup_runtime PUBLIC minebackup_data_core)
 if(APPLE)
@@ -161,13 +157,14 @@ if(NOT WIN32)
 endif()
 if(MINEBACKUP_BUILD_GUI)
     target_compile_definitions(minebackup_desktop PUBLIC MINEBACKUP_ENABLE_V15_MIGRATION=$<BOOL:${MINEBACKUP_ENABLE_V15_MIGRATION}>)
-    target_include_directories(minebackup_desktop PUBLIC ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+    target_include_directories(minebackup_desktop PUBLIC ${MINEBACKUP_DESKTOP_INCLUDE_DIRS}
+        PRIVATE ${MINEBACKUP_SOURCE_DIR} ${MINEBACKUP_STB_DIR})
     target_link_libraries(minebackup_desktop PUBLIC
         minebackup_runtime OpenGL::GL minebackup_third_party_imgui)
     target_link_libraries(MineBackup PRIVATE minebackup_desktop)
 endif()
 if(MINEBACKUP_BUILD_CLI)
-    target_include_directories(minebackup-cli PRIVATE ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+    target_include_directories(minebackup-cli PRIVATE ${MINEBACKUP_SRC_DIR}/cli)
     target_link_libraries(minebackup-cli PRIVATE minebackup_runtime)
 endif()
 
@@ -207,7 +204,7 @@ if(APPLE
 endif()
 
 if(WIN32)
-    target_link_libraries(minebackup_data_core PUBLIC ole32 advapi32 shell32)
+    target_link_libraries(minebackup_data_core PUBLIC ole32 advapi32 shell32 ws2_32)
     target_link_libraries(minebackup_runtime PUBLIC ws2_32)
     if(MINEBACKUP_BUILD_GUI)
         set_target_properties(MineBackup PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -275,9 +272,9 @@ if(APPLE AND MINEBACKUP_BUILD_GUI)
         VERBATIM)
 
     set_source_files_properties(
-        ${MINEBACKUP_PLATFORM_DIR}/Platform_macos_tray.mm
-        ${MINEBACKUP_PLATFORM_DIR}/MacDesktopBridge.mm
-        ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_macos.mm
+        ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_macos_tray.mm
+        ${MINEBACKUP_SRC_DIR}/desktop/platform/MacDesktopBridge.mm
+        ${MINEBACKUP_SRC_DIR}/infra/platform/NetworkBackend_macos.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     set_target_properties(MineBackup PROPERTIES
         MACOSX_BUNDLE TRUE
@@ -358,8 +355,8 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(minebackup_i18n_tests tests/I18nTest.cpp ${MINEBACKUP_INFRA_DIR}/i18n.cpp)
-    target_link_libraries(minebackup_i18n_tests PRIVATE minebackup_data_core)
+    add_executable(minebackup_i18n_tests tests/I18nTest.cpp ${MINEBACKUP_SRC_DIR}/desktop/adapters/i18n.cpp)
+    target_link_libraries(minebackup_i18n_tests PRIVATE minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_i18n_tests PRIVATE /utf-8 /FS)
     endif()
@@ -386,7 +383,7 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(minebackup_knotlink_protocol_tests tests/KnotLinkProtocolTest.cpp)
-    target_link_libraries(minebackup_knotlink_protocol_tests PRIVATE minebackup_data_core)
+    target_link_libraries(minebackup_knotlink_protocol_tests PRIVATE minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_knotlink_protocol_tests PRIVATE /utf-8 /FS)
     endif()
@@ -406,8 +403,8 @@ if(BUILD_TESTING)
 
     add_executable(minebackup_data_tests
         tests/TestMain.cpp
-		${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
-		${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
+		${MINEBACKUP_SRC_DIR}/desktop/app/LaunchOptions.cpp
+		${MINEBACKUP_SRC_DIR}/desktop/adapters/DesktopServices.cpp
 		${MINEBACKUP_SRC_DIR}/cli/CliJobResult.cpp
 		${MINEBACKUP_SRC_DIR}/cli/CliRenderer.cpp
 		${MINEBACKUP_SRC_DIR}/cli/CliSignalHandler.cpp
@@ -456,7 +453,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_minecraft_inspector_tests
         tests/MinecraftInstanceInspectorTests.cpp)
     target_link_libraries(minebackup_minecraft_inspector_tests PRIVATE
-        minebackup_data_core)
+        minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_minecraft_inspector_tests PRIVATE /utf-8 /FS)
     endif()
@@ -466,7 +463,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_known_minecraft_location_tests
         tests/KnownMinecraftLocationProviderTests.cpp)
     target_link_libraries(minebackup_known_minecraft_location_tests PRIVATE
-        minebackup_data_core)
+        minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_known_minecraft_location_tests PRIVATE /utf-8 /FS)
     endif()
@@ -486,7 +483,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_pcl2_discovery_tests
         tests/Pcl2ProcessDiscoveryProviderTests.cpp)
     target_link_libraries(minebackup_pcl2_discovery_tests PRIVATE
-        minebackup_data_core)
+        minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_pcl2_discovery_tests PRIVATE /utf-8 /FS)
     endif()
@@ -496,7 +493,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_launcher_discovery_tests
         tests/LauncherDiscoveryProviderTests.cpp)
     target_link_libraries(minebackup_launcher_discovery_tests PRIVATE
-        minebackup_data_core)
+        minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_launcher_discovery_tests PRIVATE /utf-8 /FS)
     endif()
@@ -506,7 +503,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_minecraft_discovery_service_tests
         tests/MinecraftInstanceDiscoveryServiceTests.cpp)
     target_link_libraries(minebackup_minecraft_discovery_service_tests PRIVATE
-        minebackup_data_core)
+        minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_minecraft_discovery_service_tests PRIVATE /utf-8 /FS)
     endif()
@@ -516,7 +513,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_batch_readiness_tests
         tests/BatchReadinessServiceTests.cpp)
     target_link_libraries(minebackup_batch_readiness_tests PRIVATE
-        minebackup_data_core)
+        minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_batch_readiness_tests PRIVATE /utf-8 /FS)
     endif()
@@ -526,7 +523,7 @@ if(BUILD_TESTING)
     add_executable(minebackup_wizard_session_tests
         tests/WizardSessionTests.cpp)
     target_link_libraries(minebackup_wizard_session_tests PRIVATE
-        minebackup_data_core)
+        minebackup_runtime)
     if(MSVC)
         target_compile_options(minebackup_wizard_session_tests PRIVATE /utf-8 /FS)
     endif()
@@ -644,7 +641,7 @@ if(BUILD_TESTING)
     if(NOT WIN32)
         add_executable(minebackup_console_input_tests tests/ConsoleInputTest.cpp)
         target_include_directories(minebackup_console_input_tests PRIVATE
-            ${MINEBACKUP_COMMON_INCLUDE_DIRS})
+            ${MINEBACKUP_TEST_INCLUDE_DIRS})
         if(NOT APPLE)
             target_link_libraries(minebackup_console_input_tests PRIVATE Iconv::Iconv)
         endif()
@@ -663,3 +660,27 @@ add_custom_target(check_runtime_boundaries
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckRuntimeBoundaries.cmake
     VERBATIM
 )
+
+# Test-only desktop adapters do not widen production include visibility.
+if(BUILD_TESTING)
+    get_property(minebackup_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(test_target IN LISTS minebackup_targets)
+        if(test_target MATCHES "^minebackup_.*_tests$")
+            target_include_directories(${test_target} PRIVATE ${MINEBACKUP_TEST_INCLUDE_DIRS})
+        endif()
+    endforeach()
+endif()
+
+# Force every lower-layer object into a standalone executable: runtime cannot
+# accidentally supply unresolved symbols through the normal application link.
+file(WRITE "${MINEBACKUP_GENERATED_DIR}/data_core_link_check.cpp" "int main() { return 0; }\n")
+add_executable(minebackup_data_core_link_check "${MINEBACKUP_GENERATED_DIR}/data_core_link_check.cpp")
+target_link_libraries(minebackup_data_core_link_check PRIVATE minebackup_data_core)
+if(MSVC)
+    target_link_options(minebackup_data_core_link_check PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:minebackup_data_core>")
+elseif(APPLE)
+    target_link_options(minebackup_data_core_link_check PRIVATE "LINKER:-force_load,$<TARGET_FILE:minebackup_data_core>")
+else()
+    target_link_libraries(minebackup_data_core_link_check PRIVATE
+        "-Wl,--whole-archive" minebackup_data_core "-Wl,--no-whole-archive")
+endif()

@@ -57,3 +57,12 @@ can identify an older service. Removal requires user confirmation, UAC, an
 absolute `MineBackup.exe ... --service` ImagePath and MineBackup resource
 validation; otherwise the program leaves the service untouched and gives manual
 inspection guidance. The compatibility fields are removed in 1.17.
+
+## 配置档事务与恢复
+
+桌面保存将 config.ini 与 jobs.json 一起提交；服务器 manifest apply 必要时同时提交 history.json。
+共享事务持久化原文件快照和 prepared 日志，再替换目标，最后写 committed 标记。
+失败后完整回滚才返回 NotCommitted；回滚失败保留快照并返回 RecoveryRequired，禁止后续依赖写入。
+CommittedNotDurable 表示已提交但持久性未完全确认，不允许回滚内存。恢复兼容原有 v1 事务日志。
+GUI 和独占写入入口在加载前恢复；只读 CLI 只检查日志，不修改配置档。
+此事务整理不改变云端 v1.15 元数据迁移流程。

@@ -166,7 +166,7 @@ systemd/Task Scheduler operations.
 ## 🤝 Contributing & Support
 
 * **Report bugs / request features:** [GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
-* **Help translate:** Edit [`i18n.h`](MineBackup/src/infra/i18n.h) and submit a pull request.
+* **Help translate:** Edit [`i18n.h`](MineBackup/src/desktop/adapters/i18n.h) and submit a pull request.
 * **Improve docs:** Visit the [official documentation](https://folderrewind.top) to submit suggestions for improvement. This is the official website for the second-generation FolderRewind, and it will also add documentation support for the first-generation MineBackup in the future.
 
 ---

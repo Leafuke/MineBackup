@@ -1,5 +1,5 @@
 # Authoritative explicit source manifest. Keep paths grouped by architectural role.
-set(MINEBACKUP_MAIN_SOURCES ${MINEBACKUP_APP_DIR}/MineBackup.cpp)
+set(MINEBACKUP_MAIN_SOURCES ${MINEBACKUP_SRC_DIR}/desktop/app/MineBackup.cpp)
 set(MINEBACKUP_CLI_SOURCES
 	${MINEBACKUP_SRC_DIR}/cli/CliArguments.cpp
 	${MINEBACKUP_SRC_DIR}/cli/CliApplication.cpp
@@ -10,159 +10,157 @@ set(MINEBACKUP_CLI_SOURCES
 	${MINEBACKUP_SRC_DIR}/cli/CliMain.cpp)
 
 set(MINEBACKUP_DATA_CORE_SOURCES
-    ${MINEBACKUP_INFRA_DIR}/AppPaths.cpp
-    ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.cpp
-    ${MINEBACKUP_INFRA_DIR}/DiagnosticLogExporter.cpp
-    ${MINEBACKUP_INFRA_DIR}/LegacyLocationDiscovery.cpp
-    ${MINEBACKUP_INFRA_DIR}/LegacyLocationMigration.cpp
-    ${MINEBACKUP_INFRA_DIR}/KnownUserFolders.cpp
-    ${MINEBACKUP_INFRA_DIR}/Logging.cpp
-    ${MINEBACKUP_INFRA_DIR}/ProcessRunner.cpp
-    ${MINEBACKUP_INFRA_DIR}/ReadOnlyMappedFile.cpp
-    ${MINEBACKUP_INFRA_DIR}/KnotLinkPackageManager.cpp
-    ${MINEBACKUP_INFRA_DIR}/KnotLinkCommandDispatcher.cpp
-    ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.cpp
-    ${MINEBACKUP_INFRA_DIR}/NetworkService.cpp
-    ${MINEBACKUP_INFRA_DIR}/Sha256.cpp
-    ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.cpp
-    ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.cpp
-    ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.cpp
-	${MINEBACKUP_CORE_DIR}/ArchiveRunner.cpp
-	${MINEBACKUP_CORE_DIR}/ChainSafeRetention.cpp
-	${MINEBACKUP_CORE_DIR}/BatchReadinessService.cpp
-	${MINEBACKUP_CORE_DIR}/ConfigFactory.cpp
-	${MINEBACKUP_CORE_DIR}/HmclDiscoveryProvider.cpp
-	# 世界身份和作业文档只描述数据语义；链保留不得反向依赖 runtime。
-	${MINEBACKUP_CORE_DIR}/JobDocument.cpp
-	${MINEBACKUP_CORE_DIR}/KnownMinecraftLocationProvider.cpp
-	${MINEBACKUP_CORE_DIR}/LauncherDiscoveryUtils.cpp
-	${MINEBACKUP_CORE_DIR}/MinecraftInstanceInspector.cpp
-	${MINEBACKUP_CORE_DIR}/MinecraftInstanceDiscoveryService.cpp
-	${MINEBACKUP_CORE_DIR}/ModrinthDiscoveryProvider.cpp
-	${MINEBACKUP_CORE_DIR}/NeteaseMinecraftDiscoveryProvider.cpp
-	${MINEBACKUP_CORE_DIR}/Pcl2ProcessDiscoveryProvider.cpp
-	${MINEBACKUP_CORE_DIR}/PrismLauncherDiscoveryProvider.cpp
-	${MINEBACKUP_CORE_DIR}/PathIdentity.cpp
-	${MINEBACKUP_CORE_DIR}/ProcessInspectionService.cpp
-	${MINEBACKUP_CORE_DIR}/WorldIdentity.cpp
-	${MINEBACKUP_CORE_DIR}/WizardSession.cpp
-	${MINEBACKUP_CORE_DIR}/BackupChangeDetector.cpp
-    ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.cpp
-    ${MINEBACKUP_CORE_DIR}/PathRuleSet.cpp
-    ${MINEBACKUP_CORE_DIR}/RcloneClient.cpp
-    ${MINEBACKUP_CORE_DIR}/RemoteContentService.cpp
-    ${MINEBACKUP_CORE_DIR}/ExternalToolManager.cpp
-    ${MINEBACKUP_CORE_DIR}/PortableConfigDocument.cpp
-    ${MINEBACKUP_CORE_DIR}/LegacyServicePolicy.cpp
-    ${MINEBACKUP_UTILS_DIR}/FileName.cpp
-    ${MINEBACKUP_UTILS_DIR}/text_to_text.cpp
+    ${MINEBACKUP_SRC_DIR}/domain/OperationResult.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/AppPaths.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/ArchiveRunner.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/AtomicFileWriter.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/BackupChangeDetector.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/DiagnosticLogExporter.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/ExternalToolManager.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/InterruptedTaskRecovery.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/KnotLinkCommandDispatcher.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/KnotLinkPackageManager.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/KnotLinkProtocol.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/KnownUserFolders.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/LegacyLocationDiscovery.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/LegacyLocationMigration.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/LegacyServicePolicy.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/Logging.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/NetworkService.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/PathIdentity.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/PathRuleSet.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/ProcessInspectionService.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/ProcessRunner.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/RcloneClient.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/ReadOnlyMappedFile.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/RemoteContentService.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/Sha256.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/SingleInstanceService.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/WorldIdentity.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/config/ConfigIniCodec.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/config/JobDocument.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/config/LegacyIniConfigCodec.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/config/PortableConfigDocument.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/storage/CloudHistoryAnalysis.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/storage/FolderRewindFormat.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/storage/FolderRewindHistoryStore.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/storage/FolderRewindMetadataStore.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/text/FileName.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/text/text_to_text.cpp
 )
 
 set(MINEBACKUP_RUNTIME_SOURCES
-    ${MINEBACKUP_CORE_DIR}/ConfigIniCodec.cpp
-    ${MINEBACKUP_CORE_DIR}/ProfileTransaction.cpp
-
-	${MINEBACKUP_APP_DIR}/ConfigSelection.cpp
-	${MINEBACKUP_CORE_DIR}/HistoryRepository.cpp
-	${MINEBACKUP_CORE_DIR}/HotRestoreCoordinator.cpp
-	${MINEBACKUP_CORE_DIR}/JobRunner.cpp
-	${MINEBACKUP_CORE_DIR}/MigrationCoordinator.cpp
-	${MINEBACKUP_CORE_DIR}/OperationResult.cpp
-	${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.cpp
-	${MINEBACKUP_CORE_DIR}/ProfileConfigRepository.cpp
-	${MINEBACKUP_CORE_DIR}/ProfileManifest.cpp
-	${MINEBACKUP_CORE_DIR}/ProfileKnotLinkCommands.cpp
-	${MINEBACKUP_CORE_DIR}/ProfileRuntime.cpp
-	${MINEBACKUP_CORE_DIR}/BackupManager.cpp
-	${MINEBACKUP_CORE_DIR}/RuntimeIntegration.cpp
-	${MINEBACKUP_CORE_DIR}/RuntimeCloudPostHook.cpp
-	${MINEBACKUP_CORE_DIR}/RuntimeFileLock.cpp
-	${MINEBACKUP_CORE_DIR}/RuntimeRetentionService.cpp
-	${MINEBACKUP_CORE_DIR}/RestoreService.cpp
-	${MINEBACKUP_CORE_DIR}/RestoreWorkspace.cpp
-	${MINEBACKUP_CORE_DIR}/TaskCoordinator.cpp
-	${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.cpp
-	${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.cpp
-	${MINEBACKUP_INFRA_DIR}/SingleInstanceService.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/BackupManager.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/BatchReadinessService.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ChainSafeRetention.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ConfigFactory.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ConfigSelection.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/HistoryRepository.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/HmclDiscoveryProvider.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/HotRestoreCoordinator.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/JobRunner.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/KnownMinecraftLocationProvider.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/LauncherDiscoveryUtils.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/MigrationCoordinator.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/MinecraftInstanceDiscoveryService.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/MinecraftInstanceInspector.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ModrinthDiscoveryProvider.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/NeteaseMinecraftDiscoveryProvider.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/Pcl2ProcessDiscoveryProvider.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/PrismLauncherDiscoveryProvider.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileConfigCatalog.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileConfigRepository.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileKnotLinkCommands.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileManifest.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileRuntime.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileTransaction.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/RestoreService.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/RestoreWorkspace.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeCloudPostHook.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeFileLock.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeIntegration.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeRetentionService.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/TaskCoordinator.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/WizardSession.cpp
 )
 
 set(MINEBACKUP_V15_DATA_SOURCES
-    ${MINEBACKUP_CORE_DIR}/LegacyMineBackup15Reader.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/legacy/LegacyMineBackup15Reader.cpp
 )
 
 set(MINEBACKUP_V15_DESKTOP_SOURCES
-    ${MINEBACKUP_CORE_DIR}/V15MigrationAdapter.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/legacy/V15MigrationAdapter.cpp
 )
 
 set(MINEBACKUP_APPLICATION_SOURCES
-    ${MINEBACKUP_APP_DIR}/Application.cpp
-    ${MINEBACKUP_APP_DIR}/ApplicationActions.cpp
-    ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.cpp
-    ${MINEBACKUP_APP_DIR}/AppearanceRuntime.cpp
-	${MINEBACKUP_APP_DIR}/ConfigBatchCreationService.cpp
-	${MINEBACKUP_APP_DIR}/DesktopUiSession.cpp
-	${MINEBACKUP_APP_DIR}/DesktopUiLifecycle.cpp
-    ${MINEBACKUP_APP_DIR}/AppState.cpp
-    ${MINEBACKUP_APP_DIR}/Globals.cpp
-    ${MINEBACKUP_APP_DIR}/ImGuiRuntime.cpp
-	${MINEBACKUP_APP_DIR}/LaunchOptions.cpp
-	${MINEBACKUP_APP_DIR}/legacy/LegacyServiceCleanup.cpp
-	${MINEBACKUP_CORE_DIR}/BackupManagerDesktop.cpp
-    ${MINEBACKUP_CORE_DIR}/BackupAuxiliary.cpp
-    ${MINEBACKUP_CORE_DIR}/BackupRestore.cpp
-    ${MINEBACKUP_CORE_DIR}/BackupRetention.cpp
-    ${MINEBACKUP_CORE_DIR}/CloudHistorySync.cpp
-    ${MINEBACKUP_CORE_DIR}/CloudPortableConfig.cpp
-    ${MINEBACKUP_CORE_DIR}/CloudSyncService.cpp
-    ${MINEBACKUP_CORE_DIR}/CoreValidation.cpp
-    ${MINEBACKUP_CORE_DIR}/GameSessionManager.cpp
-    ${MINEBACKUP_CORE_DIR}/HistoryManager.cpp
-    ${MINEBACKUP_INFRA_DIR}/Broadcast.cpp
-    ${MINEBACKUP_INFRA_DIR}/ConfigManager.cpp
-    ${MINEBACKUP_INFRA_DIR}/KnotLinkServerManager.cpp
-    ${MINEBACKUP_INFRA_DIR}/KnotLinkService.cpp
-    ${MINEBACKUP_INFRA_DIR}/i18n.cpp
-	${MINEBACKUP_INFRA_DIR}/DesktopServices.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/app/Application.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/app/ApplicationActions.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/app/ApplicationEventRouter.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/app/AppearanceRuntime.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/app/ConfigBatchCreationService.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/app/DesktopUiSession.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/app/DesktopUiLifecycle.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/app/AppState.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/app/Globals.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/app/ImGuiRuntime.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/app/LaunchOptions.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/legacy/LegacyServiceCleanup.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/adapters/BackupManagerDesktop.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/BackupAuxiliary.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/BackupRestore.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/BackupRetention.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/CloudHistorySync.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/CloudPortableConfig.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/CloudSyncService.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/CoreValidation.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/GameSessionManager.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/HistoryManager.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/Broadcast.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/ConfigManager.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/KnotLinkServerManager.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/KnotLinkService.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/i18n.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/adapters/DesktopServices.cpp
 )
 
 set(MINEBACKUP_UI_SOURCES
-    ${MINEBACKUP_UI_DIR}/CommandConsole.cpp
-    ${MINEBACKUP_UI_DIR}/HistoryDialogs.cpp
-    ${MINEBACKUP_UI_DIR}/HistoryUI.cpp
-	${MINEBACKUP_UI_DIR}/HistoryViewModel.cpp
-    ${MINEBACKUP_UI_DIR}/LogPanel.cpp
-    ${MINEBACKUP_UI_DIR}/MigrationReportUI.cpp
-	${MINEBACKUP_UI_DIR}/MinecraftSetupUI.cpp
-    ${MINEBACKUP_UI_DIR}/SettingsUI.cpp
-    ${MINEBACKUP_UI_DIR}/SettingsUIApplication.cpp
-    ${MINEBACKUP_UI_DIR}/SettingsUIAppearance.cpp
-    ${MINEBACKUP_UI_DIR}/SettingsUIConfig.cpp
-    ${MINEBACKUP_UI_DIR}/SettingsUISpecial.cpp
-    ${MINEBACKUP_UI_DIR}/SettingsUIHotkeys.cpp
-    ${MINEBACKUP_UI_DIR}/WizardUI.cpp
-    ${MINEBACKUP_UI_DIR}/MainUI.cpp
-    ${MINEBACKUP_UI_DIR}/WorldListController.cpp
-	${MINEBACKUP_UI_DIR}/WorldListModel.cpp
-    ${MINEBACKUP_UI_DIR}/WorldListUI.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/CommandConsole.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/HistoryDialogs.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/HistoryUI.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/ui/HistoryViewModel.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/LogPanel.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/MigrationReportUI.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/ui/MinecraftSetupUI.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUI.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUIApplication.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUIAppearance.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUIConfig.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUISpecial.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUIHotkeys.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/WizardUI.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/MainUI.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/WorldListController.cpp
+	${MINEBACKUP_SRC_DIR}/desktop/ui/WorldListModel.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/WorldListUI.cpp
 )
 
 set(MINEBACKUP_WINDOWS_SOURCES
-    ${MINEBACKUP_PLATFORM_DIR}/Platform_win.cpp
-    ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.cpp
-    ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_win.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_win.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/NativeDesktopServices.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/platform/NetworkBackend_win.cpp
 )
 set(MINEBACKUP_LINUX_SOURCES
-    ${MINEBACKUP_PLATFORM_DIR}/Platform_linux.cpp
-    ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.cpp
-    ${MINEBACKUP_PLATFORM_DIR}/LinuxDesktopPortal.cpp
-    ${MINEBACKUP_PLATFORM_DIR}/LinuxDesktopPortal.h
-    ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_linux.cpp)
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_linux.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/NativeDesktopServices.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/LinuxDesktopPortal.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/LinuxDesktopPortal.h
+    ${MINEBACKUP_SRC_DIR}/infra/platform/NetworkBackend_linux.cpp)
 set(MINEBACKUP_MACOS_SOURCES
-    ${MINEBACKUP_PLATFORM_DIR}/Platform_macos.cpp
-    ${MINEBACKUP_PLATFORM_DIR}/Platform_macos_tray.mm
-    ${MINEBACKUP_PLATFORM_DIR}/MacDesktopBridge.mm
-    ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.cpp
-    ${MINEBACKUP_PLATFORM_DIR}/NetworkBackend_macos.mm)
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_macos.cpp
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_macos_tray.mm
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/MacDesktopBridge.mm
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/NativeDesktopServices.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/platform/NetworkBackend_macos.mm)
 
 set(MINEBACKUP_IMGUI_SOURCES
     ${MINEBACKUP_IMGUI_DIR}/imgui.cpp
@@ -183,18 +181,166 @@ set(MINEBACKUP_SPDLOG_SOURCES
     ${MINEBACKUP_SPDLOG_DIR}/src/stdout_sinks.cpp
 )
 
-set(MINEBACKUP_PUBLIC_HEADERS
-    ${MINEBACKUP_CORE_DIR}/ConfigIniCodec.h
-    ${MINEBACKUP_CORE_DIR}/ProfileTransaction.h
+set(MINEBACKUP_DATA_CORE_HEADERS
+    ${MINEBACKUP_SRC_DIR}/domain/CompressionPolicy.h
+    ${MINEBACKUP_SRC_DIR}/domain/DataModels.h
+    ${MINEBACKUP_SRC_DIR}/domain/JobModels.h
+    ${MINEBACKUP_SRC_DIR}/domain/MinecraftTypes.h
+    ${MINEBACKUP_SRC_DIR}/domain/ModVersion.h
+    ${MINEBACKUP_SRC_DIR}/domain/OperationResult.h
+    ${MINEBACKUP_SRC_DIR}/domain/ProcessModels.h
+    ${MINEBACKUP_SRC_DIR}/infra/AppPaths.h
+    ${MINEBACKUP_SRC_DIR}/infra/ArchiveRunner.h
+    ${MINEBACKUP_SRC_DIR}/infra/AtomicFileWriter.h
+    ${MINEBACKUP_SRC_DIR}/infra/BackupChangeDetector.h
+    ${MINEBACKUP_SRC_DIR}/infra/DiagnosticLogExporter.h
+    ${MINEBACKUP_SRC_DIR}/infra/ExternalToolManager.h
+    ${MINEBACKUP_SRC_DIR}/infra/InterruptedTaskRecovery.h
+    ${MINEBACKUP_SRC_DIR}/infra/KnotLinkCommandDispatcher.h
+    ${MINEBACKUP_SRC_DIR}/infra/KnotLinkPackageManager.h
+    ${MINEBACKUP_SRC_DIR}/infra/KnotLinkProtocol.h
+    ${MINEBACKUP_SRC_DIR}/infra/KnownUserFolders.h
+    ${MINEBACKUP_SRC_DIR}/infra/LegacyLocationDiscovery.h
+    ${MINEBACKUP_SRC_DIR}/infra/LegacyLocationMigration.h
+    ${MINEBACKUP_SRC_DIR}/infra/LegacyServicePolicy.h
+    ${MINEBACKUP_SRC_DIR}/infra/Logging.h
+    ${MINEBACKUP_SRC_DIR}/infra/NetworkService.h
+    ${MINEBACKUP_SRC_DIR}/infra/PathIdentity.h
+    ${MINEBACKUP_SRC_DIR}/infra/PathRuleSet.h
+    ${MINEBACKUP_SRC_DIR}/infra/ProcessInspectionService.h
+    ${MINEBACKUP_SRC_DIR}/infra/ProcessRunner.h
+    ${MINEBACKUP_SRC_DIR}/infra/ProcessRunnerTestAccess.h
+    ${MINEBACKUP_SRC_DIR}/infra/RcloneClient.h
+    ${MINEBACKUP_SRC_DIR}/infra/ReadOnlyMappedFile.h
+    ${MINEBACKUP_SRC_DIR}/infra/RemoteContentService.h
+    ${MINEBACKUP_SRC_DIR}/infra/Sha256.h
+    ${MINEBACKUP_SRC_DIR}/infra/SingleInstanceService.h
+    ${MINEBACKUP_SRC_DIR}/infra/WorldIdentity.h
+    ${MINEBACKUP_SRC_DIR}/infra/config/ConfigIniCodec.h
+    ${MINEBACKUP_SRC_DIR}/infra/config/JobDocument.h
+    ${MINEBACKUP_SRC_DIR}/infra/config/LegacyIniConfigCodec.h
+    ${MINEBACKUP_SRC_DIR}/infra/config/PortableConfigDocument.h
+    ${MINEBACKUP_SRC_DIR}/infra/legacy/LegacyMineBackup15Reader.h
+    ${MINEBACKUP_SRC_DIR}/infra/platform/NetworkBackendFactory.h
+    ${MINEBACKUP_SRC_DIR}/infra/platform/PlatformCompat.h
+    ${MINEBACKUP_SRC_DIR}/infra/storage/CloudHistoryAnalysis.h
+    ${MINEBACKUP_SRC_DIR}/infra/storage/FolderRewindFormat.h
+    ${MINEBACKUP_SRC_DIR}/infra/storage/FolderRewindHistoryStore.h
+    ${MINEBACKUP_SRC_DIR}/infra/storage/FolderRewindMetadataStore.h
+    ${MINEBACKUP_SRC_DIR}/infra/text/FileName.h
+    ${MINEBACKUP_SRC_DIR}/infra/text/text_to_text.h
+)
 
-    ${MINEBACKUP_CORE_DIR}/CompressionPolicy.h
-    ${MINEBACKUP_APP_DIR}/Application.h ${MINEBACKUP_APP_DIR}/ApplicationActions.h ${MINEBACKUP_APP_DIR}/ApplicationEventRouter.h ${MINEBACKUP_APP_DIR}/AppearanceRuntime.h ${MINEBACKUP_APP_DIR}/ConfigBatchCreationService.h ${MINEBACKUP_APP_DIR}/DesktopUiLifecycle.h ${MINEBACKUP_APP_DIR}/DesktopUiSession.h ${MINEBACKUP_APP_DIR}/AppState.h ${MINEBACKUP_APP_DIR}/ConfigSelection.h ${MINEBACKUP_APP_DIR}/DataModels.h ${MINEBACKUP_APP_DIR}/Globals.h ${MINEBACKUP_APP_DIR}/ImGuiRuntime.h ${MINEBACKUP_APP_DIR}/LaunchOptions.h ${MINEBACKUP_APP_DIR}/MainUI.h ${MINEBACKUP_APP_DIR}/legacy/LegacyServiceCleanup.h
-    ${MINEBACKUP_CORE_DIR}/ArchiveRunner.h ${MINEBACKUP_CORE_DIR}/BatchReadinessService.h ${MINEBACKUP_CORE_DIR}/ChainSafeRetention.h ${MINEBACKUP_CORE_DIR}/ConfigFactory.h ${MINEBACKUP_CORE_DIR}/BackupChangeDetector.h ${MINEBACKUP_CORE_DIR}/BackupManager.h ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h ${MINEBACKUP_CORE_DIR}/BackupService.h ${MINEBACKUP_CORE_DIR}/CloudHistoryAnalysis.h ${MINEBACKUP_CORE_DIR}/CloudSyncInternal.h ${MINEBACKUP_CORE_DIR}/CloudSyncService.h
-    ${MINEBACKUP_CORE_DIR}/CoreValidation.h ${MINEBACKUP_CORE_DIR}/FolderRewindFormat.h ${MINEBACKUP_CORE_DIR}/FolderRewindHistoryStore.h ${MINEBACKUP_CORE_DIR}/HistoryRepository.h ${MINEBACKUP_CORE_DIR}/JobDocument.h ${MINEBACKUP_CORE_DIR}/JobModels.h ${MINEBACKUP_CORE_DIR}/JobRunner.h
-    ${MINEBACKUP_CORE_DIR}/FolderRewindMetadataStore.h ${MINEBACKUP_CORE_DIR}/GameSessionManager.h ${MINEBACKUP_CORE_DIR}/HistoryManager.h ${MINEBACKUP_CORE_DIR}/HmclDiscoveryProvider.h ${MINEBACKUP_CORE_DIR}/LegacyMineBackup15Reader.h ${MINEBACKUP_CORE_DIR}/PathRuleSet.h
-    ${MINEBACKUP_CORE_DIR}/KnownMinecraftLocationProvider.h ${MINEBACKUP_CORE_DIR}/LauncherDiscoveryUtils.h ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.h ${MINEBACKUP_CORE_DIR}/MinecraftDiscovery.h ${MINEBACKUP_CORE_DIR}/MinecraftInstanceDiscoveryService.h ${MINEBACKUP_CORE_DIR}/MinecraftInstanceInspector.h    ${MINEBACKUP_CORE_DIR}/MinecraftTypes.h ${MINEBACKUP_CORE_DIR}/ModrinthDiscoveryProvider.h ${MINEBACKUP_CORE_DIR}/NeteaseMinecraftDiscoveryProvider.h ${MINEBACKUP_CORE_DIR}/OperationResult.h ${MINEBACKUP_CORE_DIR}/Pcl2ProcessDiscoveryProvider.h ${MINEBACKUP_CORE_DIR}/PrismLauncherDiscoveryProvider.h ${MINEBACKUP_CORE_DIR}/PathIdentity.h ${MINEBACKUP_CORE_DIR}/ProcessInspectionService.h ${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.h ${MINEBACKUP_CORE_DIR}/ProfileConfigRepository.h ${MINEBACKUP_CORE_DIR}/ProfileManifest.h ${MINEBACKUP_CORE_DIR}/RestoreService.h ${MINEBACKUP_CORE_DIR}/RestoreWorkspace.h ${MINEBACKUP_CORE_DIR}/WorldIdentity.h ${MINEBACKUP_CORE_DIR}/WizardSession.h ${MINEBACKUP_CORE_DIR}/RuntimeIntegration.h ${MINEBACKUP_CORE_DIR}/RuntimeCloudPostHook.h ${MINEBACKUP_CORE_DIR}/RuntimeFileLock.h ${MINEBACKUP_CORE_DIR}/RuntimeRetentionService.h ${MINEBACKUP_CORE_DIR}/V15MigrationAdapter.h ${MINEBACKUP_CORE_DIR}/TaskCoordinator.h ${MINEBACKUP_CORE_DIR}/RemoteContentService.h ${MINEBACKUP_CORE_DIR}/ExternalToolManager.h ${MINEBACKUP_CORE_DIR}/PortableConfigDocument.h ${MINEBACKUP_CORE_DIR}/RcloneClient.h ${MINEBACKUP_CORE_DIR}/LegacyServicePolicy.h
-    ${MINEBACKUP_INFRA_DIR}/AppPaths.h ${MINEBACKUP_INFRA_DIR}/AtomicFileWriter.h ${MINEBACKUP_INFRA_DIR}/DiagnosticLogExporter.h ${MINEBACKUP_INFRA_DIR}/KnownUserFolders.h ${MINEBACKUP_INFRA_DIR}/Logging.h ${MINEBACKUP_INFRA_DIR}/SingleInstanceService.h ${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationDiscovery.h ${MINEBACKUP_INFRA_DIR}/LegacyLocationMigration.h ${MINEBACKUP_INFRA_DIR}/ProcessRunner.h ${MINEBACKUP_INFRA_DIR}/ReadOnlyMappedFile.h ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.h ${MINEBACKUP_INFRA_DIR}/KnotLinkPackageManager.h ${MINEBACKUP_INFRA_DIR}/KnotLinkProtocol.h ${MINEBACKUP_INFRA_DIR}/KnotLinkServerManager.h ${MINEBACKUP_INFRA_DIR}/KnotLinkService.h ${MINEBACKUP_INFRA_DIR}/NetworkService.h ${MINEBACKUP_INFRA_DIR}/Sha256.h ${MINEBACKUP_INFRA_DIR}/Broadcast.h ${MINEBACKUP_INFRA_DIR}/ConfigManager.h ${MINEBACKUP_INFRA_DIR}/i18n.h
-    ${MINEBACKUP_PLATFORM_DIR}/DesktopServices.h ${MINEBACKUP_PLATFORM_DIR}/NativeDesktopServices.h ${MINEBACKUP_PLATFORM_DIR}/MacDesktopBridge.h ${MINEBACKUP_PLATFORM_DIR}/PlatformCompat.h ${MINEBACKUP_PLATFORM_DIR}/Platform_linux.h ${MINEBACKUP_PLATFORM_DIR}/Platform_macos.h ${MINEBACKUP_PLATFORM_DIR}/Platform_win.h ${MINEBACKUP_PLATFORM_DIR}/NetworkBackendFactory.h
-    ${MINEBACKUP_UI_DIR}/CommandConsole.h ${MINEBACKUP_UI_DIR}/HistoryDialogs.h ${MINEBACKUP_UI_DIR}/HistoryViewModel.h ${MINEBACKUP_UI_DIR}/IconsFontAwesome6.h ${MINEBACKUP_UI_DIR}/LogPanel.h ${MINEBACKUP_UI_DIR}/MainUiController.h ${MINEBACKUP_UI_DIR}/MigrationReportUI.h ${MINEBACKUP_UI_DIR}/MinecraftSetupUI.h ${MINEBACKUP_UI_DIR}/SettingsUI.h ${MINEBACKUP_UI_DIR}/SettingsUIHotkeys.h ${MINEBACKUP_UI_DIR}/SettingsUIPrivate.h
-    ${MINEBACKUP_UI_DIR}/UIHelpers.h ${MINEBACKUP_UI_DIR}/WorldListController.h ${MINEBACKUP_UI_DIR}/WorldListModel.h ${MINEBACKUP_UI_DIR}/imgui-all.h ${MINEBACKUP_UTILS_DIR}/FileName.h ${MINEBACKUP_UTILS_DIR}/text_to_text.h
+set(MINEBACKUP_DATA_CORE_INCLUDE_DIRS
+    ${MINEBACKUP_SRC_DIR}/domain
+    ${MINEBACKUP_SRC_DIR}/infra
+    ${MINEBACKUP_SRC_DIR}/infra/config
+    ${MINEBACKUP_SRC_DIR}/infra/legacy
+    ${MINEBACKUP_SRC_DIR}/infra/platform
+    ${MINEBACKUP_SRC_DIR}/infra/storage
+    ${MINEBACKUP_SRC_DIR}/infra/text
+)
+
+set(MINEBACKUP_RUNTIME_HEADERS
+    ${MINEBACKUP_SRC_DIR}/runtime/BackupManagerInternal.h
+    ${MINEBACKUP_SRC_DIR}/runtime/BackupService.h
+    ${MINEBACKUP_SRC_DIR}/runtime/BatchReadinessService.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ChainSafeRetention.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ConfigFactory.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ConfigSelection.h
+    ${MINEBACKUP_SRC_DIR}/runtime/HistoryRepository.h
+    ${MINEBACKUP_SRC_DIR}/runtime/HmclDiscoveryProvider.h
+    ${MINEBACKUP_SRC_DIR}/runtime/HotRestoreCoordinator.h
+    ${MINEBACKUP_SRC_DIR}/runtime/JobRunner.h
+    ${MINEBACKUP_SRC_DIR}/runtime/KnownMinecraftLocationProvider.h
+    ${MINEBACKUP_SRC_DIR}/runtime/LauncherDiscoveryUtils.h
+    ${MINEBACKUP_SRC_DIR}/runtime/MigrationCoordinator.h
+    ${MINEBACKUP_SRC_DIR}/runtime/MinecraftDiscovery.h
+    ${MINEBACKUP_SRC_DIR}/runtime/MinecraftInstanceDiscoveryService.h
+    ${MINEBACKUP_SRC_DIR}/runtime/MinecraftInstanceInspector.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ModrinthDiscoveryProvider.h
+    ${MINEBACKUP_SRC_DIR}/runtime/NeteaseMinecraftDiscoveryProvider.h
+    ${MINEBACKUP_SRC_DIR}/runtime/Pcl2ProcessDiscoveryProvider.h
+    ${MINEBACKUP_SRC_DIR}/runtime/PrismLauncherDiscoveryProvider.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileConfigCatalog.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileConfigRepository.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileKnotLinkCommands.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileManifest.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileRuntime.h
+    ${MINEBACKUP_SRC_DIR}/runtime/ProfileTransaction.h
+    ${MINEBACKUP_SRC_DIR}/runtime/RestoreService.h
+    ${MINEBACKUP_SRC_DIR}/runtime/RestoreWorkspace.h
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeCloudPostHook.h
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeFileLock.h
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeIntegration.h
+    ${MINEBACKUP_SRC_DIR}/runtime/RuntimeRetentionService.h
+    ${MINEBACKUP_SRC_DIR}/runtime/TaskCoordinator.h
+    ${MINEBACKUP_SRC_DIR}/runtime/WizardSession.h
+)
+
+set(MINEBACKUP_RUNTIME_INCLUDE_DIRS
+    ${MINEBACKUP_SRC_DIR}/runtime
+)
+
+set(MINEBACKUP_DESKTOP_HEADERS
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/BackupManager.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/Broadcast.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/CloudSyncInternal.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/CloudSyncService.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/ConfigManager.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/CoreValidation.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/GameSessionManager.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/HistoryManager.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/KnotLinkServerManager.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/KnotLinkService.h
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters/i18n.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/AppState.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/AppearanceRuntime.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/Application.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/ApplicationActions.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/ApplicationEventRouter.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/ConfigBatchCreationService.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/DesktopRuntimeState.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/DesktopUiLifecycle.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/DesktopUiSession.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/Globals.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/ImGuiRuntime.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/LaunchOptions.h
+    ${MINEBACKUP_SRC_DIR}/desktop/app/MainUI.h
+    ${MINEBACKUP_SRC_DIR}/desktop/legacy/LegacyServiceCleanup.h
+    ${MINEBACKUP_SRC_DIR}/desktop/legacy/V15MigrationAdapter.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/DesktopPlatform.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/DesktopServices.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/LinuxDesktopPortal.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/MacDesktopBridge.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/NativeDesktopServices.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_linux.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_macos.h
+    ${MINEBACKUP_SRC_DIR}/desktop/platform/Platform_win.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/CommandConsole.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/HistoryDialogs.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/HistoryViewModel.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/IconsFontAwesome6.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/LogPanel.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/MainUiController.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/MigrationReportUI.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/MinecraftSetupUI.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsAutoSave.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUI.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUIHotkeys.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/SettingsUIPrivate.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/ThemeManager.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/ThemePalette.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/UIHelpers.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/WorldListController.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/WorldListModel.h
+    ${MINEBACKUP_SRC_DIR}/desktop/ui/imgui-all.h
+)
+
+set(MINEBACKUP_DESKTOP_INCLUDE_DIRS
+    ${MINEBACKUP_SRC_DIR}/desktop/adapters
+    ${MINEBACKUP_SRC_DIR}/desktop/app
+    ${MINEBACKUP_SRC_DIR}/desktop/legacy
+    ${MINEBACKUP_SRC_DIR}/desktop/platform
+    ${MINEBACKUP_SRC_DIR}/desktop/ui
 )

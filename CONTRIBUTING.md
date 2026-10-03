@@ -21,7 +21,7 @@ Thank you for your interest in contributing to MineBackup.
 
 - C++20 compiler
 - Git
-- CMake 3.15+ (Linux/macOS workflows)
+- CMake 3.22+ (Linux/macOS workflows)
 - Visual Studio 2022 with v143 toolset (Windows)
 
 ### Repository Layout
@@ -60,13 +60,13 @@ cmake --build build --config Release
 - Avoid unrelated refactors in the same pull request.
 - Add comments only where logic is not obvious.
 - Keep runtime data behavior consistent unless discussed first.
-  MineBackup currently stores runtime files (such as config/history/log/theme)
-  next to the executable or working directory.
+  Runtime configuration, history, logs and tools are resolved through AppPaths
+  inside the selected Profile; the executable and working directory are not implicit data roots.
 - If your change affects user behavior, update documentation and release notes.
 
 ## Localization Notes
 
-- UI language strings are maintained in `MineBackup/src/infra/i18n.cpp`.
+- UI language strings are maintained in `MineBackup/src/desktop/adapters/i18n.cpp`.
 - Ensure both Chinese and English entries remain consistent when applicable.
 
 ## Pull Request Checklist
@@ -100,3 +100,25 @@ Please include:
 For vulnerabilities, please follow:
 
 - `SECURITY.md`
+
+## Source layers and validation
+
+`MineBackup/src` contains `domain` (models and pure policies), `infra` (I/O and platform adapters),
+`runtime` (profile use cases), `desktop` (application, UI and desktop integration), and `cli`.
+Dependencies flow from frontends to runtime to infra/domain; domain never includes higher layers.
+Platform network backends are optional infrastructure compiled with the desktop feature; CLI-only
+builds continue to exclude native network backends and desktop dependencies.
+
+Use `cmake --build --preset windows-msvc-x64-release --parallel` and
+`ctest --preset windows-msvc-x64-release`. The CLI-only and no-v15 presets remain supported.
+Run `check_runtime_boundaries`, `check_msbuild_source_parity`, and the
+`minebackup_data_core_link_check` build target after source manifest changes.
+
+Desktop configuration views are immutable and revision-cached. Use `EditUiConfig` for a frame
+edit, identity-based mutations for background results, and scoped `DesktopConfigState::Write`
+only for batch changes. Jobs must be accessed through the same state boundary. Changes that
+save desktop preferences are dispatched to the UI thread.
+
+Profile transactions commit config and jobs together; manifest apply includes history when it
+changes. Only `NotCommitted` permits memory rollback. `RecoveryRequired` blocks dependent
+writes until recovery/reload. Read-only commands inspect journals without repairing files.

@@ -1,93 +1,84 @@
 if(NOT DEFINED MINEBACKUP_REPOSITORY_ROOT)
     message(FATAL_ERROR "MINEBACKUP_REPOSITORY_ROOT is required")
 endif()
-
 set(MINEBACKUP_SOURCE_DIR ${MINEBACKUP_REPOSITORY_ROOT}/MineBackup)
 set(MINEBACKUP_SRC_DIR ${MINEBACKUP_SOURCE_DIR}/src)
-set(MINEBACKUP_APP_DIR ${MINEBACKUP_SRC_DIR}/app)
-set(MINEBACKUP_CORE_DIR ${MINEBACKUP_SRC_DIR}/core)
-set(MINEBACKUP_INFRA_DIR ${MINEBACKUP_SRC_DIR}/infra)
-set(MINEBACKUP_PLATFORM_DIR ${MINEBACKUP_SRC_DIR}/platform)
-set(MINEBACKUP_UI_DIR ${MINEBACKUP_SRC_DIR}/ui)
-set(MINEBACKUP_UTILS_DIR ${MINEBACKUP_SRC_DIR}/utils)
-set(MINEBACKUP_THIRD_PARTY_DIR ${MINEBACKUP_SOURCE_DIR}/third_party)
-set(MINEBACKUP_IMGUI_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/imgui)
-set(MINEBACKUP_KNOTLINK_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/knotlink-sdk-cpp-2.0)
-set(MINEBACKUP_SPDLOG_DIR ${MINEBACKUP_THIRD_PARTY_DIR}/spdlog)
 include(${MINEBACKUP_REPOSITORY_ROOT}/cmake/MineBackupSources.cmake)
 
-set(runtime_contract_files
-    ${MINEBACKUP_RUNTIME_SOURCES}
-    ${MINEBACKUP_APP_DIR}/ConfigSelection.h
-    ${MINEBACKUP_CORE_DIR}/BackupManagerInternal.h
-    ${MINEBACKUP_CORE_DIR}/BackupService.h
-    ${MINEBACKUP_CORE_DIR}/HistoryRepository.h
-	${MINEBACKUP_CORE_DIR}/HotRestoreCoordinator.h
-    ${MINEBACKUP_CORE_DIR}/MigrationCoordinator.h
-    ${MINEBACKUP_CORE_DIR}/OperationResult.h
-    ${MINEBACKUP_CORE_DIR}/ProfileConfigCatalog.h
-	${MINEBACKUP_CORE_DIR}/ProfileKnotLinkCommands.h
-    ${MINEBACKUP_CORE_DIR}/ProfileRuntime.h
-    ${MINEBACKUP_CORE_DIR}/RuntimeCloudPostHook.h
-    ${MINEBACKUP_CORE_DIR}/RuntimeFileLock.h
-    ${MINEBACKUP_CORE_DIR}/RuntimeIntegration.h
-    ${MINEBACKUP_CORE_DIR}/RuntimeRetentionService.h
-    ${MINEBACKUP_CORE_DIR}/TaskCoordinator.h
-    ${MINEBACKUP_INFRA_DIR}/InterruptedTaskRecovery.h
-	${MINEBACKUP_INFRA_DIR}/KnotLinkCommandDispatcher.h
-    ${MINEBACKUP_INFRA_DIR}/LegacyIniConfigCodec.h
-    ${MINEBACKUP_INFRA_DIR}/SingleInstanceService.h)
-
-set(forbidden_include
-    "#[ \t]*include[ \t]*[<\"](Globals\\.h|AppState\\.h|DesktopServices\\.h|imgui[^>\"]*|GLFW/[^>\"]*)[>\"]")
-foreach(path IN LISTS runtime_contract_files)
-    if(NOT EXISTS "${path}")
-        message(FATAL_ERROR "Runtime contract file is missing: ${path}")
+# Include all project headers, including header-only contracts without a .cpp.
+file(GLOB_RECURSE project_files
+    "${MINEBACKUP_SRC_DIR}/*.h" "${MINEBACKUP_SRC_DIR}/*.cpp" "${MINEBACKUP_SRC_DIR}/*.mm")
+foreach(path IN LISTS project_files)
+    get_filename_component(name "${path}" NAME)
+    string(SHA256 key "${name}")
+    get_property(previous GLOBAL PROPERTY "header_${key}")
+    if(previous AND NOT previous STREQUAL path)
+        message(FATAL_ERROR "Ambiguous project include name: ${name}")
     endif()
-    file(READ "${path}" content)
-    string(REGEX MATCH "${forbidden_include}" violation "${content}")
-    if(violation)
-        file(RELATIVE_PATH relative "${MINEBACKUP_REPOSITORY_ROOT}" "${path}")
-        message(FATAL_ERROR "Runtime boundary violation in ${relative}: ${violation}")
-    endif()
+    set_property(GLOBAL PROPERTY "header_${key}" "${path}")
 endforeach()
 
-# data_core 是 runtime 的下层依赖，禁止通过运行时编排头文件回连 runtime。
-# 这项检查把库的依赖方向固化为构建期契约，避免某个平台的静态链接器
-# 恰好解析成功而掩盖了 lower layer -> higher layer 的错误依赖。
-set(data_core_forbidden_headers
-    BackupService.h
-    HistoryRepository.h
-    HotRestoreCoordinator.h
-    JobRunner.h
-    MigrationCoordinator.h
-    ProfileConfigCatalog.h
-    ProfileConfigRepository.h
-    ProfileKnotLinkCommands.h
-    ProfileManifest.h
-    ProfileRuntime.h
-    RestoreService.h
-    RestoreWorkspace.h
-    RuntimeCloudPostHook.h
-    RuntimeFileLock.h
-    RuntimeIntegration.h
-    RuntimeRetentionService.h
-    SingleInstanceService.h
-    TaskCoordinator.h)
-foreach(path IN LISTS MINEBACKUP_DATA_CORE_SOURCES)
-    if(NOT EXISTS "${path}")
-        message(FATAL_ERROR "Data-core contract file is missing: ${path}")
+function(check_dependencies path origin chain)
+    string(SHA256 visit "${origin}:${path}")
+    get_property(seen GLOBAL PROPERTY "visited_${visit}")
+    if(seen)
+        return()
     endif()
-    file(READ "${path}" content)
-    foreach(header IN LISTS data_core_forbidden_headers)
-        string(REGEX MATCH
-            "#[ \t]*include[ \t]*[<\"]${header}[>\"]" violation "${content}")
-        if(violation)
-            file(RELATIVE_PATH relative "${MINEBACKUP_REPOSITORY_ROOT}" "${path}")
-            message(FATAL_ERROR
-                "Data-core boundary violation in ${relative}: ${violation}")
+    set_property(GLOBAL PROPERTY "visited_${visit}" TRUE)
+    file(RELATIVE_PATH relative "${MINEBACKUP_SRC_DIR}" "${path}")
+    string(REGEX MATCH "^[^/]+" layer "${relative}")
+    set(allowed domain)
+    if(NOT origin STREQUAL "domain")
+        list(APPEND allowed infra)
+    endif()
+    if(origin STREQUAL "runtime" OR origin STREQUAL "cli")
+        list(APPEND allowed runtime)
+    endif()
+    if(origin STREQUAL "cli")
+        list(APPEND allowed cli)
+    endif()
+    if(NOT layer IN_LIST allowed)
+        message(FATAL_ERROR "Layer boundary violation: ${chain} -> ${relative}")
+    endif()
+    file(STRINGS "${path}" includes REGEX "^[ \t]*#[ \t]*include")
+    foreach(line IN LISTS includes)
+        string(REGEX MATCH "[<\"]([^>\"]+)[>\"]" match "${line}")
+        if(NOT match)
+            continue()
+        endif()
+        set(include "${CMAKE_MATCH_1}")
+        if(include MATCHES "^(imgui|GLFW/|GL/|X11/|gtk/|gdk/|gio/|wayland)")
+            message(FATAL_ERROR "Desktop dependency from ${origin}: ${chain} -> ${include}")
+        endif()
+        get_filename_component(name "${include}" NAME)
+        string(SHA256 key "${name}")
+        get_property(dependency GLOBAL PROPERTY "header_${key}")
+        if(dependency)
+            check_dependencies("${dependency}" "${origin}" "${chain} -> ${relative}")
         endif()
     endforeach()
-endforeach()
+endfunction()
 
-message(STATUS "Runtime source/header boundary audit passed")
+foreach(path IN LISTS MINEBACKUP_DATA_CORE_SOURCES MINEBACKUP_RUNTIME_SOURCES MINEBACKUP_CLI_SOURCES)
+    if(NOT EXISTS "${path}")
+        message(FATAL_ERROR "Source manifest references missing file: ${path}")
+    endif()
+endforeach()
+foreach(path IN LISTS MINEBACKUP_DATA_CORE_SOURCES)
+    if(NOT path MATCHES "/src/(domain|infra)/")
+        message(FATAL_ERROR "data_core contains upper-layer implementation: ${path}")
+    endif()
+endforeach()
+foreach(path IN LISTS MINEBACKUP_RUNTIME_SOURCES)
+    if(NOT path MATCHES "/src/runtime/")
+        message(FATAL_ERROR "runtime source belongs to another layer: ${path}")
+    endif()
+endforeach()
+foreach(path IN LISTS project_files)
+    file(RELATIVE_PATH relative "${MINEBACKUP_SRC_DIR}" "${path}")
+    string(REGEX MATCH "^[^/]+" layer "${relative}")
+    if(layer MATCHES "^(domain|infra|runtime|cli)$")
+        check_dependencies("${path}" "${layer}" "${relative}")
+    endif()
+endforeach()
+message(STATUS "Five-layer transitive source/header boundary audit passed")

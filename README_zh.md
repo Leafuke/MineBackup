@@ -150,7 +150,7 @@ systemd/Task Scheduler 运维见[无头服务器 CLI 指南](docs/headless-cli.m
 ## 🤝 贡献与支持
 
 * **报告问题 / 提交建议**：[GitHub Issues](https://github.com/Leafuke/MineBackup/issues)
-* **多语言支持**：翻译 [`i18n.h`](MineBackup/src/infra/i18n.h)，让更多玩家用上自己的语言。
+* **多语言支持**：翻译 [`i18n.h`](MineBackup/src/desktop/adapters/i18n.h)，让更多玩家用上自己的语言。
 * **文档改进**：访问 [官方文档](https://folderrewind.top) 提交改进建议。
 
 ---
