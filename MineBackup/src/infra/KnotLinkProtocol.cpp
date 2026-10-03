@@ -11,6 +11,8 @@
 namespace minebackup::knotlink {
 namespace {
 
+thread_local std::shared_ptr<KnotLinkCommandContext> currentCommandContext;
+
 bool IsKeyCharacter(unsigned char value) {
     return std::isalnum(value) != 0 || value == '_';
 }
@@ -204,7 +206,16 @@ std::string BuildManifest() {
         {"compression_level", InputArgument(
             "Optional one-shot compression level.", "")},
         {"backup_blacklist", InputArgument(
-            "Comma-separated one-shot blacklist rules.", "")}};
+            "Comma-separated one-shot blacklist rules.", "")},
+        {"backup_whitelist", InputArgument(
+            "One-shot relative literal or wildcard selection; creates an independent Partial archive.", "")},
+        {"backup_scope", OptionalArgument(
+            "Optional one-shot world selection; selected-regions creates an independent Partial archive.",
+            {{"Full world", "full"}, {"Selected regions", "selected-regions"}})},
+        {"scope_dimensions", InputArgument(
+            "Selected-region dimensions: overworld, nether, end; empty defaults to overworld.", "")},
+        {"scope_areas", InputArgument(
+            "Selected-region block rectangles, one x1,z1,x2,z2 per line; at most 4096 region files.", "")}};
 
     json backupArgs = backupOverrides;
     backupArgs["config_id"] =
@@ -234,7 +245,11 @@ std::string BuildManifest() {
             {"confirm_partial_clean", BooleanArgument(
                 "Confirm clean restore from a partial backup.")},
             {"restore_whitelist", InputArgument(
-                "Comma-separated one-shot restore whitelist rules.", "")}})),
+                "Comma-separated one-shot legacy restore whitelist rules.", "")},
+            {"restore_preserve_paths", InputArgument(
+                "Comma-separated exact relative paths whose current state wins, including deletions.", "")},
+            {"preserve_player_data", BooleanArgument(
+                "Preserve current Java player state while restoring the world.")}})),
         {"message"});
 
     json backupAllArgs = backupOverrides;
@@ -463,6 +478,29 @@ std::vector<std::string> KnotLinkKeyValueCodec::DecodeList(std::string_view enco
     return result;
 }
 
+std::vector<std::string> KnotLinkKeyValueCodec::DecodeOperationList(
+    std::string_view encodedValue, bool rejectEmptyItems) {
+    if (encodedValue.empty()) return {};
+    const bool encodedItems = encodedValue.find(',') != std::string_view::npos;
+    const std::string value = encodedItems ? std::string(encodedValue) : DecodeValue(encodedValue);
+    std::vector<std::string> result;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const auto end = value.find(',', start);
+        auto item = value.substr(start, end == std::string::npos ? end : end - start);
+        if (encodedItems) item = DecodeValue(item);
+        if (item.empty() || IsBlank(item)) {
+            if (rejectEmptyItems) throw KnotLinkProtocolError(
+                "Restore preservation lists cannot contain empty paths.");
+        } else {
+            result.push_back(std::move(item));
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return result;
+}
+
 std::string KnotLinkKeyValueCodec::NormalizeKey(std::string_view key) {
     std::string result(key);
     std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) {
@@ -527,6 +565,61 @@ std::string KnotLinkCommandRequest::Get(
 std::string KnotLinkCommandRequest::GetEncoded(std::string_view key) const {
     const auto value = encodedValues.find(KnotLinkKeyValueCodec::NormalizeKey(key));
     return value == encodedValues.end() ? std::string{} : value->second;
+}
+
+KnotLinkCommandScope::KnotLinkCommandScope(std::shared_ptr<KnotLinkCommandContext> context)
+    : previous_(std::move(currentCommandContext)) {
+    currentCommandContext = std::move(context);
+}
+
+KnotLinkCommandScope::~KnotLinkCommandScope() {
+    currentCommandContext = std::move(previous_);
+}
+
+std::shared_ptr<KnotLinkCommandContext> KnotLinkCommandScope::Current() {
+    return currentCommandContext;
+}
+
+void KnotLinkCallbackTracker::ObserveEvent(std::string_view eventName,
+    const KnotLinkKeyValueCodec::Fields& fields, const KnotLinkCommandContext* context) {
+    (void)context;
+    std::lock_guard lock(mutex_);
+    if (eventName == "handshake") {
+        world_.clear();
+        for (const auto& [key, value] : fields) {
+            if (key == "world") world_ = value;
+        }
+        expectedCommand_ = "HANDSHAKE_RESPONSE";
+    } else if (eventName == "pre_hot_backup") {
+        expectedCommand_ = "WORLD_SAVED";
+    } else if (eventName == "pre_hot_restore") {
+        expectedCommand_ = "WORLD_SAVE_AND_EXIT_COMPLETE";
+    } else if (eventName == "rejoin_world") {
+        expectedCommand_ = "REJOIN_RESULT";
+    } else if (eventName == "backup_success" || eventName == "backup_failed"
+        || eventName == "hot_restore_complete" || eventName == "restore_cancelled"
+        || eventName == "command_completed" || eventName == "command_failed") {
+        expectedCommand_.clear();
+    }
+}
+
+std::optional<std::string> KnotLinkCallbackTracker::Validate(
+    const KnotLinkCommandRequest& request) const {
+    if (request.command != "HANDSHAKE_RESPONSE" && request.command != "WORLD_SAVED"
+        && request.command != "WORLD_SAVE_AND_EXIT_COMPLETE" && request.command != "REJOIN_RESULT") {
+        return std::nullopt;
+    }
+    std::lock_guard lock(mutex_);
+    if (request.command != expectedCommand_) {
+        return "No matching active mod callback is expected.";
+    }
+    // The supported integrated-server mod creates a new UUID for each callback,
+    // whereas its dedicated sidecar echoes the operation UUID. request_id is
+    // therefore the callback's own correlation ID, not an authentication token.
+    if (request.Has("world") && !world_.empty() && request.Get("world") != world_) {
+        return "Mod callback does not match the active world.";
+    }
+    return std::nullopt;
 }
 
 bool KnotLinkCommandValidator::RequiresConversationMetadata(std::string_view command) {

@@ -272,7 +272,12 @@ bool IsSame(const Config& config, const HistoryEntry& left, const HistoryEntry& 
 vector<HistoryEntry> WorldHistory(const Config& config, const vector<HistoryEntry>& history,
 	const HistoryEntry& target, bool auxiliary) {
 	vector<HistoryEntry> result;
+	const bool partialTarget = FolderRewindFormat::IsPartialBackupType(target.backupType)
+		|| FolderRewindFormat::IsPartialBackupType(target.backupFile);
 	for (const auto& entry : history) {
+		const bool partialEntry = FolderRewindFormat::IsPartialBackupType(entry.backupType)
+			|| FolderRewindFormat::IsPartialBackupType(entry.backupFile);
+		if (partialTarget ? !IsSame(config, target, entry, auxiliary) : partialEntry) continue;
 		if (entry.configId == config.configId
 			&& entry.backupFile.size()
 			&& (auxiliary ? SameAuxiliarySource(config, target, entry) : WorldIdentity::Matches(config, target.worldName, entry))) {

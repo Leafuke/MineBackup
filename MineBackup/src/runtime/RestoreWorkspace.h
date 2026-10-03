@@ -25,6 +25,12 @@ struct State {
 	bool CanRollback() const { return phase == Phase::Prepared; }
 };
 
+bool ValidateSafeTree(const std::filesystem::path& root, std::string& error, std::stop_token token = {});
+
+bool CopyLegacyPreservedToStaging(
+	const std::filesystem::path& source, const std::filesystem::path& staging,
+	const std::vector<std::wstring>& rules, std::string& error, std::stop_token token = {});
+
 bool Prepare(
 	const std::filesystem::path& target,
 	State& state,

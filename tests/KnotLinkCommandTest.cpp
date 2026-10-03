@@ -149,7 +149,7 @@ void TestMetadataAndUnsupportedParameters(
 
     const auto unsupported = ParseResponse(service.HandlePayload(
         "cmd=BACKUP;from=test;request_id=req-1;config_id=7;folder=0;"
-        "backup_scope=region"));
+        "scope_unimplemented=region"));
     Check(unsupported.values.at("status") == "error" &&
               unsupported.values.at("from") == "test" &&
               unsupported.values.at("request_id") == "req-1" &&
@@ -164,7 +164,26 @@ void TestMetadataAndUnsupportedParameters(
     CheckError(service.HandlePayload(
                    "cmd=BACKUP;from=test;request_id=req-3;config_id=7;folder=0;"
                    "preserve_player_data=true"),
-               "player data preservation should be explicitly unsupported");
+               "restore-only preservation must not be silently accepted on backup");
+    CheckError(service.HandlePayload(
+        "cmd=RESTORE;from=test;request_id=bad-bool;preserve_player_data=maybe"),
+        "invalid preservation booleans must fail closed");
+    CheckError(service.HandlePayload(
+        "cmd=RESTORE;from=test;request_id=typo;restore_preserve_path=level.dat"),
+        "misspelled preservation options must fail closed");
+    CheckError(service.HandlePayload(
+        "cmd=RESTORE;from=test;request_id=wrong-command;backup_whitelist=region"),
+        "backup selection cannot be silently ignored on restore");
+    CheckError(service.HandlePayload(
+        "cmd=BACKUP_ALL;from=test;request_id=wrong-selector;current_save=true"),
+        "current_save cannot be silently ignored by backup-all");
+    const auto invalidList = ParseResponse(service.HandlePayload(
+        "cmd=RESTORE;from=test;request_id=bad-list;config_id=7;folder=0;file=archive.7z;"
+        "restore_preserve_paths=a,,b"));
+    Check(invalidList.values.at("status") == "error"
+        && invalidList.values.at("from") == "test"
+        && invalidList.values.at("request_id") == "bad-list",
+        "validation failures after parsing retain the command's correlation metadata");
 }
 
 void TestLegacyCommandsHaveNoDispatch(
@@ -193,6 +212,7 @@ void TestLegacyCommandsHaveNoDispatch(
 }
 
 void TestStrictModVersion(KnotLinkService& service) {
+    service.Broadcast("handshake", {{"world", "test-world"}});
     auto response = ParseResponse(service.HandlePayload(
         "cmd=HANDSHAKE_RESPONSE;mod_version=3.1.0"));
     Check(response.values.at("status") == "ok" &&

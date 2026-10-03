@@ -72,7 +72,11 @@ BackupResult RunDesktopBackup(
 	const MyFolder& folder,
 	const wstring& comment,
 	stop_token stopToken,
-	BackupExecutionOptions options) {
+	BackupExecutionOptions options,
+	const BackupRequest* operationOverrides) {
+    // Include the archive and terminal event, not only the save handshake.
+    // Recursive acquisition permits a restore's preflight safety backup.
+    lock_guard conversation(minebackup::knotlink::KnotLinkService::ModConversationMutex());
     if (g_appState.profileRecoveryRequired.load()) {
         BackupResult result;
         result.code = OperationCode::InvalidProfile;
@@ -90,6 +94,12 @@ BackupResult RunDesktopBackup(
 	request.displayName = folder.desc.empty() ? folder.name : folder.desc;
 	request.comment = comment;
 	request.legacyConfigIndex = configIndex;
+    if (operationOverrides) {
+        request.backupWhitelist = operationOverrides->backupWhitelist;
+        request.backupScope = operationOverrides->backupScope;
+        request.scopeDimensions = operationOverrides->scopeDimensions;
+        request.scopeAreas = operationOverrides->scopeAreas;
+    }
 
 	BackupServiceDependencies dependencies;
 	dependencies.paths = GetAppPaths();

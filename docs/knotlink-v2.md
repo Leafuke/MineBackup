@@ -119,15 +119,58 @@ or `incremental`. `compression_method` accepts `LZMA2`, `Deflate`, `BZip2`,
 or `zstd`; levels are 0-9 for LZMA2/Deflate, 1-9 for BZip2, and 1-22 for
 zstd. `backup_blacklist` is merged into a runtime configuration copy.
 
+`backup_whitelist` selects source-relative literal paths or `*`/`?` wildcards.
+It overrides configured blacklist rules; mandatory lock/internal exclusions still
+apply. Regex rules, absolute paths, and traversal are rejected. `backup_scope`
+accepts `selected-regions` with `scope_dimensions` and `scope_areas`. Dimensions
+are overworld, nether, and end (default overworld); comma, semicolon, and pipe
+separators are accepted inside the encoded scalar. Each area line contains block
+coordinates `x1,z1,x2,z2`; coordinates must be finite and within ±30 million.
+Limits are 32 KiB, 128 area lines, and 4096 selected regions. Vanilla legacy and
+post-26 layouts are supported; ambiguous layouts and Paper dimensions outside
+the configured source are rejected.
+
+Any whitelist or selected-region backup creates an independent `[Partial]`
+archive and metadata record. It never advances the ordinary Full/Smart baseline
+or runs ordinary count retention. This applies even if `backup_mode=incremental`
+was requested. Empty/full/all/default/none scope values select the whole world;
+nonempty scope dimensions or areas require `selected-regions`.
+
 Restore `mode` defaults to `clean` and also accepts `overwrite`.
 `restore_whitelist` applies only to that operation. Clean restore from a
 partial backup requires `confirm_partial_clean=true`.
 
-MineBackup does not implement regional scope, backup whitelist, or NBT player
-data preservation. A non-empty `backup_whitelist`, `backup_scope`, or
-`scope_*`, or `preserve_player_data=true`, receives a structured
-`unsupported_parameter` error. These fields are absent from the capability
-manifest. Other unknown extension keys are ignored.
+`preserve_player_data=true` preserves current Java player NBT during restore.
+`restore_preserve_paths` accepts exact world-relative files and directories,
+for example `ftbquests%2F,ftbteams%2F`. Their current state wins after extraction,
+including deleting a backed-up path when it is absent in the current world.
+Both options are operation-only and apply to clean and overwrite restores.
+Validation or preparation failure fails the operation before committing changes.
+Existing `restore_whitelist` semantics are retained separately: on clean restore,
+matching existing files replace archive files and `session.lock` is always kept.
+An omitted desktop whitelist uses the saved profile rules.
+
+List parameters prefer independently percent-encoded items separated by literal
+commas. For older callers, a single fully encoded CSV scalar is also accepted
+and decoded exactly once. Consequently a one-item backup pattern containing a
+literal comma is ambiguous with legacy CSV and is unsupported for whitelist
+rules. A blacklist may use a regular expression matching that character instead. Exact preserve paths cannot contain commas, so the
+fallback is unambiguous for them. Empty preserve-path list elements are rejected.
+
+Unknown preservation, backup, compression, and scope parameters and parameters
+used on the wrong operation receive a structured `unsupported_parameter` error.
+Unrelated extension keys remain ignored. Capabilities advertise only implemented
+operation parameters; callers should inspect `GET_CAPABILITIES`.
+
+Mod callbacks are accepted only for the pending lifecycle phase. A supplied
+world must match the pending world. Companion integrated-server releases create
+a new `request_id` for each callback, while the dedicated sidecar may echo the
+original request; both forms are accepted. Command responses and business events
+still carry the original command's `from` and `request_id`. These identifiers
+correlate messages and are not an authentication mechanism. Because old callbacks
+may omit world identity, desktop GUI and remote backup/hot-restore operations
+share one serialized mod conversation; nested safety backups remain supported.
+The headless Profile Runtime likewise serializes operations.
 
 Removed commands and aliases include `AUTO_BACKUP`, `STOP_AUTO_BACKUP`,
 `SET_CONFIG`, `BACKUP_MODS`, `ADD_TO_WE`, `SEND`,
@@ -141,7 +184,7 @@ also use v2 payloads; `HELP`,
 `GET_CAPABILITIES` returns the funcList JSON embedded in the executable:
 
 - `specVersion=1.0`
-- `manifestVersion=2.0.0`
+- `manifestVersion=2.1.0`
 - response `encoding=percent`
 - `appID=0x00000020`
 - `openSocketID=0x00000010`
@@ -203,6 +246,26 @@ FolderRewind 的命令专属内部格式：`LIST_CONFIGS` 为
 `RESTORE` 不提供 `file` 时只按本地历史选择最新且存在的备份，默认使用
 `clean`。一次性备份模式、压缩设置、黑名单和还原白名单只作用于当前任务，
 不写回配置。
+
+能力清单版本现为 `2.1.0`。`backup_whitelist` 支持相对路径和 `*`/`?`
+通配符；`backup_scope=selected-regions` 配合 `scope_dimensions`、
+`scope_areas` 选择维度和区域。受限备份生成独立 `[Partial]` 包，不推进普通
+Full/Smart 链，不执行普通数量保留策略。对独立 Partial 包进行 clean 还原
+必须显式提供 `confirm_partial_clean=true`；完整 Smart 链不按独立 Partial
+处理。
+
+`preserve_player_data=true` 在还原时保留当前 Java 玩家 NBT。
+`restore_preserve_paths` 指定当前状态优先的精确世界相对路径，例如
+`ftbquests%2F,ftbteams%2F`；当前不存在的选中路径会从还原结果中删除。
+它们同时适用于 clean 和 overwrite，仅作用于单次请求。路径保留在玩家 NBT
+处理后执行，失败时不能报告还原成功。原有 `restore_whitelist` 行为保持独立。
+
+列表优先逐项 percent-encoding、以原始逗号分隔，也接受旧调用者把整个 CSV
+值编码一次的形式。含逗号的单条 whitelist 规则有歧义，因此不支持。
+危险选项拼写错误或用于错误命令时会被拒绝，不会静默忽略。
+桌面 GUI 与远程热备份/热还原共用串行模组会话；模组回调按阶段和可选世界名
+检查。已发布集成服务器模组会为每个回调生成新 request_id，因此回调 UUID
+不能当成原操作 UUID 或认证凭据。
 
 热备份依次发送 `backup_started`、可选的 `backup_warning`，以及唯一终态
 `backup_success`/`backup_failed`；无变化时以

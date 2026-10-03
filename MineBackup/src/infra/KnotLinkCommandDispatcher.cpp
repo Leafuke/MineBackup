@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <optional>
+#include <set>
 #include <utility>
 
 using namespace std;
@@ -28,19 +29,47 @@ optional<bool> ParseBoolean(string_view value) {
 
 optional<string> ValidateUnsupportedParameters(
     const KnotLinkCommandRequest& request) {
+    const bool backup = request.command == "BACKUP" || request.command == "BACKUP_ALL";
+    const bool restore = request.command == "RESTORE";
+    const set<string, less<>> backupKeys{
+        "backup_mode", "backup_blacklist", "backup_whitelist", "backup_scope",
+        "scope_dimensions", "scope_areas", "compression_method", "compression_level"};
+    const set<string, less<>> restoreKeys{
+        "mode", "restore_whitelist", "restore_preserve_paths",
+        "preserve_player_data", "confirm_partial_clean"};
+    const map<string, set<string>, less<>> commandParameters{
+        {"config_id", {"LIST_FOLDERS", "LIST_BACKUPS", "GET_CONFIG", "BACKUP", "BACKUP_ALL", "RESTORE", "MARK_IMPORTANT"}},
+        {"folder", {"LIST_BACKUPS", "BACKUP", "RESTORE", "MARK_IMPORTANT"}},
+        {"current_save", {"LIST_BACKUPS", "BACKUP", "RESTORE"}},
+        {"comment", {"BACKUP", "BACKUP_ALL"}},
+        {"file", {"RESTORE", "MARK_IMPORTANT"}},
+        {"important", {"MARK_IMPORTANT"}},
+        {"mod_version", {"HANDSHAKE_RESPONSE"}},
+        {"result", {"REJOIN_RESULT"}},
+        {"reason", {"REJOIN_RESULT"}},
+        {"world", {"HANDSHAKE_RESPONSE", "WORLD_SAVED", "WORLD_SAVE_AND_EXIT_COMPLETE", "REJOIN_RESULT"}}};
     for (const auto& [key, value] : request.values) {
-        if ((key == "backup_whitelist" || key == "backup_scope"
-                || key.starts_with("scope_"))
-            && !value.empty()) {
+        if (const auto known = commandParameters.find(key); known != commandParameters.end()
+            && !known->second.contains(request.command)) {
+            return "Parameter '" + key + "' is not supported for " + request.command + ".";
+        }
+        if (key.starts_with("scope_") && !backupKeys.contains(key)) {
             return "Parameter '" + key + "' is not supported by MineBackup.";
         }
-        if (key == "preserve_player_data") {
-            const auto enabled = ParseBoolean(value);
-            if (!enabled.has_value()) {
-                return "preserve_player_data must be true or false.";
-            }
-            if (*enabled) {
-                return "Parameter 'preserve_player_data' is not supported by MineBackup.";
+        if ((backupKeys.contains(key) && !backup)
+            || (restoreKeys.contains(key) && !restore)) {
+            return "Parameter '" + key + "' is not supported for " + request.command + ".";
+        }
+        // A misspelled safety option must never silently become a destructive default.
+        if (((key.starts_with("restore_") || key.starts_with("preserve_"))
+                && !restoreKeys.contains(key))
+            || ((key.starts_with("backup_") || key.starts_with("compression_"))
+                && !backupKeys.contains(key))) {
+            return "Unknown operation parameter '" + key + "'.";
+        }
+        if (key == "preserve_player_data" || key == "confirm_partial_clean") {
+            if (!ParseBoolean(value).has_value()) {
+                return key + " must be true or false.";
             }
         }
     }
@@ -64,8 +93,9 @@ string KnotLinkCommandDispatcher::Dispatch(string_view payload) const {
             nullptr,
             "MineBackup requires KnotLink v2 key=value commands; upgrade the caller.");
     }
+    shared_ptr<KnotLinkCommandContext> context;
     try {
-        auto context = make_shared<KnotLinkCommandContext>(
+        context = make_shared<KnotLinkCommandContext>(
             KnotLinkCommandRequest::Parse(payload));
         if (const auto metadataError =
                 KnotLinkCommandValidator::Validate(context->request);
@@ -98,13 +128,13 @@ string KnotLinkCommandDispatcher::Dispatch(string_view payload) const {
     catch (const KnotLinkProtocolError& error) {
         MB_LOG_WARNING(logging::LogCategory::KnotLink,
             "knotlink.request.invalid", "Invalid KnotLink request: {}", error.what());
-        return KnotLinkProtocolFormatter::FormatError(nullptr, error.what());
+        return KnotLinkProtocolFormatter::FormatError(context.get(), error.what());
     }
     catch (const exception& error) {
         MB_LOG_ERROR(logging::LogCategory::KnotLink,
             "knotlink.request.failed", "KnotLink request failed: {}", error.what());
         return KnotLinkProtocolFormatter::FormatError(
-            nullptr, string("Command failed: ") + error.what());
+            context.get(), string("Command failed: ") + error.what());
     }
 }
 

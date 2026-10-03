@@ -1,11 +1,13 @@
 #include "RestoreServiceTests.h"
 
 #include "ExternalToolManager.h"
+#include "BackupManagerInternal.h"
 #include "FolderRewindFormat.h"
 #include "FolderRewindMetadataStore.h"
 #include <chrono>
 #include "RestoreService.h"
 #include "RestoreWorkspace.h"
+#include "RestorePreservedPaths.h"
 #include "WorldIdentity.h"
 
 #include <fstream>
@@ -27,6 +29,7 @@ string Read(const filesystem::path& path) {
 
 struct FakeArchiveState {
 	bool unsafeMembers = false;
+    bool linkSession = false;
 	int tests = 0;
 	int extracts = 0;
 	bool failExtract = false;
@@ -66,6 +69,12 @@ ArchiveRunner FakeRunner(const shared_ptr<FakeArchiveState>& state, stop_token t
 				}
 				Write(destination / "level.dat", "restored");
 				Write(destination / "session.lock", "archive-session-lock");
+#ifndef _WIN32
+                if (state->linkSession) {
+                    filesystem::remove(destination / "session.lock");
+                    filesystem::create_symlink(destination.parent_path()/"world"/"level.dat", destination/"session.lock");
+                }
+#endif
 				if ((state->cancelExtract || state->cancelAfterSuccess) && state->cancelSource) {
 					state->cancelSource->request_stop();
 				}
@@ -321,6 +330,8 @@ void RunRestoreServiceTests(
  string pathError;
  for(const string bad:{"C:\\world\\level.dat","//server/world/level.dat","/world/level.dat","../world/level.dat","folder/../../level.dat"})
   test.Expect(!ArchiveRunner::ValidateMemberListing("----------\nPath = "+bad+"\n",pathError),"absolute and traversing archive members are rejected");
+ test.Expect(!ArchiveRunner::ValidateMemberListing("----------\nPath = session.lock\nSymbolic Link = ../world/level.dat\n",pathError), "Archive symbolic links rejected before extraction");
+ test.Expect(!ArchiveRunner::ValidateMemberListing("----------\nPath = a\nHard Link = b\n",pathError), "Archive hard links rejected before extraction");
  test.Expect(!ArchiveRunner::ValidateMemberListing("invalid",pathError),"unrecognized archive listings fail closed");
  test.Expect(ArchiveRunner::ValidateMemberListing("----------\nPath = region/r.0.0.mca\n",pathError),"relative archive layouts remain supported");
 
@@ -418,6 +429,103 @@ void RunRestoreServiceTests(
         test.Expect(IsSuccessful(RestoreService(deps).Verify(req).code), "Overlay preflight does not require the Clean full-file ownership plan");
         req.mode = RestoreMode::Clean;
         test.Expect(!IsSuccessful(RestoreService(deps).Verify(req).code), "Clean preflight still rejects an incomplete exact file plan");
+    }
+
+    {
+        vector<wstring> normalized; string error;
+        test.Expect(RestorePreservedPaths::Normalize({L"ftbquests/a",L"ftbquests/",L"FTBQUESTS/",L"ftbteams/"}, normalized,error)
+            && normalized.size()==2, "Strong preserve selectors deduplicate subtrees and case");
+        for (const auto* bad : {L"",L"../x",L"/x",L"x//y",L"x/../y",L"x//",L"x*",L"x,y",L"C:/x",L"x./y"})
+            test.Expect(!RestorePreservedPaths::Normalize({bad},normalized,error), "Unsafe preserve selector rejected");
+        const auto area=temporaryRoot/"strong-preserve";
+        const auto current=area/"current", stage=area/"stage";
+        Write(current/"level.dat","current"); Write(stage/"level.dat","past");
+        Write(current/"ftbquests"/"same.snbt","new"); Write(stage/"ftbquests"/"same.snbt","old");
+        Write(current/"ftbquests"/"added.snbt","added"); Write(stage/"ftbquests"/"deleted.snbt","deleted");
+        Write(stage/"ftbteams"/"gone.snbt","gone"); Write(stage/"other","past-other");
+        test.Expect(RestorePreservedPaths::Apply(current,stage,{L"ftbquests/",L"ftbteams/"},error)
+            && Read(stage/"ftbquests"/"same.snbt")=="new"
+            && Read(stage/"ftbquests"/"added.snbt")=="added"
+            && !filesystem::exists(stage/"ftbquests"/"deleted.snbt")
+            && !filesystem::exists(stage/"ftbteams")
+            && Read(stage/"other")=="past-other" && Read(current/"level.dat")=="current",
+            "Strong preservation restores current files and current deletions without touching live source");
+        Write(current/"another"/"level.dat","ambiguous");
+        Write(stage/"ftbquests"/"same.snbt","unchanged");
+        test.Expect(!RestorePreservedPaths::Apply(current,stage,{L"ftbquests/"},error)
+            && Read(stage/"ftbquests"/"same.snbt")=="unchanged", "Ambiguous world preservation fails before staging writes");
+        filesystem::remove(current/"another"/"level.dat");
+        stop_source cancelled; cancelled.request_stop();
+        test.Expect(!RestorePreservedPaths::Apply(current,stage,{L"ftbquests/"},error,cancelled.get_token()),
+            "Cancelled preserve preparation fails closed");
+#ifndef _WIN32
+        filesystem::create_symlink(current/"level.dat",current/"link");
+        test.Expect(!RestorePreservedPaths::Apply(current,stage,{L"ftbquests/"},error), "Preservation refuses symbolic links");
+        filesystem::permissions(current/"level.dat", filesystem::perms::owner_read, filesystem::perm_options::replace);
+        const auto beforePermissions=filesystem::status(current/"level.dat").permissions();
+        const auto linksOnly=area/"links-only"; filesystem::create_directories(linksOnly);
+        filesystem::create_symlink(current/"level.dat",linksOnly/"outside-link");
+        BackupManagerInternal::ClearReadonlyAttributesRecursively(linksOnly);
+        test.Expect(filesystem::status(current/"level.dat").permissions()==beforePermissions,
+            "Rollback cleanup never changes outside symlink-target permissions");
+        filesystem::permissions(current/"level.dat",filesystem::perms::owner_all,filesystem::perm_options::add);
+        filesystem::remove(current/"link");
+        Write(current/"FTBQUESTS"/"different.snbt","collision");
+        test.Expect(!RestorePreservedPaths::Apply(current,stage,{L"ftbquests/"},error), "Case-colliding directories are rejected before preservation");
+        filesystem::remove_all(current/"FTBQUESTS");
+#endif
+        const auto nested=area/"nested";
+        Write(nested/"custom-world"/"level.dat","world"); Write(nested/"custom-world"/"ftbquests"/"a","nested-current");
+        const auto nestedStage=area/"nested-stage";
+        Write(nestedStage/"custom-world"/"level.dat","past"); Write(nestedStage/"custom-world"/"ftbquests"/"a","past");
+        test.Expect(RestorePreservedPaths::Apply(nested,nestedStage,{L"ftbquests/"},error)
+            && Read(nestedStage/"custom-world"/"ftbquests"/"a")=="nested-current", "World-relative selectors find unique custom-named server world");
+    }
+    for (auto mode : {RestoreMode::Clean, RestoreMode::Overwrite}) {
+        const auto area=temporaryRoot/(mode==RestoreMode::Clean?"staged-preserve-clean":"staged-preserve-overlay");
+        auto req=FixtureRequest(area); req.mode=mode; req.restorePreservePaths={L"ftbquests/"};
+        const auto live=area/"saves"/"world";
+        Write(live/"level.dat","original"); Write(live/"ftbquests"/"team.snbt","current-progress");
+        Write(live/"extra","current-extra"); Write(live/"session.lock","live-lock");
+        Write(area/"backups"/"world"/"[Full]-World.7z","archive");
+        auto fake=make_shared<FakeArchiveState>(); RestoreServiceDependencies deps;
+        deps.paths.runtimeRoot=area/"runtime";
+        deps.archiveRunnerFactory=[fake](const auto&,const auto&,stop_token token){return FakeRunner(fake,token);};
+        const auto result=RestoreService(deps).Run(req,false);
+        test.Expect(IsSuccessful(result.code) && Read(live/"level.dat")=="restored"
+            && Read(live/"ftbquests"/"team.snbt")=="current-progress"
+            && Read(live/"session.lock")=="live-lock"
+            && filesystem::exists(live/"extra")== (mode==RestoreMode::Overwrite),
+            "Strong path preservation commits isolated clean/overlay staging correctly");
+        Write(live/"level.dat","original"); req.preservePlayerData=true;
+        const auto failed=RestoreService(deps).Run(req,false);
+        test.Expect(!IsSuccessful(failed.code) && !failed.rollbackAttempted && Read(live/"level.dat")=="original",
+            "Malformed player NBT fails before any live mutation or rollback is needed");
+        req.preservePlayerData=false;
+        Write(live/"nested-world"/"level.dat","nested");
+        deps.isWorldOccupied=[&](const filesystem::path& candidate) { return candidate == live/"nested-world"; };
+        const auto beforeNested=fake->extracts;
+        const auto occupiedNested=RestoreService(deps).Run(req,false);
+        test.Expect(!IsSuccessful(occupiedNested.code) && fake->extracts==beforeNested && Read(live/"level.dat")=="original",
+            "Managed server directory checks nested world locks before extraction");
+        deps.isWorldOccupied={}; filesystem::remove_all(live/"nested-world");
+#ifndef _WIN32
+        fake->linkSession=true;
+        const auto linkFailure=RestoreService(deps).Run(req,false);
+        test.Expect(!IsSuccessful(linkFailure.code) && !linkFailure.rollbackAttempted && Read(live/"level.dat")=="original",
+            "Extracted session.lock symlink is rejected before legacy copy can escape staging");
+        fake->linkSession=false;
+#endif
+        req.archive=L"[Partial]-World.7z";
+        Write(area/"backups"/"world"/"[Partial]-World.7z","partial"); req.mode=RestoreMode::Clean;
+        test.Expect(!IsSuccessful(RestoreService(deps).Verify(req).code), "Partial clean restore needs explicit confirmation");
+        req.confirmPartialClean=true;
+        test.Expect(IsSuccessful(RestoreService(deps).Verify(req).code), "Explicit partial clean confirmation accepted");
+        const auto reversePartial=RestoreService(deps).Verify(req,{},RestoreVerificationMode::Reverse);
+        test.Expect(IsSuccessful(reversePartial.code) && reversePartial.archiveChain.size()==1
+            && reversePartial.archiveChain.front().filename()==req.archive, "Partial reverse mode never substitutes ordinary archives");
+        req.confirmPartialClean=false; req.mode=RestoreMode::Overwrite;
+        test.Expect(IsSuccessful(RestoreService(deps).Verify(req).code), "Partial overlay does not need destructive clean confirmation");
     }
 
 }
