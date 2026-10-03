@@ -26,6 +26,10 @@ struct RestoreRequest {
 	std::filesystem::path archive;
 	std::vector<std::wstring> restorePreserve;
 	RestoreMode mode = RestoreMode::Clean;
+	// Per-operation preservation; never persisted in the profile configuration.
+	bool preservePlayerData = false;
+	std::vector<std::wstring> restorePreservePaths;
+	bool confirmPartialClean = false;
 };
 
 struct RestoreSafetyBackup {

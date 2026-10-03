@@ -1,6 +1,8 @@
 name: Headless CLI Validation
 
 on:
+  pull_request:
+    branches: [develop]
   push:
     branches: [develop, master]
   workflow_dispatch:
@@ -175,6 +177,8 @@ jobs:
       - name: Configure and build console-only candidate
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cmake -S . -B build/headless-windows -A x64 `
             -DMINEBACKUP_BUILD_GUI=OFF `
             -DMINEBACKUP_BUILD_CLI=ON `
@@ -185,6 +189,8 @@ jobs:
       - name: Run CLI and process-contract tests
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           python tests/verify_rc_tests.py --build build/headless-windows
           ctest --test-dir build/headless-windows -C Release --output-on-failure
           cmake --build build/headless-windows --config Release `
@@ -195,12 +201,16 @@ jobs:
       - name: Reject GUI subsystem and desktop imports
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           .\cmake\VerifyWindowsCliBinary.ps1 `
             -Executable .\build\headless-windows\bin\Release\minebackup-cli.exe
 
       - name: Build and audit Windows server asset
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $versionFile = Join-Path $env:RUNNER_TEMP 'minebackup-version.txt'
           cmake "-DMINEBACKUP_VERSION_OUTPUT=$versionFile" `
             -P .\cmake\ExportMineBackupVersion.cmake

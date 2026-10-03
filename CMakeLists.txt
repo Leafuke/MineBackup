@@ -401,6 +401,27 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME minebackup.knotlink_sdk COMMAND minebackup_knotlink_sdk_tests)
 
+    add_executable(minebackup_player_preservation_tests tests/PlayerDataPreservationTests.cpp)
+    target_include_directories(minebackup_player_preservation_tests PRIVATE ${MINEBACKUP_TEST_INCLUDE_DIRS})
+    target_link_libraries(minebackup_player_preservation_tests PRIVATE minebackup_data_core)
+    target_compile_options(minebackup_player_preservation_tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    add_test(NAME minebackup.player_preservation COMMAND minebackup_player_preservation_tests)
+    find_program(MINEBACKUP_TEST_7ZZ NAMES 7zz 7z)
+    if(MINEBACKUP_TEST_7ZZ)
+        add_test(NAME minebackup.player_preservation_real_gzip
+            COMMAND minebackup_player_preservation_tests ${MINEBACKUP_TEST_7ZZ})
+    endif()
+
+    add_executable(minebackup_runtime_archive_tests tests/RuntimeArchiveIntegrationTest.cpp)
+    target_include_directories(minebackup_runtime_archive_tests PRIVATE ${MINEBACKUP_TEST_INCLUDE_DIRS})
+    target_link_libraries(minebackup_runtime_archive_tests PRIVATE minebackup_runtime)
+    target_compile_options(minebackup_runtime_archive_tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    if(MINEBACKUP_TEST_7ZZ)
+        add_test(NAME minebackup.runtime.archive_integration
+            COMMAND minebackup_runtime_archive_tests ${MINEBACKUP_TEST_7ZZ} ${CMAKE_CURRENT_BINARY_DIR}/test-work)
+        set_tests_properties(minebackup.runtime.archive_integration PROPERTIES TIMEOUT 180)
+    endif()
+
     add_executable(minebackup_data_tests
         tests/TestMain.cpp
 		${MINEBACKUP_SRC_DIR}/desktop/app/LaunchOptions.cpp

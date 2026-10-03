@@ -90,6 +90,9 @@ percent-encoding；旧式位置参数和自由文本命令会被直接拒绝。�
 命令、关联元数据、生命周期事件、当前世界参数和完整示例见
 [MineBackup KnotLink v2 协议说明](docs/knotlink-v2.md)。
 
+时间机器的单次玩家状态／目录保留、局部备份，以及本轮 Linux 实测边界见
+[Time Machine 联动与 Linux 验证报告](docs/time-machine-linux-validation.md)。
+
 ---
 
 ## ⚙️ 安装与编译

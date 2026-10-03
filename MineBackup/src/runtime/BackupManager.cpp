@@ -4,6 +4,7 @@
 #include "ArchiveRunner.h"
 #include "BackupChangeDetector.h"
 #include "BackupService.h"
+#include "BackupSelection.h"
 #include "BackupManagerInternal.h"
 #include "AppPaths.h"
 #include "text_to_text.h"
@@ -193,6 +194,7 @@ void WorldOperationGuard::Release() {
 	constexpr const wchar_t* kDeletedOnlyMarkerDir = FolderRewindFormat::kInternalRestoreMarkerDirectoryName;
 	constexpr const wchar_t* kDeletedOnlyMarkerFile = FolderRewindFormat::kInternalRestoreMarkerFileName;
 	const vector<wstring> kForcedBackupBlacklistRules = {
+		L"__FolderRewind_Internal",
 		L"regex:(^|[\\\\/])session\\.lock$",
 		L"regex:(^|[\\\\/])lock$",
 		L"regex:(^|[\\\\/]).*\\.lock$"
@@ -219,7 +221,7 @@ void WorldOperationGuard::Release() {
 		return filesystem::path(config.backupPath) / FolderRewindFormat::kMetadataRootDirName / FolderRewindFormat::SanitizePathSegment(worldName);
 	}
 
-	FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& previousLastBackupFile, const wstring& backupType, map<wstring, FolderRewindFormat::FileState> currentState, const BackupChangeSet& changeSet) {
+	FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& previousLastBackupFile, const wstring& backupType, map<wstring, FolderRewindFormat::FileState> currentState, const BackupChangeSet& changeSet, bool independentPartial) {
 		const wstring normalizedBase = FolderRewindFormat::IsSmartBackupType(backupType)
 			? (baseBackupFile.empty() ? currentBackupFile : baseBackupFile)
 			: currentBackupFile;
@@ -245,6 +247,15 @@ void WorldOperationGuard::Release() {
 			record.addedFiles = record.fullFileList;
 			record.modifiedFiles.clear();
 			record.deletedFiles.clear();
+		}
+		if (independentPartial) {
+			// An inclusion snapshot is not a checkpoint for the ordinary world chain.
+			// Publish its record independently and leave state.json byte-for-byte alone.
+			record.basedOnFullBackup.clear();
+			const auto saved = FolderRewindMetadataStore::SaveRecordDetailed(metadataDir, record);
+			using State = FolderRewindMetadataStore::SaveTransactionState;
+			return {saved.IsDurable() ? State::CommittedDurably : saved.WasCommitted()
+				? State::CommittedNotDurable : State::NotCommitted, saved.error};
 		}
 
 		FolderRewindFormat::MetadataState state;
@@ -284,12 +295,23 @@ void WorldOperationGuard::Release() {
 
 	void ClearReadonlyAttributesRecursively(const filesystem::path& dir) {
 		error_code ec;
-		if (!filesystem::exists(dir, ec) || ec) return;
-		for (const auto& entry : filesystem::recursive_directory_iterator(dir, filesystem::directory_options::skip_permission_denied, ec)) {
+		const auto rootStatus = filesystem::symlink_status(dir, ec);
+		if (ec || !filesystem::exists(rootStatus) || filesystem::is_symlink(rootStatus)) return;
+		filesystem::recursive_directory_iterator iterator(dir, filesystem::directory_options::skip_permission_denied, ec);
+		const filesystem::recursive_directory_iterator end;
+		while (!ec && iterator != end) {
+			const auto status = iterator->symlink_status(ec);
 			if (ec) break;
-			filesystem::permissions(entry.path(), filesystem::perms::owner_all, filesystem::perm_options::add, ec);
+			if (!filesystem::is_symlink(status)
+				&& (!filesystem::is_regular_file(status) || filesystem::hard_link_count(iterator->path(), ec) <= 1)) {
+				filesystem::permissions(iterator->path(), filesystem::perms::owner_all,
+					filesystem::perm_options::add | filesystem::perm_options::nofollow, ec);
+			}
+			ec.clear();
+			iterator.increment(ec);
 		}
-		filesystem::permissions(dir, filesystem::perms::owner_all, filesystem::perm_options::add, ec);
+		filesystem::permissions(dir, filesystem::perms::owner_all,
+			filesystem::perm_options::add | filesystem::perm_options::nofollow, ec);
 	}
 
 	bool CreateDeletionOnlyArchive(const Config& config, const filesystem::path& archivePath) {
@@ -450,6 +472,19 @@ BackupResult BackupService::RunCore(
 			OperationCode::MigrationRequired, BackupOutcome::Rejected,
 			"backup.profile.binding_required", "The imported profile still needs local path binding.");
 	}
+	BackupSelection selection;
+	string selectionError;
+	if (!BackupSelection::TryBuild(request, selection, selectionError)) {
+		return MakeBackupFailure(OperationCode::InvalidArguments, BackupOutcome::Rejected,
+			"backup.selection.invalid", selectionError);
+	}
+	const bool independentPartial = selection.IsPartial();
+	if (independentPartial) {
+		// One-shot snapshots always capture their complete selected set, including
+		// unchanged files; they do not inherit Smart or Overwrite semantics.
+		config.backupMode = 1;
+		config.skipIfUnchanged = false;
+	}
 
 	WorldOperationGuard opGuard(request.sourcePath, FolderState::BACKUP);
 	if (!opGuard.Acquired()) {
@@ -520,8 +555,8 @@ BackupResult BackupService::RunCore(
 
 	wstring originalSourcePath = request.sourcePath.wstring();
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
-	const vector<wstring> effectiveBlacklist = request.auxiliarySource
-		? vector<wstring>{} : BuildEffectiveBackupBlacklist(config.blacklist);
+	const vector<wstring> effectiveBlacklist = request.auxiliarySource && !independentPartial
+		? vector<wstring>{} : BuildEffectiveBackupBlacklist(selection.HasWhitelist() ? vector<wstring>{} : config.blacklist);
 	FolderRewindFormat::StoragePaths storagePaths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, worldName, request.sourcePath.wstring(), storagePaths)) {
 		BACKUP_ERROR("Invalid FolderRewind storage folder name for world: %s", wstring_to_utf8(worldName).c_str());
@@ -589,6 +624,7 @@ BackupResult BackupService::RunCore(
         }
     }
 	if (forceFullForMigration) forceFullBackup = true;
+	if (independentPartial) forceFullBackup = true;
     if (forceFullBackup)
 		BACKUP_INFO("A full backup is required.");
 
@@ -630,7 +666,11 @@ BackupResult BackupService::RunCore(
         }
     }
 
-	BackupScanResult scanResult = BackupChangeDetector{}.Scan(sourcePath, metadataFolder, destinationFolder);
+	const PathRuleSet backupRules(effectiveBlacklist);
+	BackupScanResult scanResult = BackupChangeDetector{}.Scan(sourcePath, metadataFolder, destinationFolder,
+		[&](const filesystem::path& relativePath) {
+			return backupRules.Matches(filesystem::path(sourcePath) / relativePath, sourcePath, originalSourcePath);
+		});
 	vector<filesystem::path> candidate_files = std::move(scanResult.changedFiles);
 	auto currentState = std::move(scanResult.currentState);
 	auto changeSet = std::move(scanResult.changes);
@@ -654,17 +694,17 @@ BackupResult BackupService::RunCore(
         BACKUP_ERROR("Failed to scan source directory for backup state.");
 		return MakeBackupFailure(
 			OperationCode::BackupFailed, BackupOutcome::Failed,
-			"backup.scan.failed", "Failed to scan source directory for backup state.");
+			"backup.scan.failed", scanResult.failureDetail.empty()
+				? "Failed to scan source directory for backup state." : scanResult.failureDetail);
     }
 
     forceFullBackup = (scanResult.status == BackupScanStatus::MetadataInvalid ||
         scanResult.status == BackupScanStatus::BaseBackupMissing ||
         forceFullBackupDueToLimit) || forceFullBackup;
 
-	const PathRuleSet backupRules(effectiveBlacklist);
     auto is_relative_blacklisted = [&](const wstring& relativePath) {
 		filesystem::path absolutePath = filesystem::path(sourcePath) / relativePath;
-		return backupRules.Matches(absolutePath, sourcePath, originalSourcePath);
+		return !selection.Includes(relativePath) || backupRules.Matches(absolutePath, sourcePath, originalSourcePath);
 	};
 
 	for (auto it = currentState.begin(); it != currentState.end(); ) {
@@ -757,8 +797,8 @@ BackupResult BackupService::RunCore(
     filesystem::path latestBackupPath;
 
 	if ((config.backupMode == 1 || forceFullBackup) && config.backupMode != 3) {
-		backupTypeStr = L"Full";
-		archivePath = makeArchivePath(L"Full");
+		backupTypeStr = independentPartial ? L"Partial" : L"Full";
+		archivePath = makeArchivePath(backupTypeStr);
 		auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
 		arguments.push_back(L"@" + filelist_path);
 		command = makeCommand(std::move(arguments), sourcePath);
@@ -893,7 +933,7 @@ execute_backup:
   const auto statePath=FolderRewindMetadataStore::GetStatePath(metadataFolder);
   const bool stateExisted=filesystem::exists(statePath);
   error_code snapshotError;
-  if(stateExisted) filesystem::copy_file(statePath,metadataRecovery/L"state.json",filesystem::copy_options::overwrite_existing,snapshotError);
+  if(stateExisted && !independentPartial) filesystem::copy_file(statePath,metadataRecovery/L"state.json",filesystem::copy_options::overwrite_existing,snapshotError);
   if(snapshotError) return MakeBackupFailure(OperationCode::BackupFailed,BackupOutcome::Failed,"backup.metadata.snapshot_failed",snapshotError.message());
 
 		const auto metadataUpdate = UpdateMetadataFiles(
@@ -903,7 +943,8 @@ execute_backup:
 			previousLastBackupFile,
 			backupTypeStr,
 			std::move(currentState),
-			changeSet);
+			changeSet,
+			independentPartial);
 		if (!metadataUpdate.IsCommitted()) {
 			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
 			const bool archiveWasNewlyCreated = config.backupMode != 3 || latestBackupPath.empty();
@@ -938,18 +979,18 @@ execute_backup:
 		historyEntry.worldName = storageFolderName;
 		historyEntry.backupFile = completedBackupFile;
 		historyEntry.backupType = backupTypeStr;
-		historyEntry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(backupTypeStr);
+		historyEntry.isPartialBackup = independentPartial || FolderRewindFormat::IsSmartBackupType(backupTypeStr);
 		historyEntry.comment = comment;
 		if (!dependencies_.addHistory || !dependencies_.addHistory(historyEntry)) {
 			error_code recoveryError;
-			if (stateExisted) {
+			if (!independentPartial && stateExisted) {
 				const auto preparedState = metadataRecovery / L"restore-state.json";
 				filesystem::copy_file(metadataRecovery / L"state.json", preparedState,
 					filesystem::copy_options::overwrite_existing, recoveryError);
 				if (!recoveryError && !AtomicFileWriter::ReplacePreparedFile(preparedState, statePath).WasReplaced()) {
 					recoveryError = make_error_code(errc::io_error);
 				}
-			} else {
+			} else if (!independentPartial) {
 				filesystem::remove(statePath, recoveryError);
 			}
 			if (!recoveryError && !dependencies_.deleteMetadataRecord(metadataFolder, completedBackupFile)) {
@@ -968,7 +1009,7 @@ execute_backup:
 			publish("backup.failed", {{"error", "history_commit_failed"}});
 			return failure;
 		}
-		if (dependencies_.enforceRetention && !options.deferRetention) {
+		if (dependencies_.enforceRetention && !options.deferRetention && !independentPartial) {
 			dependencies_.enforceRetention(request, historyEntry, stopToken);
 		}
 

@@ -25,6 +25,11 @@ struct BackupRequest {
 	int legacyConfigIndex = -1;
 	// Explicitly opt in for independent Full backups of mods/arbitrary folders.
 	bool auxiliarySource = false;
+	// One-operation selection only; never persisted into Config or the Smart baseline.
+	std::vector<std::wstring> backupWhitelist;
+	std::wstring backupScope;
+	std::wstring scopeDimensions;
+	std::wstring scopeAreas;
 };
 
 struct BackupExecutionOptions {

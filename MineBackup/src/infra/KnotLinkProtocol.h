@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -32,6 +33,8 @@ public:
     static std::string DecodeValue(std::string_view encodedValue);
     static std::string EncodeList(const std::vector<std::string>& values);
     static std::vector<std::string> DecodeList(std::string_view encodedValue);
+    // Also accepts older callers that percent-encoded a complete CSV scalar.
+    static std::vector<std::string> DecodeOperationList(std::string_view encodedValue, bool rejectEmptyItems = false);
     static std::string NormalizeKey(std::string_view key);
 
 private:
@@ -67,6 +70,33 @@ struct KnotLinkCommandContext {
     KnotLinkCommandMetadata metadata;
 };
 
+// Operation-local context follows synchronous runtime calls on the worker thread.
+// It is never global mutable request state or persisted configuration.
+class KnotLinkCommandScope {
+public:
+    explicit KnotLinkCommandScope(std::shared_ptr<KnotLinkCommandContext> context);
+    ~KnotLinkCommandScope();
+    KnotLinkCommandScope(const KnotLinkCommandScope&) = delete;
+    KnotLinkCommandScope& operator=(const KnotLinkCommandScope&) = delete;
+    static std::shared_ptr<KnotLinkCommandContext> Current();
+private:
+    std::shared_ptr<KnotLinkCommandContext> previous_;
+};
+
+// One transport conversation at a time. Late or cross-world acknowledgements
+// must not release an unrelated save/restore wait.
+class KnotLinkCallbackTracker {
+public:
+    void ObserveEvent(std::string_view eventName,
+        const KnotLinkKeyValueCodec::Fields& fields,
+        const KnotLinkCommandContext* context = nullptr);
+    std::optional<std::string> Validate(const KnotLinkCommandRequest& request) const;
+private:
+    mutable std::mutex mutex_;
+    std::string expectedCommand_;
+    std::string world_;
+};
+
 class KnotLinkCommandValidator {
 public:
     static bool RequiresConversationMetadata(std::string_view command);
@@ -97,7 +127,7 @@ private:
 class KnotLinkCapabilities {
 public:
     static constexpr std::string_view SpecVersion = "1.0";
-    static constexpr std::string_view ManifestVersion = "2.0.0";
+    static constexpr std::string_view ManifestVersion = "2.1.0";
     static constexpr std::string_view AppId = "0x00000020";
     static constexpr std::string_view OpenSocketId = "0x00000010";
     static constexpr std::string_view SignalId = "0x00000020";

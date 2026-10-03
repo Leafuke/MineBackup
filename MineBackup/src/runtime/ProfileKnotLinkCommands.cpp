@@ -163,7 +163,7 @@ optional<BackupRequest> ResolveBackupRequest(
 	if (command.Has("backup_mode") && !command.Get("backup_mode").empty()) {
 		const string mode = LowerAscii(command.Get("backup_mode"));
 		if (mode == "full") request->config.backupMode = 1;
-		else if (mode == "incremental" || mode == "smart") request->config.backupMode = 2;
+		else if (mode == "incremental") request->config.backupMode = 2;
 		else {
 			error = "backup_mode must be full or incremental.";
 			return nullopt;
@@ -197,7 +197,7 @@ optional<BackupRequest> ResolveBackupRequest(
 		request->config.zipLevel = level;
 	}
 	if (command.Has("backup_blacklist")) {
-		for (const auto& item : KnotLinkKeyValueCodec::DecodeList(
+		for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(
 				command.GetEncoded("backup_blacklist"))) {
 			const wstring rule = utf8_to_wstring(item);
 			if (find(request->config.blacklist.begin(),
@@ -207,6 +207,12 @@ optional<BackupRequest> ResolveBackupRequest(
 			}
 		}
 	}
+    for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(command.GetEncoded("backup_whitelist"))) {
+        request->backupWhitelist.push_back(utf8_to_wstring(item));
+    }
+    request->backupScope = utf8_to_wstring(command.Get("backup_scope"));
+    request->scopeDimensions = utf8_to_wstring(command.Get("scope_dimensions"));
+    request->scopeAreas = utf8_to_wstring(command.Get("scope_areas"));
 	return request;
 }
 
@@ -260,7 +266,7 @@ struct ProfileKnotLinkCommands::Implementation {
 	ProfileRuntime& runtime;
 	mutex stateMutex;
 	weak_ptr<HeadlessKnotLinkBridge> bridge;
-	map<string, shared_ptr<Operation>> operations;
+	map<pair<string, string>, shared_ptr<Operation>> operations;
 	bool stopping = false;
 
 	Implementation(ProfileRuntime& runtimeValue, shared_ptr<HeadlessKnotLinkBridge> bridgeValue)
@@ -324,9 +330,7 @@ struct ProfileKnotLinkCommands::Implementation {
 		const shared_ptr<KnotLinkCommandContext>& context,
 		function<pair<bool, string>(stop_token)> work) {
 		Cleanup();
-		const string id = context->metadata.requestId.empty()
-			? wstring_to_utf8(FolderRewindFormat::GenerateGuidString())
-			: context->metadata.requestId;
+		const auto id = pair{context->metadata.from, context->metadata.requestId};
 		auto operation = make_shared<Operation>();
 		{
 			lock_guard lock(stateMutex);
@@ -336,6 +340,7 @@ struct ProfileKnotLinkCommands::Implementation {
 		Publish(Event("command_accepted", *context,
 			{{"command", context->request.command}}));
 		operation->worker = jthread([this, operation, context, work = std::move(work)](stop_token) {
+			KnotLinkCommandScope scope(context);
 			Publish(Event("command_started", *context,
 				{{"command", context->request.command}}));
 			pair<bool, string> outcome;
@@ -453,7 +458,7 @@ struct ProfileKnotLinkCommands::Implementation {
 			if (!Submit(context, [this, backup = *backup](stop_token token) {
 				const auto result = runtime.RunBackupRequest(backup, token);
 				return pair{IsSuccessful(result.code), ToString(result.code)};
-			})) return error("The headless runtime is stopping.");
+			})) return error("The headless runtime is stopping or this request is already active.");
 			return ok({{"message", "Command accepted."}});
 		}
 		if (request.command == "BACKUP_ALL") {
@@ -470,16 +475,27 @@ struct ProfileKnotLinkCommands::Implementation {
 				if (!backup) return error(backupError);
 				backups.push_back(std::move(*backup));
 			}
-			if (!Submit(context, [this, backups = std::move(backups)](stop_token token) {
-				size_t succeeded = 0;
-				for (const auto& backup : backups) {
-					if (token.stop_requested()) return pair{false, string("cancelled")};
-					if (IsSuccessful(runtime.RunBackupRequest(backup, token).code)) ++succeeded;
-				}
-				return pair{succeeded == backups.size(),
-					"succeeded=" + to_string(succeeded) + ", failed="
-						+ to_string(backups.size() - succeeded)};
-			})) return error("The headless runtime is stopping.");
+			if (!Submit(context, [this, context, configId = config->configId,
+                backups = std::move(backups)](stop_token token) {
+                Publish(Event("backup_all_started", *context,
+                    {{"config", wstring_to_utf8(configId)}}));
+                size_t created = 0, unchanged = 0, failed = 0, attempted = 0;
+                for (const auto& backup : backups) {
+                    if (token.stop_requested()) break;
+                    ++attempted;
+                    const auto result = runtime.RunBackupRequest(backup, token);
+                    if (!IsSuccessful(result.code)) ++failed;
+                    else if (result.outcome == BackupOutcome::NoChanges) ++unchanged;
+                    else ++created;
+                }
+                failed += backups.size() - attempted;
+                const bool succeeded = failed == 0 && !token.stop_requested();
+                Publish(Event(succeeded ? "backup_all_completed" : "backup_all_failed", *context,
+                    {{"config", wstring_to_utf8(configId)}, {"created", to_string(created)},
+                     {"unchanged", to_string(unchanged)}, {"failed", to_string(failed)}}));
+                return pair{succeeded, "created=" + to_string(created) + ", unchanged="
+                    + to_string(unchanged) + ", failed=" + to_string(failed)};
+			})) return error("The headless runtime is stopping or this request is already active.");
 			return ok({{"message", "Command accepted."}});
 		}
 		if (request.command == "RESTORE") {
@@ -504,8 +520,13 @@ struct ProfileKnotLinkCommands::Implementation {
 			restore.archive = archive;
 			restore.mode = mode == "clean" ? RestoreMode::Clean : RestoreMode::Overwrite;
 			restore.restorePreserve = runtime.RestorePreserveSnapshot();
+            restore.preservePlayerData = ParseBoolean(request.Get("preserve_player_data", "false")).value_or(false);
+            restore.confirmPartialClean = ParseBoolean(request.Get("confirm_partial_clean", "false")).value_or(false);
+            for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(request.GetEncoded("restore_preserve_paths"), true)) {
+                restore.restorePreservePaths.push_back(utf8_to_wstring(item));
+            }
 			if (request.Has("restore_whitelist")) {
-				for (const auto& item : KnotLinkKeyValueCodec::DecodeList(
+				for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(
 						request.GetEncoded("restore_whitelist"))) {
 					const wstring rule = utf8_to_wstring(item);
 					if (find(restore.restorePreserve.begin(),
@@ -521,19 +542,33 @@ struct ProfileKnotLinkCommands::Implementation {
 				hotRequest.worldPath = target->world;
 				hotRequest.fullWorldPath = target->fullPath;
 				hotRequest.requestId = context->metadata.requestId;
-				if (!Submit(context, [this,
+				if (!Submit(context, [this, context,
 						hotRequest = std::move(hotRequest),
 						restore = std::move(restore)](stop_token token) {
+                    const auto fields = KnotLinkProtocolFormatter::Fields{
+                        {"config", wstring_to_utf8(restore.config.configId)},
+                        {"folder", wstring_to_utf8(restore.world.relativePath)},
+                        {"world", wstring_to_utf8(restore.world.relativePath)},
+                        {"file", wstring_to_utf8(restore.archive.filename().wstring())}};
+                    Publish(Event("restore_started", *context, fields));
 					const auto result = runtime.RunHotRestore(
 						hotRequest, restore, token);
+                    Publish(Event(IsSuccessful(result.code) ? "restore_success" : "restore_failed", *context, fields));
 					return pair{IsSuccessful(result.code), ToString(result.code)};
-				})) return error("The headless runtime is stopping.");
+				})) return error("The headless runtime is stopping or this request is already active.");
 				return ok({{"message", "Command accepted."}});
 			}
-			if (!Submit(context, [this, restore = std::move(restore)](stop_token token) {
+			if (!Submit(context, [this, context, restore = std::move(restore)](stop_token token) {
+                const auto fields = KnotLinkProtocolFormatter::Fields{
+                    {"config", wstring_to_utf8(restore.config.configId)},
+                    {"folder", wstring_to_utf8(restore.world.relativePath)},
+                    {"world", wstring_to_utf8(restore.world.relativePath)},
+                    {"file", wstring_to_utf8(restore.archive.filename().wstring())}};
+                Publish(Event("restore_started", *context, fields));
 				const auto result = runtime.Restore(restore, false, token);
+                Publish(Event(IsSuccessful(result.code) ? "restore_success" : "restore_failed", *context, fields));
 				return pair{IsSuccessful(result.code), ToString(result.code)};
-			})) return error("The headless runtime is stopping.");
+			})) return error("The headless runtime is stopping or this request is already active.");
 			return ok({{"message", "Command accepted."}});
 		}
 		if (request.command == "MARK_IMPORTANT") {

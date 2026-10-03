@@ -99,12 +99,51 @@ void TestMetadataAndFormatting() {
           "events should inherit correlation metadata");
 }
 
+void TestOperationContextAndCallbacks() {
+    auto outer = std::make_shared<KnotLinkCommandContext>(KnotLinkCommandRequest::Parse(
+        "cmd=RESTORE;from=test.client;request_id=restore-1"));
+    Check(!KnotLinkCommandScope::Current(), "No ambient command should exist outside a scope");
+    {
+        KnotLinkCommandScope scope(outer);
+        Check(KnotLinkCommandScope::Current() == outer, "Runtime events inherit the executing command");
+        {
+            KnotLinkCommandScope nested({});
+            Check(!KnotLinkCommandScope::Current(), "Nested scopes may clear context");
+        }
+        Check(KnotLinkCommandScope::Current() == outer, "Nested scope restores its caller context");
+    }
+    Check(!KnotLinkCommandScope::Current(), "Command context must not leak into later operations");
+    KnotLinkCallbackTracker tracker;
+    const auto callback = [](const std::string& text) { return KnotLinkCommandRequest::Parse(text); };
+    Check(tracker.Validate(callback("cmd=WORLD_SAVED")).has_value(), "Orphan callbacks are rejected");
+    tracker.ObserveEvent("handshake", {{"world", "world-one"}}, outer.get());
+    Check(!tracker.Validate(callback("cmd=HANDSHAKE_RESPONSE;request_id=fresh-callback-id;mod_version=3.3.2")),
+        "Integrated-server callbacks use their own new UUID");
+    Check(tracker.Validate(callback("cmd=WORLD_SAVED")).has_value(), "Out-of-phase callbacks are rejected");
+    tracker.ObserveEvent("pre_hot_backup", {});
+    Check(tracker.Validate(callback("cmd=WORLD_SAVED;world=world-two")).has_value(), "Cross-world callbacks are rejected");
+    Check(!tracker.Validate(callback("cmd=WORLD_SAVED;world=world-one;request_id=another-uuid")),
+        "Matching phase/world accepts the callback's independent UUID");
+    tracker.ObserveEvent("backup_success", {});
+    Check(tracker.Validate(callback("cmd=WORLD_SAVED")).has_value(), "Terminal events close pending callbacks");
+    Check(KnotLinkKeyValueCodec::DecodeOperationList("ftbquests%2F,ftbteams%2F")
+            == std::vector<std::string>{"ftbquests/", "ftbteams/"}, "Canonical operation lists decode per item");
+    Check(KnotLinkKeyValueCodec::DecodeOperationList("ftbquests%2F%2Cftbteams%2F")
+            == std::vector<std::string>{"ftbquests/", "ftbteams/"}, "Legacy whole-value CSV remains supported");
+    CheckThrows([] { KnotLinkKeyValueCodec::DecodeOperationList("a,,b", true); },
+        "Canonical preserve paths reject empty elements");
+    CheckThrows([] { KnotLinkKeyValueCodec::DecodeOperationList("a%2C%20%2Cb", true); },
+        "Legacy preserve paths reject blank elements");
+    Check(KnotLinkKeyValueCodec::DecodeOperationList("a%252Fb%2Cc")
+            == std::vector<std::string>{"a%2Fb", "c"}, "Legacy CSV values are decoded only once");
+}
+
 void TestCapabilities() {
     const std::string manifest(KnotLinkCapabilities::ManifestJson());
     const auto document = nlohmann::json::parse(manifest);
     Check(document.at("specVersion") == "1.0",
           "funcList spec version should be embedded");
-    Check(document.at("manifestVersion") == "2.0.0",
+    Check(document.at("manifestVersion") == "2.1.0",
           "funcList manifest version should be embedded");
     Check(document.at("openSocket").is_object() &&
               document.at("signal").is_object(),
@@ -133,10 +172,18 @@ void TestCapabilities() {
     }
     Check(!document.at("openSocket").at("list_configs").contains("command"),
           "funcList functions should not use the non-standard command property");
+    for (const std::string command : {"backup", "backup_all"}) {
+        for (const std::string field : {"backup_whitelist", "backup_scope", "scope_dimensions", "scope_areas"}) {
+            Check(document.at("openSocket").at(command).at("args").contains(field),
+                "Validated one-shot backup selection is discoverable: " + field);
+        }
+    }
+    Check(document.at("openSocket").at("restore").at("args").contains("restore_preserve_paths")
+        && document.at("openSocket").at("restore").at("args").contains("preserve_player_data"),
+        "Preservation controls are discoverable for restore");
     Check(document.at("signal").contains("backup_warning"),
           "funcList should advertise the backup warning notification");
     for (const std::string unsupported : {
-             "backup_whitelist", "backup_scope", "preserve_player_data",
              "AUTO_BACKUP", "STOP_AUTO_BACKUP",
              "RESTORE_CURRENT", "LIST_WORLDS", "SEND"}) {
         Check(manifest.find(unsupported) == std::string::npos,
@@ -151,6 +198,7 @@ int main() {
     TestStrictParsing();
     TestMetadataAndFormatting();
     TestCapabilities();
+    TestOperationContextAndCallbacks();
     if (failures == 0) {
         std::cout << "KnotLink protocol tests passed\n";
     }

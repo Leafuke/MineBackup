@@ -99,6 +99,7 @@ struct HeadlessKnotLinkBridge::Implementation {
 	unique_ptr<::knotlink::SignalSender> sender;
 	unique_ptr<::knotlink::OpenSocketResponser> responder;
 	minebackup::knotlink::KnotLinkCommandDispatcher dispatcher;
+    minebackup::knotlink::KnotLinkCallbackTracker callbacks;
 	minebackup::knotlink::KnotLinkCommandDispatcher::Handler commandHandler;
 	bool running = false;
 	bool handshakeReceived = false;
@@ -113,6 +114,10 @@ struct HeadlessKnotLinkBridge::Implementation {
 		const shared_ptr<minebackup::knotlink::KnotLinkCommandContext>& context) {
 		using namespace minebackup::knotlink;
 		const auto& request = context->request;
+        if (const auto callbackError = callbacks.Validate(request)) {
+            return KnotLinkProtocolFormatter::FormatError(context.get(), *callbackError,
+                {{"code", "callback_mismatch"}});
+        }
 		if (request.command == "HANDSHAKE_RESPONSE") {
 			const string version = request.Get("mod_version");
 			if (version.empty()) {
@@ -185,11 +190,13 @@ struct HeadlessKnotLinkBridge::Implementation {
 	bool Emit(
 		string_view eventId,
 		const vector<pair<string, string>>& fields) {
+        const auto context = minebackup::knotlink::KnotLinkCommandScope::Current();
+        callbacks.ObserveEvent(eventId, fields, context.get());
 		lock_guard lock(lifecycleMutex);
 		if (!sender) return false;
 		return sender->emitt(
 			minebackup::knotlink::KnotLinkProtocolFormatter::FormatEvent(
-				nullptr, eventId, fields));
+				minebackup::knotlink::KnotLinkCommandScope::Current().get(), eventId, fields));
 	}
 
 	bool WaitFor(bool& flag, chrono::milliseconds timeout, stop_token stopToken) {

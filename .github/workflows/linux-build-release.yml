@@ -1,6 +1,8 @@
 name: Linux Build and Desktop Validation
 
 on:
+  pull_request:
+    branches: [develop]
   workflow_call:
   push:
     branches: [develop]
