@@ -13,6 +13,7 @@
 #include "Globals.h"
 #include "HistoryManager.h"
 #include "HotRestoreCoordinator.h"
+#include "KnotLinkService.h"
 #include "Logging.h"
 #include "MigrationCoordinator.h"
 #include "DesktopPlatform.h"
@@ -117,7 +118,8 @@ bool RunSharedManagedRestore(
 	const vector<wstring>* restoreWhitelistOverride,
 	const string& requestId,
 	const RestoreSafetyBackup* safetyBackup,
-    const RestorePlan* preparedPlan) {
+    const RestorePlan* preparedPlan,
+    const RestoreRequest* operationOptions) {
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
 	minebackup::logging::ScopedLogContext operationContext{{
@@ -125,9 +127,11 @@ bool RunSharedManagedRestore(
 		{"config_id", wstring_to_utf8(config.configId)},
 		{"world", wstring_to_utf8(worldName)}}};
 	auto fail = [&](string reason) {
-		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId)
-			+ ";world=" + wstring_to_utf8(worldName) + ";error=" + reason
-			+ (requestId.empty() ? "" : ";request_id=" + requestId));
+        minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields{
+            {"config", wstring_to_utf8(config.configId)}, {"config_id", wstring_to_utf8(config.configId)},
+            {"folder", wstring_to_utf8(worldName)}, {"world", wstring_to_utf8(worldName)}, {"error", reason}};
+        if (!requestId.empty()) fields.emplace_back("request_id", requestId);
+        BroadcastEvent("restore_failed", fields);
 		return false;
 	};
 	if (g_appState.profileRecoveryRequired.load()) return fail("profile_recovery_required");
@@ -151,6 +155,11 @@ bool RunSharedManagedRestore(
 	request.mode = mode;
 	request.restorePreserve = restoreWhitelistOverride
 		? *restoreWhitelistOverride : SettingsState().restoreWhitelist;
+    if (operationOptions) {
+        request.restorePreservePaths = operationOptions->restorePreservePaths;
+        request.preservePlayerData = operationOptions->preservePlayerData;
+        request.confirmPartialClean = operationOptions->confirmPartialClean;
+    }
 	RestoreServiceDependencies dependencies = DesktopVerificationDependencies();
     if (preparedPlan) dependencies.repairArchiveChain = {};
 	dependencies.isWorldOccupied = IsWorldOccupied;
@@ -192,19 +201,27 @@ bool RunSharedManagedRestore(
 	if (!IsSuccessful(restored.code)) return fail(ToString(restored.code));
 
 	RESTORE_INFO(L("LOG_RESTORE_END_HEADER"));
-	BroadcastEvent("event=restore_success;config_id=" + wstring_to_utf8(config.configId)
-		+ ";world=" + wstring_to_utf8(worldName) + ";backup="
-		+ wstring_to_utf8(backupFile)
-		+ (requestId.empty() ? "" : ";request_id=" + requestId));
+    minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields{
+        {"config", wstring_to_utf8(config.configId)}, {"config_id", wstring_to_utf8(config.configId)},
+        {"folder", wstring_to_utf8(worldName)}, {"world", wstring_to_utf8(worldName)},
+        {"file", wstring_to_utf8(backupFile)}, {"backup", wstring_to_utf8(backupFile)}};
+    if (!requestId.empty()) fields.emplace_back("request_id", requestId);
+    BroadcastEvent("restore_success", fields);
 	return true;
 }
 
 } // namespace
 
 RestorePlan PreflightDesktopRestore(const Config& config, const wstring& worldName,
-    const wstring& backupFile, int restoreMethod, stop_token token) {
+    const wstring& backupFile, int restoreMethod, stop_token token,
+    const RestoreRequest* operationOptions) {
     RestoreRequest request; request.config = config; request.world = {config.configId, worldName}; request.archive = backupFile;
     request.mode = restoreMethod == 0 ? RestoreMode::Clean : RestoreMode::Overwrite;
+    if (operationOptions) {
+        request.restorePreservePaths = operationOptions->restorePreservePaths;
+        request.preservePlayerData = operationOptions->preservePlayerData;
+        request.confirmPartialClean = operationOptions->confirmPartialClean;
+    }
     const auto mode = restoreMethod == 2 ? RestoreVerificationMode::Reverse
         : restoreMethod == 3 ? RestoreVerificationMode::LegacyForward : RestoreVerificationMode::Managed;
     return RestoreService(DesktopVerificationDependencies()).Verify(request, token, mode);
@@ -352,11 +369,12 @@ bool DoRestore(
 	const vector<wstring>* restoreWhitelistOverride,
 	const string& requestId,
 	const RestoreSafetyBackup* safetyBackup,
-    const RestorePlan* preparedPlan) {
+    const RestorePlan* preparedPlan,
+    const RestoreRequest* operationOptions) {
 	if (restoreMethod == 0 || restoreMethod == 1) {
 		return RunSharedManagedRestore(config, worldName, backupFile,
 			restoreMethod == 0 ? RestoreMode::Clean : RestoreMode::Overwrite,
-			restoreWhitelistOverride, requestId, safetyBackup, preparedPlan);
+			restoreWhitelistOverride, requestId, safetyBackup, preparedPlan, operationOptions);
 	}
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
@@ -398,9 +416,11 @@ bool DoRestore(
 		if (!message.empty()) {
 			RESTORE_ERROR("%s", message.c_str());
 		}
-		BroadcastEvent("event=restore_failed;config_id=" + wstring_to_utf8(config.configId)
-			+ ";world=" + wstring_to_utf8(worldName) + ";error=" + reason
-			+ (requestId.empty() ? "" : ";request_id=" + requestId));
+        minebackup::knotlink::KnotLinkProtocolFormatter::Fields fields{
+            {"config", wstring_to_utf8(config.configId)}, {"config_id", wstring_to_utf8(config.configId)},
+            {"folder", wstring_to_utf8(worldName)}, {"world", wstring_to_utf8(worldName)}, {"error", reason}};
+        if (!requestId.empty()) fields.emplace_back("request_id", requestId);
+        BroadcastEvent("restore_failed", fields);
 		return false;
 	};
 	auto failRestore = [&](const string& reason) {
@@ -525,8 +545,10 @@ bool DoHotRestore(
 	const string& customRestoreList,
 	const string& requestId,
 	const RestoreSafetyBackup* safetyBackup,
-    const RestorePlan* preparedPlan) {
+    const RestorePlan* preparedPlan,
+    const RestoreRequest* operationOptions) {
 	(void)deleteBackup;
+    lock_guard conversation(minebackup::knotlink::KnotLinkService::ModConversationMutex());
 	auto& mod = g_appState.knotLinkMod;
 	const string operationId = requestId.empty()
 		? wstring_to_utf8(FolderRewindFormat::GenerateGuidString()) : requestId;
@@ -589,7 +611,7 @@ bool DoHotRestore(
 		}
 		result.code = DoRestore(
 			world.config, world.name, selected, restoreMethod,
-			customRestoreList, restoreWhitelistOverride, requestId, safetyBackup, preparedPlan)
+			customRestoreList, restoreWhitelistOverride, requestId, safetyBackup, preparedPlan, operationOptions)
 			? OperationCode::Success : OperationCode::RestoreFailed;
 		return result;
 	};

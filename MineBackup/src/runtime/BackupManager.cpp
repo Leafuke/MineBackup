@@ -4,6 +4,11 @@
 #include "ArchiveRunner.h"
 #include "BackupChangeDetector.h"
 #include "BackupService.h"
+#include "HistoryRepository.h"
+#include "RestoreService.h"
+#include "RestoreWorkspace.h"
+#include <array>
+#include "BackupSelection.h"
 #include "BackupManagerInternal.h"
 #include "AppPaths.h"
 #include "text_to_text.h"
@@ -193,6 +198,7 @@ void WorldOperationGuard::Release() {
 	constexpr const wchar_t* kDeletedOnlyMarkerDir = FolderRewindFormat::kInternalRestoreMarkerDirectoryName;
 	constexpr const wchar_t* kDeletedOnlyMarkerFile = FolderRewindFormat::kInternalRestoreMarkerFileName;
 	const vector<wstring> kForcedBackupBlacklistRules = {
+		L"__FolderRewind_Internal",
 		L"regex:(^|[\\\\/])session\\.lock$",
 		L"regex:(^|[\\\\/])lock$",
 		L"regex:(^|[\\\\/]).*\\.lock$"
@@ -219,7 +225,7 @@ void WorldOperationGuard::Release() {
 		return filesystem::path(config.backupPath) / FolderRewindFormat::kMetadataRootDirName / FolderRewindFormat::SanitizePathSegment(worldName);
 	}
 
-	FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& previousLastBackupFile, const wstring& backupType, map<wstring, FolderRewindFormat::FileState> currentState, const BackupChangeSet& changeSet) {
+	FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(const filesystem::path& metadataDir, const wstring& currentBackupFile, const wstring& baseBackupFile, const wstring& previousLastBackupFile, const wstring& backupType, map<wstring, FolderRewindFormat::FileState> currentState, const BackupChangeSet& changeSet, bool independentPartial) {
 		const wstring normalizedBase = FolderRewindFormat::IsSmartBackupType(backupType)
 			? (baseBackupFile.empty() ? currentBackupFile : baseBackupFile)
 			: currentBackupFile;
@@ -245,6 +251,15 @@ void WorldOperationGuard::Release() {
 			record.addedFiles = record.fullFileList;
 			record.modifiedFiles.clear();
 			record.deletedFiles.clear();
+		}
+		if (independentPartial) {
+			// An inclusion snapshot is not a checkpoint for the ordinary world chain.
+			// Publish its record independently and leave state.json byte-for-byte alone.
+			record.basedOnFullBackup.clear();
+			const auto saved = FolderRewindMetadataStore::SaveRecordDetailed(metadataDir, record);
+			using State = FolderRewindMetadataStore::SaveTransactionState;
+			return {saved.IsDurable() ? State::CommittedDurably : saved.WasCommitted()
+				? State::CommittedNotDurable : State::NotCommitted, saved.error};
 		}
 
 		FolderRewindFormat::MetadataState state;
@@ -284,12 +299,23 @@ void WorldOperationGuard::Release() {
 
 	void ClearReadonlyAttributesRecursively(const filesystem::path& dir) {
 		error_code ec;
-		if (!filesystem::exists(dir, ec) || ec) return;
-		for (const auto& entry : filesystem::recursive_directory_iterator(dir, filesystem::directory_options::skip_permission_denied, ec)) {
+		const auto rootStatus = filesystem::symlink_status(dir, ec);
+		if (ec || !filesystem::exists(rootStatus) || filesystem::is_symlink(rootStatus)) return;
+		filesystem::recursive_directory_iterator iterator(dir, filesystem::directory_options::skip_permission_denied, ec);
+		const filesystem::recursive_directory_iterator end;
+		while (!ec && iterator != end) {
+			const auto status = iterator->symlink_status(ec);
 			if (ec) break;
-			filesystem::permissions(entry.path(), filesystem::perms::owner_all, filesystem::perm_options::add, ec);
+			if (!filesystem::is_symlink(status)
+				&& (!filesystem::is_regular_file(status) || filesystem::hard_link_count(iterator->path(), ec) <= 1)) {
+				filesystem::permissions(iterator->path(), filesystem::perms::owner_all,
+					filesystem::perm_options::add | filesystem::perm_options::nofollow, ec);
+			}
+			ec.clear();
+			iterator.increment(ec);
 		}
-		filesystem::permissions(dir, filesystem::perms::owner_all, filesystem::perm_options::add, ec);
+		filesystem::permissions(dir, filesystem::perms::owner_all,
+			filesystem::perm_options::add | filesystem::perm_options::nofollow, ec);
 	}
 
 	bool CreateDeletionOnlyArchive(const Config& config, const filesystem::path& archivePath) {
@@ -355,12 +381,63 @@ BackupResult MakeBackupFailure(
 	return result;
 }
 
+
+// A timestamp/size match is only a hint. Protected reuse verifies a complete
+// materialized chain against every included source byte and checks the file set
+// again afterward. Only engine lock/internal exclusions are permitted.
+bool MatchesCompleteSource(const filesystem::path& source, const filesystem::path& staged,
+    const map<wstring, FolderRewindFormat::FileState>& expected,
+    const function<bool(const filesystem::path&)>& internalExclude,
+    string& error, stop_token token) {
+    if (!RestoreWorkspace::ValidateSafeTree(source, error, token)
+        || !RestoreWorkspace::ValidateSafeTree(staged, error, token)) return false;
+    const auto actual = BackupChangeDetector{}.Scan(staged, staged / L".absent-metadata",
+        staged / L".absent-backups");
+    if (actual.status == BackupScanStatus::ScanFailed || actual.currentState.size() != expected.size()) {
+        error = "Archive coverage does not match the complete source."; return false;
+    }
+    array<char, 64 * 1024> left{}, right{};
+    for (const auto& [path, state] : expected) {
+        if (token.stop_requested()) { error = "Snapshot verification cancelled."; return false; }
+        const auto found = actual.currentState.find(path);
+        if (found == actual.currentState.end() || found->second.size != state.size) {
+            error = "Archive is missing or has a different file: " + wstring_to_utf8(path); return false;
+        }
+        ifstream a(source / path, ios::binary), b(staged / path, ios::binary);
+        if (!a || !b) { error = "Could not read snapshot files."; return false; }
+        while (a || b) {
+            if (token.stop_requested()) { error = "Snapshot verification cancelled."; return false; }
+            a.read(left.data(), left.size()); b.read(right.data(), right.size());
+            if (a.bad() || b.bad() || a.gcount() != b.gcount()
+                || !equal(left.begin(), left.begin() + a.gcount(), right.begin())) {
+                error = "Archive content differs from source: " + wstring_to_utf8(path); return false;
+            }
+        }
+    }
+    const auto after = BackupChangeDetector{}.Scan(source, staged / L".absent-metadata",
+        staged / L".absent-backups", internalExclude);
+    if (after.status == BackupScanStatus::ScanFailed || after.currentState.size() != expected.size()) {
+        error = "Source changed during snapshot verification."; return false;
+    }
+    for (const auto& [path, state] : expected) {
+        const auto found = after.currentState.find(path);
+        if (found == after.currentState.end() || found->second.size != state.size
+            || found->second.lastWriteTimeUtc != state.lastWriteTimeUtc) {
+            error = "Source changed during snapshot verification: " + wstring_to_utf8(path); return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 BackupResult BackupService::Run(
 	const BackupRequest& request,
 	stop_token stopToken,
 	BackupExecutionOptions options) const {
+    unique_lock operation(HistoryRepository::ArchiveMutationMutex(), try_to_lock);
+    if (!operation.owns_lock()) return MakeBackupFailure(OperationCode::ProfileBusy,
+        BackupOutcome::Rejected, "backup.archive.busy");
 	const vector<pair<string, string>> targetFields{
 		{"config", wstring_to_utf8(request.config.configId)},
 		{"config_id", wstring_to_utf8(request.config.configId)},
@@ -381,24 +458,24 @@ BackupResult BackupService::Run(
 		result = RunCore(request, stopToken, options);
 	}
 	catch (const exception& error) {
-		publish("backup_failed", {
+		if (!request.protect) publish("backup_failed", {
 			{"error", "exception"}, {"message", error.what()}});
 		throw;
 	}
 	catch (...) {
-		publish("backup_failed", {
+		if (!request.protect) publish("backup_failed", {
 			{"error", "unknown_exception"}});
 		throw;
 	}
 
-	if (result.outcome == BackupOutcome::NoChanges) {
+	if (result.outcome == BackupOutcome::NoChanges && !request.protect) {
 		// The companion mod treats this command lifecycle event as the
 		// terminal signal that also releases a coordinated auto-save freeze.
 		publish("command_completed", {
 			{"command", "BACKUP"}, {"result", "no_changes"}});
 	}
-	else if (result.outcome != BackupOutcome::Created) {
-		publish("backup_failed", {
+	else if (result.outcome != BackupOutcome::Created && result.outcome != BackupOutcome::NoChanges) {
+		if (!request.protect) publish("backup_failed", {
 			{"error", ToString(result.code)},
 			{"result", ToString(result.outcome)}});
 	}
@@ -449,6 +526,31 @@ BackupResult BackupService::RunCore(
 		return MakeBackupFailure(
 			OperationCode::MigrationRequired, BackupOutcome::Rejected,
 			"backup.profile.binding_required", "The imported profile still needs local path binding.");
+	}
+	BackupSelection selection;
+	string selectionError;
+	if (!BackupSelection::TryBuild(request, selection, selectionError)) {
+		return MakeBackupFailure(OperationCode::InvalidArguments, BackupOutcome::Rejected,
+			"backup.selection.invalid", selectionError);
+	}
+    auto historyWritable = [&] { return !dependencies_.canPersistHistory || dependencies_.canPersistHistory(); };
+    if (request.protect && !historyWritable())
+        return MakeBackupFailure(OperationCode::MigrationRequired, BackupOutcome::Rejected,
+            "backup.protection.history_blocked", "History migration must finish before protected backup.");
+	const bool independentPartial = selection.IsPartial();
+    if (request.protect && (independentPartial || request.auxiliarySource || !config.blacklist.empty()
+            || !dependencies_.history || dependencies_.historyConfigs.empty()
+            || none_of(config.worlds.begin(), config.worlds.end(), [&](const auto& world) { return world.first == worldName; })
+            || !PathIdentity::PathsEqual(request.sourcePath, filesystem::path(config.saveRoot) / worldName))) {
+        return MakeBackupFailure(OperationCode::InvalidArguments, BackupOutcome::Rejected,
+            "backup.protection.incomplete_source",
+            "Protected backup requires a complete configured source without user filters and persistent history.");
+    }
+	if (independentPartial) {
+		// One-shot snapshots always capture their complete selected set, including
+		// unchanged files; they do not inherit Smart or Overwrite semantics.
+		config.backupMode = 1;
+		config.skipIfUnchanged = false;
 	}
 
 	WorldOperationGuard opGuard(request.sourcePath, FolderState::BACKUP);
@@ -520,8 +622,8 @@ BackupResult BackupService::RunCore(
 
 	wstring originalSourcePath = request.sourcePath.wstring();
 	wstring sourcePath = NormalizeSeparators(originalSourcePath);
-	const vector<wstring> effectiveBlacklist = request.auxiliarySource
-		? vector<wstring>{} : BuildEffectiveBackupBlacklist(config.blacklist);
+	const vector<wstring> effectiveBlacklist = request.auxiliarySource && !independentPartial
+		? vector<wstring>{} : BuildEffectiveBackupBlacklist(selection.HasWhitelist() ? vector<wstring>{} : config.blacklist);
 	FolderRewindFormat::StoragePaths storagePaths;
 	if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, worldName, request.sourcePath.wstring(), storagePaths)) {
 		BACKUP_ERROR("Invalid FolderRewind storage folder name for world: %s", wstring_to_utf8(worldName).c_str());
@@ -563,7 +665,8 @@ BackupResult BackupService::RunCore(
 		if (dependencies_.hotBackup) {
 			preparation = dependencies_.hotBackup->Prepare(request, stopToken);
 		}
-		if (preparation.status == HotBackupStatus::Rejected) {
+		if (preparation.status == HotBackupStatus::Rejected
+            || (request.protect && preparation.status != HotBackupStatus::Coordinated)) {
 			BackupResult rejected = MakeBackupFailure(
 				cancelled() ? OperationCode::Cancelled : OperationCode::BackupFailed,
 				BackupOutcome::Rejected,
@@ -589,6 +692,7 @@ BackupResult BackupService::RunCore(
         }
     }
 	if (forceFullForMigration) forceFullBackup = true;
+	if (independentPartial) forceFullBackup = true;
     if (forceFullBackup)
 		BACKUP_INFO("A full backup is required.");
 
@@ -630,13 +734,55 @@ BackupResult BackupService::RunCore(
         }
     }
 
-	BackupScanResult scanResult = BackupChangeDetector{}.Scan(sourcePath, metadataFolder, destinationFolder);
+	const PathRuleSet backupRules(effectiveBlacklist);
+	BackupScanResult scanResult = BackupChangeDetector{}.Scan(sourcePath, metadataFolder, destinationFolder,
+		[&](const filesystem::path& relativePath) {
+			return backupRules.Matches(filesystem::path(sourcePath) / relativePath, sourcePath, originalSourcePath);
+		});
 	vector<filesystem::path> candidate_files = std::move(scanResult.changedFiles);
 	auto currentState = std::move(scanResult.currentState);
 	auto changeSet = std::move(scanResult.changes);
 	const wstring previousLastBackupFile = std::move(scanResult.previousLastBackupFileName);
 	const wstring previousBasedOnFullBackup = std::move(scanResult.previousBasedOnFullBackup);
-    if (scanResult.status == BackupScanStatus::NoChange && config.skipIfUnchanged) {
+
+    auto reuseProtected = [&]() -> BackupResult {
+        auto reject = [&](string error) {
+            return MakeBackupFailure(cancelled() ? OperationCode::Cancelled : OperationCode::VerificationFailed,
+                BackupOutcome::Failed, "backup.protection.reuse_failed", std::move(error));
+        };
+        if (previousLastBackupFile.empty()) return reject("No exact unchanged backup is available.");
+        const auto existing = dependencies_.history->QueryImportance(config, worldName, previousLastBackupFile);
+        if (!existing.success || !existing.entry) return reject(existing.error);
+        if (FolderRewindFormat::IsPartialBackupType(existing.entry->backupFile)
+            || FolderRewindFormat::IsPartialBackupType(existing.entry->backupType))
+            return reject("Partial backups cannot be reused as a protected source.");
+        RestoreRequest restore;
+        restore.config = config; restore.world = request.world; restore.archive = previousLastBackupFile;
+        RestoreServiceDependencies restoreDependencies;
+        restoreDependencies.paths = dependencies_.paths;
+        restoreDependencies.archiveRunnerFactory = [&archiveRunner](const auto&, const auto&, auto) { return archiveRunner; };
+        string error;
+        const auto staged = stagingRoot / L"verify-reuse";
+        if (!RestoreService(std::move(restoreDependencies)).StageVerifiedSnapshot(restore, staged, error, stopToken)
+            || !MatchesCompleteSource(request.sourcePath, staged, currentState,
+                [&](const filesystem::path& relative) { return backupRules.Matches(
+                    request.sourcePath / relative, sourcePath, originalSourcePath); }, error, stopToken)) return reject(error);
+        if (cancelled()) return reject("Cancelled before protection commit.");
+        if (!historyWritable()) return MakeBackupFailure(OperationCode::MigrationRequired, BackupOutcome::Failed,
+            "backup.protection.history_blocked", "History migration blocks the protection commit.");
+        const auto pinned = dependencies_.history->SetImportance(config, worldName, previousLastBackupFile,
+            true, dependencies_.paths.HistoryFile(), dependencies_.historyConfigs);
+        if (!pinned.success || !pinned.entry) return reject(pinned.error);
+        BackupResult result;
+        result.code = OperationCode::NoChanges; result.outcome = BackupOutcome::NoChanges;
+        result.archivePath = destinationFolder / pinned.file; result.historyEntry = pinned.entry;
+        result.diagnostics.push_back(MakeDiagnostic("backup.protection.reused", DiagnosticSeverity::Info));
+        if (options.onProtectedCommit) options.onProtectedCommit(result);
+        return result;
+    };
+
+    if (scanResult.status == BackupScanStatus::NoChange && (config.skipIfUnchanged || request.protect)) {
+        if (request.protect) return reuseProtected();
 		BACKUP_INFO("No world changes were found.");
 		publish("backup.no_changes", {{"config_id", wstring_to_utf8(config.configId)}, {"world", wstring_to_utf8(worldName)}});
 		BackupResult result;
@@ -654,17 +800,17 @@ BackupResult BackupService::RunCore(
         BACKUP_ERROR("Failed to scan source directory for backup state.");
 		return MakeBackupFailure(
 			OperationCode::BackupFailed, BackupOutcome::Failed,
-			"backup.scan.failed", "Failed to scan source directory for backup state.");
+			"backup.scan.failed", scanResult.failureDetail.empty()
+				? "Failed to scan source directory for backup state." : scanResult.failureDetail);
     }
 
     forceFullBackup = (scanResult.status == BackupScanStatus::MetadataInvalid ||
         scanResult.status == BackupScanStatus::BaseBackupMissing ||
         forceFullBackupDueToLimit) || forceFullBackup;
 
-	const PathRuleSet backupRules(effectiveBlacklist);
     auto is_relative_blacklisted = [&](const wstring& relativePath) {
 		filesystem::path absolutePath = filesystem::path(sourcePath) / relativePath;
-		return backupRules.Matches(absolutePath, sourcePath, originalSourcePath);
+		return !selection.Includes(relativePath) || backupRules.Matches(absolutePath, sourcePath, originalSourcePath);
 	};
 
 	for (auto it = currentState.begin(); it != currentState.end(); ) {
@@ -702,6 +848,7 @@ BackupResult BackupService::RunCore(
 	}
 
 	if (!forceFullBackup && !changeSet.HasChanges() && (config.skipIfUnchanged || config.backupMode == 2)) {
+        if (request.protect) return reuseProtected();
 		BACKUP_INFO("No world changes were found.");
 		publish("backup.no_changes", {{"config_id", wstring_to_utf8(config.configId)}, {"world", wstring_to_utf8(worldName)}});
 		BackupResult result;
@@ -715,6 +862,8 @@ BackupResult BackupService::RunCore(
 
 	const bool deletionOnlyChange = changeSet.deletedFiles.size() > 0 && files_to_backup.empty();
 	if (files_to_backup.empty() && !(config.backupMode == 3 || (config.backupMode == 2 && deletionOnlyChange && !forceFullBackup))) {
+        if (request.protect) return MakeBackupFailure(OperationCode::VerificationFailed, BackupOutcome::Failed,
+            "backup.protection.empty_source", "A protected source must contain at least one included file.");
 		BACKUP_INFO("No world changes were found.");
 		publish("backup.no_changes", {{"config_id", wstring_to_utf8(config.configId)}, {"world", wstring_to_utf8(worldName)}});
 		BackupResult result;
@@ -757,8 +906,8 @@ BackupResult BackupService::RunCore(
     filesystem::path latestBackupPath;
 
 	if ((config.backupMode == 1 || forceFullBackup) && config.backupMode != 3) {
-		backupTypeStr = L"Full";
-		archivePath = makeArchivePath(L"Full");
+		backupTypeStr = independentPartial ? L"Partial" : L"Full";
+		archivePath = makeArchivePath(backupTypeStr);
 		auto arguments = SevenZipCreateArguments(config, normalizedZipLevel, archivePath);
 		arguments.push_back(L"@" + filelist_path);
 		command = makeCommand(std::move(arguments), sourcePath);
@@ -778,6 +927,8 @@ BackupResult BackupService::RunCore(
 			}
 		} catch (const exception& e) {
 			BACKUP_WARNING("Failed to read metadata for smart backup, forcing full backup: %s", e.what());
+            if (request.protect) return MakeBackupFailure(OperationCode::VerificationFailed,
+                BackupOutcome::Failed, "backup.protection.chain_invalid", e.what());
 			// 回退到完整备份
 			backupTypeStr = L"Full";
 			archivePath = makeArchivePath(L"Full");
@@ -874,7 +1025,43 @@ execute_backup:
 
    {
     if (archiveRunner.Execute({L"t", archivePath}, {}, config.useLowPriority).status != ProcessStatus::Succeeded)
-     return MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed, "backup.archive.verify_failed");
+     return MakeBackupFailure(cancelled() ? OperationCode::Cancelled : OperationCode::BackupFailed,
+         BackupOutcome::Failed, cancelled() ? "backup.cancelled" : "backup.archive.verify_failed");
+
+    if (request.protect) {
+        string error;
+        auto reject = [&]() {
+            return MakeBackupFailure(cancelled() ? OperationCode::Cancelled : OperationCode::VerificationFailed,
+                BackupOutcome::Failed, "backup.protection.verify_failed", error);
+        };
+        const auto staged = stagingRoot / L"verify-created";
+        if (backupTypeStr == L"Smart") {
+            RestoreRequest previous;
+            previous.config = config; previous.world = request.world; previous.archive = previousLastBackupFile;
+            RestoreServiceDependencies restoreDependencies;
+            restoreDependencies.paths = dependencies_.paths;
+            restoreDependencies.archiveRunnerFactory = [&archiveRunner](const auto&, const auto&, auto) { return archiveRunner; };
+            if (!RestoreService(std::move(restoreDependencies)).StageVerifiedSnapshot(previous, staged, error, stopToken))
+                return reject();
+            for (const auto& deleted : changeSet.deletedFiles) {
+                error_code ec;
+                filesystem::remove(staged / deleted, ec);
+                if (ec) { error = ec.message(); return reject(); }
+            }
+        }
+        if (!archiveRunner.ValidateMembers(archivePath, error, config.useLowPriority)
+            || archiveRunner.Execute({L"x", archivePath, L"-o" + staged.wstring(), L"-y"},
+                {}, config.useLowPriority).status != ProcessStatus::Succeeded) return reject();
+        if (!RestoreWorkspace::ValidateSafeTree(staged, error, stopToken)) return reject();
+        error_code ec;
+        filesystem::remove_all(staged / FolderRewindFormat::kInternalRestoreMarkerDirectoryName, ec);
+        if (ec) { error = ec.message(); return reject(); }
+        if (!MatchesCompleteSource(request.sourcePath, staged, currentState,
+                [&](const filesystem::path& relative) { return backupRules.Matches(
+                    request.sourcePath / relative, sourcePath, originalSourcePath); }, error, stopToken)) return reject();
+        if (cancelled()) return MakeBackupFailure(OperationCode::Cancelled, BackupOutcome::Failed, "backup.cancelled");
+    }
+
     while (filesystem::exists(finalArchivePath)) {
      finalArchivePath = destinationFolder / FolderRewindFormat::GenerateArchiveFileName(
       backupTypeStr, storageFolderName, comment, config.zipFormat);
@@ -888,12 +1075,18 @@ execute_backup:
 		wstring completedBackupFile = filesystem::path(archivePath).filename().wstring();
 
 
+  if (request.protect && !historyWritable()) {
+      error_code cleanupError;
+      filesystem::remove(filesystem::path(archivePath), cleanupError);
+      return MakeBackupFailure(OperationCode::MigrationRequired, BackupOutcome::Failed,
+          "backup.protection.history_blocked", "History migration blocks the protection commit.");
+  }
   const auto metadataRecovery=stagingRoot/L"metadata-recovery";
   filesystem::create_directories(metadataRecovery);
   const auto statePath=FolderRewindMetadataStore::GetStatePath(metadataFolder);
   const bool stateExisted=filesystem::exists(statePath);
   error_code snapshotError;
-  if(stateExisted) filesystem::copy_file(statePath,metadataRecovery/L"state.json",filesystem::copy_options::overwrite_existing,snapshotError);
+  if(stateExisted && !independentPartial) filesystem::copy_file(statePath,metadataRecovery/L"state.json",filesystem::copy_options::overwrite_existing,snapshotError);
   if(snapshotError) return MakeBackupFailure(OperationCode::BackupFailed,BackupOutcome::Failed,"backup.metadata.snapshot_failed",snapshotError.message());
 
 		const auto metadataUpdate = UpdateMetadataFiles(
@@ -903,7 +1096,8 @@ execute_backup:
 			previousLastBackupFile,
 			backupTypeStr,
 			std::move(currentState),
-			changeSet);
+			changeSet,
+			independentPartial);
 		if (!metadataUpdate.IsCommitted()) {
 			BACKUP_ERROR("Failed to write FolderRewind metadata for backup: %s", wstring_to_utf8(completedBackupFile).c_str());
 			const bool archiveWasNewlyCreated = config.backupMode != 3 || latestBackupPath.empty();
@@ -938,26 +1132,44 @@ execute_backup:
 		historyEntry.worldName = storageFolderName;
 		historyEntry.backupFile = completedBackupFile;
 		historyEntry.backupType = backupTypeStr;
-		historyEntry.isPartialBackup = FolderRewindFormat::IsSmartBackupType(backupTypeStr);
+		historyEntry.isPartialBackup = independentPartial || FolderRewindFormat::IsSmartBackupType(backupTypeStr);
 		historyEntry.comment = comment;
-		if (!dependencies_.addHistory || !dependencies_.addHistory(historyEntry)) {
+        historyEntry.isImportant = request.protect;
+        bool historyCommitted = false;
+        if (request.protect && !metadataDurabilityWarning && historyWritable() && !cancelled()) {
+            const auto mutation = dependencies_.history->Mutate(config.configId, dependencies_.paths.HistoryFile(),
+                dependencies_.historyConfigs, true, [&](vector<HistoryEntry>& entries) {
+                    entries.push_back(historyEntry); return true;
+                });
+            if (mutation.committed && !mutation.persisted) {
+                auto uncertain = MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed,
+                    "backup.history.committed_not_durable", "Pinned history committed, but directory durability is unconfirmed; archive and metadata retained.");
+                uncertain.archivePath = archivePath; uncertain.historyEntry = historyEntry;
+                return uncertain;
+            }
+            historyCommitted = mutation.changed && mutation.persisted;
+        } else if (!request.protect) {
+            historyCommitted = dependencies_.addHistory && dependencies_.addHistory(historyEntry);
+        }
+		if (!historyCommitted) {
 			error_code recoveryError;
-			if (stateExisted) {
+			if (!independentPartial && stateExisted) {
 				const auto preparedState = metadataRecovery / L"restore-state.json";
 				filesystem::copy_file(metadataRecovery / L"state.json", preparedState,
 					filesystem::copy_options::overwrite_existing, recoveryError);
 				if (!recoveryError && !AtomicFileWriter::ReplacePreparedFile(preparedState, statePath).WasReplaced()) {
 					recoveryError = make_error_code(errc::io_error);
 				}
-			} else {
+			} else if (!independentPartial) {
 				filesystem::remove(statePath, recoveryError);
 			}
 			if (!recoveryError && !dependencies_.deleteMetadataRecord(metadataFolder, completedBackupFile)) {
 				recoveryError = make_error_code(errc::io_error);
 			}
 			if (!recoveryError) filesystem::remove(filesystem::path(archivePath), recoveryError);
-			BackupResult failure = MakeBackupFailure(OperationCode::BackupFailed, BackupOutcome::Failed,
-				"backup.history.commit_failed", wstring_to_utf8(completedBackupFile));
+			BackupResult failure = MakeBackupFailure(cancelled() ? OperationCode::Cancelled : OperationCode::BackupFailed,
+                BackupOutcome::Failed, cancelled() ? "backup.cancelled" : "backup.history.commit_failed",
+                wstring_to_utf8(completedBackupFile));
 			if (recoveryError) {
 				stagingCleanup.Release();
 				failure.archivePath = archivePath;
@@ -968,7 +1180,7 @@ execute_backup:
 			publish("backup.failed", {{"error", "history_commit_failed"}});
 			return failure;
 		}
-		if (dependencies_.enforceRetention && !options.deferRetention) {
+		if (dependencies_.enforceRetention && !options.deferRetention && !independentPartial) {
 			dependencies_.enforceRetention(request, historyEntry, stopToken);
 		}
 
@@ -979,7 +1191,7 @@ execute_backup:
 		// This is the companion-mod terminal event. Publish it immediately
 		// after the local archive and history commit so auto-save resumes before
 		// potentially slow rclone post-processing begins.
-		publish("backup_success", {
+		if (!request.protect) publish("backup_success", {
 			{"config", wstring_to_utf8(config.configId)},
 			{"config_id", wstring_to_utf8(config.configId)},
 			{"folder", wstring_to_utf8(storageFolderName)},
@@ -1003,17 +1215,30 @@ execute_backup:
 		}
 		result.diagnostics.insert(result.diagnostics.end(),
 			deferredDiagnostics.begin(), deferredDiagnostics.end());
+        if (request.protect && options.onProtectedCommit) options.onProtectedCommit(result);
 		if (dependencies_.cloudPost && !cancelled()) {
-			result.cloud = dependencies_.cloudPost->Run(request, historyEntry, stopToken);
+            try {
+                result.cloud = dependencies_.cloudPost->Run(request, historyEntry, stopToken);
+            } catch (const exception& error) {
+                if (!request.protect) throw;
+                result.cloud.status = CloudPostStatus::Failed;
+                result.cloud.diagnostics.push_back(MakeDiagnostic("backup.cloud.post_failed", DiagnosticSeverity::Warning, error.what()));
+            } catch (...) {
+                if (!request.protect) throw;
+                result.cloud.status = CloudPostStatus::Failed;
+                result.cloud.diagnostics.push_back(MakeDiagnostic("backup.cloud.post_failed", DiagnosticSeverity::Warning, "Unknown cloud post-processing failure."));
+            }
+            if (request.protect && result.cloud.status == CloudPostStatus::Failed)
+                publish("backup.cloud.warning", {{"file", wstring_to_utf8(completedBackupFile)}});
 			result.diagnostics.insert(
 				result.diagnostics.end(),
 				result.cloud.diagnostics.begin(),
 				result.cloud.diagnostics.end());
-			if (result.cloud.status == CloudPostStatus::Failed) {
+			if (result.cloud.status == CloudPostStatus::Failed && !request.protect) {
 				result.code = OperationCode::PartialSuccess;
 			}
 		}
-		if (cancelled() && result.cloud.status != CloudPostStatus::Failed) {
+		if (cancelled() && result.cloud.status != CloudPostStatus::Failed && !request.protect) {
 			result.code = OperationCode::Cancelled;
 			result.diagnostics.push_back(MakeDiagnostic(
 				"backup.cancelled", DiagnosticSeverity::Warning,

@@ -302,7 +302,7 @@ bool ImportHistoryFromFile(
             }
             return changed || (!mergeExisting && parsedEntries.empty());
         });
-    return !result.changed || result.persisted || PersistenceBlocked();
+    return !result.changed || result.persisted || result.committed || PersistenceBlocked();
 }
 
 HistoryRepository::EntriesView GetHistoryEntriesViewForConfig(int configIndex) {
@@ -394,7 +394,7 @@ bool UpsertHistoryEntry(
             entries.push_back(std::move(copy));
             return true;
         });
-    return result.changed && (result.persisted || PersistenceBlocked());
+    return result.changed && (result.persisted || result.committed || PersistenceBlocked());
 }
 
 bool UpdateHistoryEntry(
@@ -413,7 +413,7 @@ bool UpdateHistoryEntry(
             }
             return false;
         });
-    return result.changed && (result.persisted || PersistenceBlocked());
+    return result.changed && (result.persisted || result.committed || PersistenceBlocked());
 }
 
 bool ReplaceHistoryEntriesForConfig(int configIndex, vector<HistoryEntry> entries) {
@@ -426,7 +426,7 @@ bool ReplaceHistoryEntriesForConfig(int configIndex, vector<HistoryEntry> entrie
             target = std::move(entries);
             return true;
         });
-    return result.persisted || PersistenceBlocked();
+    return result.persisted || result.committed || PersistenceBlocked();
 }
 
 bool ClearHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
@@ -439,7 +439,7 @@ bool ClearHistoryEntriesForWorld(int configIndex, const wstring& worldName) {
             });
             return entries.size() != oldSize;
         });
-	return !result.changed || result.persisted || PersistenceBlocked();
+	return !result.changed || result.persisted || result.committed || PersistenceBlocked();
 }
 
 bool RemoveHistoryEntriesIf(
@@ -461,10 +461,10 @@ bool RemoveHistoryEntriesIf(
             return removed != 0;
         });
     if (removedCount && removed != 0
-        && (result.persisted || PersistenceBlocked())) {
+        && (result.persisted || result.committed || PersistenceBlocked())) {
         *removedCount = removed;
     }
-    return !result.changed || result.persisted || PersistenceBlocked();
+    return !result.changed || result.persisted || result.committed || PersistenceBlocked();
 }
 
 bool UpdateHistoryCloudState(

@@ -6,6 +6,8 @@
 #include "FolderRewindMetadataStore.h"
 #include "JobDocument.h"
 #include "RestoreWorkspace.h"
+#include "RestorePreservedPaths.h"
+#include "PlayerDataPreservation.h"
 #include "WorldIdentity.h"
 #include "PathIdentity.h"
 #include "text_to_text.h"
@@ -37,6 +39,22 @@ Diagnostic Failure(string eventId, string detail = {}) {
 }
 
 
+
+bool WorldOccupied(const RestoreRequest& request, const filesystem::path& root,
+    const function<bool(const filesystem::path&)>& occupied) {
+    if (!occupied) return false;
+    if (occupied(root)) return true;
+    if (!request.preservePlayerData && request.restorePreservePaths.empty()) return false;
+    try {
+        if (!filesystem::exists(root)) return false;
+        string error;
+        if (!RestoreWorkspace::ValidateSafeTree(root, error)) return true;
+        for (const auto& entry : filesystem::recursive_directory_iterator(root)) {
+            if (entry.path().filename() == "level.dat" && occupied(entry.path().parent_path())) return true;
+        }
+        return false;
+    } catch (...) { return true; } // An uninspectable world is never safe to replace.
+}
 
 void CleanupMarkers(const filesystem::path& target) {
 	for (const wchar_t* marker : {
@@ -306,10 +324,21 @@ RestorePlan RestoreService::BuildAndVerify(
 		return plan;
 	}
 	const wstring selectedName = plan.selectedArchive.filename().wstring();
-    if (!FolderRewindFormat::IsSmartBackupType(selectedName) && !FolderRewindFormat::IsFullLikeBackupType(selectedName)) {
+    const bool partial = FolderRewindFormat::IsPartialBackupType(selectedName);
+    if (partial && request.mode == RestoreMode::Clean && !request.confirmPartialClean) {
+        plan.diagnostics.push_back(Failure("restore.partial.clean_confirmation_required")); return plan;
+    }
+    vector<wstring> normalizedPreserve;
+    string preservationError;
+    if (!RestorePreservedPaths::Normalize(request.restorePreservePaths, normalizedPreserve, preservationError)) {
+        plan.diagnostics.push_back(Failure("restore.preserve.invalid", preservationError)); return plan;
+    }
+    if (!partial && !FolderRewindFormat::IsSmartBackupType(selectedName) && !FolderRewindFormat::IsFullLikeBackupType(selectedName)) {
         plan.diagnostics.push_back(Failure("restore.backup.type_invalid", wstring_to_utf8(selectedName))); return plan;
     }
-    if (verificationMode == RestoreVerificationMode::Reverse) {
+    if (partial) {
+        plan.archiveChain.push_back(plan.selectedArchive);
+    } else if (verificationMode == RestoreVerificationMode::Reverse) {
         plan.archiveChain = BuildReverseRestoreChain(backupRoot, plan.selectedArchive);
     } else if (FolderRewindFormat::IsSmartBackupType(selectedName)) {
         string eventId;
@@ -365,8 +394,7 @@ RestorePlan RestoreService::BuildAndVerify(
 		}
 		++plan.checkedArchiveCount;
 	}
-	if (requireColdWorld && dependencies_.isWorldOccupied
-		&& dependencies_.isWorldOccupied(plan.targetWorld)) {
+	if (requireColdWorld && WorldOccupied(request, plan.targetWorld, dependencies_.isWorldOccupied)) {
 		plan.diagnostics.push_back(Failure("restore.world.occupied",
 			wstring_to_utf8(plan.targetWorld.wstring())));
 		return plan;
@@ -465,8 +493,7 @@ RestoreResult RestoreService::Run(
 			return result;
 		}
 	}
-	if (dependencies_.isWorldOccupied
-		&& dependencies_.isWorldOccupied(result.plan.targetWorld)) {
+	if (WorldOccupied(request, result.plan.targetWorld, dependencies_.isWorldOccupied)) {
 		result.code = OperationCode::RestoreFailed;
 		result.diagnostics.push_back(Failure("restore.world.occupied"));
 		return result;
@@ -481,39 +508,78 @@ RestoreResult RestoreService::Run(
 		request.config.zipPath, dependencies_.paths, stopToken);
 	RestoreWorkspace::State workspace;
 	string errorText;
-	const auto workspaceMode = request.mode == RestoreMode::Clean
-		? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay;
-	if (!RestoreWorkspace::Prepare(
-			result.plan.targetWorld, workspace, errorText, workspaceMode)) {
-		result.code = OperationCode::RestoreFailed;
-		result.diagnostics.push_back(Failure("restore.snapshot.prepare_failed", errorText));
-		if (workspace.CanRollback()) {
-			result.rollbackAttempted = true;
-			result.rollbackSucceeded = RestoreWorkspace::Rollback(workspace, errorText);
-			if (!result.rollbackSucceeded) {
-				result.diagnostics.push_back(Failure("restore.rollback.failed", errorText));
+	const bool advancedPreservation = request.preservePlayerData || !request.restorePreservePaths.empty();
+	filesystem::path staging;
+	if (advancedPreservation) {
+		// A sibling staging tree keeps extraction and all preservation work away
+		// from live data. Only a fully prepared tree can enter the commit window.
+		staging = result.plan.targetWorld.parent_path()
+			/ (".minebackup-restore-stage-" + wstring_to_utf8(FolderRewindFormat::GenerateGuidString()));
+	}
+	ScopedRuntimeArtifact stageCleanup(staging);
+	bool prepared = false;
+	bool extracted = false;
+	bool committed = false;
+	try {
+		if (advancedPreservation) {
+			if (!RestoreWorkspace::ValidateSafeTree(result.plan.targetWorld, errorText, stopToken)) throw runtime_error(errorText);
+			if (!filesystem::create_directory(staging)) throw runtime_error("Could not create isolated restore staging.");
+			if (request.mode == RestoreMode::Overwrite) {
+				// Never follow a source link while preparing an overlay.
+				for (const auto& entry : filesystem::recursive_directory_iterator(result.plan.targetWorld)) {
+					if (stopToken.stop_requested()) throw runtime_error("Restore cancelled.");
+					auto status = entry.symlink_status();
+					if (filesystem::is_symlink(status) || (!filesystem::is_regular_file(status) && !filesystem::is_directory(status)))
+						throw runtime_error("Restore preservation does not accept links or special files.");
+				}
+				filesystem::copy(result.plan.targetWorld, staging, filesystem::copy_options::recursive | filesystem::copy_options::overwrite_existing);
+			}
+			extracted = ExtractChain(result.plan, GetMetadataDirectory(request.config, request.world.relativePath),
+				staging, runner, dependencies_.paths, request.config.useLowPriority);
+			if (!extracted || stopToken.stop_requested()) throw runtime_error("Restore staging extraction failed or cancelled.");
+			if (!RestoreWorkspace::ValidateSafeTree(staging, errorText, stopToken)) throw runtime_error(errorText);
+			CleanupMarkers(staging);
+			if (request.mode == RestoreMode::Clean && !RestoreWorkspace::CopyLegacyPreservedToStaging(
+				result.plan.targetWorld, staging, request.restorePreserve, errorText, stopToken))
+				throw runtime_error(errorText);
+			if (request.preservePlayerData) {
+				vector<PlayerDataPreservation::Proposal> proposals;
+				if (!PlayerDataPreservation::Prepare(result.plan.targetWorld, staging, runner, proposals,
+					errorText, stopToken, request.config.useLowPriority)
+					|| !PlayerDataPreservation::ApplyToStaging(proposals, staging, errorText, stopToken))
+					throw runtime_error(errorText);
+			}
+			// Whole-file/subtree selections deliberately override NBT field overlays.
+			if (!RestorePreservedPaths::Apply(result.plan.targetWorld, staging, request.restorePreservePaths, errorText, stopToken))
+				throw runtime_error(errorText);
+			if (stopToken.stop_requested() || WorldOccupied(request, result.plan.targetWorld, dependencies_.isWorldOccupied))
+				throw runtime_error("Restore cancelled or world became occupied before commit.");
+			prepared = RestoreWorkspace::Prepare(result.plan.targetWorld, workspace, errorText, RestoreWorkspace::Mode::Clean);
+			if (!prepared) throw runtime_error(errorText);
+			filesystem::remove(result.plan.targetWorld); // Prepare created an empty directory.
+			filesystem::rename(staging, result.plan.targetWorld);
+		} else {
+			prepared = RestoreWorkspace::Prepare(result.plan.targetWorld, workspace, errorText,
+				request.mode == RestoreMode::Clean ? RestoreWorkspace::Mode::Clean : RestoreWorkspace::Mode::Overlay);
+			if (!prepared) throw runtime_error(errorText);
+			extracted = ExtractChain(result.plan, GetMetadataDirectory(request.config, request.world.relativePath),
+				result.plan.targetWorld, runner, dependencies_.paths, request.config.useLowPriority);
+			if (extracted) {
+				if (!RestoreWorkspace::ValidateSafeTree(result.plan.targetWorld, errorText, stopToken)) throw runtime_error(errorText);
+				CleanupMarkers(result.plan.targetWorld);
 			}
 		}
-		return result;
-	}
-	const bool extracted = ExtractChain(
-		result.plan,
-		GetMetadataDirectory(request.config, request.world.relativePath),
-		result.plan.targetWorld,
-		runner,
-		dependencies_.paths,
-		request.config.useLowPriority);
-	bool committed = false;
-	if (extracted && !stopToken.stop_requested()) {
-		CleanupMarkers(result.plan.targetWorld);
-		const auto preserve = request.mode == RestoreMode::Clean
-			? request.restorePreserve : vector<wstring>{};
-		const auto commit = RestoreWorkspace::Commit(
-			workspace, preserve, errorText, {.stopToken = stopToken});
-		committed = commit.WasCommitted();
-		if (commit.status == RestoreWorkspace::CommitStatus::CleanupWarning)
-			result.diagnostics.push_back({"restore.snapshot.cleanup_failed", DiagnosticSeverity::Warning,
-				commit.error + "; retained snapshot: " + commit.retainedSnapshot.string()});
+		if (extracted && !stopToken.stop_requested()) {
+			const auto preserve = !advancedPreservation && request.mode == RestoreMode::Clean
+				? request.restorePreserve : vector<wstring>{};
+			const auto commit = RestoreWorkspace::Commit(workspace, preserve, errorText, {.stopToken = stopToken});
+			committed = commit.WasCommitted();
+			if (commit.status == RestoreWorkspace::CommitStatus::CleanupWarning)
+				result.diagnostics.push_back({"restore.snapshot.cleanup_failed", DiagnosticSeverity::Warning,
+					commit.error + "; retained snapshot: " + commit.retainedSnapshot.string()});
+		}
+	} catch (const exception& exception) {
+		errorText = exception.what();
 	}
 	if (!committed) {
 		result.code = stopToken.stop_requested()
@@ -556,4 +622,31 @@ RestoreResult RestoreService::Run(
 
 const char* ToString(RestoreMode mode) noexcept {
 	return mode == RestoreMode::Clean ? "clean" : "overwrite";
+}
+
+bool RestoreService::StageVerifiedSnapshot(const RestoreRequest& request,
+    const filesystem::path& staging, string& error, stop_token stopToken) const {
+    if (FolderRewindFormat::IsPartialBackupType(request.archive.filename().wstring())) {
+        error = "A partial archive is not a complete source snapshot."; return false;
+    }
+    const auto plan = BuildAndVerify(request, false, stopToken, RestoreVerificationMode::Managed);
+    if (!IsSuccessful(plan.code)) {
+        error = plan.diagnostics.empty() ? "Archive verification failed." : plan.diagnostics.front().eventId;
+        return false;
+    }
+    error_code ec;
+    if (filesystem::exists(staging, ec) || ec) {
+        error = "Snapshot staging directory must not already exist."; return false;
+    }
+    filesystem::create_directories(staging, ec);
+    if (ec) { error = ec.message(); return false; }
+    const auto runner = dependencies_.archiveRunnerFactory(request.config.zipPath, dependencies_.paths, stopToken);
+    if (!ExtractChain(plan, GetMetadataDirectory(request.config, request.world.relativePath),
+            staging, runner, dependencies_.paths, request.config.useLowPriority)) {
+        error = "Could not materialize the verified archive chain."; return false;
+    }
+    if (!RestoreWorkspace::ValidateSafeTree(staging, error, stopToken)) return false;
+    filesystem::remove_all(staging / FolderRewindFormat::kInternalRestoreMarkerDirectoryName, ec);
+    if (ec) { error = ec.message(); return false; }
+    return !stopToken.stop_requested();
 }

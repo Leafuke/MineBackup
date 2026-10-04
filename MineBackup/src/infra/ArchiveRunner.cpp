@@ -41,7 +41,8 @@ ProcessResult ArchiveRunner::Execute(
 	vector<wstring> arguments,
 	const filesystem::path& workingDirectory,
 	bool useLowPriority,
-	size_t maximumCapturedBytes) const {
+	size_t maximumCapturedBytes,
+	chrono::milliseconds timeout) const {
 	ProcessResult unavailable;
 	if (!IsAvailable()) {
 		unavailable.status = ProcessStatus::FailedToStart;
@@ -57,6 +58,7 @@ ProcessResult ArchiveRunner::Execute(
 	spec.workingDirectory = workingDirectory;
 	spec.useLowPriority = useLowPriority;
 	spec.maximumCapturedBytes = maximumCapturedBytes;
+	spec.timeout = timeout;
 	return executor_(spec, stopToken_);
 }
 
@@ -65,6 +67,10 @@ bool ArchiveRunner::ValidateMemberListing(const string& listing, string& error) 
  while (getline(input,line)) {
   if (!line.empty() && line.back()=='\r') line.pop_back();
   if (line=="----------") {members=true; continue;}
+  if (members && (line.starts_with("Symbolic Link = ") || line.starts_with("Hard Link = ")
+      || (line.starts_with("Attributes = ") && line.find("l", 13) != string::npos))) {
+   error="archive links are not supported"; return false;
+  }
   if (!members || !line.starts_with("Path = ")) continue;
   sawPath=true; string path=line.substr(7); replace(path.begin(),path.end(),'\\','/');
   if (path.empty() || path.front()=='/' || path.find(':')!=string::npos) {error="unsupported absolute archive member: "+path; return false;}
@@ -76,7 +82,7 @@ bool ArchiveRunner::ValidateMemberListing(const string& listing, string& error) 
 }
 
 bool ArchiveRunner::ValidateMembers(const filesystem::path& archive, string& error, bool lowPriority) const {
- const auto listed=Execute({L"l",L"-slt",L"-sccUTF-8",archive.wstring()}, {},lowPriority, numeric_limits<size_t>::max());
+ const auto listed=Execute({L"l",L"-slt",L"-sccUTF-8",archive.wstring()}, {},lowPriority, 64u * 1024u * 1024u, chrono::seconds(60));
  if(listed.status!=ProcessStatus::Succeeded || listed.outputTruncated) {error="could not inspect archive member paths"; return false;}
  return ValidateMemberListing(listed.standardOutput,error);
 }

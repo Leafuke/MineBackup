@@ -162,6 +162,7 @@ void DoSafeDeleteBackupShared(
 	request.config = config;
 	request.entry = entry;
 	request.history = GetHistoryEntriesForConfig(configIndex);
+    request.historySnapshot = [config] { return *GetHistoryRepository().EntriesForConfig(config.configId); };
 	request.backupDirectory = storage.backupSubDir;
 	request.metadataDirectory = storage.metadataDir;
 	request.paths = GetAppPaths();
@@ -171,7 +172,7 @@ void DoSafeDeleteBackupShared(
             SnapshotConfigState().configs, true, [&](vector<HistoryEntry>& latest) {
                 return ChainSafeRetention::ApplyHistoryChanges(config, latest, changes);
             });
-        return mutation.changed && mutation.persisted;
+        return mutation.changed && (mutation.persisted || mutation.committed);
     };
 	const auto result = ChainSafeRetention::Remove(std::move(request));
 	if (result.warning) {

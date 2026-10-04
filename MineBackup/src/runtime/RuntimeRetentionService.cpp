@@ -49,7 +49,12 @@ void RuntimeRetentionService::Enforce(
 	const BackupRequest& request,
 	const HistoryEntry& createdEntry,
 	stop_token stopToken) {
+	lock_guard operation(HistoryRepository::ArchiveMutationMutex());
 	const Config& config = request.config;
+	// One-shot inclusion snapshots have a separate lifetime and are never counted
+	// toward, or removed by, the ordinary full-world retention chain.
+	if (FolderRewindFormat::IsPartialBackupType(createdEntry.backupType)
+		|| FolderRewindFormat::IsPartialBackupType(createdEntry.backupFile)) return;
 	const bool overwrite = !request.auxiliarySource && config.backupMode == 3;
 	const int limit = overwrite ? 1 : config.keepCount;
 	if (limit <= 0 || stopToken.stop_requested()) return;
@@ -72,8 +77,10 @@ void RuntimeRetentionService::Enforce(
 			!error && iterator != end; iterator.increment(error)) {
             if (!iterator->is_regular_file(error)) continue;
             const auto name = iterator->path().filename().wstring();
+            if (FolderRewindFormat::IsPartialBackupType(name)) continue;
             if (overwrite && !name.starts_with(L"[Overwrite]")) continue;
             const bool managed = any_of(currentHistory.begin(), currentHistory.end(), [&](const auto& entry) {
+                if (FolderRewindFormat::IsPartialBackupType(entry.backupType)) return false;
                 return request.auxiliarySource
                     ? entry.backupFile == name && ChainSafeRetention::SameAuxiliarySource(config, createdEntry, entry)
                     : WorldIdentity::Matches(config, storage.folderName, entry, name);
@@ -130,6 +137,7 @@ void RuntimeRetentionService::Enforce(
             retentionRequest.auxiliarySource = request.auxiliarySource;
 			retentionRequest.entry = *found;
 			retentionRequest.history = currentHistory;
+            retentionRequest.historySnapshot = [&] { return *history_.EntriesForConfig(config.configId); };
 			retentionRequest.backupDirectory = storage.backupSubDir;
 			retentionRequest.metadataDirectory = storage.metadataDir;
 			retentionRequest.paths = paths_;
@@ -141,8 +149,8 @@ void RuntimeRetentionService::Enforce(
 					[&](vector<HistoryEntry>& entries) {
 						return ChainSafeRetention::ApplyHistoryChanges(config, entries, changes);
 					});
-				if (mutation.changed && mutation.persisted) currentHistory = *history_.EntriesForConfig(config.configId);
-				return mutation.changed && mutation.persisted;
+				if (mutation.changed && (mutation.persisted || mutation.committed)) currentHistory = *history_.EntriesForConfig(config.configId);
+				return mutation.changed && (mutation.persisted || mutation.committed);
 			};
 			const auto retention = ChainSafeRetention::Remove(std::move(retentionRequest));
 			if (retention.warning) {

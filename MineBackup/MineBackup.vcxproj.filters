@@ -114,6 +114,9 @@
     <ClCompile Include="src\desktop\app\MineBackup.cpp">
       <Filter>src\desktop\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\infra\PlayerDataPreservation.cpp">
+      <Filter>src\infra</Filter>
+    </ClCompile>
     <ClCompile Include="src\infra\ArchiveRunner.cpp">
       <Filter>src\infra</Filter>
     </ClCompile>
@@ -238,6 +241,12 @@
       <Filter>src\runtime</Filter>
     </ClCompile>
     <ClCompile Include="src\runtime\ProfileRuntime.cpp">
+      <Filter>src\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\runtime\RestorePreservedPaths.cpp">
+      <Filter>src\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\runtime\BackupSelection.cpp">
       <Filter>src\runtime</Filter>
     </ClCompile>
     <ClCompile Include="src\runtime\RestoreService.cpp">
@@ -527,6 +536,9 @@
     <ClInclude Include="src\desktop\legacy\LegacyServiceCleanup.h">
       <Filter>src\desktop\legacy</Filter>
     </ClInclude>
+    <ClInclude Include="src\infra\PlayerDataPreservation.h">
+      <Filter>src\infra</Filter>
+    </ClInclude>
     <ClInclude Include="src\infra\ArchiveRunner.h">
       <Filter>src\infra</Filter>
     </ClInclude>
@@ -651,6 +663,12 @@
       <Filter>src\runtime</Filter>
     </ClInclude>
     <ClInclude Include="src\runtime\ProfileRuntime.h">
+      <Filter>src\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\runtime\RestorePreservedPaths.h">
+      <Filter>src\runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\runtime\BackupSelection.h">
       <Filter>src\runtime</Filter>
     </ClInclude>
     <ClInclude Include="src\runtime\RestoreService.h">

@@ -12,6 +12,7 @@
 #include "FolderRewindFormat.h"
 #include "Globals.h"
 #include "HistoryManager.h"
+#include "MigrationCoordinator.h"
 #include "TaskCoordinator.h"
 #include "text_to_text.h"
 
@@ -30,7 +31,6 @@
 namespace minebackup::knotlink {
 namespace {
 
-thread_local std::shared_ptr<KnotLinkCommandContext> g_commandContext;
 
 struct ResolvedFolder {
     Config config;
@@ -256,7 +256,7 @@ std::optional<Config> ApplyBackupOverrides(
 
     if (request.Has("backup_blacklist")) {
         for (const auto& item :
-             KnotLinkKeyValueCodec::DecodeList(request.GetEncoded("backup_blacklist"))) {
+             KnotLinkKeyValueCodec::DecodeOperationList(request.GetEncoded("backup_blacklist"))) {
             const std::wstring rule = utf8_to_wstring(item);
             if (std::find(config.blacklist.begin(), config.blacklist.end(), rule) ==
                 config.blacklist.end()) {
@@ -265,6 +265,18 @@ std::optional<Config> ApplyBackupOverrides(
         }
     }
     return config;
+}
+
+BackupRequest BackupSelectionOverrides(const KnotLinkCommandRequest& request) {
+    BackupRequest result;
+    for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(request.GetEncoded("backup_whitelist"))) {
+        result.backupWhitelist.push_back(utf8_to_wstring(item));
+    }
+    result.protect = ParseBoolean(request.Get("protect", "false")).value_or(false);
+    result.backupScope = utf8_to_wstring(request.Get("backup_scope"));
+    result.scopeDimensions = utf8_to_wstring(request.Get("scope_dimensions"));
+    result.scopeAreas = utf8_to_wstring(request.Get("scope_areas"));
+    return result;
 }
 
 std::filesystem::path BackupDirectory(const ResolvedFolder& folder) {
@@ -278,27 +290,14 @@ std::filesystem::path BackupDirectory(const ResolvedFolder& folder) {
 
 std::optional<std::wstring> LatestBackup(const ResolvedFolder& folder) {
     const auto directory = BackupDirectory(folder);
-    if (!std::filesystem::exists(directory)) {
-        return std::nullopt;
-    }
-    std::optional<std::filesystem::directory_entry> latest;
-    std::error_code error;
-    for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
-        if (error) {
-            return std::nullopt;
-        }
-        if (!entry.is_regular_file() ||
-            !IsSupportedBackupArchive(entry.path())) {
-            continue;
-        }
-        if (!latest.has_value() ||
-            entry.last_write_time(error) > latest->last_write_time(error)) {
-            latest = entry;
+    const auto history = GetHistoryEntriesForWorld(folder.configIndex, folder.folderName);
+    for (auto current = history.rbegin(); current != history.rend(); ++current) {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(directory / current->backupFile, error) && !error) {
+            return current->backupFile;
         }
     }
-    return latest.has_value()
-        ? std::optional<std::wstring>(latest->path().filename().wstring())
-        : std::nullopt;
+    return std::nullopt;
 }
 
 KnotLinkProtocolFormatter::Fields EventTargetFields(const ResolvedFolder& folder) {
@@ -313,21 +312,18 @@ struct KnotLinkService::Implementation {
     std::unique_ptr<::knotlink::SignalSender> sender;
     std::unique_ptr<::knotlink::OpenSocketResponser> responder;
     KnotLinkCommandDispatcher dispatcher;
+    KnotLinkCallbackTracker callbacks;
 };
 
 class KnotLinkService::ContextScope {
 public:
     explicit ContextScope(std::shared_ptr<KnotLinkCommandContext> context)
-        : previous_(std::move(g_commandContext)) {
-        g_commandContext = std::move(context);
-    }
+        : scope_(std::move(context)) {}
 
-    ~ContextScope() {
-        g_commandContext = std::move(previous_);
-    }
+    ~ContextScope() = default;
 
 private:
-    std::shared_ptr<KnotLinkCommandContext> previous_;
+    KnotLinkCommandScope scope_;
 };
 
 KnotLinkService::KnotLinkService()
@@ -392,18 +388,28 @@ bool KnotLinkService::IsRunning() const noexcept {
 }
 
 std::shared_ptr<KnotLinkCommandContext> KnotLinkService::CurrentCommandContext() {
-    return g_commandContext;
+    return KnotLinkCommandScope::Current();
+}
+
+std::recursive_mutex& KnotLinkService::ModConversationMutex() {
+    static std::recursive_mutex mutex;
+    return mutex;
 }
 
 void KnotLinkService::Broadcast(
     std::string_view eventName,
     const KnotLinkProtocolFormatter::Fields& fields,
     const std::shared_ptr<KnotLinkCommandContext>& context) {
+    const auto effectiveContext = context ? context : KnotLinkCommandScope::Current();
+    if ((eventName == "command_completed" || eventName == "command_failed") && effectiveContext
+        && effectiveContext->request.command == "BACKUP"
+        && ParseBoolean(effectiveContext->request.Get("protect", "false")).value_or(false)
+        && effectiveContext->terminalPublished.exchange(true)) return;
+    implementation_->callbacks.ObserveEvent(eventName, fields, effectiveContext.get());
     std::lock_guard<std::mutex> lock(lifecycleMutex_);
     if (!implementation_->sender) {
         return;
     }
-    const auto effectiveContext = context ? context : g_commandContext;
     implementation_->sender->emitt(KnotLinkProtocolFormatter::FormatEvent(
         effectiveContext.get(), eventName, fields));
 }
@@ -578,6 +584,9 @@ std::string KnotLinkService::HandleRequest(
         return ok({{"data", data}});
     }
 
+    if (const auto callbackError = implementation_->callbacks.Validate(request)) {
+        return error(*callbackError, {{"code", "callback_mismatch"}});
+    }
     if (request.command == "HANDSHAKE_RESPONSE") {
         const std::string version = request.Get("mod_version");
         if (version.empty()) {
@@ -619,7 +628,7 @@ std::string KnotLinkService::HandleRequest(
 
     auto submit = [&](std::wstring taskName,
                       std::vector<std::wstring> resources,
-                      std::function<std::pair<bool, std::string>()> work) {
+                      std::function<KnotLinkCommandResult()> work) {
         Broadcast("command_accepted", {{"command", request.command}}, context);
         const bool queued = TaskCoordinator::Instance().Submit(
             std::move(taskName), std::move(resources),
@@ -628,10 +637,11 @@ std::string KnotLinkService::HandleRequest(
                 ContextScope scope(context);
                 Broadcast("command_started", {{"command", command}}, context);
                 try {
-                    const auto [success, message] = work();
-                    Broadcast(
-                        success ? "command_completed" : "command_failed",
-                        {{"command", command}, {"message", message}}, context);
+                    auto result = work();
+                    result.fields.emplace_back("command", command);
+                    result.fields.emplace_back("message", result.message);
+                    Broadcast(result.success ? "command_completed" : "command_failed",
+                        result.fields, context);
                 } catch (const std::exception& exception) {
                     Broadcast("command_failed",
                               {{"command", command}, {"message", exception.what()}},
@@ -670,19 +680,40 @@ std::string KnotLinkService::HandleRequest(
         return submit(
             L"KnotLink v2 backup",
             {TaskCoordinator::WorldResourceKey(target.config.configId, target.path)},
-            [target, comment] {
-                const BackupOutcome outcome = DoBackup(target, comment);
-                switch (outcome) {
-                    case BackupOutcome::Created:
-                        return std::pair{true, std::string("Backup created.")};
-                    case BackupOutcome::NoChanges:
-                        return std::pair{true, std::string("No changes.")};
-                    case BackupOutcome::Rejected:
-                        return std::pair{false, std::string("Backup rejected.")};
-                    case BackupOutcome::Failed:
-                        return std::pair{false, std::string("Backup failed.")};
+            [this, context, target, comment, overrides = BackupSelectionOverrides(request)] {
+                BackupExecutionOptions options;
+                if (overrides.protect) options.onProtectedCommit = [this, context](const BackupResult& local) {
+                    Broadcast("command_completed", {{"command", "BACKUP"}, {"message", ToString(local.code)},
+                        {"result", local.outcome == BackupOutcome::Created ? "created" : "reused"},
+                        {"file", wstring_to_utf8(local.historyEntry->backupFile)}, {"important", "true"}}, context);
+                };
+                const auto result = RunDesktopBackup(target, comment,
+                    TaskCoordinator::CurrentStopToken(), std::move(options), &overrides);
+                KnotLinkCommandResult completion{IsSuccessful(result.code), ToString(result.code)};
+                if (!overrides.protect) {
+                    switch (result.outcome) {
+                        case BackupOutcome::Created: return KnotLinkCommandResult{true, "Backup created."};
+                        case BackupOutcome::NoChanges: return KnotLinkCommandResult{true, "No changes."};
+                        case BackupOutcome::Rejected: return KnotLinkCommandResult{false, "Backup rejected."};
+                        case BackupOutcome::Failed: return KnotLinkCommandResult{false, "Backup failed."};
+                    }
                 }
-                return std::pair{false, std::string("Backup failed.")};
+                if (overrides.protect && result.code == OperationCode::Cancelled) {
+                    completion.fields.emplace_back("reason", "canceled");
+                }
+                if (overrides.protect && completion.success) {
+                    if (!result.historyEntry || !result.historyEntry->isImportant
+                        || result.historyEntry->backupFile.empty()
+                        || (result.outcome != BackupOutcome::Created
+                            && result.outcome != BackupOutcome::NoChanges)) {
+                        return KnotLinkCommandResult{false, "Protected snapshot was not verified."};
+                    }
+                    completion.fields = {
+                        {"result", result.outcome == BackupOutcome::Created ? "created" : "reused"},
+                        {"file", wstring_to_utf8(result.historyEntry->backupFile)},
+                        {"important", "true"}};
+                }
+                return completion;
             });
     }
     if (request.command == "BACKUP_ALL") {
@@ -711,13 +742,14 @@ std::string KnotLinkService::HandleRequest(
         const std::wstring comment = utf8_to_wstring(request.Get("comment"));
         return submit(
             L"KnotLink v2 backup all", std::move(resources),
-            [this, context, targets = std::move(targets), comment] {
+            [this, context, targets = std::move(targets), comment,
+             overrides = BackupSelectionOverrides(request)] {
                 Broadcast("backup_all_started", {}, context);
                 int created = 0;
                 int unchanged = 0;
                 int failed = 0;
                 for (const auto& target : targets) {
-                    switch (DoBackup(target, comment)) {
+                    switch (RunDesktopBackup(target, comment, TaskCoordinator::CurrentStopToken(), {}, &overrides).outcome) {
                         case BackupOutcome::Created: ++created; break;
                         case BackupOutcome::NoChanges: ++unchanged; break;
                         case BackupOutcome::Failed:
@@ -756,23 +788,18 @@ std::string KnotLinkService::HandleRequest(
         if (mode != "overwrite" && mode != "clean") {
             return error("mode must be overwrite or clean.");
         }
-        if (mode == "clean") {
-            HistoryEntry entry;
-            if (TryGetHistoryEntry(
-                    folder->configIndex, folder->folderName, backupFile, entry)
-                && entry.isPartialBackup) {
-                const auto confirmed = ParseBoolean(
-                    request.Get("confirm_partial_clean", "false"));
-                if (!confirmed.has_value() || !*confirmed) {
-                    return error(
-                        "Clean restore from a partial backup requires "
-                        "confirm_partial_clean=true.");
-                }
-            }
+        // The shared restore planner distinguishes independent Partial archives
+        // from complete Smart chains and enforces clean-restore confirmation.
+        RestoreRequest operationOptions;
+        operationOptions.preservePlayerData = ParseBoolean(request.Get("preserve_player_data", "false")).value_or(false);
+        operationOptions.confirmPartialClean = ParseBoolean(request.Get("confirm_partial_clean", "false")).value_or(false);
+        for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(request.GetEncoded("restore_preserve_paths"), true)) {
+            operationOptions.restorePreservePaths.push_back(utf8_to_wstring(item));
         }
+        const bool hasRestoreWhitelist = request.Has("restore_whitelist");
         std::vector<std::wstring> requestedRestoreWhitelist;
         if (request.Has("restore_whitelist")) {
-            for (const auto& item : KnotLinkKeyValueCodec::DecodeList(
+            for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(
                      request.GetEncoded("restore_whitelist"))) {
                 requestedRestoreWhitelist.push_back(utf8_to_wstring(item));
             }
@@ -787,7 +814,14 @@ std::string KnotLinkService::HandleRequest(
                 {TaskCoordinator::WorldResourceKey(
                     target.config.configId, target.path)},
                 [target, backupFile, mode,
-                 requestedRestoreWhitelist = std::move(requestedRestoreWhitelist), requestId] {
+                 requestedRestoreWhitelist = std::move(requestedRestoreWhitelist), requestId,
+                 operationOptions, hasRestoreWhitelist] {
+                    std::lock_guard conversation(KnotLinkService::ModConversationMutex());
+                    const auto plan = PreflightDesktopRestore(target.config, target.name, backupFile,
+                        mode == "clean" ? 0 : 1, TaskCoordinator::CurrentStopToken(), &operationOptions);
+                    if (!IsSuccessful(plan.code)) {
+                        return std::pair{false, std::string("Restore verification failed before world exit.")};
+                    }
                     HotRestoreState expected = HotRestoreState::IDLE;
                     if (!g_appState.hotkeyRestoreState.compare_exchange_strong(
                             expected, HotRestoreState::WAITING_FOR_MOD)) {
@@ -810,7 +844,9 @@ std::string KnotLinkService::HandleRequest(
                     }
                     const bool restored = DoHotRestore(
                         target, false, backupFile,
-                        mode == "clean" ? 0 : 1, &requestedRestoreWhitelist, "", requestId);
+                        mode == "clean" ? 0 : 1,
+                        hasRestoreWhitelist ? &requestedRestoreWhitelist : nullptr, "", requestId,
+                        nullptr, &plan, &operationOptions);
                     return std::pair{
                         restored,
                         restored
@@ -824,42 +860,49 @@ std::string KnotLinkService::HandleRequest(
             L"KnotLink v2 restore",
             {TaskCoordinator::WorldResourceKey(config.configId, folder->folderPath)},
             [config, worldName, backupFile, mode,
-             requestedRestoreWhitelist = std::move(requestedRestoreWhitelist)] {
+             requestedRestoreWhitelist = std::move(requestedRestoreWhitelist),
+             operationOptions, hasRestoreWhitelist] {
                 const bool restored = DoRestore(
                     config, worldName, backupFile,
-                    mode == "clean" ? 0 : 1, "", &requestedRestoreWhitelist);
+                    mode == "clean" ? 0 : 1, "",
+                    hasRestoreWhitelist ? &requestedRestoreWhitelist : nullptr,
+                    "", nullptr, nullptr, &operationOptions);
                 return std::pair{
                     restored,
                     restored ? std::string("Restore completed.")
                              : std::string("Restore failed.")};
             });
     }
-    if (request.command == "MARK_IMPORTANT") {
+    if (request.command == "MARK_IMPORTANT" || request.command == "GET_IMPORTANCE") {
         std::string targetError;
         const auto folder = ResolveFolder(request, targetError);
-        if (!folder.has_value()) {
-            return error(targetError);
-        }
+        if (!folder.has_value()) return error(targetError);
         const std::wstring file = utf8_to_wstring(request.Get("file"));
+        if (file.empty()) return error("An exact file is required.");
+        const bool marking = request.command == "MARK_IMPORTANT";
         const auto important = ParseBoolean(request.Get("important"));
-        if (file.empty() || !important.has_value()) {
-            return error("file and important=true|false are required.");
+        if (marking && !important.has_value()) return error("important=true|false is required.");
+        if (g_appState.profileRecoveryRequired.load() || MigrationCoordinator::IsHistoryPersistenceBlocked()) {
+            return error("History persistence is blocked by pending migration.");
         }
-        HistoryEntry entry;
-        if (!TryGetHistoryEntry(
-                folder->configIndex, folder->folderName, file, entry)) {
-            return error("Backup history entry was not found.");
+        ImportanceResult result;
+        if (marking) {
+            result = GetHistoryRepository().SetImportance(folder->config, folder->folderName,
+                file, *important, GetAppPaths().HistoryFile(), SnapshotConfigState().configs);
+        } else {
+            result = GetHistoryRepository().QueryImportance(folder->config, folder->folderName, file);
         }
-        (void)UpdateHistoryEntry(
-            folder->configIndex,
-            folder->folderName,
-            file,
-            [important](HistoryEntry& value) { value.isImportant = *important; });
-        auto fields = EventTargetFields(*folder);
-        fields.emplace_back("file", wstring_to_utf8(file));
-        fields.emplace_back("important", *important ? "true" : "false");
-        Broadcast("mark_important", fields, context);
-        return ok({{"message", "Importance flag updated."}});
+        if (!result.success) return error(result.error);
+        auto fields = KnotLinkProtocolFormatter::Fields{
+            {"file", wstring_to_utf8(result.file)},
+            {"important", result.important ? "true" : "false"}};
+        if (marking) {
+            auto eventFields = EventTargetFields(*folder);
+            eventFields.insert(eventFields.end(), fields.begin(), fields.end());
+            Broadcast("mark_important", eventFields, context);
+            fields.emplace_back("message", "Importance flag updated.");
+        }
+        return ok(fields);
     }
 
     return error("Unknown command.", {{"code", "unknown_command"}});

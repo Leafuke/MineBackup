@@ -191,3 +191,9 @@ The next generation of MineBackup has been realesed as [FolderRewind](https://gi
 
 **MineBackup** — Peace of mind for your Minecraft worlds.
 ⭐ If you find it useful, please give it a star!
+
+### Time Machine integration validation
+
+See the [Time Machine and Linux validation report (Chinese)](docs/time-machine-linux-validation.md)
+for per-operation preservation, partial backups, verified Linux engine behavior,
+and the remaining real-game and native-desktop acceptance checklist.

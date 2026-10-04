@@ -1,6 +1,7 @@
 #include "BackupServiceTests.h"
 
 #include "BackupService.h"
+#include "BackupSelection.h"
 #include "ChainSafeRetention.h"
 #include "ExternalToolManager.h"
 #include "FolderRewindFormat.h"
@@ -216,6 +217,182 @@ void RunScanReuseContracts(TestContext& test, const filesystem::path& temporaryR
 				"Full and Forced Full must establish a new complete checkpoint");
 		}
 	}
+}
+
+void RunOneShotSelectionContracts(TestContext& test, const filesystem::path& temporaryRoot) {
+	const auto root = temporaryRoot / "one-shot-selection";
+	const auto world = root / "saves" / "world";
+	const vector<wstring> files = {L"level.dat", L"region/r.0.0.mca", L"region/r.-1.-1.mca",
+		L"region/r.1.1.mca", L"region/r.8.8.mca", L"region/c.999.999.mcc", L"entities/r.0.0.mca",
+		L"poi/r.0.0.mca", L"DIM-1/region/r.0.0.mca", L"DIM1/region/r.0.0.mca",
+		L"DIM-1/data/map.dat", L"playerdata/player.dat", L"cache/temp.bin", L"other.txt",
+		L"session.lock", L"region/write.lock", L"__FolderRewind_Internal/private.dat"};
+	for (const auto& file : files) WriteFixture(world / file, "original");
+	BackupRequest request;
+	auto& config = request.config;
+	config.configId = L"one-shot"; config.saveRoot = (root / "saves").wstring();
+	config.backupPath = (root / "backups").wstring(); config.zipPath = L"fake-7zz";
+	config.zipFormat = L"7z"; config.backupMode = 2; config.skipIfUnchanged = true;
+	config.blacklist = {L"cache"}; config.worlds = {{L"world", L"World"}};
+	request.world = {config.configId, L"world"}; request.sourcePath = world;
+	vector<HistoryEntry> history;
+	vector<set<wstring>> lists;
+	auto processCount = make_shared<int>(0);
+	bool failHistory = false;
+	int retentionCalls = 0;
+	BackupServiceDependencies dependencies;
+	dependencies.paths.runtimeRoot = root / "runtime";
+	dependencies.addHistory = [&](const auto& entry) { if (failHistory) return false; history.push_back(entry); return true; };
+	dependencies.enforceRetention = [&](const auto&, const auto&, stop_token) { ++retentionCalls; };
+	dependencies.archiveRunnerFactory = [&](const auto&, const auto&, stop_token token) {
+		return MakeFakeArchiveRunner(processCount, token, 128 * 1024, true, [&](const auto& spec) {
+			for (const auto& argument : spec.arguments) {
+				if (!argument.starts_with(L"@")) continue;
+				istringstream input(ReadFixture(filesystem::path(argument.substr(1))));
+				set<wstring> selected; string line;
+				while (getline(input, line)) selected.insert(FolderRewindFormat::NormalizeRelativePath(utf8_to_wstring(line)));
+				lists.push_back(std::move(selected));
+			}
+		});
+	};
+	BackupService service(dependencies);
+	const auto baseline = service.Run(request);
+	test.Expect(baseline.historyEntry && baseline.historyEntry->backupType == L"Full", "Selection fixture starts with an ordinary Full baseline");
+	if (!baseline.historyEntry) return;
+	FolderRewindFormat::StoragePaths storage;
+	FolderRewindFormat::TryResolveStoragePaths(config.backupPath, L"world", world.wstring(), storage);
+	const auto statePath = FolderRewindMetadataStore::GetStatePath(storage.metadataDir);
+	const auto baselineState = ReadFixture(statePath);
+	request.backupWhitelist = {L"region/*.mca", L"cache", L"*.lock", L"__FolderRewind_Internal"};
+	request.config.backupMode = 3;
+	const auto whitelist = service.Run(request);
+	const set<wstring> expectedWhitelist{L"region/r.0.0.mca", L"region/r.-1.-1.mca", L"region/r.1.1.mca", L"region/r.8.8.mca", L"cache/temp.bin"};
+	test.Expect(whitelist.historyEntry && whitelist.historyEntry->backupType == L"Partial"
+		&& whitelist.historyEntry->isPartialBackup && whitelist.historyEntry->backupFile.starts_with(L"[Partial]")
+		&& lists.back() == expectedWhitelist && ReadFixture(statePath) == baselineState && retentionCalls == 1,
+		"Whitelist snapshots override configured exclusions but preserve locks/internal exclusions, ignore Overwrite, and never advance baseline or retention");
+	if (whitelist.historyEntry) {
+		FolderRewindFormat::ChangeRecord record;
+		test.Expect(FolderRewindMetadataStore::LoadRecord(storage.metadataDir, whitelist.historyEntry->backupFile, record)
+			&& record.backupType == L"Partial" && record.basedOnFullBackup.empty() && record.previousBackupFileName.empty()
+			&& set<wstring>(record.fullFileList.begin(), record.fullFileList.end()) == expectedWhitelist
+			&& record.addedFiles == record.fullFileList && record.modifiedFiles.empty() && record.deletedFiles.empty(),
+			"Partial metadata records exactly its standalone selected snapshot without chain links");
+		HistoryEntry decoded; wstring id;
+		test.Expect(FolderRewindHistoryStore::TryParseHistoryItem(FolderRewindHistoryStore::SerializeHistoryItem(config, *whitelist.historyEntry), decoded, id)
+			&& decoded.isPartialBackup && decoded.backupType == L"Partial", "Partial history type and flag survive persistence");
+	}
+	request.backupWhitelist.clear(); request.backupScope = L"selected-regions";
+	request.scopeAreas = L"# reversed and negative block-coordinate boundaries\n0,0,-1,-1\n512,512,512,512";
+	request.scopeDimensions = L"world;DIM-1|minecraft:the_end";
+	const auto regional = service.Run(request);
+	const set<wstring> expectedRegions{L"level.dat", L"playerdata/player.dat", L"region/r.0.0.mca",
+		L"region/r.-1.-1.mca", L"region/r.1.1.mca", L"region/c.999.999.mcc", L"entities/r.0.0.mca",
+		L"poi/r.0.0.mca", L"DIM-1/region/r.0.0.mca", L"DIM1/region/r.0.0.mca", L"DIM-1/data/map.dat"};
+	test.Expect(regional.historyEntry && regional.historyEntry->backupType == L"Partial" && lists.back() == expectedRegions
+		&& ReadFixture(statePath) == baselineState && retentionCalls == 1,
+		"Selected regions include essentials, chosen dimension data, region/entities/poi and external chunks, without unrelated files");
+	request.scopeDimensions = L"overworld";
+	request.backupWhitelist = {L"*.mca"};
+	const auto intersection = service.Run(request);
+	test.Expect(intersection.historyEntry && lists.back() == set<wstring>{L"region/r.0.0.mca", L"region/r.-1.-1.mca", L"region/r.1.1.mca", L"entities/r.0.0.mca", L"poi/r.0.0.mca"},
+		"Whitelist intersects rooted scope and cannot pull in unselected dimensions");
+	const auto committedCount = history.size();
+	failHistory = true;
+	const auto failed = service.Run(request);
+	test.Expect(failed.code == OperationCode::BackupFailed && history.size() == committedCount && ReadFixture(statePath) == baselineState,
+		"Failed partial history commit leaves the world baseline byte-for-byte unchanged");
+	test.Expect(static_cast<size_t>(distance(filesystem::directory_iterator(storage.backupSubDir), filesystem::directory_iterator{})) == committedCount,
+		"Failed partial history commit removes the provisional archive");
+	failHistory = false;
+	request.backupWhitelist = {L"does-not-exist"};
+	const auto noMatch = service.Run(request);
+	test.Expect(noMatch.code == OperationCode::NoChanges && history.size() == committedCount && ReadFixture(statePath) == baselineState,
+		"Empty selections produce no archive or baseline mutation");
+	request.backupWhitelist.clear(); request.backupScope.clear(); request.scopeDimensions.clear(); request.scopeAreas.clear();
+	request.config.backupMode = 2;
+	WriteFixture(world / "region/r.0.0.mca", "changed selected file");
+	WriteFixture(world / "other.txt", "changed unselected file");
+	const auto next = service.Run(request);
+	FolderRewindFormat::ChangeRecord nextRecord;
+	test.Expect(next.historyEntry && next.historyEntry->backupType == L"Smart"
+		&& FolderRewindMetadataStore::LoadRecord(storage.metadataDir, next.historyEntry->backupFile, nextRecord)
+		&& nextRecord.previousBackupFileName == baseline.historyEntry->backupFile
+		&& nextRecord.basedOnFullBackup == baseline.historyEntry->backupFile
+		&& lists.back() == set<wstring>{L"other.txt", L"region/r.0.0.mca"},
+		"The next ordinary Smart backup still compares against the original full-world baseline and skips partial records");
+
+	for (const auto& scope : {L"", L"full", L"all", L"default", L"none"}) {
+		request.backupScope = scope;
+		BackupSelection selection; string error;
+		test.Expect(BackupSelection::TryBuild(request, selection, error) && !selection.IsPartial(), "Full scope aliases clear selection for one operation");
+	}
+	vector<pair<wstring, wstring>> invalidAreas{{L"0,0,1", L"invalid_region_area"}, {L"NaN,0,1,1", L"invalid_region_area"},
+		{L"30000001,0,0,0", L"invalid_region_area"}, {L"0,0,2097152,0", L"region_limit_exceeded"}, {L"# only comment", L"region_area_required"}};
+	request.backupScope = L"selected-regions"; request.scopeDimensions = L"overworld";
+	for (const auto& [areas, expected] : invalidAreas) {
+		request.scopeAreas = areas; BackupSelection selection; string error;
+		test.Expect(!BackupSelection::TryBuild(request, selection, error) && error == wstring_to_utf8(expected), "Invalid or oversized region areas are rejected");
+	}
+	{
+		BackupSelection bounded; string error;
+		request.scopeAreas.assign(32769, L' ');
+		test.Expect(!BackupSelection::TryBuild(request, bounded, error) && error == "region_input_too_large", "Region input bytes are bounded before parsing");
+		request.scopeAreas.clear();
+		for (int i = 0; i < 129; ++i) request.scopeAreas += L"0,0,0,0\n";
+		test.Expect(!BackupSelection::TryBuild(request, bounded, error) && error == "region_too_many_lines", "Region input line count is bounded even when areas overlap");
+		request.scopeAreas = L"0,0,2096640,0\n2097152,0,2097152,0";
+		test.Expect(!BackupSelection::TryBuild(request, bounded, error) && error == "region_limit_exceeded", "Union of individually valid rectangles cannot exceed 4096 regions");
+		request.scopeAreas = L"-30000000,-30000000,-30000000,-30000000\n30000000,30000000,30000000,30000000";
+		test.Expect(BackupSelection::TryBuild(request, bounded, error)
+			&& bounded.Includes(L"region/r.-58594.-58594.mca") && bounded.Includes(L"region/r.58593.58593.mca")
+			&& !bounded.Includes(L"region/c.directory/nested.0.mcc"), "Coordinate extremes use floor division and external chunk matches stay in their selected directory");
+	}
+	request.scopeAreas = L"0,0,0,0"; request.scopeDimensions = L"unknown";
+	const int beforeRejected = *processCount;
+	test.Expect(service.Run(request).code == OperationCode::InvalidArguments && *processCount == beforeRejected, "Invalid selections fail before starting an archive");
+	request.backupScope = L"directory"; request.scopeDimensions.clear(); request.scopeAreas.clear();
+	test.Expect(service.Run(request).code == OperationCode::InvalidArguments, "Unimplemented scopes fail explicitly instead of becoming whole-world backups");
+	request.backupScope.clear(); request.scopeAreas = L"0,0,0,0";
+	test.Expect(service.Run(request).code == OperationCode::InvalidArguments, "Scope parameters without selected-regions fail explicitly");
+	request.scopeAreas.clear();
+	for (const auto* rule : {L"regex:.*", L"../outside", L"/absolute", L"C:\\absolute", L"region\nfile"}) {
+		request.backupWhitelist = {rule};
+		test.Expect(service.Run(request).code == OperationCode::InvalidArguments, "Unsupported or unsafe whitelist rules fail explicitly");
+	}
+	request.backupWhitelist.clear(); request.backupScope = L"selected-regions"; request.scopeAreas = L"0,0,0,0";
+	WriteFixture(world / "dimensions/minecraft/overworld/region/r.0.0.mca", "modern");
+	BackupSelection selection; string error;
+	test.Expect(!BackupSelection::TryBuild(request, selection, error) && error == "dimension_layout_ambiguous", "Mixed legacy and modern overworld candidates are rejected");
+	filesystem::remove_all(world / "region"); filesystem::remove_all(world / "entities"); filesystem::remove_all(world / "poi");
+	request.scopeDimensions = L"overworld,nether";
+	test.Expect(!BackupSelection::TryBuild(request, selection, error) && error == "dimension_layout_mixed", "Cross-family dimension layouts are rejected");
+	request.scopeDimensions = L"overworld";
+	test.Expect(BackupSelection::TryBuild(request, selection, error)
+		&& selection.Includes(L"dimensions/minecraft/overworld/region/r.0.0.mca") && !selection.Includes(L"DIM-1/region/r.0.0.mca"), "Modern world dimension roots are supported with rooted matching");
+	filesystem::remove_all(world / "DIM-1"); WriteFixture(root / "saves/world_nether/DIM-1/region/r.0.0.mca", "outside");
+	request.scopeDimensions = L"nether";
+	test.Expect(!BackupSelection::TryBuild(request, selection, error) && error == "dimension_outside_source", "Paper sibling dimensions outside the configured source are explicitly rejected");
+#ifndef _WIN32
+	filesystem::create_directory_symlink(root / "saves/world_nether/DIM-1", world / "DIM-1");
+	test.Expect(!BackupSelection::TryBuild(request, selection, error) && error == "dimension_outside_source", "Symlinked dimensions cannot escape the world root");
+	filesystem::remove(world / "DIM-1");
+	WriteFixture(world / "linked-dimension/region/r.0.0.mca", "inside");
+	filesystem::create_directory_symlink(world / "linked-dimension", world / "DIM-1");
+	test.Expect(!BackupSelection::TryBuild(request, selection, error) && error == "dimension_symlink_unsupported", "Inside-root directory symlinks are rejected rather than silently omitting a dimension");
+	filesystem::remove(world / "DIM-1");
+#endif
+
+	// A first-ever partial snapshot must not manufacture a Smart checkpoint.
+	request.config.backupPath = (root / "fresh-backups").wstring();
+	request.backupScope.clear(); request.scopeDimensions.clear(); request.scopeAreas.clear(); request.backupWhitelist = {L"level.dat"};
+	const auto firstPartial = service.Run(request);
+	FolderRewindFormat::TryResolveStoragePaths(request.config.backupPath, L"world", world.wstring(), storage);
+	test.Expect(firstPartial.historyEntry && !filesystem::exists(FolderRewindMetadataStore::GetStatePath(storage.metadataDir)), "First-ever partial backup does not create state.json");
+	request.backupWhitelist.clear();
+	const auto firstFull = service.Run(request);
+	test.Expect(firstFull.historyEntry && firstFull.historyEntry->backupType == L"Full"
+		&& filesystem::exists(FolderRewindMetadataStore::GetStatePath(storage.metadataDir)), "The first ordinary backup after a Partial-only history still creates a Full baseline");
 }
 
 const BackupRuntimeEvent* FindLastEvent(
@@ -608,6 +785,7 @@ void RunBackupServiceTests(
 	}
 
 	RunScanReuseContracts(test, temporaryRoot);
+	RunOneShotSelectionContracts(test, temporaryRoot);
 	const filesystem::path root = temporaryRoot / "backup-service";
 	const filesystem::path world = root / "saves" / "world";
 	WriteFixture(world / "level.dat", "world-data");
@@ -1103,6 +1281,12 @@ void RunBackupServiceTests(
         ChainSafeRetention::HistoryChanges changes; changes.auxiliarySource = true; changes.deletions = {old};
         vector<HistoryEntry> latest{old}; latest.front().isImportant = true;
         test.Expect(!ChainSafeRetention::ApplyHistoryChanges(cfg, latest, changes), "Concurrent important flag conflicts also protect auxiliary backups");
+        ChainSafeRetention::HistoryChanges rename; rename.auxiliarySource = true;
+        rename.renames.push_back({old, L"[Full] renamed.7z", L"Full"});
+        test.Expect(!ChainSafeRetention::ApplyHistoryChanges(cfg, latest, rename),
+            "Concurrent important flag conflicts protect renamed compaction targets too");
+        test.Expect(latest.front().backupFile == old.backupFile && latest.front().isImportant,
+            "Rejected compaction preserves the pinned exact filename and importance");
     }
 
 
@@ -1154,7 +1338,7 @@ void RunBackupServiceTests(
 
 
 	auto runSmartRetention = [&](const filesystem::path& chainRoot,
-		bool importantTail, bool failMerge, bool cancelMerge, const string& message) {
+		bool importantTail, bool failMerge, bool cancelMerge, const string& message, bool includePartial = false) {
 		Config chainConfig = retentionConfig;
 		chainConfig.configId = L"chain-" + chainRoot.filename().wstring();
 		chainConfig.backupPath = (chainRoot / "backups").wstring();
@@ -1214,6 +1398,17 @@ void RunBackupServiceTests(
 		HistoryRepository chainHistory;
 		FolderRewindHistoryStore::HistoryByConfigId chainItems;
 		chainItems[chainConfig.configId] = {full, smartOne, smartTwo};
+		HistoryEntry partial = full;
+		if (includePartial) {
+			partial.backupFile = L"[Partial]-island.7z"; partial.backupType = L"Partial"; partial.isPartialBackup = true;
+			partial.timestamp_str = L"2024-01-01T00:00:30";
+			WriteFixture(chainStorage.backupSubDir / partial.backupFile, "partial island");
+			FolderRewindFormat::ChangeRecord partialRecord;
+			partialRecord.archiveFileName = partial.backupFile; partialRecord.backupType = L"Partial";
+			partialRecord.fullFileList = {L"island.dat"}; partialRecord.addedFiles = partialRecord.fullFileList;
+			test.Expect(FolderRewindMetadataStore::SaveRecord(chainStorage.metadataDir, partialRecord), "Partial retention fixture writes standalone metadata");
+			chainItems[chainConfig.configId].push_back(partial);
+		}
 		const auto chainHistoryFile = chainRoot / "history.json";
 		test.Expect(chainHistory.ReplaceAll(
 			std::move(chainItems), chainHistoryFile, chainConfigs, true),
@@ -1278,17 +1473,22 @@ void RunBackupServiceTests(
 		const auto remainingEntries = chainHistory.EntriesForConfig(chainConfig.configId);
 		const int archiveCount = static_cast<int>(distance(
 			filesystem::directory_iterator(chainStorage.backupSubDir),
-			filesystem::directory_iterator{}));
+			filesystem::directory_iterator{})) - (includePartial ? 1 : 0);
 		const bool expected = cancelMerge
 			? archiveCount == 3 && remainingEntries->size() == 3
 			: importantTail
 			? archiveCount == 2 && remainingEntries->size() == 2
 			: failMerge
 				? archiveCount == 3 && remainingEntries->size() == 3
-				: archiveCount == 1 && remainingEntries->size() == 1
+				: archiveCount == 1 && remainingEntries->size() == (includePartial ? 2 : 1)
 					&& FolderRewindFormat::IsFullLikeBackupType(
 						remainingEntries->front().backupType);
 		test.Expect(expected, message.c_str());
+		if (includePartial) {
+			test.Expect(ReadFixture(chainStorage.backupSubDir / partial.backupFile) == "partial island"
+				&& any_of(remainingEntries->begin(), remainingEntries->end(), [&](const auto& entry) { return entry.backupFile == partial.backupFile && entry.isPartialBackup; }),
+				"Ordinary Smart retention preserves independent Partial archives and their history");
+		}
 		if (!importantTail && !failMerge && !cancelMerge) {
 			const auto finalEntry = remainingEntries->front();
 			FolderRewindFormat::ChangeRecord finalRecord;
@@ -1321,6 +1521,10 @@ void RunBackupServiceTests(
 		false,
 		false,
 		"Runtime retention should merge a Full -> Smart -> Smart chain in Smart mode");
+	runSmartRetention(
+		temporaryRoot / "runtime-retention-smart-with-partial",
+		false, false, false,
+		"Ordinary retention merges its Full/Smart chain across an interleaved independent Partial snapshot", true);
 	runSmartRetention(
 		temporaryRoot / "runtime-retention-important",
 		true,
