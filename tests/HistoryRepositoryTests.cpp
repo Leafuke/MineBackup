@@ -97,7 +97,7 @@ void RunHistoryRepositoryTests(
     jthread writer([&] {
         rendezvous.arrive_and_wait();
         concurrent.Mutate(config.configId, path, retentionConfigs, false, [&](auto& entries) {
-            entries.push_back(other); entries[1].comment = L"new comment"; entries[1].isImportant = true;
+            entries.push_back(other); entries[1].comment = L"new comment";
             entries[1].isCloudArchived = true; entries[1].cloudArchiveRemotePath = L"remote"; return true;
         });
         rendezvous.arrive_and_wait();
@@ -109,16 +109,33 @@ void RunHistoryRepositoryTests(
     const auto latest = concurrent.EntriesForConfig(config.configId);
     test.Expect(merged.changed && merged.persisted && latest->size() == 2 && latest->at(1).backupFile == other.backupFile,
         "retention must preserve another world's concurrently inserted history");
-    test.Expect(latest->at(0).backupFile == L"promoted.7z" && latest->at(0).isImportant && latest->at(0).isCloudArchived
+    test.Expect(latest->at(0).backupFile == L"promoted.7z" && !latest->at(0).isImportant && latest->at(0).isCloudArchived
         && latest->at(0).comment == L"new comment" && latest->at(0).cloudArchiveRemotePath == L"remote",
         "archive rename preserves latest annotations and cloud state");
     auto important = target; important.isImportant = true;
     vector<HistoryEntry> conflict{important, tail};
     test.Expect(!ChainSafeRetention::ApplyHistoryChanges(config, conflict, changes) && conflict.size() == 2,
         "concurrent important marking must reject the entire retention change set");
+    conflict = {target, tail}; conflict[1].isImportant = true;
+    test.Expect(!ChainSafeRetention::ApplyHistoryChanges(config, conflict, changes)
+        && conflict[1].backupFile == L"tail.7z" && conflict[1].isImportant,
+        "concurrent pin of a rename target must preserve its exact filename");
     conflict = {target, tail}; conflict[0].worldPath += L"changed";
     test.Expect(!ChainSafeRetention::ApplyHistoryChanges(config, conflict, changes) && conflict[1].backupFile == L"tail.7z",
         "identity changes must reject rename and deletion together");
+    // A matching source path must never redirect a request into another world's archive directory.
+    Config exactConfig = config;
+    HistoryEntry wrongStorage = target; wrongStorage.worldName = L"two"; wrongStorage.isImportant = true;
+    const auto otherArchive = root / "archives" / "two" / wrongStorage.backupFile;
+    filesystem::create_directories(otherArchive.parent_path());
+    std::ofstream(otherArchive).put('x');
+    HistoryRepository exact;
+    exact.ReplaceAll({{config.configId, {wrongStorage}}}, path, retentionConfigs, false);
+    test.Expect(!exact.QueryImportance(exactConfig, L"one", wrongStorage.backupFile).success,
+        "exact query rejects a record redirecting source one to storage two");
+    test.Expect(!exact.SetImportance(exactConfig, L"one", wrongStorage.backupFile, false, path, retentionConfigs).success
+        && exact.EntriesForConfig(config.configId)->front().isImportant,
+        "exact pin cannot mutate a different world's matching filename");
     filesystem::create_directories(root / "blocked-history");
     concurrent.ReplaceAll({{config.configId, {target, tail}}}, path, retentionConfigs, false);
     const auto failed = concurrent.Mutate(config.configId, root / "blocked-history", retentionConfigs, true, [&](auto& entries) {

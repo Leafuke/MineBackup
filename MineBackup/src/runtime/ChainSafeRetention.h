@@ -40,6 +40,8 @@ struct Request {
 	ArchiveRunner* archiveRunner = nullptr;
 	std::stop_token stopToken;
 	std::function<bool(const HistoryChanges&)> commitHistory;
+    // Refresh under the archive transaction guard before touching any files.
+    std::function<std::vector<HistoryEntry>()> historySnapshot;
 	// Optional file-operation/phase injection for deterministic transaction tests.
 	std::function<AtomicFileWriter::WriteResult(const std::filesystem::path&, const std::filesystem::path&)> replacePrepared;
 	std::function<void()> beforeMetadataCommit;

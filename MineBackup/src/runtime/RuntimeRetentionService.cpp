@@ -49,6 +49,7 @@ void RuntimeRetentionService::Enforce(
 	const BackupRequest& request,
 	const HistoryEntry& createdEntry,
 	stop_token stopToken) {
+	lock_guard operation(HistoryRepository::ArchiveMutationMutex());
 	const Config& config = request.config;
 	// One-shot inclusion snapshots have a separate lifetime and are never counted
 	// toward, or removed by, the ordinary full-world retention chain.
@@ -136,6 +137,7 @@ void RuntimeRetentionService::Enforce(
             retentionRequest.auxiliarySource = request.auxiliarySource;
 			retentionRequest.entry = *found;
 			retentionRequest.history = currentHistory;
+            retentionRequest.historySnapshot = [&] { return *history_.EntriesForConfig(config.configId); };
 			retentionRequest.backupDirectory = storage.backupSubDir;
 			retentionRequest.metadataDirectory = storage.metadataDir;
 			retentionRequest.paths = paths_;
@@ -147,8 +149,8 @@ void RuntimeRetentionService::Enforce(
 					[&](vector<HistoryEntry>& entries) {
 						return ChainSafeRetention::ApplyHistoryChanges(config, entries, changes);
 					});
-				if (mutation.changed && mutation.persisted) currentHistory = *history_.EntriesForConfig(config.configId);
-				return mutation.changed && mutation.persisted;
+				if (mutation.changed && (mutation.persisted || mutation.committed)) currentHistory = *history_.EntriesForConfig(config.configId);
+				return mutation.changed && (mutation.persisted || mutation.committed);
 			};
 			const auto retention = ChainSafeRetention::Remove(std::move(retentionRequest));
 			if (retention.warning) {

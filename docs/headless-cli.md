@@ -143,7 +143,7 @@ Job 是一次性工作流，不包含时间触发器。Stage 按数组顺序执�
 
 ### KnotLink 查询、备份与热还原
 
-网络模式的 `serve` 长期持有 KnotLink endpoint，支持 `PING`、能力/状态、Config/World/本地历史查询、`BACKUP`、`BACKUP_ALL`、`RESTORE` 和 `MARK_IMPORTANT`。`AUTO_BACKUP`/`STOP_AUTO_BACKUP` 已从能力清单删除；时间触发始终由 systemd timer 或 Task Scheduler 持有。
+网络模式的 `serve` 长期持有 KnotLink endpoint，支持 `PING`、能力/状态、Config/World/本地历史查询、`BACKUP`、`BACKUP_ALL`、`RESTORE`、`MARK_IMPORTANT` 和 `GET_IMPORTANCE`。`BACKUP;protect=true`、精确归档的重要标记/查询与 GUI 共用验证、持久化和保留保护；`MARK_IMPORTANT` 与 `GET_IMPORTANCE` 也支持 `current_save=true`。受保护成功必须等待含 `result=created|reused`、`file`、`important=true` 的最终关联回执，失败不能降级。`AUTO_BACKUP`/`STOP_AUTO_BACKUP` 已从能力清单删除；时间触发始终由 systemd timer 或 Task Scheduler 持有。
 
 `RESTORE current_save=true` 使用共享热还原协调器：验证本地历史归档链，默认 `clean`，与模组握手，要求游戏保存并退出，等待世界锁释放，调用与 CLI/GUI 相同的 `RestoreService`，最后通知重新进入世界。多个配置世界同时占用时会拒绝歧义请求；本地链缺失会明确失败，不下载云端数据。还原成功但 rejoin 失败或超时时，归档还原仍视为成功并发出 warning，玩家需手动重进。GUI 也使用同一协调状态机。
 

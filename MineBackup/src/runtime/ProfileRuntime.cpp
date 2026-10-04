@@ -142,6 +142,8 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 		shared_ptr<ICloudPostHook> cloudPost) {
 		BackupServiceDependencies backupDependencies;
 		backupDependencies.paths = paths_;
+        backupDependencies.history = &state->history;
+        backupDependencies.historyConfigs = state->catalog.configs;
 		backupDependencies.ensureMigration = [](const BackupRequest&) {
 			MigrationUnitResult migration;
 			migration.status = MigrationStatus::NotNeeded;
@@ -165,7 +167,7 @@ ProfileRuntimeInitialization ProfileRuntime::Reload() {
 					entries.push_back(entry);
 					return true;
 				});
-			return mutation.changed && mutation.persisted;
+			return mutation.changed && (mutation.persisted || mutation.committed);
 		};
 		backupDependencies.removeHistory = [this, state](
 			const wstring& worldName,
@@ -286,27 +288,34 @@ vector<wstring> ProfileRuntime::RestorePreserveSnapshot() const {
 	return profile.IsUsable() ? profile.restorePreserve : vector<wstring>{};
 }
 
-bool ProfileRuntime::SetBackupImportant(
-	const wstring& configId,
-	const wstring& worldPath,
-	const wstring& backupFile,
-	bool important) {
-	lock_guard lock(stateMutex_);
-	if (!implementation_ || !implementation_->catalog.FindConfig(configId)) return false;
-	const auto mutation = implementation_->history.Mutate(
-		configId, paths_.HistoryFile(), implementation_->catalog.configs, true,
-		[&](vector<HistoryEntry>& entries) {
-			for (auto& entry : entries) {
-				if (WorldIdentity::Matches(
-						*implementation_->catalog.FindConfig(configId),
-						worldPath, entry, backupFile)) {
-					entry.isImportant = important;
-					return true;
-				}
-			}
-			return false;
-		});
-	return mutation.changed && mutation.persisted;
+ImportanceResult ProfileRuntime::QueryBackupImportance(const wstring& configId,
+    const wstring& worldPath, const wstring& backupFile) const {
+    unique_lock lock(stateMutex_, try_to_lock);
+    ImportanceResult result;
+    if (!lock.owns_lock()) { result.error = "Profile operation is busy."; return result; }
+    const Config* config = implementation_ ? implementation_->catalog.FindConfig(configId) : nullptr;
+    if (!config) { result.error = "Unknown configuration."; return result; }
+    return implementation_->history.QueryImportance(*config, worldPath, backupFile);
+}
+
+ImportanceResult ProfileRuntime::SetBackupImportanceResult(const wstring& configId,
+    const wstring& worldPath, const wstring& backupFile, bool important) {
+    unique_lock lock(stateMutex_, try_to_lock);
+    ImportanceResult result;
+    if (!lock.owns_lock()) { result.error = "Profile operation is busy."; return result; }
+    const Config* config = implementation_ ? implementation_->catalog.FindConfig(configId) : nullptr;
+    if (!config) { result.error = "Unknown configuration."; return result; }
+    vector<Diagnostic> diagnostics;
+    if (!ProfileTransaction::Inspect(paths_.ConfigFile(), diagnostics)) {
+        result.error = "Profile transaction requires recovery."; return result;
+    }
+    return implementation_->history.SetImportance(*config, worldPath, backupFile,
+        important, paths_.HistoryFile(), implementation_->catalog.configs);
+}
+
+bool ProfileRuntime::SetBackupImportant(const wstring& configId, const wstring& worldPath,
+    const wstring& backupFile, bool important) {
+    return SetBackupImportanceResult(configId, worldPath, backupFile, important).success;
 }
 
 optional<BackupRequest> ProfileRuntime::ResolveBackup(
@@ -394,15 +403,17 @@ BackupResult ProfileRuntime::RunBackup(
 BackupResult ProfileRuntime::RunBackupRequest(
 	const BackupRequest& request,
 	stop_token stopToken,
-	bool noNetwork) const {
+	bool noNetwork,
+    BackupExecutionOptions options) const {
 	scoped_lock lock(operationMutex_, stateMutex_);
-	return RunBackupRequestUnlocked(request, stopToken, noNetwork);
+	return RunBackupRequestUnlocked(request, stopToken, noNetwork, std::move(options));
 }
 
 BackupResult ProfileRuntime::RunBackupRequestUnlocked(
 	const BackupRequest& request,
 	stop_token stopToken,
-	bool noNetwork) const {
+	bool noNetwork,
+    BackupExecutionOptions options) const {
 	const auto preflight = PreflightBackup(request, stopToken);
 	if (!IsSuccessful(preflight.code)) {
 		BackupResult result;
@@ -413,7 +424,7 @@ BackupResult ProfileRuntime::RunBackupRequestUnlocked(
 	}
 	BackupService* backup = !noNetwork && implementation_->onlineBackup
 		? implementation_->onlineBackup.get() : implementation_->offlineBackup.get();
-	return backup->Run(request, stopToken);
+	return backup->Run(request, stopToken, std::move(options));
 }
 
 JobRunResult ProfileRuntime::RunJob(

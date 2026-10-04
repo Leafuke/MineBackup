@@ -99,6 +99,31 @@ void TestMetadataAndFormatting() {
           "events should inherit correlation metadata");
 }
 
+void TestStructuredCommandResult() {
+    const std::function<KnotLinkCommandResult()> work = [] {
+        return KnotLinkCommandResult{true, "success",
+            {{"result", "reused"}, {"file", "[Full] 世界.7z"}, {"important", "true"}}};
+    };
+    const auto result = work();
+    KnotLinkCommandContext context(KnotLinkCommandRequest::Parse(
+        "cmd=BACKUP;protect=true;from=test.client;request_id=protected-1"));
+    auto fields = result.fields;
+    fields.emplace_back("command", context.request.command);
+    fields.emplace_back("message", result.message);
+    const auto response = KnotLinkKeyValueCodec::Parse(KnotLinkProtocolFormatter::FormatEvent(
+        &context, result.success ? "command_completed" : "command_failed", fields));
+    Check(response.values.at("result") == "reused"
+        && response.values.at("file") == "[Full] 世界.7z"
+        && response.values.at("important") == "true"
+        && response.values.at("from") == "test.client"
+        && response.values.at("request_id") == "protected-1",
+        "Structured terminal fields survive task abstraction and are encoded exactly once");
+    const std::function<KnotLinkCommandResult()> legacyWork = [] {
+        return std::pair{true, std::string("done")};
+    };
+    Check(legacyWork().success, "Other commands retain their existing task result contract");
+}
+
 void TestOperationContextAndCallbacks() {
     auto outer = std::make_shared<KnotLinkCommandContext>(KnotLinkCommandRequest::Parse(
         "cmd=RESTORE;from=test.client;request_id=restore-1"));
@@ -143,7 +168,7 @@ void TestCapabilities() {
     const auto document = nlohmann::json::parse(manifest);
     Check(document.at("specVersion") == "1.0",
           "funcList spec version should be embedded");
-    Check(document.at("manifestVersion") == "2.1.0",
+    Check(document.at("manifestVersion") == "2.2.0",
           "funcList manifest version should be embedded");
     Check(document.at("openSocket").is_object() &&
               document.at("signal").is_object(),
@@ -160,7 +185,8 @@ void TestCapabilities() {
              {"backup", "BACKUP"},
              {"restore", "RESTORE"},
              {"backup_all", "BACKUP_ALL"},
-             {"mark_important", "MARK_IMPORTANT"}}) {
+             {"mark_important", "MARK_IMPORTANT"},
+             {"get_importance", "GET_IMPORTANCE"}}) {
         const auto& function = document.at("openSocket").at(functionName);
         Check(function.at("args").is_object() &&
                   function.at("args").at("cmd").at("type") == "static" &&
@@ -181,6 +207,25 @@ void TestCapabilities() {
     Check(document.at("openSocket").at("restore").at("args").contains("restore_preserve_paths")
         && document.at("openSocket").at("restore").at("args").contains("preserve_player_data"),
         "Preservation controls are discoverable for restore");
+    Check(document.at("openSocket").at("backup").at("args").contains("protect")
+        && !document.at("openSocket").at("backup_all").at("args").contains("protect"),
+        "Protection is discoverable only for single complete-world backups");
+    Check(document.at("openSocket").at("backup").at("args").at("protect").at("defaultVal") == "false",
+        "The capability manifest preserves the ordinary-backup default");
+    for (const std::string command : {"mark_important", "get_importance"}) {
+        const auto& function = document.at("openSocket").at(command);
+        Check(function.at("args").contains("current_save") && function.at("args").contains("file"),
+            "Importance commands advertise current_save and an exact file: " + command);
+        for (const std::string field : {"file", "important"}) {
+            bool found = false;
+            for (const auto& value : function.at("returns")) found |= value.at(1) == field;
+            Check(found, "Importance replies advertise " + field + " for " + command);
+        }
+    }
+    for (const std::string field : {"result", "file", "important", "from", "request_id"}) {
+        Check(document.at("signal").at("command_completed").at("returns").contains(field),
+            "Protected terminal completion advertises " + field);
+    }
     Check(document.at("signal").contains("backup_warning"),
           "funcList should advertise the backup warning notification");
     for (const std::string unsupported : {
@@ -197,6 +242,7 @@ int main() {
     TestEncoding();
     TestStrictParsing();
     TestMetadataAndFormatting();
+    TestStructuredCommandResult();
     TestCapabilities();
     TestOperationContextAndCallbacks();
     if (failures == 0) {

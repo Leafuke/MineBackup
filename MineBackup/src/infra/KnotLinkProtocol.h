@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -41,6 +42,21 @@ private:
     static void ValidateEncodedValue(std::string_view value);
 };
 
+// Preserve machine-readable terminal fields across frontend task submission.
+struct KnotLinkCommandResult {
+    bool success = false;
+    std::string message;
+    KnotLinkKeyValueCodec::Fields fields;
+
+    KnotLinkCommandResult() = default;
+    KnotLinkCommandResult(bool successValue, std::string messageValue,
+        KnotLinkKeyValueCodec::Fields fieldValues = {})
+        : success(successValue), message(std::move(messageValue)),
+          fields(std::move(fieldValues)) {}
+    KnotLinkCommandResult(std::pair<bool, std::string> result)
+        : KnotLinkCommandResult(result.first, std::move(result.second)) {}
+};
+
 struct KnotLinkCommandMetadata {
     std::string from;
     std::string requestId;
@@ -68,6 +84,7 @@ struct KnotLinkCommandContext {
 
     KnotLinkCommandRequest request;
     KnotLinkCommandMetadata metadata;
+    std::atomic<bool> terminalPublished{false};
 };
 
 // Operation-local context follows synchronous runtime calls on the worker thread.
@@ -127,7 +144,7 @@ private:
 class KnotLinkCapabilities {
 public:
     static constexpr std::string_view SpecVersion = "1.0";
-    static constexpr std::string_view ManifestVersion = "2.1.0";
+    static constexpr std::string_view ManifestVersion = "2.2.0";
     static constexpr std::string_view AppId = "0x00000020";
     static constexpr std::string_view OpenSocketId = "0x00000010";
     static constexpr std::string_view SignalId = "0x00000020";

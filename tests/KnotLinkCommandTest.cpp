@@ -1,4 +1,7 @@
 #include "AppState.h"
+#include "AppPaths.h"
+#include "HistoryManager.h"
+#include "MigrationCoordinator.h"
 #include "KnotLinkProtocol.h"
 #include "KnotLinkService.h"
 
@@ -174,6 +177,18 @@ void TestMetadataAndUnsupportedParameters(
     CheckError(service.HandlePayload(
         "cmd=RESTORE;from=test;request_id=wrong-command;backup_whitelist=region"),
         "backup selection cannot be silently ignored on restore");
+    for (const std::string payload : {
+        "cmd=BACKUP;from=test;request_id=protect-bool;protect=maybe",
+        "cmd=BACKUP_ALL;from=test;request_id=protect-all;protect=true",
+        "cmd=RESTORE;from=test;request_id=protect-restore;protect=true",
+        "cmd=BACKUP;from=test;request_id=protect-partial;protect=true;backup_whitelist=region",
+        "cmd=BACKUP;from=test;request_id=protect-scope;protect=true;backup_scope=selected-regions"}) {
+        const auto denied = ParseResponse(service.HandlePayload(payload));
+        Check(denied.values.at("status") == "error"
+            && denied.values.at("code") == "unsupported_parameter"
+            && denied.values.at("from") == "test",
+            "invalid, misplaced, or partial protection is rejected before command submission");
+    }
     CheckError(service.HandlePayload(
         "cmd=BACKUP_ALL;from=test;request_id=wrong-selector;current_save=true"),
         "current_save cannot be silently ignored by backup-all");
@@ -184,6 +199,93 @@ void TestMetadataAndUnsupportedParameters(
         && invalidList.values.at("from") == "test"
         && invalidList.values.at("request_id") == "bad-list",
         "validation failures after parsing retain the command's correlation metadata");
+}
+
+void TestImportanceCommands(KnotLinkService& service) {
+    const auto root = std::filesystem::temp_directory_path() /
+        ("minebackup-importance-command-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    AppPaths paths;
+    AppPathRequest pathRequest;
+    pathRequest.dataDirectory = root / "profile";
+    std::wstring pathError;
+    Check(ResolveAppPaths(pathRequest, root / "MineBackup", paths, pathError), "importance test profile paths resolve");
+    std::filesystem::create_directories(paths.dataRoot);
+    SetCurrentAppPaths(paths);
+    Config config = MakeConfig();
+    config.saveRoot = (root / "worlds").wstring();
+    config.backupPath = (root / "archives").wstring();
+    config.worlds = {{L"world", L""}};
+    g_appState.configuration.Write().Configs() = {{7, config}};
+    std::filesystem::create_directories(root / "archives" / "world");
+    std::ofstream(root / "archives" / "world" / "archive space.7z").put('x');
+    HistoryEntry entry;
+    entry.configId = config.configId;
+    entry.worldName = L"world";
+    entry.worldPath = (root / "worlds" / "world").wstring();
+    entry.backupFile = L"archive space.7z";
+    entry.backupType = L"Partial";
+    entry.timestamp_str = L"2026-10-04T00:00:00";
+    Check(GetHistoryRepository().ReplaceAll({{config.configId, {entry}}},
+        paths.HistoryFile(), {{7, config}}, true), "importance fixture persists");
+    const std::string target = ";from=test;request_id=pin-1;config_id=stable-config-id;folder=0";
+    const std::string file = ";file=archive%20space.7z";
+    const auto query = [&] { return ParseResponse(service.HandlePayload("cmd=GET_IMPORTANCE" + target + file)); };
+    const auto revision = GetHistoryRepository().Snapshot()->revision;
+    auto response = query();
+    Check(response.values.at("status") == "ok" && response.values.at("file") == "archive space.7z"
+        && response.values.at("important") == "false"
+        && response.values.at("from") == "test" && response.values.at("request_id") == "pin-1",
+        "importance query returns the exact local archive, boolean, and caller metadata");
+    Check(GetHistoryRepository().Snapshot()->revision == revision,
+        "importance query must not mutate history");
+    MigrationCoordinator::SetHistoryPersistenceBlocked(true);
+    CheckError(service.HandlePayload("cmd=MARK_IMPORTANT" + target + file + ";important=true"),
+        "desktop migration gate blocks a protected history mutation");
+    CheckError(service.HandlePayload("cmd=GET_IMPORTANCE" + target + file),
+        "migration-blocked query cannot confirm unsaved in-memory history");
+    MigrationCoordinator::SetHistoryPersistenceBlocked(false);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        response = ParseResponse(service.HandlePayload("cmd=MARK_IMPORTANT" + target + file + ";important=true"));
+        Check(response.values.at("status") == "ok" && response.values.at("file") == "archive space.7z"
+            && response.values.at("important") == "true",
+            "pin is idempotent and synchronously confirms persisted importance");
+    }
+    Check(GetHistoryRepository().Load(paths.HistoryFile(), {{7, config}})
+        && query().values.at("important") == "true", "pin survives history reload");
+    response = ParseResponse(service.HandlePayload("cmd=MARK_IMPORTANT" + target + file + ";important=false"));
+    Check(response.values.at("status") == "ok" && response.values.at("important") == "false"
+        && query().values.at("important") == "false", "unpin returns and persists false");
+    for (const auto& payload : {
+        "cmd=GET_IMPORTANCE" + target,
+        "cmd=GET_IMPORTANCE" + target + ";file=missing.7z",
+        "cmd=GET_IMPORTANCE" + target + ";file=..%2Farchive%20space.7z",
+        "cmd=MARK_IMPORTANT" + target + file,
+        "cmd=MARK_IMPORTANT" + target + file + ";important=maybe"}) {
+        CheckError(service.HandlePayload(payload), "invalid exact pin/query requests fail closed");
+    }
+    for (const std::string command : {"MARK_IMPORTANT", "GET_IMPORTANCE"}) {
+        response = ParseResponse(service.HandlePayload("cmd=" + command
+            + ";from=test;request_id=current-save;current_save=true" + file
+            + (command == "MARK_IMPORTANT" ? ";important=true" : "")));
+        Check(response.values.at("status") == "error"
+            && response.values.at("message") == "No active world was found.",
+            "current_save is accepted by importance commands and fails safely without an active world");
+    }
+    AppPaths blocked = paths;
+    blocked.dataRoot = root / "blocked";
+    std::filesystem::create_directories(blocked.HistoryFile());
+    SetCurrentAppPaths(blocked);
+    CheckError(service.HandlePayload("cmd=MARK_IMPORTANT" + target + file + ";important=true"),
+        "history write failure must not acknowledge a successful pin");
+    Check(query().values.at("important") == "false", "failed pin keeps the prior published flag");
+    SetCurrentAppPaths(paths);
+    std::filesystem::remove(root / "archives" / "world" / "archive space.7z");
+    CheckError(service.HandlePayload("cmd=GET_IMPORTANCE" + target + file),
+        "missing local archive must not be returned as an unprotected backup");
+    GetHistoryRepository().ReplaceAll({}, paths.HistoryFile(), {{7, config}}, false);
+    std::error_code cleanupError;
+    std::filesystem::remove_all(root, cleanupError);
 }
 
 void TestLegacyCommandsHaveNoDispatch(
@@ -237,6 +339,7 @@ int main() {
     KnotLinkService service;
     TestQueriesAndTargetResolution(service);
     TestMetadataAndUnsupportedParameters(service);
+    TestImportanceCommands(service);
     TestLegacyCommandsHaveNoDispatch(service);
     TestStrictModVersion(service);
     g_appState.configuration.Write().Configs().clear();

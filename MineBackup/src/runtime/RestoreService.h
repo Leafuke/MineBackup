@@ -88,6 +88,11 @@ public:
 		const RestoreRequest& request,
 		std::stop_token stopToken = {},
 		RestoreVerificationMode verificationMode = RestoreVerificationMode::Managed) const;
+    // Materialize a verified complete restore into a caller-owned empty staging
+    // directory. Never repairs archives or modifies the configured live world.
+    bool StageVerifiedSnapshot(const RestoreRequest& request,
+        const std::filesystem::path& staging, std::string& error,
+        std::stop_token stopToken = {}) const;
 	RestoreResult Run(
 		const RestoreRequest& request,
 		bool dryRun,

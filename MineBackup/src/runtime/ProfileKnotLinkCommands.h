@@ -6,7 +6,7 @@
 #include <memory>
 #include <string>
 
-class HeadlessKnotLinkBridge;
+class IRuntimeEventSink;
 class ProfileRuntime;
 
 // Adapts the shared KnotLink command dispatcher to a headless ProfileRuntime.
@@ -16,13 +16,13 @@ class ProfileKnotLinkCommands {
 public:
 	ProfileKnotLinkCommands(
 		ProfileRuntime& runtime,
-		std::shared_ptr<HeadlessKnotLinkBridge> bridge);
+		std::shared_ptr<IRuntimeEventSink> bridge);
 	~ProfileKnotLinkCommands();
 
 	ProfileKnotLinkCommands(const ProfileKnotLinkCommands&) = delete;
 	ProfileKnotLinkCommands& operator=(const ProfileKnotLinkCommands&) = delete;
 
-	void SetBridge(std::shared_ptr<HeadlessKnotLinkBridge> bridge);
+	void SetBridge(std::shared_ptr<IRuntimeEventSink> bridge);
 	void Stop();
 	std::string Handle(
 		const std::shared_ptr<minebackup::knotlink::KnotLinkCommandContext>& context);

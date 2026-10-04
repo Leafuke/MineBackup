@@ -223,6 +223,9 @@ std::string BuildManifest() {
     backupArgs["folder"] = InputArgument("Folder name or index.", "0");
     backupArgs["current_save"] =
         BooleanArgument("Use the currently active Minecraft world.");
+    backupArgs["protect"] = BooleanArgument(
+        "Require a verified complete local snapshot and persist its importance before success; no partial or unprotected fallback.");
+    backupArgs["protect"]["defaultVal"] = "false";
     AddFunction(
         manifest, "backup", "BACKUP",
         "Start a backup for one managed folder.",
@@ -266,10 +269,20 @@ std::string BuildManifest() {
             {"config_id", InputArgument(
                 "Backup configuration ID.", "config-id")},
             {"folder", InputArgument("Folder name or index.", "0")},
-            {"file", InputArgument("Backup archive file name.", "backup.7z")},
+            {"current_save", BooleanArgument("Use the currently active Minecraft world.")},
+            {"file", InputArgument("Required exact backup archive file name.", "backup.7z")},
             {"important", BooleanArgument(
-                "Whether the archive is important.")}})),
-        {"message"});
+                "Required true or false importance flag.")}})),
+        {"message", "file", "important"});
+    AddFunction(
+        manifest, "get_importance", "GET_IMPORTANCE",
+        "Query the importance of an exact local backup archive without changing history.",
+        json::object({
+            {"config_id", InputArgument("Backup configuration ID.", "config-id")},
+            {"folder", InputArgument("Folder name or index.", "0")},
+            {"current_save", BooleanArgument("Use the currently active Minecraft world.")},
+            {"file", InputArgument("Required exact backup archive file name.", "backup.7z")}}),
+        {"file", "important"});
 
     AddSignal(
         manifest, "app_startup", "MineBackup KnotLink endpoint started.",
@@ -296,6 +309,13 @@ std::string BuildManifest() {
             {{"command", "Command name."},
              {"request_id", "Request correlation ID."}});
     }
+    manifest["signal"]["command_failed"]["returns"]["reason"] = {
+        {"description", "canceled when a protected BACKUP is cancelled."}};
+    auto& completed = manifest["signal"]["command_completed"]["returns"];
+    completed["from"] = {{"description", "Original caller identifier."}};
+    completed["result"] = {{"description", "For protected BACKUP: created or reused."}};
+    completed["file"] = {{"description", "For protected BACKUP: exact verified archive file name."}};
+    completed["important"] = {{"description", "For protected BACKUP: true, after persisted protection succeeds."}};
     for (const auto name : {
              "backup_started", "backup_warning", "backup_success", "backup_failed",
              "restore_started", "restore_success", "restore_failed"}) {

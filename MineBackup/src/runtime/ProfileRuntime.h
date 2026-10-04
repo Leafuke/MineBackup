@@ -56,6 +56,10 @@ public:
 	ProfileConfigCatalog CatalogSnapshot() const;
 	std::vector<HistoryEntry> HistorySnapshot(const std::wstring& configId) const;
 	std::vector<std::wstring> RestorePreserveSnapshot() const;
+    ImportanceResult QueryBackupImportance(const std::wstring& configId,
+        const std::wstring& worldPath, const std::wstring& backupFile) const;
+    ImportanceResult SetBackupImportanceResult(const std::wstring& configId,
+        const std::wstring& worldPath, const std::wstring& backupFile, bool important);
 	bool SetBackupImportant(
 		const std::wstring& configId,
 		const std::wstring& worldPath,
@@ -72,7 +76,8 @@ public:
 	BackupResult RunBackupRequest(
 		const BackupRequest& request,
 		std::stop_token stopToken = {},
-		bool noNetwork = false) const;
+		bool noNetwork = false,
+        BackupExecutionOptions options = {}) const;
 	BackupResult RunBackup(
 		const std::wstring& configId,
 		const std::wstring& worldPath,
@@ -104,7 +109,8 @@ private:
 	BackupResult RunBackupRequestUnlocked(
 		const BackupRequest& request,
 		std::stop_token stopToken,
-		bool noNetwork) const;
+		bool noNetwork,
+        BackupExecutionOptions options = {}) const;
 	struct Implementation;
 	AppPaths paths_;
 	ProfileRuntimeDependencies dependencies_;

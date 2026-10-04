@@ -38,12 +38,13 @@ optional<string> ValidateUnsupportedParameters(
         "mode", "restore_whitelist", "restore_preserve_paths",
         "preserve_player_data", "confirm_partial_clean"};
     const map<string, set<string>, less<>> commandParameters{
-        {"config_id", {"LIST_FOLDERS", "LIST_BACKUPS", "GET_CONFIG", "BACKUP", "BACKUP_ALL", "RESTORE", "MARK_IMPORTANT"}},
-        {"folder", {"LIST_BACKUPS", "BACKUP", "RESTORE", "MARK_IMPORTANT"}},
-        {"current_save", {"LIST_BACKUPS", "BACKUP", "RESTORE"}},
+        {"config_id", {"LIST_FOLDERS", "LIST_BACKUPS", "GET_CONFIG", "BACKUP", "BACKUP_ALL", "RESTORE", "MARK_IMPORTANT", "GET_IMPORTANCE"}},
+        {"folder", {"LIST_BACKUPS", "BACKUP", "RESTORE", "MARK_IMPORTANT", "GET_IMPORTANCE"}},
+        {"current_save", {"LIST_BACKUPS", "BACKUP", "RESTORE", "MARK_IMPORTANT", "GET_IMPORTANCE"}},
         {"comment", {"BACKUP", "BACKUP_ALL"}},
-        {"file", {"RESTORE", "MARK_IMPORTANT"}},
+        {"file", {"RESTORE", "MARK_IMPORTANT", "GET_IMPORTANCE"}},
         {"important", {"MARK_IMPORTANT"}},
+        {"protect", {"BACKUP"}},
         {"mod_version", {"HANDSHAKE_RESPONSE"}},
         {"result", {"REJOIN_RESULT"}},
         {"reason", {"REJOIN_RESULT"}},
@@ -67,10 +68,20 @@ optional<string> ValidateUnsupportedParameters(
                 && !backupKeys.contains(key))) {
             return "Unknown operation parameter '" + key + "'.";
         }
-        if (key == "preserve_player_data" || key == "confirm_partial_clean") {
+        if (key == "preserve_player_data" || key == "confirm_partial_clean"
+            || key == "protect" || key == "important" || key == "current_save") {
             if (!ParseBoolean(value).has_value()) {
                 return key + " must be true or false.";
             }
+        }
+    }
+    if (request.command == "BACKUP" && ParseBoolean(request.Get("protect", "false")).value_or(false)) {
+        const string scope = LowerAscii(request.Get("backup_scope"));
+        if (!request.Get("backup_whitelist").empty()
+            || (scope != "" && scope != "full" && scope != "all"
+                && scope != "default" && scope != "none")
+            || !request.Get("scope_dimensions").empty() || !request.Get("scope_areas").empty()) {
+            return "protect=true requires a complete-world backup; partial selection is not supported.";
         }
     }
     return nullopt;
