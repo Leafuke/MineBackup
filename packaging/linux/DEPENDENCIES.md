@@ -1,6 +1,6 @@
 # Linux desktop dependencies
 
-MineBackup builds GLFW 3.4 statically with both the X11 and Wayland backends. The
+MineBackup builds GLFW 3.5.1 statically with both the X11 and Wayland backends. The
 remaining desktop libraries are dynamic and must be declared by the package.
 
 ## Ubuntu 24.04 build packages

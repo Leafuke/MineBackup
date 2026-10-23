@@ -87,12 +87,8 @@ if(MINEBACKUP_BUILD_GUI)
         set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
     endif()
     FetchContent_Declare(glfw
-        # GLFW 3.4 crashes during glfwInit() when a Wayland compositor has no
-        # wl_seat, as is intentional for headless Weston. Pin the upstream fix
-        # until it is included in a tagged GLFW release:
-        # https://github.com/glfw/glfw/issues/2517
-        URL https://github.com/glfw/glfw/archive/3573c5a890b4878bb7357f71daaf49260c6fef15.zip
-        URL_HASH SHA256=dba78a22b73c231560ef3817b7fde606170711af733c8c8065ad2e6f0285bd07
+        URL https://github.com/glfw/glfw/releases/download/3.5.1/glfw-3.5.1.zip
+        URL_HASH SHA256=ea79bc5feffc254c87291980c2d0bce9acebb68c4983b79f961dcd2cb8a611a0
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(glfw)

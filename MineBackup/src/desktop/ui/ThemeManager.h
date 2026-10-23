@@ -191,7 +191,6 @@ namespace ImGuiTheme {
         style.ScrollbarSize = 14.0f;
 
         style.AntiAliasedLines = true;
-        style.AntiAliasedLinesUseTex = true;
         style.AntiAliasedFill = true;
 
         ImGui::StyleColorsLight();
@@ -224,7 +223,6 @@ namespace ImGuiTheme {
         style.ScrollbarSize = 14.0f;
 
         style.AntiAliasedLines = true;
-        style.AntiAliasedLinesUseTex = true;
         style.AntiAliasedFill = true;
 
         ImGui::StyleColorsDark();
@@ -253,7 +251,6 @@ namespace ImGuiTheme {
         style.ScrollbarSize = 14.0f;
 
         style.AntiAliasedLines = true;
-        style.AntiAliasedLinesUseTex = true;
         style.AntiAliasedFill = true;
 
         ImGui::StyleColorsClassic();
