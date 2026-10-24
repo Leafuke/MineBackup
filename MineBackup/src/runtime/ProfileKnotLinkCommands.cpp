@@ -210,6 +210,7 @@ optional<BackupRequest> ResolveBackupRequest(
     for (const auto& item : KnotLinkKeyValueCodec::DecodeOperationList(command.GetEncoded("backup_whitelist"))) {
         request->backupWhitelist.push_back(utf8_to_wstring(item));
     }
+    request->protect = ParseBoolean(command.Get("protect", "false")).value_or(false);
     request->backupScope = utf8_to_wstring(command.Get("backup_scope"));
     request->scopeDimensions = utf8_to_wstring(command.Get("scope_dimensions"));
     request->scopeAreas = utf8_to_wstring(command.Get("scope_areas"));
@@ -265,11 +266,11 @@ struct ProfileKnotLinkCommands::Implementation {
 
 	ProfileRuntime& runtime;
 	mutex stateMutex;
-	weak_ptr<HeadlessKnotLinkBridge> bridge;
+	weak_ptr<IRuntimeEventSink> bridge;
 	map<pair<string, string>, shared_ptr<Operation>> operations;
 	bool stopping = false;
 
-	Implementation(ProfileRuntime& runtimeValue, shared_ptr<HeadlessKnotLinkBridge> bridgeValue)
+	Implementation(ProfileRuntime& runtimeValue, shared_ptr<IRuntimeEventSink> bridgeValue)
 		: runtime(runtimeValue), bridge(std::move(bridgeValue)) {
 	}
 
@@ -318,7 +319,7 @@ struct ProfileKnotLinkCommands::Implementation {
 	}
 
 	void Publish(const BackupRuntimeEvent& event) {
-		shared_ptr<HeadlessKnotLinkBridge> current;
+		shared_ptr<IRuntimeEventSink> current;
 		{
 			lock_guard lock(stateMutex);
 			current = bridge.lock();
@@ -326,9 +327,16 @@ struct ProfileKnotLinkCommands::Implementation {
 		if (current) current->Publish(event);
 	}
 
+    void Complete(const shared_ptr<KnotLinkCommandContext>& context, KnotLinkCommandResult outcome) {
+        if (context->terminalPublished.exchange(true)) return;
+        outcome.fields.emplace_back("command", context->request.command);
+        outcome.fields.emplace_back("message", outcome.message);
+        Publish(Event(outcome.success ? "command_completed" : "command_failed", *context, std::move(outcome.fields)));
+    }
+
 	bool Submit(
 		const shared_ptr<KnotLinkCommandContext>& context,
-		function<pair<bool, string>(stop_token)> work) {
+		function<KnotLinkCommandResult(stop_token)> work) {
 		Cleanup();
 		const auto id = pair{context->metadata.from, context->metadata.requestId};
 		auto operation = make_shared<Operation>();
@@ -343,7 +351,7 @@ struct ProfileKnotLinkCommands::Implementation {
 			KnotLinkCommandScope scope(context);
 			Publish(Event("command_started", *context,
 				{{"command", context->request.command}}));
-			pair<bool, string> outcome;
+			KnotLinkCommandResult outcome;
 			try {
 				outcome = work(operation->cancellation.get_token());
 			}
@@ -353,9 +361,7 @@ struct ProfileKnotLinkCommands::Implementation {
 			catch (...) {
 				outcome = {false, "Unknown task failure."};
 			}
-			Publish(Event(outcome.first ? "command_completed" : "command_failed",
-				*context, {{"command", context->request.command},
-					{"message", outcome.second}}));
+            Complete(context, std::move(outcome));
 			operation->completed.store(true, memory_order_release);
 		});
 		return true;
@@ -455,10 +461,32 @@ struct ProfileKnotLinkCommands::Implementation {
 			if (!target) return error(targetError);
 			const auto backup = ResolveBackupRequest(runtime, *target, request, targetError);
 			if (!backup) return error(targetError);
-			if (!Submit(context, [this, backup = *backup](stop_token token) {
-				const auto result = runtime.RunBackupRequest(backup, token);
-				return pair{IsSuccessful(result.code), ToString(result.code)};
-			})) return error("The headless runtime is stopping or this request is already active.");
+            if (!Submit(context, [this, context, backup = *backup](stop_token token) {
+                BackupExecutionOptions options;
+                if (backup.protect) options.onProtectedCommit = [this, context](const BackupResult& local) {
+                    Complete(context, {true, ToString(local.code), {
+                        {"result", local.outcome == BackupOutcome::Created ? "created" : "reused"},
+                        {"file", wstring_to_utf8(local.historyEntry->backupFile)}, {"important", "true"}}});
+                };
+                const auto result = runtime.RunBackupRequest(backup, token, false, std::move(options));
+                KnotLinkCommandResult completion{IsSuccessful(result.code), ToString(result.code)};
+                if (backup.protect && result.code == OperationCode::Cancelled) {
+                    completion.fields.emplace_back("reason", "canceled");
+                }
+                if (backup.protect && completion.success) {
+                    if (!result.historyEntry || !result.historyEntry->isImportant
+                        || result.historyEntry->backupFile.empty()
+                        || (result.outcome != BackupOutcome::Created
+                            && result.outcome != BackupOutcome::NoChanges)) {
+                        return KnotLinkCommandResult{false, "Protected snapshot was not verified."};
+                    }
+                    completion.fields = {
+                        {"result", result.outcome == BackupOutcome::Created ? "created" : "reused"},
+                        {"file", wstring_to_utf8(result.historyEntry->backupFile)},
+                        {"important", "true"}};
+                }
+                return completion;
+            })) return error("The headless runtime is stopping or this request is already active.");
 			return ok({{"message", "Command accepted."}});
 		}
 		if (request.command == "BACKUP_ALL") {
@@ -554,7 +582,7 @@ struct ProfileKnotLinkCommands::Implementation {
 					const auto result = runtime.RunHotRestore(
 						hotRequest, restore, token);
                     Publish(Event(IsSuccessful(result.code) ? "restore_success" : "restore_failed", *context, fields));
-					return pair{IsSuccessful(result.code), ToString(result.code)};
+					return KnotLinkCommandResult{IsSuccessful(result.code), ToString(result.code)};
 				})) return error("The headless runtime is stopping or this request is already active.");
 				return ok({{"message", "Command accepted."}});
 			}
@@ -567,30 +595,38 @@ struct ProfileKnotLinkCommands::Implementation {
                 Publish(Event("restore_started", *context, fields));
 				const auto result = runtime.Restore(restore, false, token);
                 Publish(Event(IsSuccessful(result.code) ? "restore_success" : "restore_failed", *context, fields));
-				return pair{IsSuccessful(result.code), ToString(result.code)};
+				return KnotLinkCommandResult{IsSuccessful(result.code), ToString(result.code)};
 			})) return error("The headless runtime is stopping or this request is already active.");
 			return ok({{"message", "Command accepted."}});
 		}
-		if (request.command == "MARK_IMPORTANT") {
-			string targetError;
-			const auto target = ResolveTarget(runtime, request, targetError);
-			if (!target) return error(targetError);
-			const wstring file = utf8_to_wstring(request.Get("file"));
-			const auto important = ParseBoolean(request.Get("important"));
-			if (file.empty() || !important.has_value()) {
-				return error("file and important=true|false are required.");
-			}
-			if (!runtime.SetBackupImportant(
-					target->config.configId, target->world, file, *important)) {
-				return error("Backup history entry was not found.");
-			}
-			Publish(Event("mark_important", *context,
-				{{"config", wstring_to_utf8(target->config.configId)},
-					{"folder", wstring_to_utf8(target->world)},
-					{"file", wstring_to_utf8(file)},
-					{"important", *important ? "true" : "false"}}));
-			return ok({{"message", "Importance flag updated."}});
-		}
+        if (request.command == "MARK_IMPORTANT" || request.command == "GET_IMPORTANCE") {
+            string targetError;
+            const auto target = ResolveTarget(runtime, request, targetError);
+            if (!target) return error(targetError);
+            const wstring file = utf8_to_wstring(request.Get("file"));
+            if (file.empty()) return error("An exact file is required.");
+            const bool marking = request.command == "MARK_IMPORTANT";
+            const auto important = ParseBoolean(request.Get("important"));
+            if (marking && !important.has_value()) {
+                return error("important=true|false is required.");
+            }
+            const auto result = marking
+                ? runtime.SetBackupImportanceResult(target->config.configId, target->world, file, *important)
+                : runtime.QueryBackupImportance(target->config.configId, target->world, file);
+            if (!result.success) return error(result.error);
+            auto fields = KnotLinkProtocolFormatter::Fields{
+                {"file", wstring_to_utf8(result.file)},
+                {"important", result.important ? "true" : "false"}};
+            if (marking) {
+                auto eventFields = fields;
+                eventFields.emplace_back("config", wstring_to_utf8(target->config.configId));
+                eventFields.emplace_back("folder", wstring_to_utf8(target->world));
+                Publish(Event("mark_important", *context, std::move(eventFields)));
+                fields.emplace_back("message", "Importance flag updated.");
+            }
+            return ok(fields);
+        }
+
 		return error("Unknown command.", {{"code", "unknown_command"}});
 	}
 
@@ -603,13 +639,13 @@ struct ProfileKnotLinkCommands::Implementation {
 
 ProfileKnotLinkCommands::ProfileKnotLinkCommands(
 	ProfileRuntime& runtime,
-	shared_ptr<HeadlessKnotLinkBridge> bridge)
+	shared_ptr<IRuntimeEventSink> bridge)
 	: implementation_(make_unique<Implementation>(runtime, std::move(bridge))) {
 }
 
 ProfileKnotLinkCommands::~ProfileKnotLinkCommands() = default;
 
-void ProfileKnotLinkCommands::SetBridge(shared_ptr<HeadlessKnotLinkBridge> bridge) {
+void ProfileKnotLinkCommands::SetBridge(shared_ptr<IRuntimeEventSink> bridge) {
 	lock_guard lock(implementation_->stateMutex);
 	implementation_->bridge = std::move(bridge);
 }

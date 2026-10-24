@@ -2,6 +2,14 @@
 #include "FolderRewindFormat.h"
 #include "ProfileManifest.h"
 #include "ProfileRuntime.h"
+#include "ProfileKnotLinkCommands.h"
+#include "KnotLinkCommandDispatcher.h"
+#include "KnotLinkProtocol.h"
+#include "RuntimeIntegration.h"
+#include "FolderRewindMetadataStore.h"
+#include <mutex>
+#include <thread>
+#include <atomic>
 #include "text_to_text.h"
 
 #include <chrono>
@@ -355,6 +363,330 @@ void TestExcludedLinuxPaths(ArchiveIntegrationTest& test, Fixture& fixture, bool
 }
 #endif
 
+
+
+
+
+
+
+void TestProtectedLocalReceipt(ArchiveIntegrationTest& test, Fixture& fixture) {
+    if (!fixture.Apply(test)) return;
+    HistoryRepository history;
+    BackupServiceDependencies dependencies;
+    dependencies.paths = fixture.paths; dependencies.history = &history;
+    dependencies.historyConfigs = {{0, fixture.Configuration()}};
+    int localReceipts = 0;
+    bool cloudStartedAfterReceipt = false;
+    dependencies.cloudPost = std::make_shared<CallbackCloudPostHook>([&](const auto&, const auto&, auto) -> CloudPostResult {
+        cloudStartedAfterReceipt = localReceipts == 1;
+        throw std::runtime_error("synthetic slow-cloud failure after local commit");
+    });
+    BackupRequest request;
+    request.config = fixture.Configuration(); request.world = {request.config.configId, fixture.WorldName()};
+    request.sourcePath = fixture.world; request.protect = true;
+    BackupExecutionOptions options;
+    options.onProtectedCommit = [&](const BackupResult& result) {
+        ++localReceipts;
+        test.Expect(result.code == OperationCode::Success && result.historyEntry && result.historyEntry->isImportant
+            && fs::is_regular_file(result.archivePath), "local receipt follows verified archive and pinned history commit");
+        HistoryRepository reloaded;
+        test.Expect(reloaded.Load(fixture.paths.HistoryFile(), dependencies.historyConfigs)
+            && reloaded.QueryImportance(request.config, fixture.WorldName(), result.historyEntry->backupFile).important,
+            "local receipt's important flag is already visible after disk reload");
+    };
+    const auto result = BackupService(dependencies).Run(request, {}, options);
+    test.Expect(cloudStartedAfterReceipt && localReceipts == 1, "protected local receipt is emitted once before cloud post-processing");
+    test.Expect(result.code == OperationCode::Success && result.cloud.status == CloudPostStatus::Failed
+        && result.historyEntry && result.historyEntry->isImportant,
+        "cloud exception becomes a warning without retracting the committed protected result");
+}
+
+void TestProtectedMigrationGate(ArchiveIntegrationTest& test, Fixture& fixture) {
+    if (!fixture.Apply(test)) return;
+    HistoryRepository history;
+    BackupServiceDependencies dependencies;
+    dependencies.paths = fixture.paths; dependencies.history = &history;
+    dependencies.historyConfigs = {{0, fixture.Configuration()}};
+    bool writable = false;
+    dependencies.canPersistHistory = [&] { return writable; };
+    BackupRequest request;
+    request.config = fixture.Configuration(); request.world = {request.config.configId, fixture.WorldName()};
+    request.sourcePath = fixture.world; request.protect = true;
+    const auto blocked = BackupService(dependencies).Run(request);
+    test.Expect(blocked.code == OperationCode::MigrationRequired && !blocked.historyEntry,
+        "migration gate rejects protected backup before creation");
+    writable = true;
+    dependencies.processExecutor = [&](const ProcessSpec& process, std::stop_token token) {
+        auto result = ProcessRunner::Run(process, token);
+        if (!process.arguments.empty() && process.arguments.front() == L"a"
+            && result.status == ProcessStatus::Succeeded) writable = false;
+        return result;
+    };
+    const auto midOperationBlocked = BackupService(dependencies).Run(request);
+    test.Expect(midOperationBlocked.code == OperationCode::MigrationRequired && !midOperationBlocked.historyEntry,
+        "migration gate is rechecked after compression before protected commit");
+    FolderRewindFormat::StoragePaths storage;
+    FolderRewindFormat::TryResolveStoragePaths(request.config.backupPath, fixture.WorldName(), fixture.world.wstring(), storage);
+    test.Expect(!fs::exists(storage.statePath) && history.EntriesForConfig(request.config.configId)->empty()
+        && fs::is_empty(storage.backupSubDir), "mid-operation migration gate preserves state and removes uncommitted archive");
+    writable = true; dependencies.processExecutor = {};
+    const auto created = BackupService(dependencies).Run(request);
+    test.Expect(created.historyEntry && created.historyEntry->isImportant, "unblocked migration permits protected creation");
+    if (!created.historyEntry) return;
+    history.SetImportance(request.config, fixture.WorldName(), created.historyEntry->backupFile, false,
+        fixture.paths.HistoryFile(), dependencies.historyConfigs);
+    dependencies.processExecutor = [&](const ProcessSpec& process, std::stop_token token) {
+        auto result = ProcessRunner::Run(process, token);
+        if (!process.arguments.empty() && process.arguments.front() == L"x") writable = false;
+        return result;
+    };
+    const auto reused = BackupService(dependencies).Run(request);
+    test.Expect(reused.code == OperationCode::MigrationRequired
+        && !history.QueryImportance(request.config, fixture.WorldName(), created.historyEntry->backupFile).important,
+        "migration gate is rechecked after reuse verification without pinning");
+}
+
+void TestProtectedRetention(ArchiveIntegrationTest& test, Fixture& fixture) {
+    fixture.manifest.configs.front().keepCount = 1;
+    fixture.manifest.configs.front().backupMode = 1;
+    if (!fixture.Apply(test)) return;
+    ProfileRuntime runtime(fixture.paths, {.noNetwork = true});
+    test.Expect(runtime.Reload().code == OperationCode::Success, "protected retention profile loads");
+    auto request = *runtime.ResolveBackup(fixture.Configuration().configId, fixture.WorldName());
+    request.protect = true;
+    const auto pinned = runtime.RunBackupRequest(request);
+    test.Expect(pinned.historyEntry && pinned.historyEntry->isImportant, "retention fixture commits protected backup");
+    if (!pinned.historyEntry) return;
+    request.protect = false;
+    WriteFile(fixture.world / "region" / "r.0.0.mca", "second full");
+    const auto second = runtime.RunBackupRequest(request);
+    test.Expect(second.outcome == BackupOutcome::Created && fs::is_regular_file(pinned.archivePath)
+        && runtime.QueryBackupImportance(request.config.configId, fixture.WorldName(), pinned.historyEntry->backupFile).important,
+        "ordinary keep-one retention preserves exact protected archive");
+    test.Expect(runtime.SetBackupImportant(request.config.configId, fixture.WorldName(), pinned.historyEntry->backupFile, false),
+        "explicit unpin commits before later cleanup");
+    WriteFile(fixture.world / "region" / "r.0.0.mca", "third full");
+    const auto third = runtime.RunBackupRequest(request);
+    test.Expect(third.outcome == BackupOutcome::Created && !fs::exists(pinned.archivePath)
+        && runtime.HistorySnapshot(request.config.configId).size() == 1,
+        "retention may clean an archive only after its explicit unpin");
+}
+
+void TestProtectedCancelBeforePin(ArchiveIntegrationTest& test, Fixture& fixture) {
+    if (!fixture.Apply(test)) return;
+    HistoryRepository history;
+    BackupServiceDependencies dependencies;
+    dependencies.paths = fixture.paths; dependencies.history = &history;
+    dependencies.historyConfigs = {{0, fixture.Configuration()}};
+    std::stop_source cancellation;
+    dependencies.processExecutor = [&](const ProcessSpec& process, std::stop_token token) {
+        auto result = ProcessRunner::Run(process, token);
+        if (!process.arguments.empty() && process.arguments.front() == L"a"
+            && result.status == ProcessStatus::Succeeded) cancellation.request_stop();
+        return result;
+    };
+    BackupRequest request;
+    request.config = fixture.Configuration(); request.world = {request.config.configId, fixture.WorldName()};
+    request.sourcePath = fixture.world; request.protect = true;
+    const auto result = BackupService(dependencies).Run(request, cancellation.get_token());
+    test.Expect(result.code == OperationCode::Cancelled && !result.historyEntry,
+        "cancellation after compression but before pin remains cancelled, never success");
+    FolderRewindFormat::StoragePaths storage;
+    FolderRewindFormat::TryResolveStoragePaths(request.config.backupPath, fixture.WorldName(), fixture.world.wstring(), storage);
+    test.Expect(!fs::exists(storage.statePath) && history.EntriesForConfig(request.config.configId)->empty(),
+        "cancel-before-pin never advances state or history");
+    test.Expect(fs::is_empty(storage.backupSubDir), "cancel-before-pin cleans its staged archive");
+    cancellation = std::stop_source{};
+    dependencies.processExecutor = {};
+    dependencies.canPersistHistory = [&] {
+        if (fs::exists(storage.statePath)) cancellation.request_stop();
+        return true;
+    };
+    int receipts = 0;
+    BackupExecutionOptions options;
+    options.onProtectedCommit = [&](const BackupResult&) { ++receipts; };
+    const auto late = BackupService(dependencies).Run(request, cancellation.get_token(), options);
+    test.Expect(late.code == OperationCode::Cancelled && !late.historyEntry && receipts == 0,
+        "cancellation after metadata staging but before pin retains cancelled terminal semantics");
+    test.Expect(!fs::exists(storage.statePath) && fs::is_empty(storage.backupSubDir)
+        && history.EntriesForConfig(request.config.configId)->empty(),
+        "late pre-pin cancellation restores baseline and cleans uncommitted archive");
+
+}
+
+void TestProtectedCommitDurability(ArchiveIntegrationTest& test, Fixture& fixture) {
+    if (!fixture.Apply(test)) return;
+    HistoryRepository uncertain([](const fs::path& path, const std::string& content) {
+        AtomicFileWriter::WriteOptions options;
+        options.directorySyncOverride = [](const auto&) { return false; };
+        return AtomicFileWriter::WriteText(path, content, options);
+    });
+    BackupServiceDependencies dependencies;
+    dependencies.paths = fixture.paths;
+    dependencies.history = &uncertain;
+    dependencies.historyConfigs = {{0, fixture.Configuration()}};
+    BackupRequest request;
+    request.config = fixture.Configuration(); request.world = {request.config.configId, fixture.WorldName()};
+    request.sourcePath = fixture.world; request.protect = true;
+    const auto result = BackupService(dependencies).Run(request);
+    test.Expect(!IsSuccessful(result.code) && result.historyEntry && result.historyEntry->isImportant,
+        "post-replacement durability uncertainty cannot emit protected success");
+    test.Expect(fs::is_regular_file(result.archivePath),
+        "uncertain committed history never triggers deletion of its referenced archive");
+    HistoryRepository reload;
+    test.Expect(reload.Load(fixture.paths.HistoryFile(), dependencies.historyConfigs),
+        "uncertain history is still a parseable committed document");
+    if (result.historyEntry) {
+        const auto disk = reload.QueryImportance(request.config, fixture.WorldName(), result.historyEntry->backupFile);
+        test.Expect(disk.success && disk.important, "committed pin and archive remain aligned after reload");
+        const auto failedUnpin = uncertain.SetImportance(request.config, fixture.WorldName(), result.historyEntry->backupFile,
+            false, fixture.paths.HistoryFile(), dependencies.historyConfigs);
+        test.Expect(!failedUnpin.success && !failedUnpin.important,
+            "post-commit unpin uncertainty is reported without pretending memory rollback");
+        test.Expect(!uncertain.QueryImportance(request.config, fixture.WorldName(), result.historyEntry->backupFile).important,
+            "memory reflects the actual post-replacement unpin state");
+    }
+}
+
+void TestProtectedBackup(ArchiveIntegrationTest& test, Fixture& fixture) {
+    WriteFile(fixture.world / "session.lock", "internal lock excluded");
+    if (!fixture.Apply(test)) return;
+    ProfileRuntime runtime(fixture.paths, {.noNetwork = true});
+    test.Expect(runtime.Reload().code == OperationCode::Success, "protected runtime loads");
+    auto request = *runtime.ResolveBackup(fixture.Configuration().configId, fixture.WorldName(), L"original protected comment");
+    request.protect = true;
+    const auto created = runtime.RunBackupRequest(request);
+    test.Diagnostics(created.diagnostics);
+    test.Expect(created.code == OperationCode::Success && created.outcome == BackupOutcome::Created
+        && created.historyEntry && created.historyEntry->isImportant,
+        "protected creation returns committed important archive");
+    if (!created.historyEntry) return;
+    const auto name = created.historyEntry->backupFile;
+    test.Expect(created.historyEntry->backupType == L"Full", "protected creation establishes complete Full checkpoint");
+    test.Expect(runtime.Reload().code == OperationCode::Success
+        && runtime.QueryBackupImportance(request.config.configId, fixture.WorldName(), name).important,
+        "protected pin survives runtime restart");
+    request.comment = L"must not replace original comment";
+    const auto reused = runtime.RunBackupRequest(request);
+    test.Diagnostics(reused.diagnostics);
+    test.Expect(reused.code == OperationCode::NoChanges && reused.historyEntry
+        && reused.historyEntry->isImportant && reused.archivePath == created.archivePath,
+        "unchanged protected request reuses exact verified archive");
+    test.Expect(reused.historyEntry && reused.historyEntry->comment == L"original protected comment",
+        "protected reuse retains original filename and comment");
+    test.Expect(runtime.HistorySnapshot(request.config.configId).size() == 1,
+        "protected reuse never creates duplicate archive history");
+    test.Expect(runtime.SetBackupImportant(request.config.configId, fixture.WorldName(), name, false),
+        "exact existing archive can be unpinned");
+    const auto originalTime = fs::last_write_time(fixture.world / "level.dat");
+    WriteFile(fixture.world / "level.dat", std::string(10000, 'Z'));
+    fs::last_write_time(fixture.world / "level.dat", originalTime);
+    const auto falseUnchanged = runtime.RunBackupRequest(request);
+    test.Expect(!IsSuccessful(falseUnchanged.code) && !falseUnchanged.historyEntry
+        && !runtime.QueryBackupImportance(request.config.configId, fixture.WorldName(), name).important,
+        "timestamp-size no-change hint cannot pin archive with different source bytes");
+    WriteFile(fixture.world / "level.dat", std::string(10000, 'A'));
+    fs::last_write_time(fixture.world / "level.dat", originalTime);
+    auto filtered = request; filtered.config.blacklist = {L"region"};
+    test.Expect(!IsSuccessful(runtime.RunBackupRequest(filtered).code),
+        "protected request refuses user-filtered sources");
+    auto partial = request; partial.backupWhitelist = {L"level.dat"};
+    test.Expect(!IsSuccessful(runtime.RunBackupRequest(partial).code),
+        "protected request refuses partial selection");
+    test.Expect(runtime.HistorySnapshot(request.config.configId).size() == 1,
+        "rejected protection has no archive or history side effects");
+
+    // Real Smart reuse verifies its whole reconstructed source, including deletions.
+    WriteFile(fixture.world / "region" / "r.0.0.mca", "new Smart region");
+    auto ordinary = request; ordinary.protect = false; ordinary.comment = L"keep Smart comment";
+    const auto smart = runtime.RunBackupRequest(ordinary);
+    test.Expect(smart.historyEntry && smart.historyEntry->backupType == L"Smart", "Smart reuse fixture created");
+    const auto reuseSmart = runtime.RunBackupRequest(request);
+    test.Diagnostics(reuseSmart.diagnostics);
+    test.Expect(reuseSmart.code == OperationCode::NoChanges && reuseSmart.historyEntry
+        && reuseSmart.historyEntry->isImportant && reuseSmart.archivePath == smart.archivePath
+        && reuseSmart.historyEntry->comment == L"keep Smart comment", "complete Smart chain can be verified and pinned unchanged");
+
+    FolderRewindFormat::StoragePaths storage;
+    FolderRewindFormat::TryResolveStoragePaths(request.config.backupPath, fixture.WorldName(), fixture.world.wstring(), storage);
+    const auto stateBefore = ReadFile(storage.statePath);
+    const auto historyBefore = ReadFile(fixture.paths.HistoryFile());
+    const auto countBefore = runtime.HistorySnapshot(request.config.configId).size();
+    fs::rename(fixture.paths.HistoryFile(), fixture.paths.HistoryFile().string() + ".saved");
+    fs::create_directory(fixture.paths.HistoryFile());
+    const auto failedPin = runtime.RunBackupRequest(request);
+    test.Expect(!IsSuccessful(failedPin.code) && !failedPin.historyEntry,
+        "reuse persistence failure never returns protected success");
+    WriteFile(fixture.world / "new-file.txt", "create rollback fixture");
+    const auto failedCreate = runtime.RunBackupRequest(request);
+    test.Expect(!IsSuccessful(failedCreate.code) && !failedCreate.historyEntry,
+        "new protection persistence failure never returns success");
+    test.Expect(ReadFile(storage.statePath) == stateBefore
+        && runtime.HistorySnapshot(request.config.configId).size() == countBefore,
+        "failed protected history commit rolls back Smart baseline and memory");
+    std::size_t archiveCount = 0;
+    for (const auto& entry : fs::directory_iterator(storage.backupSubDir)) if (entry.is_regular_file()) ++archiveCount;
+    test.Expect(archiveCount == countBefore, "failed protected creation removes uncommitted archive");
+    fs::remove(fixture.paths.HistoryFile());
+    fs::rename(fixture.paths.HistoryFile().string() + ".saved", fixture.paths.HistoryFile());
+    test.Expect(ReadFile(fixture.paths.HistoryFile()) == historyBefore, "failed protection preserves persisted history bytes");
+    fs::remove(fixture.world / "new-file.txt");
+
+    struct CapturingSink : IRuntimeEventSink {
+        std::mutex mutex;
+        std::vector<BackupRuntimeEvent> events;
+        void Publish(const BackupRuntimeEvent& event) override { std::lock_guard lock(mutex); events.push_back(event); }
+    };
+    auto sink = std::make_shared<CapturingSink>();
+    ProfileKnotLinkCommands commands(runtime, sink);
+    minebackup::knotlink::KnotLinkCommandDispatcher dispatcher(
+        [&](const auto& context) { return commands.Handle(context); });
+    auto runCommand = [&](const std::string& id, const std::string& result, bool expectSuccess) {
+        const auto response = dispatcher.Dispatch("cmd=BACKUP;from=Time-Machine;request_id=" + id
+            + ";config_id=" + wstring_to_utf8(request.config.configId) + ";folder="
+            + wstring_to_utf8(fixture.WorldName()) + ";protect=true");
+        test.Expect(response.find("status=ok") != std::string::npos, "protected command accepted without claiming completion");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (commands.ActiveOperationCount() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        test.Expect(commands.ActiveOperationCount() == 0, "protected command reaches terminal state");
+        int completed = 0, failed = 0;
+        std::lock_guard lock(sink->mutex);
+        for (const auto& event : sink->events) {
+            std::map<std::string,std::string> fields(event.fields.begin(), event.fields.end());
+            if (fields["request_id"] != id) continue;
+            if (event.eventId == "command_completed") {
+                ++completed;
+                test.Expect(fields["from"] == "Time-Machine" && fields["command"] == "BACKUP"
+                    && fields["result"] == result && fields["important"] == "true" && !fields["file"].empty(),
+                    "final protected receipt preserves exact correlation, result, file, and pin");
+                const auto query = runtime.QueryBackupImportance(request.config.configId, fixture.WorldName(), utf8_to_wstring(fields["file"]));
+                test.Expect(query.success && query.important, "receipt only refers to existing persisted pinned archive");
+            }
+            if (event.eventId == "command_failed") ++failed;
+        }
+        test.Expect(completed == (expectSuccess ? 1 : 0) && failed == (expectSuccess ? 0 : 1),
+            "protected command has exactly one correlated terminal receipt");
+    };
+    runCommand("protected-reused", "reused", true);
+    WriteFile(fixture.world / "new-file.txt", "command creation");
+    runCommand("protected-created", "created", true);
+    test.Expect(runtime.HistorySnapshot(request.config.configId).back().backupType == L"Smart",
+        "protected command honors Smart mode for changed source");
+    fs::remove(fixture.world / "new-file.txt");
+    const auto deletionOnly = runtime.RunBackupRequest(request);
+    test.Expect(deletionOnly.historyEntry && deletionOnly.historyEntry->backupType == L"Smart"
+        && deletionOnly.historyEntry->isImportant, "protected deletion-only Smart verifies complete surviving source");
+    auto overwrite = request; overwrite.config.backupMode = 3;
+    WriteFile(fixture.world / "overwrite.txt", "protected overwrite");
+    const auto overwritten = runtime.RunBackupRequest(overwrite);
+    test.Expect(overwritten.historyEntry && overwritten.historyEntry->backupType == L"Overwrite"
+        && overwritten.historyEntry->isImportant, "protected creation honors Overwrite without replacing existing pinned archive");
+    const auto latest = runtime.HistorySnapshot(request.config.configId).back();
+    WriteFile(storage.backupSubDir / latest.backupFile, "corrupted archive");
+    runCommand("protected-corrupt", "", false);
+}
+
 fs::path CreateFixtureRoot(const fs::path& requestedRoot) {
 #ifdef _WIN32
     // A checkout-relative root plus archive GUIDs exceeded MAX_PATH in Windows
@@ -411,6 +743,18 @@ int main(int argc, char** argv) {
             Fixture fixture(root / item.name, sevenZip, item.world, item.saves, item.backups);
             TestRoundTrip(test, fixture, std::string(item.name) == "unicode-file");
         }
+        Fixture protectedCloud(root / "protected-cloud", sevenZip);
+        TestProtectedLocalReceipt(test, protectedCloud);
+        Fixture protectedMigration(root / "protected-migration", sevenZip);
+        TestProtectedMigrationGate(test, protectedMigration);
+        Fixture protectedRetention(root / "protected-retention", sevenZip);
+        TestProtectedRetention(test, protectedRetention);
+        Fixture protectedCancellation(root / "protected-cancellation", sevenZip);
+        TestProtectedCancelBeforePin(test, protectedCancellation);
+        Fixture protectedDurability(root / "protected-durability", sevenZip);
+        TestProtectedCommitDurability(test, protectedDurability);
+        Fixture protectedBackup(root / "protected-backups", sevenZip);
+        TestProtectedBackup(test, protectedBackup);
         Fixture player(root / "real-player-preservation", sevenZip);
         TestRealPlayerPreservation(test, player);
         Fixture deletion(root / "deletion-and-job", sevenZip);

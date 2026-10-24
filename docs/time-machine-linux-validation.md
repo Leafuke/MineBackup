@@ -196,3 +196,52 @@ PR 已配置 Linux 桌面与 headless 流水线在面向 develop 的 PR 上运�
 8. 记录世界／归档哈希、协议请求和结果 UUID、后端与模组精确版本；保存完整错误输出供定位
 
 本次不以“编译成功”代替以上游戏实机验收。未完成的项目应继续作为发布前门槛。
+
+## 8. 2026-10-04 追加：受保护备份与精确重要标记
+
+本节保留上面 2026-10-03 的原始验证记录；它描述 PR #92 后续追加的工作，不覆盖或改写旧 CI 结论。
+
+### 本轮基线与契约
+
+- 在现有 PR #92 分支 `feat/time-machine-linux-interop` 的精确提交 `351e819de62d76785a3d0ef9cf7666a24f2e956d` 上继续开发，没有从 `develop` 另开替代实现
+- [FolderRewind 1.9.x `23fd976`](https://github.com/Leafuke/FolderRewind/commit/23fd976acdf64dd85d31b8f7d81435fc89352419)
+- [MineBackup-Mod `27f6cec`](https://github.com/Leafuke/MineBackup-Mod/commit/27f6cec21ad19111c8e7a34bd92f58ebe8b8e2ae)
+- 已逐项核对最新 Mod 的 `current_save` 精确 pin/query 请求，以及受保护操作严格匹配 `from`、`request_id`、`command=BACKUP`、`result=created|reused`、非空 `file`、`important=true` 的终态要求
+
+### 新增能力与安全边界
+
+1. `MARK_IMPORTANT` 和 `GET_IMPORTANCE` 都支持 `current_save=true`，要求精确归档名。响应回显 `file`、布尔 `important` 与关联字段。不存在、重名歧义、跨世界的源/存储身份不一致、写失败或正在进行的归档事务会明确拒绝
+2. 标记/取消标记、桌面历史按钮、GUI 与 headless 命令使用同一个历史服务。既有 Partial 可以查询或标记；重要标记本身不证明其是完整恢复点
+3. `BACKUP protect=true` 只允许单个已配置的完整源，拒绝用户黑名单、局部白名单/区域、辅助来源和未协调的热备份降级。引擎固有锁文件/内部标记排除与用户筛选分开处理
+4. 保留请求的 Full / Smart / Overwrite 模式及原有基线规则。新 Smart 先在隔离目录还原已验证的前置链，再应用本次新增/修改/删除，逐文件比较完整源的实际内容；Full/Overwrite 也先验证并解压比较。不会仅凭时间戳、大小、历史标记或归档存在判定成功
+5. 无变化复用仅针对扫描器指向的精确归档，校验完整还原链与当前源内容后提交 pin，保留原有归档名和备注。损坏、不完整或内容不同则失败，不寻找其他旧备份冒充当前来源
+6. pin 在初始历史提交中写入，先于保留清理与最终回执。归档事务锁串行化 pin 与合并/清理；合并提交同时重新检查被删除及被改名的目标，刚被标记的重要归档不能改名
+7. 前端只发送一次关联的受保护终态。持久本地提交后、云上传开始前即通过本地提交回调发送 `command_completed`，让 Mod 恢复自动保存；后续云失败/异常是独立警告，不撤销本地保护成功，也不产生第二条成功/失败终态
+8. 迁移或恢复门禁会在受保护工作开始及提交前重查。压缩后或 metadata 写入后、pin 提交前的取消会保留 `reason=canceled` 语义，并回滚未提交归档和基线
+9. 区分“未替换历史文件”与“历史已替换但目录同步未确认”。前者可以回滚；后者保留已经被历史引用的归档、metadata 和真实内存状态，明确报告不确定性，不删除被引用的归档，也不发保护成功回执
+
+详细参数、布尔要求和 EN/ZH 示例见 [KnotLink v2 文档](knotlink-v2.md)。MineBackup 能力清单版本为 2.2.0；`protect` 只声明在单个 `BACKUP` 上，不声明 `BACKUP_ALL` 保护、跨崩溃请求去重或游戏内完整旅行验收。
+
+### 本轮 Linux 实测
+
+环境仍为 Debian 13 x86_64、GCC 14.2；CMake 4.4.3、Ninja 1.13.2 使用隔离工具目录。GUI 开发依赖从签名验证的 Debian 官方源下载并解包到隔离目录，没有修改系统权限、注册表或安全策略。真实 7zz 仍使用上文的固定发布与 SHA-256。
+
+- CLI 与完整 X11/Wayland GUI 均编译通过；CMake/MSBuild 源文件一致性、五层边界检查和独立数据核心链接通过
+- 真实 7zz 引擎集成：**237/237 断言通过**。覆盖受保护 Full/Smart/Overwrite、新建/复用、删除增量、保留原备注、pin 重启持久化、保留配额、明确取消重要后清理、同大小/同时间戳内容伪装、损坏归档、历史写失败、提交后同步不确定性、迁移门禁变化、两处取消边界、云操作开始前的本地回执和云异常
+- 命令/数据测试额外覆盖 GUI 与 headless 精确 pin/query、Partial 重要标记、幂等标记/取消、真实独立锁持有进程的 `current_save`、多个活动世界歧义、归档事务 busy、跨世界伪造历史身份、重命名目标刚被 pin 以及关联终态只发一次
+- 新工作区重新探测 AF_UNIX，仍返回 `EPERM`；完整 CLI CTest 为 **19/25 通过**，剩余 6 项均为相同的 profile IPC 限制，data_core 内只有 10 个既有 IPC 断言失败
+- GUI 选定的协议、真实归档、玩家保留与 data_core 共 8 项中 **7 项通过**；唯一失败为同一组 IPC 断言。GUI 命令测试实际执行了 handler 与共享历史服务，不只是语法检查；完整窗口启动及游戏连接仍不能算通过
+
+复现核心检查（普通已安装开发依赖的 Linux 主机）：
+
+```bash
+cmake --preset linux-x64-cli-only -DBUILD_TESTING=ON
+cmake --build build/linux-x64-cli-only --parallel 4
+ctest --test-dir build/linux-x64-cli-only --output-on-failure
+cmake --build build/linux-x64-cli-only --target check_runtime_boundaries check_msbuild_source_parity minebackup_data_core_link_check
+cmake --preset linux-x64 -DBUILD_TESTING=ON
+cmake --build build/linux-x64 --parallel 4
+ctest --test-dir build/linux-x64 -R 'knotlink|archive_integration|player_preservation|data_core' --output-on-failure
+```
+
+这轮验证不是 Windows/macOS 原生运行，也不是 Minecraft/FTB 单人/专服旅行端到端验收。新提交的跨平台 CI 需要按 PR 后续精确 SHA 单独确认，不能沿用上面旧提交的绿色结果。内容校验会额外解压完整快照/链并读取源数据；大型世界需要相应临时磁盘与时间，不能将小型合成夹具的时延当作生产上限。

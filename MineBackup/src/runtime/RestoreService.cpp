@@ -623,3 +623,30 @@ RestoreResult RestoreService::Run(
 const char* ToString(RestoreMode mode) noexcept {
 	return mode == RestoreMode::Clean ? "clean" : "overwrite";
 }
+
+bool RestoreService::StageVerifiedSnapshot(const RestoreRequest& request,
+    const filesystem::path& staging, string& error, stop_token stopToken) const {
+    if (FolderRewindFormat::IsPartialBackupType(request.archive.filename().wstring())) {
+        error = "A partial archive is not a complete source snapshot."; return false;
+    }
+    const auto plan = BuildAndVerify(request, false, stopToken, RestoreVerificationMode::Managed);
+    if (!IsSuccessful(plan.code)) {
+        error = plan.diagnostics.empty() ? "Archive verification failed." : plan.diagnostics.front().eventId;
+        return false;
+    }
+    error_code ec;
+    if (filesystem::exists(staging, ec) || ec) {
+        error = "Snapshot staging directory must not already exist."; return false;
+    }
+    filesystem::create_directories(staging, ec);
+    if (ec) { error = ec.message(); return false; }
+    const auto runner = dependencies_.archiveRunnerFactory(request.config.zipPath, dependencies_.paths, stopToken);
+    if (!ExtractChain(plan, GetMetadataDirectory(request.config, request.world.relativePath),
+            staging, runner, dependencies_.paths, request.config.useLowPriority)) {
+        error = "Could not materialize the verified archive chain."; return false;
+    }
+    if (!RestoreWorkspace::ValidateSafeTree(staging, error, stopToken)) return false;
+    filesystem::remove_all(staging / FolderRewindFormat::kInternalRestoreMarkerDirectoryName, ec);
+    if (ec) { error = ec.message(); return false; }
+    return !stopToken.stop_requested();
+}

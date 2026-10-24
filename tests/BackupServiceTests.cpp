@@ -1281,6 +1281,12 @@ void RunBackupServiceTests(
         ChainSafeRetention::HistoryChanges changes; changes.auxiliarySource = true; changes.deletions = {old};
         vector<HistoryEntry> latest{old}; latest.front().isImportant = true;
         test.Expect(!ChainSafeRetention::ApplyHistoryChanges(cfg, latest, changes), "Concurrent important flag conflicts also protect auxiliary backups");
+        ChainSafeRetention::HistoryChanges rename; rename.auxiliarySource = true;
+        rename.renames.push_back({old, L"[Full] renamed.7z", L"Full"});
+        test.Expect(!ChainSafeRetention::ApplyHistoryChanges(cfg, latest, rename),
+            "Concurrent important flag conflicts protect renamed compaction targets too");
+        test.Expect(latest.front().backupFile == old.backupFile && latest.front().isImportant,
+            "Rejected compaction preserves the pinned exact filename and importance");
     }
 
 

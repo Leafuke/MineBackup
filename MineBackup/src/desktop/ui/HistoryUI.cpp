@@ -13,6 +13,7 @@
 #include "ConfigManager.h"
 #include "text_to_text.h"
 #include "HistoryManager.h"
+#include "MigrationCoordinator.h"
 #include "BackupManager.h"
 #include "CloudSyncService.h"
 #include "DesktopPlatform.h"
@@ -28,6 +29,7 @@ using namespace std;
 
 namespace {
 HistoryWindowController historyController;
+string importanceError;
 bool historyNeedsInitialViewport = true;
 
 const char* HistoryStatusKey(HistoryFileStatus status) {
@@ -517,12 +519,16 @@ void ShowHistoryWindow(int requestedConfigIndex,
 			if (ImGui::Button(selectedEntry->isImportant
 				? L("HISTORY_UNMARK_IMPORTANT") : L("HISTORY_MARK_IMPORTANT"))) {
 				const bool important = !selectedEntry->isImportant;
-				(void)UpdateHistoryEntry(
-					lockedConfigIndex,
-					selectedEntry->worldName,
-					selectedEntry->backupFile,
-					[important](HistoryEntry& entry) { entry.isImportant = important; });
+                if (g_appState.profileRecoveryRequired.load() || MigrationCoordinator::IsHistoryPersistenceBlocked()) {
+                    importanceError = "History migration must finish before importance can be saved.";
+                } else {
+                    const auto result = GetHistoryRepository().SetImportance(config,
+                        selectedEntry->worldName, selectedEntry->backupFile, important,
+                        GetAppPaths().HistoryFile(), SnapshotConfigState().configs);
+                    importanceError = result.success ? string{} : result.error;
+                }
 			}
+            if (!importanceError.empty()) ImGui::TextWrapped("%s", importanceError.c_str());
 			SameLineFits(L("HISTORY_EDIT_COMMENT"));
 			if (ImGui::Button(L("HISTORY_EDIT_COMMENT"))) {
 				commentKey = selectedKey;

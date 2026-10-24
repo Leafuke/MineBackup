@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <cstdlib>
 #include <cwctype>
@@ -51,6 +52,8 @@
 #include <io.h>
 #else
 #include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 #include <spawn.h>
 #include <sys/wait.h>
 extern char** environ;
@@ -59,6 +62,63 @@ extern char** environ;
 #include "RuntimeInfrastructureTests.h"
 
 namespace {
+
+class HeldWorldLock {
+public:
+    explicit HeldWorldLock(const std::filesystem::path& world) {
+        std::filesystem::create_directories(world);
+        const auto path = world / "session.lock";
+        std::ofstream(path, std::ios::app).put('x');
+#ifdef _WIN32
+        handle_ = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        held_ = handle_ != INVALID_HANDLE_VALUE;
+#else
+        int ready[2], release[2];
+        if (pipe(ready) != 0) return;
+        if (pipe(release) != 0) { close(ready[0]); close(ready[1]); return; }
+        const std::string filename = path.string();
+        child_ = fork();
+        if (child_ == 0) {
+            close(ready[0]); close(release[1]);
+            const int file = open(filename.c_str(), O_RDWR);
+            struct flock lock {};
+            lock.l_type = F_WRLCK; lock.l_whence = SEEK_SET;
+            const char acquired = file >= 0 && fcntl(file, F_SETLK, &lock) == 0 ? 1 : 0;
+            (void)write(ready[1], &acquired, 1);
+            char finish;
+            (void)read(release[0], &finish, 1);
+            if (file >= 0) close(file);
+            _exit(0);
+        }
+        close(ready[1]); close(release[0]);
+        if (child_ < 0) { close(ready[0]); close(release[1]); return; }
+        release_ = release[1];
+        char acquired = 0;
+        held_ = read(ready[0], &acquired, 1) == 1 && acquired == 1;
+        close(ready[0]);
+#endif
+    }
+    ~HeldWorldLock() {
+#ifdef _WIN32
+        if (handle_ != INVALID_HANDLE_VALUE) CloseHandle(handle_);
+#else
+        if (release_ >= 0) close(release_);
+        if (child_ > 0) { int status; while (waitpid(child_, &status, 0) < 0 && errno == EINTR) {} }
+#endif
+    }
+    bool Held() const { return held_; }
+    HeldWorldLock(const HeldWorldLock&) = delete;
+    HeldWorldLock& operator=(const HeldWorldLock&) = delete;
+private:
+    bool held_ = false;
+#ifdef _WIN32
+    HANDLE handle_ = INVALID_HANDLE_VALUE;
+#else
+    pid_t child_ = -1;
+    int release_ = -1;
+#endif
+};
 
 void TestTaskCoordinator(TestContext& test, const std::filesystem::path& root) {
     auto& coordinator = TaskCoordinator::Instance();
@@ -722,6 +782,17 @@ void TestProfileRuntimeReload(
 	test.Expect(JobStorage::Save(paths.JobsFile(), document, saveError),
 		"ProfileRuntime fixture should persist jobs.json");
 
+    HistoryEntry pinned;
+    pinned.configId = config.configId;
+    pinned.worldName = L"world";
+    pinned.worldPath = (profileRoot / "server" / "world").wstring();
+    pinned.backupFile = L"exact backup.7z";
+    pinned.backupType = L"Partial";
+    pinned.timestamp_str = L"2026-10-04T00:00:00";
+    std::filesystem::create_directories(profileRoot / "backups" / "world");
+    std::ofstream(profileRoot / "backups" / "world" / pinned.backupFile).put('x');
+    test.Expect(FolderRewindHistoryStore::SaveHistoryFile(paths.HistoryFile(),
+        {{1, config}}, {{1, {pinned}}}), "headless importance fixture persists");
 	ProfileRuntime runtime(paths, {true, {}});
 	const auto loaded = runtime.Reload();
 	test.Expect(IsSuccessful(loaded.code) && runtime.IsReady()
@@ -730,8 +801,13 @@ void TestProfileRuntimeReload(
 			&& runtime.ResolveBackup(config.configId, L"world").has_value(),
 		"ProfileRuntime should own a coherent catalog, Job and history snapshot");
 
-	auto bridge = std::make_shared<HeadlessKnotLinkBridge>();
-	ProfileKnotLinkCommands commands(runtime, bridge);
+    std::mutex eventMutex;
+    std::vector<BackupRuntimeEvent> commandEvents;
+    auto sink = std::make_shared<CallbackRuntimeEventSink>([&](const BackupRuntimeEvent& event) {
+        std::lock_guard lock(eventMutex);
+        commandEvents.push_back(event);
+    });
+    ProfileKnotLinkCommands commands(runtime, sink);
 	minebackup::knotlink::KnotLinkCommandDispatcher dispatcher(
 		[&commands](const auto& context) { return commands.Handle(context); });
 	const auto listed = minebackup::knotlink::KnotLinkKeyValueCodec::Parse(
@@ -750,6 +826,128 @@ void TestProfileRuntimeReload(
 	test.Expect(removedSchedule.values.at("status") == "error"
 			&& removedSchedule.values.at("code") == "unknown_command",
 		"the headless dispatcher should not reintroduce internal scheduling");
+
+    const std::string importanceTarget =
+        ";from=test.mod;request_id=importance;config_id=11111111-1111-4111-8111-111111111111;folder=world";
+    const std::string exactFile = ";file=exact%20backup.7z";
+    const auto dispatch = [&](const std::string& payload) {
+        return minebackup::knotlink::KnotLinkKeyValueCodec::Parse(dispatcher.Dispatch(payload));
+    };
+    auto response = dispatch("cmd=GET_IMPORTANCE" + importanceTarget + exactFile);
+    const auto historyRevision = runtime.History().Snapshot()->revision;
+    test.Expect(response.values.at("status") == "ok"
+        && response.values.at("file") == "exact backup.7z"
+        && response.values.at("important") == "false"
+        && response.values.at("from") == "test.mod"
+        && response.values.at("request_id") == "importance",
+        "headless importance query returns the exact file and correlated boolean");
+    dispatch("cmd=GET_IMPORTANCE" + importanceTarget + exactFile);
+    test.Expect(runtime.History().Snapshot()->revision == historyRevision,
+        "headless importance query is read-only");
+    for (int repeat = 0; repeat != 2; ++repeat) {
+        response = dispatch("cmd=MARK_IMPORTANT" + importanceTarget + exactFile + ";important=true");
+        test.Expect(response.values.at("status") == "ok"
+            && response.values.at("file") == "exact backup.7z"
+            && response.values.at("important") == "true", "headless exact pin is idempotent");
+    }
+    test.Expect(IsSuccessful(runtime.Reload().code)
+        && dispatch("cmd=GET_IMPORTANCE" + importanceTarget + exactFile).values.at("important") == "true",
+        "headless pin survives runtime reload");
+    {
+        std::barrier rendezvous(2);
+        std::jthread archiveMutation([&] {
+            std::lock_guard guard(HistoryRepository::ArchiveMutationMutex());
+            rendezvous.arrive_and_wait();
+            rendezvous.arrive_and_wait();
+        });
+        rendezvous.arrive_and_wait();
+        const auto blockedPin = dispatch("cmd=MARK_IMPORTANT" + importanceTarget + exactFile + ";important=false");
+        const auto blockedQuery = dispatch("cmd=GET_IMPORTANCE" + importanceTarget + exactFile);
+        test.Expect(blockedPin.values.at("status") == "error"
+            && blockedPin.values.at("message") == "Archive operation is busy."
+            && blockedQuery.values.at("status") == "error",
+            "pin and query fail busy instead of racing a retention archive transaction");
+        rendezvous.arrive_and_wait();
+        archiveMutation.join();
+        test.Expect(dispatch("cmd=GET_IMPORTANCE" + importanceTarget + exactFile).values.at("important") == "true",
+            "a rejected concurrent unpin cannot lose the existing persisted pin");
+    }
+    response = dispatch("cmd=MARK_IMPORTANT" + importanceTarget + exactFile + ";important=false");
+    test.Expect(response.values.at("status") == "ok" && response.values.at("important") == "false"
+        && dispatch("cmd=GET_IMPORTANCE" + importanceTarget + exactFile).values.at("important") == "false",
+        "headless exact unpin returns and persists false");
+    for (const std::string payload : {
+        "cmd=GET_IMPORTANCE" + importanceTarget,
+        "cmd=GET_IMPORTANCE" + importanceTarget + ";file=unknown.7z",
+        "cmd=GET_IMPORTANCE" + importanceTarget + ";file=..%2Fexact%20backup.7z",
+        "cmd=MARK_IMPORTANT" + importanceTarget + exactFile,
+        "cmd=MARK_IMPORTANT" + importanceTarget + exactFile + ";important=maybe",
+        std::string("cmd=BACKUP;from=test.mod;request_id=invalid-protect;protect=invalid"),
+        std::string("cmd=BACKUP_ALL;from=test.mod;request_id=invalid-all;protect=true"),
+        std::string("cmd=BACKUP;from=test.mod;request_id=invalid-partial;protect=true;backup_whitelist=region")}) {
+        test.Expect(dispatch(payload).values.at("status") == "error",
+            "headless dispatcher rejects incomplete, unknown, and unsupported protection requests");
+    }
+    for (const std::string command : {"MARK_IMPORTANT", "GET_IMPORTANCE"}) {
+        response = dispatch("cmd=" + command + ";from=test.mod;request_id=current-save;current_save=true"
+            + exactFile + (command == "MARK_IMPORTANT" ? ";important=true" : ""));
+        test.Expect(response.values.at("status") == "error"
+            && response.values.at("message") == "No active world was found.",
+            "headless importance commands accept current_save and safely require one active world");
+    }
+    {
+        HeldWorldLock activeWorld(profileRoot / "server" / "world");
+        test.Expect(activeWorld.Held(), "test world lock is held by an independent owner");
+        if (activeWorld.Held()) {
+            response = dispatch("cmd=MARK_IMPORTANT;from=test.mod;request_id=current-pin;current_save=true"
+                + exactFile + ";important=true");
+            test.Expect(response.values.at("status") == "ok"
+                && response.values.at("file") == "exact backup.7z"
+                && response.values.at("important") == "true",
+                "current_save pin resolves exactly one occupied configured world");
+            response = dispatch("cmd=GET_IMPORTANCE;from=test.mod;request_id=current-query;current_save=true" + exactFile);
+            test.Expect(response.values.at("status") == "ok" && response.values.at("important") == "true",
+                "current_save query reads the same precise pinned archive");
+            config.worlds.emplace_back(L"world-two", L"");
+            test.Expect(ProfileConfigRepository(paths.ConfigFile()).Save({{1, config}}, {L"session.lock"}, true).success
+                && IsSuccessful(runtime.Reload().code), "multiple-world fixture reloads");
+            {
+                HeldWorldLock otherWorld(profileRoot / "server" / "world-two");
+                test.Expect(otherWorld.Held(), "second test world lock is held");
+                if (otherWorld.Held()) {
+                    response = dispatch("cmd=GET_IMPORTANCE;current_save=true" + exactFile);
+                    test.Expect(response.values.at("status") == "error"
+                        && response.values.at("message").starts_with("Multiple active worlds"),
+                        "importance selection never guesses between active worlds");
+                }
+            }
+            config.worlds.pop_back();
+            test.Expect(ProfileConfigRepository(paths.ConfigFile()).Save({{1, config}}, {L"session.lock"}, true).success
+                && IsSuccessful(runtime.Reload().code), "single-world fixture is restored");
+        }
+    }
+    response = dispatch("cmd=BACKUP" + importanceTarget + ";protect=true");
+    test.Expect(response.values.at("status") == "ok", "protected backup is submitted through the headless abstraction");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (commands.ActiveOperationCount() != 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    test.Expect(commands.ActiveOperationCount() == 0, "failed protected backup reaches a terminal state");
+    {
+        std::lock_guard lock(eventMutex);
+        std::size_t failed = 0, succeeded = 0;
+        for (const auto& event : commandEvents) {
+            if (event.eventId != "command_failed" && event.eventId != "command_completed") continue;
+            const std::map<std::string, std::string> fields(event.fields.begin(), event.fields.end());
+            if (!fields.contains("command") || fields.at("command") != "BACKUP") continue;
+            failed += event.eventId == "command_failed";
+            succeeded += event.eventId == "command_completed";
+            test.Expect(fields.at("from") == "test.mod" && fields.at("request_id") == "importance",
+                "headless terminal receipt retains the original correlation fields");
+        }
+        test.Expect(failed == 1 && succeeded == 0,
+            "unavailable protected source emits one failure receipt and never an unprotected success");
+    }
 
 	document.jobs.front().stages.front().steps.front().backup.configId =
 		L"99999999-9999-4999-8999-999999999999";

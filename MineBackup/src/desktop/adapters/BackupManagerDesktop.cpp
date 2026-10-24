@@ -95,6 +95,7 @@ BackupResult RunDesktopBackup(
 	request.comment = comment;
 	request.legacyConfigIndex = configIndex;
     if (operationOverrides) {
+        request.protect = operationOverrides->protect;
         request.backupWhitelist = operationOverrides->backupWhitelist;
         request.backupScope = operationOverrides->backupScope;
         request.scopeDimensions = operationOverrides->scopeDimensions;
@@ -103,6 +104,10 @@ BackupResult RunDesktopBackup(
 
 	BackupServiceDependencies dependencies;
 	dependencies.paths = GetAppPaths();
+    dependencies.history = &GetHistoryRepository();
+    dependencies.historyConfigs = SnapshotConfigState().configs;
+    dependencies.canPersistHistory = [] { return !g_appState.profileRecoveryRequired.load()
+        && !MigrationCoordinator::IsHistoryPersistenceBlocked(); };
 	dependencies.ensureMigration = [configIndex](const BackupRequest& value) {
 		return MigrationCoordinator::EnsureWorldMigrated(
 			value.config,
@@ -115,6 +120,7 @@ BackupResult RunDesktopBackup(
 	};
 	dependencies.hotBackup = make_shared<CallbackHotBackupBridge>(PrepareDesktopHotBackup);
 	dependencies.addHistory = [configIndex](const HistoryEntry& entry) {
+        if (entry.isImportant && MigrationCoordinator::IsHistoryPersistenceBlocked()) return false;
 		return UpsertHistoryEntry(configIndex, entry, false);
 	};
 	dependencies.removeHistory = [configIndex](

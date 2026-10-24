@@ -1,5 +1,6 @@
 #include "CompressionPolicy.h"
 #include "ChainSafeRetention.h"
+#include "HistoryRepository.h"
 #include "PlatformCompat.h"
 
 #include "FolderRewindFormat.h"
@@ -380,7 +381,8 @@ bool ApplyHistoryChanges(const Config& config, vector<HistoryEntry>& latest, con
         if (!index || latest[*index].isImportant) return false;
     }
     for (const auto& rename : changes.renames) {
-        if (!locate(rename.expected)) return false;
+        const auto index = locate(rename.expected);
+        if (!index || latest[*index].isImportant) return false;
         auto collision = rename.expected; collision.backupFile = rename.backupFile;
         if (rename.backupFile != rename.expected.backupFile && locate(collision)) return false;
     }
@@ -399,7 +401,18 @@ bool ApplyHistoryChanges(const Config& config, vector<HistoryEntry>& latest, con
 }
 
 Result Remove(Request request) {
+    lock_guard operation(HistoryRepository::ArchiveMutationMutex());
 	Result result;
+    if (request.historySnapshot) {
+        request.history = request.historySnapshot();
+        const auto found = find_if(request.history.begin(), request.history.end(), [&](const auto& entry) {
+            return IsSame(request.config, entry, request.entry, request.auxiliarySource);
+        });
+        if (found == request.history.end()) {
+            result.warning = true; result.detail = "Archive history changed before retention."; return result;
+        }
+        request.entry = *found;
+    }
 	if (IsCancelled(request)) {
 		result.warning = true;
 		result.detail = "retention was cancelled before archive mutation";
