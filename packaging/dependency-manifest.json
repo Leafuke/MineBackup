@@ -4,16 +4,16 @@
   "dependencies": [
     {
       "name": "GLFW",
-      "version": "3.4",
-      "source": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip",
-      "sha256": "b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9",
+      "version": "3.5.1",
+      "source": "https://github.com/glfw/glfw/releases/download/3.5.1/glfw-3.5.1.zip",
+      "sha256": "ea79bc5feffc254c87291980c2d0bce9acebb68c4983b79f961dcd2cb8a611a0",
       "distribution": "statically linked"
     },
     {
       "name": "Dear ImGui",
-      "version": "1.92.9-docking",
-      "source": "https://github.com/ocornut/imgui/releases/tag/v1.92.9-docking",
-      "sourceCommit": "9b4eb24cee2071e61dc1f9ef3e5228097cdde720",
+      "version": "1.93.0-docking",
+      "source": "https://github.com/ocornut/imgui/releases/tag/v1.93.0-docking",
+      "sourceCommit": "b916186e66aa3c02b72c6ca17455516512ed8049",
       "distribution": "selected sources vendored and statically linked"
     },
     {

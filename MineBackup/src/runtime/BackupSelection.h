@@ -22,5 +22,4 @@ private:
 	std::vector<std::wstring> wildcards_;
 	std::set<std::wstring> scopeFiles_;
 	std::vector<std::wstring> scopePrefixes_;
-	std::vector<std::wstring> scopeWildcards_;
 };

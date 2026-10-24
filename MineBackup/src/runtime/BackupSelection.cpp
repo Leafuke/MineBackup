@@ -5,9 +5,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cwctype>
+#include <limits>
 #include <locale>
 #include <sstream>
+#include <string_view>
 
 using namespace std;
 
@@ -42,6 +45,47 @@ bool WildcardMatches(const wstring& pattern, const wstring& path) {
 	}
 	while (p < pattern.size() && pattern[p] == L'*') ++p;
 	return p == pattern.size();
+}
+
+bool ParseChunkCoordinate(wstring_view text, int32_t& coordinate) {
+	if (text.empty()) return false;
+	const bool negative = text.front() == L'-';
+	if (negative) text.remove_prefix(1);
+	if (text.empty()) return false;
+	const int64_t limit = static_cast<int64_t>(numeric_limits<int32_t>::max()) + (negative ? 1 : 0);
+	int64_t magnitude = 0;
+	for (const wchar_t ch : text) {
+		if (ch < L'0' || ch > L'9') return false;
+		const int digit = ch - L'0';
+		if (magnitude > (limit - digit) / 10) return false;
+		magnitude = magnitude * 10 + digit;
+	}
+	coordinate = static_cast<int32_t>(negative ? -magnitude : magnitude);
+	return true;
+}
+
+int32_t ChunkToRegion(int32_t coordinate) {
+	// Match Minecraft's floor division, including negative chunk coordinates.
+	const int32_t region = coordinate / 32;
+	return coordinate % 32 < 0 ? region - 1 : region;
+}
+
+bool IsSelectedExternalChunk(const wstring& path, const set<wstring>& scopeFiles) {
+	const auto slash = path.find_last_of(L'/');
+	if (slash == wstring::npos) return false;
+	wstring_view coordinates(path);
+	coordinates.remove_prefix(slash + 1);
+	if (coordinates.size() < 9 || !coordinates.starts_with(L"c.") || !coordinates.ends_with(L".mcc")) return false;
+	coordinates.remove_prefix(2);
+	coordinates.remove_suffix(4);
+	const auto separator = coordinates.find(L'.');
+	if (separator == wstring_view::npos) return false;
+	int32_t x, z;
+	if (!ParseChunkCoordinate(coordinates.substr(0, separator), x)
+		|| !ParseChunkCoordinate(coordinates.substr(separator + 1), z)) return false;
+	// The exact parent directory also preserves dimension and region/entities/poi boundaries.
+	return scopeFiles.contains(path.substr(0, slash + 1) + L"r."
+		+ to_wstring(ChunkToRegion(x)) + L"." + to_wstring(ChunkToRegion(z)) + L".mca");
 }
 
 bool SafeRelative(const wstring& path) {
@@ -209,7 +253,6 @@ bool BackupSelection::TryBuild(const BackupRequest& request, BackupSelection& re
 			const auto name = L"r." + to_wstring(x) + L"." + to_wstring(z) + L".mca";
 			for (const auto* directory : {L"region/", L"entities/", L"poi/"}) next.scopeFiles_.insert(root + directory + name);
 		}
-		for (const auto* directory : {L"region/", L"entities/", L"poi/"}) next.scopeWildcards_.push_back(root + directory + L"c.*.*.mcc");
 	}
 	for (const auto* essential : {L"level.dat", L"level.dat_old", L"icon.png", L"resources.zip", L"resourcepacks", L"advancements", L"data", L"datapacks", L"generated", L"playerdata", L"players", L"stats", L"serverconfig"}) next.scopePrefixes_.push_back(essential);
 	next.scoped_ = true;
@@ -221,9 +264,7 @@ bool BackupSelection::Includes(const wstring& relativePath) const {
 	if (!SafeRelative(path)) return false;
 	if (scoped_ && !scopeFiles_.contains(path)
 		&& none_of(scopePrefixes_.begin(), scopePrefixes_.end(), [&](const auto& rule) { return EqualsOrUnder(path, rule); })
-		&& none_of(scopeWildcards_.begin(), scopeWildcards_.end(), [&](const auto& rule) {
-			return path.substr(0, path.find_last_of(L'/')) == rule.substr(0, rule.find_last_of(L'/')) && WildcardMatches(rule, path);
-		})) return false;
+		&& !IsSelectedExternalChunk(path, scopeFiles_)) return false;
 	if (literals_.empty() && wildcards_.empty()) return true;
 	// Literal rules match a complete contiguous run of source-relative segments.
 	for (size_t start = 0; start < path.size();) {

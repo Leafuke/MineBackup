@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -95,6 +96,9 @@ private:
     mutable std::mutex mutex_;
     std::string expectedCommand_;
     std::string world_;
+    std::thread::id ownerThread_;
+    std::string ownerFrom_;
+    std::string ownerRequestId_;
 };
 
 class KnotLinkCommandValidator {

@@ -582,15 +582,29 @@ std::shared_ptr<KnotLinkCommandContext> KnotLinkCommandScope::Current() {
 
 void KnotLinkCallbackTracker::ObserveEvent(std::string_view eventName,
     const KnotLinkKeyValueCodec::Fields& fields, const KnotLinkCommandContext* context) {
-    (void)context;
     std::lock_guard lock(mutex_);
+    const bool hasCommandIdentity = context && !context->metadata.from.empty()
+        && !context->metadata.requestId.empty();
     if (eventName == "handshake") {
+        ownerThread_ = std::this_thread::get_id();
+        ownerFrom_ = hasCommandIdentity ? context->metadata.from : std::string{};
+        ownerRequestId_ = hasCommandIdentity ? context->metadata.requestId : std::string{};
         world_.clear();
         for (const auto& [key, value] : fields) {
             if (key == "world") world_ = value;
         }
         expectedCommand_ = "HANDSHAKE_RESPONSE";
-    } else if (eventName == "pre_hot_backup") {
+        return;
+    }
+    // Completion can be published after an operation releases its conversation lock.
+    // Only the owning command (or its synchronous local worker) may change this session.
+    if (ownerThread_ == std::thread::id{}) return;
+    if (hasCommandIdentity) {
+        if (context->metadata.from != ownerFrom_ || context->metadata.requestId != ownerRequestId_) return;
+    } else if (std::this_thread::get_id() != ownerThread_) {
+        return;
+    }
+    if (eventName == "pre_hot_backup") {
         expectedCommand_ = "WORLD_SAVED";
     } else if (eventName == "pre_hot_restore") {
         expectedCommand_ = "WORLD_SAVE_AND_EXIT_COMPLETE";
@@ -600,6 +614,10 @@ void KnotLinkCallbackTracker::ObserveEvent(std::string_view eventName,
         || eventName == "hot_restore_complete" || eventName == "restore_cancelled"
         || eventName == "command_completed" || eventName == "command_failed") {
         expectedCommand_.clear();
+        world_.clear();
+        ownerThread_ = {};
+        ownerFrom_.clear();
+        ownerRequestId_.clear();
     }
 }
 

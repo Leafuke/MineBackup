@@ -287,7 +287,7 @@ void RunOneShotSelectionContracts(TestContext& test, const filesystem::path& tem
 	request.scopeDimensions = L"world;DIM-1|minecraft:the_end";
 	const auto regional = service.Run(request);
 	const set<wstring> expectedRegions{L"level.dat", L"playerdata/player.dat", L"region/r.0.0.mca",
-		L"region/r.-1.-1.mca", L"region/r.1.1.mca", L"region/c.999.999.mcc", L"entities/r.0.0.mca",
+		L"region/r.-1.-1.mca", L"region/r.1.1.mca", L"entities/r.0.0.mca",
 		L"poi/r.0.0.mca", L"DIM-1/region/r.0.0.mca", L"DIM1/region/r.0.0.mca", L"DIM-1/data/map.dat"};
 	test.Expect(regional.historyEntry && regional.historyEntry->backupType == L"Partial" && lists.back() == expectedRegions
 		&& ReadFixture(statePath) == baselineState && retentionCalls == 1,
