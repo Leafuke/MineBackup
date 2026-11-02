@@ -1,4 +1,5 @@
 #include "Broadcast.h"
+#include "KnotLinkService.h"
 #include "AppPaths.h"
 #include "BackupManager.h"
 #include "GameSessionManager.h"
@@ -202,6 +203,7 @@ bool SubmitUserRestore(
 		{TaskCoordinator::WorldResourceKey(world.config.configId, world.path)},
 		[world, backupFile, restoreMethod,
 			customRestoreList = std::move(customRestoreList), backupBeforeRestore](stop_token) {
+            lock_guard conversation(minebackup::knotlink::KnotLinkService::ModConversationMutex());
 			wstring pinnedBackup = backupFile;
 			if (pinnedBackup.empty()) {
 				const optional<wstring> latest = ResolveLatestManagedBackup(world);

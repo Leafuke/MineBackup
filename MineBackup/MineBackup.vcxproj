@@ -110,6 +110,7 @@
     <ClCompile Include="src\desktop\app\ImGuiRuntime.cpp" />
 	<ClCompile Include="src\desktop\legacy\LegacyServiceCleanup.cpp" />
     <ClCompile Include="src\desktop\app\MineBackup.cpp" />
+    <ClCompile Include="src\infra\PlayerDataPreservation.cpp" />
     <ClCompile Include="src\infra\ArchiveRunner.cpp" />
     <ClCompile Include="src\runtime\ChainSafeRetention.cpp" />
     <ClCompile Include="src\infra\BackupChangeDetector.cpp" />
@@ -152,7 +153,9 @@
 	<ClCompile Include="src\runtime\ProfileKnotLinkCommands.cpp" />
 	<ClCompile Include="src\runtime\ProfileManifest.cpp" />
 	<ClCompile Include="src\runtime\ProfileRuntime.cpp" />
-	<ClCompile Include="src\runtime\RestoreService.cpp" />
+	<ClCompile Include="src\runtime\RestorePreservedPaths.cpp" />
+    <ClCompile Include="src\runtime\BackupSelection.cpp" />
+    <ClCompile Include="src\runtime\RestoreService.cpp" />
 	<ClCompile Include="src\runtime\RestoreWorkspace.cpp" />
 	<ClCompile Include="src\infra\WorldIdentity.cpp" />
 	<ClCompile Include="src\runtime\RuntimeIntegration.cpp" />
@@ -249,6 +252,7 @@
     <ClInclude Include="src\desktop\app\LaunchOptions.h" />
     <ClInclude Include="src\desktop\app\MainUI.h" />
 	<ClInclude Include="src\desktop\legacy\LegacyServiceCleanup.h" />
+    <ClInclude Include="src\infra\PlayerDataPreservation.h" />
     <ClInclude Include="src\infra\ArchiveRunner.h" />
     <ClInclude Include="src\runtime\BatchReadinessService.h" />
     <ClInclude Include="src\runtime\ChainSafeRetention.h" />
@@ -291,7 +295,9 @@
 	<ClInclude Include="src\runtime\ProfileKnotLinkCommands.h" />
 	<ClInclude Include="src\runtime\ProfileManifest.h" />
 	<ClInclude Include="src\runtime\ProfileRuntime.h" />
-	<ClInclude Include="src\runtime\RestoreService.h" />
+	<ClInclude Include="src\runtime\RestorePreservedPaths.h" />
+    <ClInclude Include="src\runtime\BackupSelection.h" />
+    <ClInclude Include="src\runtime\RestoreService.h" />
 	<ClInclude Include="src\runtime\RestoreWorkspace.h" />
 	<ClInclude Include="src\infra\WorldIdentity.h" />
 	<ClInclude Include="src\runtime\RuntimeIntegration.h" />

@@ -84,6 +84,7 @@ bool IsSafeSinglePathSegment(const std::wstring& value);
 bool TryResolveStoragePaths(const std::wstring& backupRoot, const std::wstring& folderName, const std::wstring& fallbackPath, StoragePaths& outPaths);
 std::wstring SanitizeArchiveComment(const std::wstring& comment);
 std::wstring GenerateArchiveFileName(const std::wstring& backupType, const std::wstring& folderName, const std::wstring& comment, const std::wstring& format);
+bool IsPartialBackupType(const std::wstring& typeOrFileName);
 bool IsSmartBackupType(const std::wstring& typeOrFileName);
 bool IsFullLikeBackupType(const std::wstring& typeOrFileName);
 std::wstring AppendRemotePath(const std::wstring& root, std::initializer_list<std::wstring> segments);

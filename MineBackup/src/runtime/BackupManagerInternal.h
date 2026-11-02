@@ -80,7 +80,8 @@ FolderRewindMetadataStore::SaveTransactionResult UpdateMetadataFiles(
 	const std::wstring& previousLastBackupFile,
 	const std::wstring& backupType,
 	std::map<std::wstring, FolderRewindFormat::FileState> currentState,
-	const BackupChangeSet& changeSet);
+	const BackupChangeSet& changeSet,
+	bool independentPartial = false);
 void InvalidateBackupMetadata(
 	const Config& config,
 	const std::wstring& worldName,

@@ -87,12 +87,8 @@ if(MINEBACKUP_BUILD_GUI)
         set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
     endif()
     FetchContent_Declare(glfw
-        # GLFW 3.4 crashes during glfwInit() when a Wayland compositor has no
-        # wl_seat, as is intentional for headless Weston. Pin the upstream fix
-        # until it is included in a tagged GLFW release:
-        # https://github.com/glfw/glfw/issues/2517
-        URL https://github.com/glfw/glfw/archive/3573c5a890b4878bb7357f71daaf49260c6fef15.zip
-        URL_HASH SHA256=dba78a22b73c231560ef3817b7fde606170711af733c8c8065ad2e6f0285bd07
+        URL https://github.com/glfw/glfw/releases/download/3.5.1/glfw-3.5.1.zip
+        URL_HASH SHA256=ea79bc5feffc254c87291980c2d0bce9acebb68c4983b79f961dcd2cb8a611a0
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(glfw)
@@ -400,6 +396,27 @@ if(BUILD_TESTING)
         target_compile_options(minebackup_knotlink_sdk_tests PRIVATE /utf-8 /FS)
     endif()
     add_test(NAME minebackup.knotlink_sdk COMMAND minebackup_knotlink_sdk_tests)
+
+    add_executable(minebackup_player_preservation_tests tests/PlayerDataPreservationTests.cpp)
+    target_include_directories(minebackup_player_preservation_tests PRIVATE ${MINEBACKUP_TEST_INCLUDE_DIRS})
+    target_link_libraries(minebackup_player_preservation_tests PRIVATE minebackup_data_core)
+    target_compile_options(minebackup_player_preservation_tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    add_test(NAME minebackup.player_preservation COMMAND minebackup_player_preservation_tests)
+    find_program(MINEBACKUP_TEST_7ZZ NAMES 7zz 7z)
+    if(MINEBACKUP_TEST_7ZZ)
+        add_test(NAME minebackup.player_preservation_real_gzip
+            COMMAND minebackup_player_preservation_tests ${MINEBACKUP_TEST_7ZZ})
+    endif()
+
+    add_executable(minebackup_runtime_archive_tests tests/RuntimeArchiveIntegrationTest.cpp)
+    target_include_directories(minebackup_runtime_archive_tests PRIVATE ${MINEBACKUP_TEST_INCLUDE_DIRS})
+    target_link_libraries(minebackup_runtime_archive_tests PRIVATE minebackup_runtime)
+    target_compile_options(minebackup_runtime_archive_tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    if(MINEBACKUP_TEST_7ZZ)
+        add_test(NAME minebackup.runtime.archive_integration
+            COMMAND minebackup_runtime_archive_tests ${MINEBACKUP_TEST_7ZZ} ${CMAKE_CURRENT_BINARY_DIR}/test-work)
+        set_tests_properties(minebackup.runtime.archive_integration PROPERTIES TIMEOUT 180)
+    endif()
 
     add_executable(minebackup_data_tests
         tests/TestMain.cpp

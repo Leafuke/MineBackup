@@ -1,6 +1,7 @@
 #include "BackupChangeDetector.h"
 
 #include "FolderRewindMetadataStore.h"
+#include "text_to_text.h"
 
 #include <algorithm>
 #include <system_error>
@@ -58,30 +59,66 @@ bool TryCaptureFileState(const filesystem::path& file, FolderRewindFormat::FileS
 	return true;
 }
 
+bool ScanFailure(
+	const filesystem::path& path,
+	const string& reason,
+	string& failureDetail,
+	const error_code& error = {}) {
+	string name;
+	try {
+		const auto utf8 = path.generic_u8string();
+		name.assign(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+	}
+	catch (...) {
+		name = "(unrepresentable path)";
+	}
+	failureDetail = SanitizeUtf8(reason + ": " + name
+		+ (error ? " (" + error.message() + ")" : ""), 8192).value;
+	return false;
+}
+
 bool CollectCurrentState(
 	const filesystem::path& root,
-	map<wstring, FolderRewindFormat::FileState>& state) {
+	map<wstring, FolderRewindFormat::FileState>& state,
+	const function<bool(const filesystem::path&)>& excludePath,
+	string& failureDetail) {
 	map<wstring, FolderRewindFormat::FileState> nextState;
 	error_code ec;
-	if (!filesystem::exists(root, ec) || ec) return false;
+	if (!filesystem::exists(root, ec) || ec)
+		return ScanFailure(root, "Source directory is unavailable", failureDetail, ec);
 
 	filesystem::recursive_directory_iterator iterator(root, ec), end;
-	if (ec) return false;
+	if (ec) return ScanFailure(root, "Could not read source directory", failureDetail, ec);
 	while (iterator != end) {
 		const auto& entry = *iterator;
-		const bool regularFile = entry.is_regular_file(ec);
-		if (ec) return false;
-		if (regularFile) {
-			wstring relative;
-			FolderRewindFormat::FileState fileState;
-			if (!TryGetNormalizedRelativePath(entry.path(), root, relative)
-				|| !TryCaptureFileState(entry.path(), fileState)) {
-				return false;
+		// Do not canonicalize first: an explicitly excluded symlink may point
+		// outside the world, and an excluded directory may be unreadable.
+		const auto relativePath = entry.path().lexically_relative(root);
+		bool excluded = false;
+		try {
+			excluded = excludePath && excludePath(relativePath);
+		}
+		catch (...) {
+			return ScanFailure(relativePath, "Could not evaluate backup exclusions", failureDetail);
+		}
+		if (excluded) {
+			iterator.disable_recursion_pending();
+		}
+		else {
+			const bool regularFile = entry.is_regular_file(ec);
+			if (ec) return ScanFailure(relativePath, "Could not inspect source entry", failureDetail, ec);
+			if (regularFile) {
+				wstring relative;
+				FolderRewindFormat::FileState fileState;
+				if (!TryGetNormalizedRelativePath(entry.path(), root, relative))
+					return ScanFailure(relativePath, "Unsupported or unsafe backup path", failureDetail);
+				if (!TryCaptureFileState(entry.path(), fileState))
+					return ScanFailure(relativePath, "Could not read file size or modification time", failureDetail);
+				nextState[relative] = std::move(fileState);
 			}
-			nextState[relative] = std::move(fileState);
 		}
 		iterator.increment(ec);
-		if (ec) return false;
+		if (ec) return ScanFailure(relativePath, "Could not traverse source directory", failureDetail, ec);
 	}
 	state = std::move(nextState);
 	return true;
@@ -92,14 +129,15 @@ bool CollectCurrentState(
 BackupScanResult BackupChangeDetector::Scan(
 	const filesystem::path& sourceRoot,
 	const filesystem::path& metadataDirectory,
-	const filesystem::path& backupDirectory) const {
+	const filesystem::path& backupDirectory,
+	const function<bool(const filesystem::path&)>& excludePath) const {
 	BackupScanResult result;
 	auto collectOrFail = [&](BackupScanStatus successStatus) {
-		if (CollectCurrentState(sourceRoot, result.currentState)) {
+		if (CollectCurrentState(sourceRoot, result.currentState, excludePath, result.failureDetail)) {
 			result.status = successStatus;
 		}
 		else {
-			result = BackupScanResult{};
+			result.currentState.clear();
 			result.status = BackupScanStatus::ScanFailed;
 		}
 	};
@@ -139,7 +177,7 @@ BackupScanResult BackupChangeDetector::Scan(
 		return result;
 	}
 
-	if (!CollectCurrentState(sourceRoot, result.currentState)) {
+	if (!CollectCurrentState(sourceRoot, result.currentState, excludePath, result.failureDetail)) {
 		result.status = BackupScanStatus::ScanFailed;
 		return result;
 	}

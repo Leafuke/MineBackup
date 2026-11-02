@@ -27,6 +27,8 @@ jobs:
       - name: Build and test CMake candidate
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cmake --build build/windows-shadow --config Release --parallel
           python tests/verify_rc_tests.py --build build/windows-shadow
           ctest --test-dir build/windows-shadow -C Release --output-on-failure
@@ -36,6 +38,8 @@ jobs:
       - name: Build and verify formal MSBuild candidate
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           msbuild ./MineBackup.sln /p:Configuration=Release /p:Platform=x64 /m
           ./cmake/VerifyWindowsArtifact.ps1 -Executable x64/Release/MineBackup.exe
           ./cmake/SmokeTestWindowsArtifact.ps1 -Executable x64/Release/MineBackup.exe

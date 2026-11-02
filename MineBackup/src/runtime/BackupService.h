@@ -7,11 +7,13 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <map>
 #include <stop_token>
 #include <string>
 #include <utility>
 #include <vector>
 
+class HistoryRepository;
 class ICloudPostHook;
 class IHotBackupBridge;
 class IRuntimeEventSink;
@@ -25,11 +27,20 @@ struct BackupRequest {
 	int legacyConfigIndex = -1;
 	// Explicitly opt in for independent Full backups of mods/arbitrary folders.
 	bool auxiliarySource = false;
+	// Complete-source checkpoint, pinned in the initial history commit.
+	bool protect = false;
+	// One-operation selection only; never persisted into Config or the Smart baseline.
+	std::vector<std::wstring> backupWhitelist;
+	std::wstring backupScope;
+	std::wstring scopeDimensions;
+	std::wstring scopeAreas;
 };
 
 struct BackupExecutionOptions {
 	// 恢复前安全备份需要先固定恢复链；其保留策略必须延迟到恢复事务成功之后。
 	bool deferRetention = false;
+    // Emitted only after durable protected local commit, before optional cloud I/O.
+    std::function<void(const BackupResult&)> onProtectedCommit;
 };
 
 enum class HotBackupStatus {
@@ -51,6 +62,10 @@ struct BackupRuntimeEvent {
 
 struct BackupServiceDependencies {
 	AppPaths paths;
+	HistoryRepository* history = nullptr;
+	std::map<int, Config> historyConfigs;
+    // Desktop migration keeps legacy history write-blocked until safely mapped.
+    std::function<bool()> canPersistHistory;
 	std::function<MigrationUnitResult(const BackupRequest&)> ensureMigration;
 	std::function<bool(const std::filesystem::path&)> isFileLocked;
 	std::function<bool(const HistoryEntry&)> addHistory;

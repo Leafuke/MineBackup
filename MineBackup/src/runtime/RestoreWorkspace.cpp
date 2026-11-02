@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <system_error>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 using namespace std;
 
@@ -51,6 +54,7 @@ bool CopyPreserved(
 	vector<wstring> rules,
 	string& errorText,
 	stop_token stopToken) {
+	if (!ValidateSafeTree(source, errorText, stopToken) || !ValidateSafeTree(target, errorText, stopToken)) return false;
 	// session.lock 由恢复工作区统一保留，避免桌面端与 headless 端出现不同语义。
 	if (none_of(rules.begin(), rules.end(), [](const wstring& item) {
 		return item == L"session.lock";
@@ -150,6 +154,39 @@ bool CopyPreserved(
 }
 
 } // namespace
+
+bool ValidateSafeTree(const filesystem::path& root, string& error, stop_token token) {
+ try {
+  auto rejectLink = [](const filesystem::path& path) {
+   if (filesystem::is_symlink(filesystem::symlink_status(path))) throw runtime_error("Restore tree contains a symbolic link.");
+#ifdef _WIN32
+   auto attributes = GetFileAttributesW(path.c_str());
+   if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+    throw runtime_error("Restore tree contains a reparse point.");
+#endif
+  };
+  filesystem::path ancestor;
+  for (const auto& part : filesystem::absolute(root).lexically_normal()) { ancestor /= part; rejectLink(ancestor); }
+  if (!filesystem::exists(root)) return true;
+  size_t count = 0;
+  for (const auto& entry : filesystem::recursive_directory_iterator(root)) {
+   if (token.stop_requested()) throw runtime_error("Restore cancelled.");
+   if (++count > 1000000) throw runtime_error("Restore inventory exceeds safety limit.");
+   rejectLink(entry.path());
+   const auto status = entry.symlink_status();
+   if (filesystem::is_regular_file(status) && filesystem::hard_link_count(entry.path()) > 1)
+    throw runtime_error("Restore tree contains a multiply linked file.");
+   if (!filesystem::is_regular_file(status) && !filesystem::is_directory(status))
+    throw runtime_error("Restore tree contains a special file.");
+  }
+  return true;
+ } catch (const exception& exception) { error = exception.what(); return false; }
+}
+
+bool CopyLegacyPreservedToStaging(const filesystem::path& source, const filesystem::path& staging,
+ const vector<wstring>& rules, string& error, stop_token token) {
+ return CopyPreserved(source, staging, rules, error, token);
+}
 
 bool Prepare(
 	const filesystem::path& target,

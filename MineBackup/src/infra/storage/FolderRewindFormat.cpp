@@ -353,6 +353,11 @@ wstring GenerateArchiveFileName(const wstring& backupType, const wstring& folder
     return L"[Backup][" + MakeLocalTimestampString() + L"]-" + GenerateGuidString() + L".7z";
 }
 
+bool IsPartialBackupType(const wstring& typeOrFileName) {
+    return _wcsicmp(typeOrFileName.c_str(), L"Partial") == 0
+        || (typeOrFileName.size() >= 9 && _wcsicmp(typeOrFileName.substr(0, 9).c_str(), L"[Partial]") == 0);
+}
+
 bool IsSmartBackupType(const wstring& typeOrFileName) {
     return _wcsicmp(typeOrFileName.c_str(), L"Smart") == 0 || typeOrFileName.find(L"[Smart]") != wstring::npos;
 }

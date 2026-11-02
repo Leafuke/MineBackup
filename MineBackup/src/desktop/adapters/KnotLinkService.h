@@ -30,6 +30,9 @@ public:
     void BroadcastLegacyPayload(std::string_view payload);
 
     static std::shared_ptr<KnotLinkCommandContext> CurrentCommandContext();
+    // Legacy integrated callbacks have no world identity and use fresh UUIDs.
+    // Hold across handshake, mutation and terminal event, including GUI callers.
+    static std::recursive_mutex& ModConversationMutex();
 
 private:
     class ContextScope;

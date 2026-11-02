@@ -12,6 +12,7 @@ set(MINEBACKUP_CLI_SOURCES
 set(MINEBACKUP_DATA_CORE_SOURCES
     ${MINEBACKUP_SRC_DIR}/domain/OperationResult.cpp
     ${MINEBACKUP_SRC_DIR}/infra/AppPaths.cpp
+    ${MINEBACKUP_SRC_DIR}/infra/PlayerDataPreservation.cpp
     ${MINEBACKUP_SRC_DIR}/infra/ArchiveRunner.cpp
     ${MINEBACKUP_SRC_DIR}/infra/AtomicFileWriter.cpp
     ${MINEBACKUP_SRC_DIR}/infra/BackupChangeDetector.cpp
@@ -50,6 +51,7 @@ set(MINEBACKUP_DATA_CORE_SOURCES
 )
 
 set(MINEBACKUP_RUNTIME_SOURCES
+    ${MINEBACKUP_SRC_DIR}/runtime/BackupSelection.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/BackupManager.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/BatchReadinessService.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/ChainSafeRetention.cpp
@@ -74,6 +76,7 @@ set(MINEBACKUP_RUNTIME_SOURCES
     ${MINEBACKUP_SRC_DIR}/runtime/ProfileManifest.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/ProfileRuntime.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/ProfileTransaction.cpp
+    ${MINEBACKUP_SRC_DIR}/runtime/RestorePreservedPaths.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/RestoreService.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/RestoreWorkspace.cpp
     ${MINEBACKUP_SRC_DIR}/runtime/RuntimeCloudPostHook.cpp
@@ -190,6 +193,7 @@ set(MINEBACKUP_DATA_CORE_HEADERS
     ${MINEBACKUP_SRC_DIR}/domain/OperationResult.h
     ${MINEBACKUP_SRC_DIR}/domain/ProcessModels.h
     ${MINEBACKUP_SRC_DIR}/infra/AppPaths.h
+    ${MINEBACKUP_SRC_DIR}/infra/PlayerDataPreservation.h
     ${MINEBACKUP_SRC_DIR}/infra/ArchiveRunner.h
     ${MINEBACKUP_SRC_DIR}/infra/AtomicFileWriter.h
     ${MINEBACKUP_SRC_DIR}/infra/BackupChangeDetector.h
@@ -243,6 +247,7 @@ set(MINEBACKUP_DATA_CORE_INCLUDE_DIRS
 
 set(MINEBACKUP_RUNTIME_HEADERS
     ${MINEBACKUP_SRC_DIR}/runtime/BackupManagerInternal.h
+    ${MINEBACKUP_SRC_DIR}/runtime/BackupSelection.h
     ${MINEBACKUP_SRC_DIR}/runtime/BackupService.h
     ${MINEBACKUP_SRC_DIR}/runtime/BatchReadinessService.h
     ${MINEBACKUP_SRC_DIR}/runtime/ChainSafeRetention.h
@@ -268,6 +273,7 @@ set(MINEBACKUP_RUNTIME_HEADERS
     ${MINEBACKUP_SRC_DIR}/runtime/ProfileManifest.h
     ${MINEBACKUP_SRC_DIR}/runtime/ProfileRuntime.h
     ${MINEBACKUP_SRC_DIR}/runtime/ProfileTransaction.h
+    ${MINEBACKUP_SRC_DIR}/runtime/RestorePreservedPaths.h
     ${MINEBACKUP_SRC_DIR}/runtime/RestoreService.h
     ${MINEBACKUP_SRC_DIR}/runtime/RestoreWorkspace.h
     ${MINEBACKUP_SRC_DIR}/runtime/RuntimeCloudPostHook.h
