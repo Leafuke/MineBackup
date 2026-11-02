@@ -3,6 +3,7 @@
 #include "WorldIdentity.h"
 #include "PathIdentity.h"
 #include "AtomicFileWriter.h"
+#include "ChainSafeRetention.h"
 
 using namespace std;
 
@@ -164,19 +165,88 @@ ImportanceResult HistoryRepository::SetImportance(const Config& config, const ws
     if (!operation.owns_lock()) {
         ImportanceResult busy; busy.error = "Archive operation is busy."; return busy;
     }
-    auto result = QueryImportance(config, world, file);
+    return PersistImportance(config, QueryImportance(config, world, file), important, historyFile, configs);
+}
+
+ImportanceResult HistoryRepository::QueryImportance(const Config& config, const HistoryEntry& selected) const {
+    ImportanceResult result;
+    unique_lock operation(ArchiveMutationMutex(), try_to_lock);
+    if (!operation.owns_lock()) { result.error = "Archive operation is busy."; return result; }
+    if (selected.configId != config.configId || !FolderRewindFormat::IsSafeSinglePathSegment(selected.backupFile)) {
+        result.error = "Selection must identify an exact archive in this configuration."; return result;
+    }
+    WorldIdentity::Value identity;
+    if (WorldIdentity::TryResolveHistory(config, selected, identity)) {
+        result = QueryImportance(config, identity.relativeWorldPath, selected.backupFile);
+        if (result.success && !selected.worldPath.empty()
+            && !ChainSafeRetention::SameAuxiliarySource(config, selected, *result.entry)) {
+            result.success = false; result.error = "Selected and recorded storage identities do not agree.";
+        }
+        return result;
+    }
+    FolderRewindFormat::StoragePaths storage;
+    if (selected.worldPath.empty() || !filesystem::path(selected.worldPath).is_absolute()
+        || !FolderRewindFormat::TryResolveStoragePaths(config.backupPath, selected.worldName, selected.worldPath, storage)) {
+        result.error = "Auxiliary backup requires a recorded source and storage identity."; return result;
+    }
+    // A failed configured-world validation must not become an auxiliary bypass.
+    for (const auto& [world, unused] : config.worlds) {
+        (void)unused;
+        if (WorldIdentity::TryBuild(config, world, identity)
+            && PathIdentity::PathsEqual(identity.sourcePath, selected.worldPath)) {
+            result.error = "Auxiliary backup identity conflicts with a configured world."; return result;
+        }
+    }
+    for (const auto& entry : *EntriesForConfig(config.configId)) {
+        if (entry.backupFile != selected.backupFile) continue;
+        FolderRewindFormat::StoragePaths recorded;
+        if (!FolderRewindFormat::TryResolveStoragePaths(config.backupPath, entry.worldName, entry.worldPath, recorded)
+            || !PathIdentity::PathsEqual(storage.backupSubDir, recorded.backupSubDir)) continue;
+        if (result.entry || !ChainSafeRetention::SameAuxiliarySource(config, selected, entry)) {
+            result.error = "Backup history identity is ambiguous."; return result;
+        }
+        result.entry = entry;
+    }
+    if (!result.entry) { result.error = "Backup history entry was not found."; return result; }
+    error_code error;
+    if (!filesystem::is_regular_file(filesystem::symlink_status(storage.backupSubDir / selected.backupFile, error)) || error) {
+        result.error = "The exact local archive is missing or unsafe."; return result;
+    }
+    result.success = true;
+    result.file = result.entry->backupFile;
+    result.important = result.entry->isImportant;
+    return result;
+}
+
+ImportanceResult HistoryRepository::SetImportance(const Config& config, const HistoryEntry& selected,
+    bool important, const filesystem::path& historyFile, const map<int, Config>& configs) {
+    unique_lock operation(ArchiveMutationMutex(), try_to_lock);
+    if (!operation.owns_lock()) {
+        ImportanceResult busy; busy.error = "Archive operation is busy."; return busy;
+    }
+    return PersistImportance(config, QueryImportance(config, selected), important, historyFile, configs);
+}
+
+ImportanceResult HistoryRepository::PersistImportance(const Config& config, ImportanceResult result,
+    bool important, const filesystem::path& historyFile, const map<int, Config>& configs) {
     if (!result.success) return result;
     // Persist even an idempotent request, so an acknowledgement always confirms
     // the flag reached the same authoritative history file used after restart.
     const auto mutation = Mutate(config.configId, historyFile, configs, true,
         [&](Entries& entries) {
+            HistoryEntry* matching = nullptr;
             for (auto& entry : entries) {
-                if (WorldIdentity::SameHistoryEntry(config, entry, *result.entry)) {
-                    entry.isImportant = important;
-                    return true;
-                }
+                const bool same = result.entry->worldPath.empty()
+                    ? WorldIdentity::SameHistoryEntry(config, entry, *result.entry)
+                    : entry.backupFile == result.entry->backupFile
+                        && ChainSafeRetention::SameAuxiliarySource(config, entry, *result.entry);
+                if (!same) continue;
+                if (matching) return false;
+                matching = &entry;
             }
-            return false;
+            if (!matching) return false;
+            matching->isImportant = important;
+            return true;
         });
     if (!mutation.changed || !mutation.persisted) {
         result.success = false;

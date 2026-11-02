@@ -462,7 +462,12 @@ bool Prepare(const fs::path& currentRoot, const fs::path& targetRoot, const Arch
         if (!modern) if (const auto player = Find(currentData, "Player")) {
             inlinePlayer = AsCompound(*player); inlineUuid = ReadUuid(*inlinePlayer); ValidateFields(*inlinePlayer);
         }
-        if (const auto player = Find(targetData, "Player")) { const auto compound = AsCompound(*player); ReadUuid(compound); ValidateFields(compound); }
+        std::optional<Compound> targetInlinePlayer; std::optional<Bytes> targetInlineUuid;
+        if (const auto player = Find(targetData, "Player")) {
+            targetInlinePlayer = AsCompound(*player); targetInlineUuid = ReadUuid(*targetInlinePlayer); ValidateFields(*targetInlinePlayer);
+            if (!inlinePlayer && (!targetInlineUuid || !currentPlayers.contains(*targetInlineUuid)))
+                Fail("Target embedded player does not identify an available current player file.");
+        }
         if (modern) {
             if (const auto single = Find(currentData, "singleplayer_uuid"))
                 if (!currentPlayers.contains(DecodeUuid(*single))) Fail("Current singleplayer_uuid does not reference an available player file.");
@@ -485,9 +490,17 @@ bool Prepare(const fs::path& currentRoot, const fs::path& targetRoot, const Arch
             if (content.size() > MaximumTotalBytes - total) Fail("Player preservation exceeds the aggregate output limit.");
             total += content.size(); prepared[key] = {PathFromUtf8(path), std::move(content)};
         };
+        bool levelChanged = false;
         for (const auto& [uuid, path] : currentPlayers) {
             auto source = codec.Read(currentRoot / PathFromUtf8(path)); ValidatePlayer(source.root, uuid);
             const auto& player = inlinePlayer && inlineUuid == uuid ? *inlinePlayer : source.root;
+            if (!inlinePlayer && targetInlinePlayer && targetInlineUuid == uuid) {
+                // Legacy singleplayer loads the embedded state before the UUID
+                // file. Keep its unselected fields from the restored backup.
+                Overlay(*targetInlinePlayer, player);
+                targetData["Player"] = {10, EncodeCompound(*targetInlinePlayer)};
+                levelChanged = true;
+            }
             auto destinationPath = directory + uuid + ".dat"; Document destination;
             if (const auto existing = targetPlayers.find(uuid); existing != targetPlayers.end()) {
                 destinationPath = existing->second; destination = codec.Read(targetRoot / PathFromUtf8(destinationPath));
@@ -495,7 +508,6 @@ bool Prepare(const fs::path& currentRoot, const fs::path& targetRoot, const Arch
             } else destination = {"", player};
             add(destinationPath, destination);
         }
-        bool levelChanged = false;
         if (inlinePlayer) {
             auto destination = Find(targetData, "Player");
             if (!destination) targetData["Player"] = {10, EncodeCompound(*inlinePlayer)};

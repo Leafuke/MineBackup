@@ -245,3 +245,11 @@ ctest --test-dir build/linux-x64 -R 'knotlink|archive_integration|player_preserv
 ```
 
 这轮验证不是 Windows/macOS 原生运行，也不是 Minecraft/FTB 单人/专服旅行端到端验收。新提交的跨平台 CI 需要按 PR 后续精确 SHA 单独确认，不能沿用上面旧提交的绿色结果。内容校验会额外解压完整快照/链并读取源数据；大型世界需要相应临时磁盘与时间，不能将小型合成夹具的时延当作生产上限。
+
+## 9. 2026-10-27：PR #92 审阅修复
+
+- 指定路径保留分别解析当前目录与恢复暂存目录的世界根，并在写入前拒绝根目录不一致。服务器目录以 `server.properties` 的 `level-name`（省略时为 `world`）为准，避免 Overwrite 暂存目录同时留下新旧世界时选错；没有服务器配置时仍要求唯一世界根，不自动映射目录。
+- 桌面历史的重要标记传入完整历史记录，使 mods 和自定义文件夹备份可以标记与取消标记。辅助来源复用 `SameAuxiliarySource` 校验配置、源路径与存储目录，并核对实际归档名，拒绝缺失文件和身份歧义；继续使用原有归档事务锁和历史持久化流程。
+- 当前世界没有内嵌 `Data.Player`、备份却包含该节点时，以目标玩家 UUID 精确关联当前玩家文件，只同步既定的 13 个保留字段。目标 UUID 缺失、无法匹配或文件内身份冲突时明确失败；当前内嵌玩家存在时仍保持原有优先级。
+
+本轮按要求不新增或修改测试用例。Windows MSVC Release 桌面构建、CMake/MSBuild 源文件一致性和五层边界检查通过；已有 `knotlink_commands`、`player_preservation`、`player_preservation_real_gzip`、`runtime.archive_integration`、`data_core` 共 5 项 CTest 全部通过。本轮未重新执行 Linux/macOS 或 Minecraft 游戏内验收。

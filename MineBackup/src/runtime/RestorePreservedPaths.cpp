@@ -5,6 +5,7 @@
 #include <cwctype>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -43,6 +44,58 @@ Inventory Inspect(const filesystem::path& root, stop_token token, Inventory& dir
         if (files.size() > 1000000) throw runtime_error("World inventory exceeds safety limit.");
     }
     return files;
+}
+wstring Trim(wstring value) {
+    const auto begin = value.find_first_not_of(L" \t\r\n");
+    if (begin == wstring::npos) return {};
+    return value.substr(begin, value.find_last_not_of(L" \t\r\n") - begin + 1);
+}
+filesystem::path ResolveLevel(const Inventory& files, const filesystem::path& root) {
+    if (const auto properties = files.find(L"server.properties"); properties != files.end()) {
+        const auto size = filesystem::file_size(properties->second);
+        if (size > 1024u * 1024u) throw runtime_error("Server properties exceeds the preservation limit.");
+        string bytes(static_cast<size_t>(size), '\0');
+        ifstream stream(properties->second, ios::binary);
+        if (!stream || !stream.read(bytes.data(), static_cast<streamsize>(size))
+            || stream.peek() != char_traits<char>::eof())
+            throw runtime_error("Server properties could not be read consistently.");
+        if (bytes.starts_with("\xef\xbb\xbf")) bytes.erase(0, 3);
+        const auto text = utf8_to_wstring(bytes);
+        optional<wstring> configured;
+        for (size_t start = 0; start < text.size();) {
+            auto end = text.find(L'\n', start);
+            if (end == wstring::npos) end = text.size();
+            const auto line = Trim(text.substr(start, end - start)); start = end + 1;
+            if (line.empty() || line.front() == L'#' || line.front() == L'!') continue;
+            const auto separator = line.find_first_of(L"=: \t");
+            if (line.substr(0, separator) != L"level-name") continue;
+            if (configured) throw runtime_error("Ambiguous server level-name.");
+            auto name = separator == wstring::npos ? wstring{} : Trim(line.substr(separator));
+            if (!name.empty() && (name.front() == L'=' || name.front() == L':')) name = Trim(name.substr(1));
+            vector<wstring> normalized; string error;
+            if (!Normalize({name}, normalized, error) || normalized.front().back() == L'/')
+                throw runtime_error("Server level-name must be a managed relative world path.");
+            configured = normalized.front() + L"/level.dat";
+        }
+        // The server's configured (or default) world is authoritative even when
+        // an overwrite restore leaves other world directories in staging.
+        const auto expected = configured.value_or(L"world/level.dat");
+        const auto level = files.find(Fold(expected));
+        if (level == files.end()) throw runtime_error("Configured server world is outside the managed inventory.");
+#ifndef _WIN32
+        if (Relative(level->second, root) != expected || Relative(properties->second, root) != L"server.properties")
+            throw runtime_error("Configured server world has noncanonical path casing.");
+#endif
+        return level->second;
+    }
+    optional<filesystem::path> level;
+    for (const auto& [name, path] : files) {
+        if (name != L"level.dat" && !name.ends_with(L"/level.dat")) continue;
+        if (level) throw runtime_error("Preservation requires one managed Minecraft world.");
+        level = path;
+    }
+    if (!level) throw runtime_error("World level.dat is missing.");
+    return *level;
 }
 bool Matches(const vector<wstring>& selectors, const wstring& path) {
     return any_of(selectors.begin(), selectors.end(), [&](const auto& selector) {
@@ -98,14 +151,14 @@ bool Apply(const filesystem::path& current, const filesystem::path& staging,
         Inventory sourceDirectories, targetDirectories;
         const auto source = Inspect(current, token, sourceDirectories);
         const auto target = Inspect(staging, token, targetDirectories);
-        vector<wstring> roots;
-        for (const auto& [name, path] : source) {
-            (void)path;
-            if (name == L"level.dat" || name.ends_with(L"/level.dat"))
-                roots.push_back(name.substr(0, name.size() - 9));
-        }
-        if (roots.size() != 1) throw runtime_error("Preservation requires one managed Minecraft world.");
-        for (auto& selector : selectors) selector = roots.front() + Fold(selector);
+        auto sourceLevel = Relative(ResolveLevel(source, current), current);
+        auto targetLevel = Relative(ResolveLevel(target, staging), staging);
+#ifdef _WIN32
+        sourceLevel = Fold(sourceLevel); targetLevel = Fold(targetLevel);
+#endif
+        if (sourceLevel != targetLevel) throw runtime_error("Target and current server world roots conflict.");
+        const auto prefix = Fold(sourceLevel.substr(0, sourceLevel.size() - 9));
+        for (auto& selector : selectors) selector = prefix + Fold(selector);
         struct File { filesystem::path relative; string bytes; };
         vector<File> files;
         vector<filesystem::path> deletes;

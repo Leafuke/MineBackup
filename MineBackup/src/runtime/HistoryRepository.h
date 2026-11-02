@@ -55,6 +55,11 @@ public:
     ImportanceResult SetImportance(const Config& config, const std::wstring& world,
         const std::wstring& file, bool important, const std::filesystem::path& historyFile,
         const std::map<int, Config>& configs);
+    // History selections carry the source path needed to identify auxiliary
+    // backups without guessing from a display name or archive filename.
+    ImportanceResult QueryImportance(const Config& config, const HistoryEntry& selected) const;
+    ImportanceResult SetImportance(const Config& config, const HistoryEntry& selected,
+        bool important, const std::filesystem::path& historyFile, const std::map<int, Config>& configs);
 
     std::shared_ptr<const HistorySnapshot> Snapshot() const;
     EntriesView EntriesForConfig(const std::wstring& configId) const;
@@ -79,6 +84,8 @@ public:
         const Mutator& mutator);
 
 private:
+    ImportanceResult PersistImportance(const Config& config, ImportanceResult result,
+        bool important, const std::filesystem::path& historyFile, const std::map<int, Config>& configs);
     static FolderRewindHistoryStore::HistoryByConfigId Flatten(
         const HistorySnapshot& snapshot);
     static std::shared_ptr<HistorySnapshot> MakeSnapshot(

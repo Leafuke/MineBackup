@@ -522,8 +522,7 @@ void ShowHistoryWindow(int requestedConfigIndex,
                 if (g_appState.profileRecoveryRequired.load() || MigrationCoordinator::IsHistoryPersistenceBlocked()) {
                     importanceError = "History migration must finish before importance can be saved.";
                 } else {
-                    const auto result = GetHistoryRepository().SetImportance(config,
-                        selectedEntry->worldName, selectedEntry->backupFile, important,
+                    const auto result = GetHistoryRepository().SetImportance(config, *selectedEntry, important,
                         GetAppPaths().HistoryFile(), SnapshotConfigState().configs);
                     importanceError = result.success ? string{} : result.error;
                 }
